@@ -369,7 +369,7 @@ func (m *MeasureTemplate) bindSort(bound *BoundQuery, plan *ql.RawPlan) (*ql.Sor
 			return nil, fmt.Errorf("ORDER BY: %w", err)
 		}
 		switch expression.Type {
-		case ql.ExpressionInt, ql.ExpressionFloat, ql.ExpressionString, ql.ExpressionBytes, ql.ExpressionTimestamp, ql.ExpressionNull:
+		case ql.ExpressionInt, ql.ExpressionFloat, ql.ExpressionDecimal, ql.ExpressionString, ql.ExpressionBytes, ql.ExpressionTimestamp, ql.ExpressionNull:
 		default:
 			return nil, fmt.Errorf("ORDER BY requires a scalar numeric, string, bytes or timestamp key")
 		}

@@ -310,6 +310,9 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery, aggregate *ql.Aggre
 				return nil, err
 			}
 		}
+		if resolved.Type == ql.ExpressionDecimal {
+			column.Type, column.Scale = vectorized.ColumnTypeDecimal, resolved.Scale
+		}
 		key := measureColumnKey{family: column.TagFamily, name: column.Name, role: column.Role}
 		if seen[key] {
 			return nil, fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
@@ -407,6 +410,8 @@ func expressionOutputColumn(name string, typ ql.ExpressionType) (vectorized.Colu
 		column.Type = vectorized.ColumnTypeInt64
 	case ql.ExpressionFloat:
 		column.Type = vectorized.ColumnTypeFloat64
+	case ql.ExpressionDecimal:
+		column.Type = vectorized.ColumnTypeDecimal
 	case ql.ExpressionString:
 		column.Type = vectorized.ColumnTypeString
 	case ql.ExpressionBytes:

@@ -41,8 +41,10 @@ const (
 
 // AggregateCall describes one aggregate input independently of output aliases.
 type AggregateCall struct {
-	Source   vectorized.ColumnDef
-	Function AggregateFunction
+	Source       vectorized.ColumnDef
+	Function     AggregateFunction
+	Decimal      bool
+	DecimalScale uint8
 }
 
 // AggregateOutput names one selected grouping key or aggregate call.
@@ -188,6 +190,9 @@ func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 		if output.Column.Type != expected {
 			return nil, fmt.Errorf("aggregate output %q has type %s; expected %s", output.Column.Name, output.Column.Type, expected)
 		}
+		if !output.IsGroup && plan.Calls[output.Index].Decimal && output.Column.Scale != plan.Calls[output.Index].DecimalScale {
+			return nil, fmt.Errorf("aggregate output %q has inconsistent decimal scale", output.Column.Name)
+		}
 		defs[index] = output.Column
 		defs[index].Entity = false
 	}
@@ -203,6 +208,7 @@ func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls [
 	type stateKey struct {
 		source   vectorized.ColumnDef
 		distinct bool
+		decimal  bool
 	}
 	bySource := make(map[stateKey]int)
 	for index, call := range calls {
@@ -215,7 +221,10 @@ func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls [
 		}
 		def := call.Source
 		def.Entity = false
-		key := stateKey{source: def, distinct: call.Function == AggregateCountDistinct}
+		if call.Decimal && (call.Function != AggregateSum || def.Type != vectorized.ColumnTypeInt64 || call.DecimalScale > 18) {
+			return fmt.Errorf("decimal aggregation requires SUM of int64 with scale 0 to 18")
+		}
+		key := stateKey{source: def, distinct: call.Function == AggregateCountDistinct, decimal: call.Decimal}
 		state, exists := bySource[key]
 		if !exists {
 			reader, err := newAggregateReader(schema, def)
@@ -224,7 +233,7 @@ func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls [
 			}
 			state = len(o.states)
 			bySource[key] = state
-			entry := aggregateState{source: def}
+			entry := aggregateState{source: def, decimal: call.Decimal}
 			if key.distinct {
 				bytes, boundErr := groupAllocationBytes(int64(unsafe.Sizeof(aggregateGroups{})))
 				if boundErr != nil {
@@ -246,6 +255,9 @@ func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls [
 }
 
 func aggregateOutputType(call AggregateCall) vectorized.ColumnType {
+	if call.Decimal {
+		return vectorized.ColumnTypeDecimal
+	}
 	switch call.Function {
 	case AggregateCount, AggregateCountDistinct:
 		return vectorized.ColumnTypeInt64

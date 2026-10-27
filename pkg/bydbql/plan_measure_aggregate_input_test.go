@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
+	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -72,4 +73,47 @@ func TestMeasureComputedAggregateInputAvoidsAmbiguousSourceName(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, collision, execution.Plan.Aggregate.Calls[0].Source.Name)
 	require.Equal(t, collision, execution.Plan.Aggregate.Calls[1].Source.Name)
+}
+
+func TestMeasureScaledDecimalAggregate(t *testing.T) {
+	execution := typedExecution(t, "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS total FROM g.m")
+	require.Len(t, execution.Plan.Aggregate.Calls, 1)
+	require.Equal(t, vectorized.ColumnTypeInt64, execution.Plan.Aggregate.Calls[0].Source.Type)
+	require.True(t, execution.Plan.Aggregate.Calls[0].Decimal)
+	require.Equal(t, uint8(10), execution.Plan.Aggregate.Calls[0].DecimalScale)
+	require.Equal(t, vectorized.ColumnTypeDecimal, execution.Plan.Aggregate.Outputs[0].Column.Type)
+}
+
+func TestMeasureScaledDecimalOrderBy(t *testing.T) {
+	execution := typedExecution(t, "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS total FROM g.m ORDER BY total ASC")
+	require.NotNil(t, execution.Plan.Sort)
+	require.Equal(t, ql.ExpressionDecimal, execution.Plan.Sort.Keys[0].Expr.Type)
+}
+
+func TestMeasureScaledDecimalBoundaries(t *testing.T) {
+	for _, test := range []struct{ name, query string }{
+		{"negative scale", "SELECT SUM(DECIMAL_FROM_SCALED(v, -1)) FROM g.m"},
+		{"scale above maximum", "SELECT SUM(DECIMAL_FROM_SCALED(v, 19)) FROM g.m"},
+		{"nonliteral scale", "SELECT SUM(DECIMAL_FROM_SCALED(v, v)) FROM g.m"},
+		{"decimal arithmetic", "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) + 1 FROM g.m"},
+		{"float comparison", "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS total FROM g.m HAVING SUM(DECIMAL_FROM_SCALED(v, 10)) > 0.5"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			statement, err := bydbql.Prepare(test.query)
+			require.NoError(t, err)
+			template, err := typedTransformer().CompileMeasure(context.Background(), statement)
+			if err != nil {
+				return
+			}
+			_, err = template.BindParams(nil, time.Now())
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestMeasureScaledDecimalCoalesceZero(t *testing.T) {
+	execution := typedExecution(t, "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), 0) AS total FROM g.m")
+	require.NotNil(t, execution.Plan.Expressions)
+	require.Equal(t, vectorized.ColumnTypeDecimal, execution.Plan.Expressions.Outputs[0].Column.Type)
+	require.Equal(t, uint8(10), execution.Plan.Expressions.Outputs[0].Column.Scale)
 }

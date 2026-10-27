@@ -154,6 +154,11 @@ func generateT07(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario, erro
 		return nil, nil, compositionErr
 	}
 	scenarios = append(scenarios, composition...)
+	decimalScenarios, decimalErr := generateQG3Decimal(b)
+	if decimalErr != nil {
+		return nil, nil, decimalErr
+	}
+	scenarios = append(scenarios, decimalScenarios...)
 	return readiness, scenarios, nil
 }
 
@@ -195,13 +200,41 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 		}
 		b.cases = append(b.cases, Case{Name: fmt.Sprintf("qg2_overflow_%d", index), Ticket: "T07", Query: query, WantCode: code, Features: []string{"t08.integer_overflow"}})
 	}
+	for index, expression := range []string{
+		"SUM(DECIMAL_FROM_SCALED(v + 9223372036854775807, 10))",
+		"SUM(v)",
+	} {
+		q := t07Query{Fixture: T07DecimalFixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 10000}
+		query, err := renderT07(q)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		query = strings.Replace(query, "SUM(v) AS result", expression+" AS result", 1)
+		code := codes.Unknown
+		if index == 0 {
+			code = codes.InvalidArgument
+		}
+		b.cases = append(b.cases, Case{Name: fmt.Sprintf("qg3_overflow_%d", index), Ticket: "T07", Query: query, WantCode: code, Features: []string{"t08.integer_overflow"}})
+	}
+	q := t07Query{Fixture: T07DecimalFixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 13000}
+	query, err := renderT07(q)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	query = strings.Replace(query, "SUM(v) AS result", "SUM(DECIMAL_FROM_SCALED(v, 39)) AS result", 1)
+	b.cases = append(b.cases, Case{
+		Name: "qg3_invalid_scale", Ticket: "T07", Query: query, WantCode: codes.InvalidArgument,
+		Features: []string{"t07.invalid_shape"}, NoScan: true,
+	})
 	cases := b.cases[start:]
 	b.cases = b.cases[:start]
 	return cases
 }
 
 func validateAggregateScenarios(readiness []AggregateFixture, scenarios []AggregateScenario) error {
-	if len(readiness) != 2 || readiness[0].Name != T07FixtureName || readiness[1].Name != T07GroupsFixtureName {
+	if len(readiness) != 3 || readiness[0].Name != T07FixtureName || readiness[1].Name != T07GroupsFixtureName || readiness[2].Name != T07DecimalFixtureName {
 		return fmt.Errorf("generated T07 suite lacks its independent fixture visibility witnesses")
 	}
 	for _, fixture := range readiness {

@@ -32,6 +32,7 @@ var coverageContract = []Feature{
 	{ID: "patterns.LIKE", Status: "supported"},
 	{ID: "patterns.ILIKE", Status: "supported"},
 	{ID: "qg2.composition", Status: "supported"},
+	{ID: "qg3.decimal", Status: "supported"},
 	{ID: "t16.fixture", Status: "supported"},
 	{ID: "t16.computed", Status: "supported"},
 	{ID: "t16.ordinal", Status: "supported"},

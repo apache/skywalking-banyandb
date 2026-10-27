@@ -340,6 +340,26 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 }
 
 func (p *expressionParser) functionPrefix() (*GrammarExpression, bool, error) {
+	if p.take("DECIMAL_FROM_SCALED") {
+		if err := p.need("("); err != nil {
+			return nil, true, err
+		}
+		value, err := p.parse(0)
+		if err != nil {
+			return nil, true, err
+		}
+		if err = p.need(","); err != nil {
+			return nil, true, err
+		}
+		scale, err := p.parse(0)
+		if err != nil {
+			return nil, true, err
+		}
+		if err = p.need(")"); err != nil {
+			return nil, true, err
+		}
+		return &GrammarExpression{Op: "decimal_from_scaled", Args: []*GrammarExpression{value, scale}}, true, nil
+	}
 	if p.take("TIME_BUCKET") {
 		if err := p.need("("); err != nil {
 			return nil, true, err

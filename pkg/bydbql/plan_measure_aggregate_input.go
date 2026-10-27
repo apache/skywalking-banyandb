@@ -29,8 +29,11 @@ import (
 type measureAggregateInput struct {
 	expression *measureExpression
 	call       int
+	decimal    bool
+	scale      uint8
 }
 
+//nolint:gocyclo // Validates the aggregate and allocates its collision-free input slot.
 func (m *MeasureTemplate) resolveAggregateInput(aggregate *GrammarAggregateFunction, typeSpec *string, columns *measureColumns,
 	plan *ql.AggregatePlan, addInput func(vectorized.ColumnDef),
 ) (ql.AggregateCall, vectorized.ColumnDef, error) {
@@ -52,8 +55,17 @@ func (m *MeasureTemplate) resolveAggregateInput(aggregate *GrammarAggregateFunct
 	if aggregate.Distinct {
 		function = ql.AggregateCountDistinct
 	}
+	argument := aggregate.Argument
+	decimal, scale := false, uint8(0)
+	if argument.Op == "decimal_from_scaled" {
+		if function != ql.AggregateSum || len(argument.Args) != 2 || argument.Args[1].Op != "literal" ||
+			argument.Args[1].Param || argument.Args[1].Type != ql.ExpressionInt || argument.Args[1].Literal.Int64 < 0 || argument.Args[1].Literal.Int64 > 18 {
+			return call, output, fmt.Errorf("DECIMAL_FROM_SCALED requires SUM and a literal scale from 0 to 18")
+		}
+		decimal, scale, argument = true, uint8(argument.Args[1].Literal.Int64), argument.Args[0]
+	}
 	inputs := newMeasureExpressionInputs(nil)
-	recipe, err := compileMeasureExpression(aggregate.Argument, columns, inputs)
+	recipe, err := compileMeasureExpression(argument, columns, inputs)
 	if err != nil {
 		return call, output, err
 	}
@@ -61,7 +73,8 @@ func (m *MeasureTemplate) resolveAggregateInput(aggregate *GrammarAggregateFunct
 		addInput(slot.Source)
 	}
 	for _, previous := range m.aggregateInputs {
-		if previous.call < len(plan.Calls) && plan.Calls[previous.call].Function == function && reflect.DeepEqual(previous.expression, recipe) {
+		if previous.call < len(plan.Calls) && plan.Calls[previous.call].Function == function && previous.decimal == decimal &&
+			previous.scale == scale && reflect.DeepEqual(previous.expression, recipe) {
 			call = plan.Calls[previous.call]
 			output = vectorized.ColumnDef{Name: strings.ToUpper(aggregate.Function) + "(" + call.Source.Name + ")", Role: vectorized.RoleField, Type: call.Source.Type}
 			return call, output, nil
@@ -85,7 +98,7 @@ func (m *MeasureTemplate) resolveAggregateInput(aggregate *GrammarAggregateFunct
 	source := vectorized.ColumnDef{Name: name, Role: vectorized.RoleField, Type: vectorized.ColumnTypeInt64}
 	call = ql.AggregateCall{Source: source, Function: function}
 	output = vectorized.ColumnDef{Name: strings.ToUpper(aggregate.Function) + "(" + name + ")", Role: vectorized.RoleField, Type: vectorized.ColumnTypeInt64}
-	m.aggregateInputs = append(m.aggregateInputs, measureAggregateInput{expression: recipe, call: len(plan.Calls)})
+	m.aggregateInputs = append(m.aggregateInputs, measureAggregateInput{expression: recipe, call: len(plan.Calls), decimal: decimal, scale: scale})
 	return call, output, nil
 }
 
@@ -110,11 +123,21 @@ func (m *MeasureTemplate) bindAggregateInputs(bound *BoundQuery, plan *ql.Aggreg
 			return fmt.Errorf("aggregate does not support argument type %s", source.Type)
 		}
 		plan.Calls[input.call].Source = source
+		if input.decimal {
+			if source.Type != vectorized.ColumnTypeInt64 {
+				return fmt.Errorf("DECIMAL_FROM_SCALED requires an int64 input")
+			}
+			plan.Calls[input.call].Decimal = true
+			plan.Calls[input.call].DecimalScale = input.scale
+		}
 		if plan.GroupExpressions == nil {
 			plan.GroupExpressions = &ql.ExpressionPlan{}
 		}
 		plan.GroupExpressions.Outputs = append(plan.GroupExpressions.Outputs, ql.ExpressionOutput{Expr: resolved, Column: source})
 		resultType := source.Type
+		if input.decimal {
+			resultType = vectorized.ColumnTypeDecimal
+		}
 		if function == ql.AggregateCount || function == ql.AggregateCountDistinct {
 			resultType = vectorized.ColumnTypeInt64
 		}
@@ -124,6 +147,9 @@ func (m *MeasureTemplate) bindAggregateInputs(bound *BoundQuery, plan *ql.Aggreg
 		for index := range plan.Outputs {
 			if !plan.Outputs[index].IsGroup && plan.Outputs[index].Index == input.call {
 				plan.Outputs[index].Column.Type = resultType
+				if input.decimal {
+					plan.Outputs[index].Column.Scale = input.scale
+				}
 			}
 		}
 	}

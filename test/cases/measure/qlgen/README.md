@@ -894,3 +894,30 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 
 Run topologies sequentially. The focused benchmark and before/after exact-query
 control are documented in `verification/dpo85bench/README.md` at repository root.
+
+### Bounded decimal aggregation
+
+The `ql_t07_decimal` fixture includes ten coefficients of 999999999999999999,
+negative coefficients -999999999999999999 and -1, and a null. Each represents
+an integer scaled by 10 decimal places. The generated scalar, grouped, HAVING,
+ordering, and mixed integer/decimal cases bind the full fixture, the null row,
+and an empty interval. The expected values were checked with PostgreSQL 17.6
+using `sum(v::numeric / 10000000000)::numeric(38,10)` and the corresponding
+`GROUP BY`, `HAVING`, `ORDER BY`, and separate `sum(...)` and `count(v)` expressions. Decimal
+strings preserve all ten fractional places.
+
+### Bounded decimal sums
+
+The QG3 cases exercise `SUM(DECIMAL_FROM_SCALED(v::FIELD, 10))` over scaled
+int64 values through the QL RPC in standalone and distributed topologies. They
+include ten maximum numeric(18,10) coefficients in one group, a negative group,
+NULL and empty windows, cancellation, numeric ordering and HAVING, mixed integer
+and decimal aggregates, and `COALESCE` with zero and NULL. Rebound parameters
+exercise the cached plan. Invalid scales, overflow in the input expression, and
+ordinary int64 SUM overflow are rejected. Expected decimal strings retain ten
+fractional digits. The independent PostgreSQL oracle is recorded in
+`verification/qg3bench/postgres-oracle.sql` and its adjacent log.
+
+Decimal results have at most 38 coefficient digits and scales from 0 to 18.
+The normal int64 row and count limits cannot produce a precision-38 overflow
+in an RPC fixture; arithmetic boundary tests cover that bound directly.

@@ -1008,6 +1008,10 @@ LIMIT 10
 
 HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
 
+For scaled integer fields, `SUM(DECIMAL_FROM_SCALED(cost_scaled, 10))` accumulates the integer coefficients exactly. The scale must be an integer literal from 0 through 18. The signed coefficient is limited to 38 decimal digits (absolute value at most 10^38 - 1); exceeding this bound fails the query. Negative values and NULL follow SUM semantics, including NULL for empty or all-NULL input. Results use the existing string field value, formatted with exactly the declared number of fractional digits, including trailing zeros. Ordinary integer SUM remains checked int64.
+
+Decimal results remain numeric for HAVING comparisons and ORDER BY. Comparisons with integers and other decimal sums use their scales exactly; floating-point operands are unsupported. `COALESCE` accepts decimal arguments of matching scale, NULL, and the integer literal zero. Decimal arithmetic, casts, CASE results, and general decimal storage are unsupported. Distributed execution merges raw rows and performs decimal aggregation locally; decimal partials are not transported. Group state and buffers share the query memory budget.
+
 Within a measure predicate, `CONTAINS` and `NOT CONTAINS` are aliases of the existing infix `HAVING` and `NOT HAVING` operators. CONTAINS is contextual, so existing tags named `contains` and resources named `contains-svc` remain valid. The new aliases are limited to measure queries; other resource types keep their existing syntax.
 
 ```sql

@@ -516488,6 +516488,672 @@
           "ordered": true
         }
       ]
+    },
+    {
+      "name": "ql_t07_decimal",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "t07_ready_ql_t07_decimal_0",
+          "query": "SELECT rid, host, zone, v::FIELD, f::FIELD FROM replicated_group.ql_t07_decimal WHERE time \u003e= '{{time:0}}' AND time \u003c '{{time:12001}}' ORDER BY TIME ASC",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "1"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:0}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "2"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:1000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "3"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:2000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "4"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:3000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "5"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:4000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "6"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:5000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "7"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:6000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "8"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:7000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "9"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:8000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "10"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:9000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "-999999999999999999"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "11"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:10000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "int": {
+                        "value": "-1"
+                      }
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "12"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:11000}}"
+              },
+              {
+                "fields": [
+                  {
+                    "name": "v",
+                    "value": {
+                      "null": 0
+                    }
+                  },
+                  {
+                    "name": "f",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "13"
+                          }
+                        }
+                      },
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      },
+                      {
+                        "key": "zone",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "timestamp": "{{time:12000}}"
+              }
+            ]
+          },
+          "features": [
+            "t07.fixture"
+          ],
+          "ordered": true
+        }
+      ]
     }
   ],
   "aggregate_rejections": [
@@ -516618,6 +517284,34 @@
         "t08.integer_overflow"
       ],
       "want_code": 2
+    },
+    {
+      "ticket": "T07",
+      "name": "qg3_overflow_0",
+      "query": "SELECT SUM(DECIMAL_FROM_SCALED(v + 9223372036854775807, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:10000}}\"}}]",
+      "features": [
+        "t08.integer_overflow"
+      ],
+      "want_code": 3
+    },
+    {
+      "ticket": "T07",
+      "name": "qg3_overflow_1",
+      "query": "SELECT SUM(v) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:10000}}\"}}]",
+      "features": [
+        "t08.integer_overflow"
+      ],
+      "want_code": 2
+    },
+    {
+      "ticket": "T07",
+      "name": "qg3_invalid_scale",
+      "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 39)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+      "features": [
+        "t07.invalid_shape"
+      ],
+      "want_code": 3,
+      "no_scan": true
     }
   ],
   "aggregate_scenarios": [
@@ -541432,6 +542126,1408 @@
           "aggregate_groups": 1
         }
       ]
+    },
+    {
+      "name": "qg3_decimal_scalar",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_scalar_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "899999999.9999999990"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_scalar_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_scalar_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_coalesce_zero",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_zero_binding_0",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), 0) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "899999999.9999999990"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_zero_binding_1",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), 0) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "0.0000000000"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_zero_binding_2",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), 0) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "0.0000000000"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_coalesce_null",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_null_binding_0",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), NULL) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "899999999.9999999990"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_null_binding_1",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), NULL) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_coalesce_null_binding_2",
+          "query": "SELECT COALESCE(SUM(DECIMAL_FROM_SCALED(v, 10)), NULL) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_grouped",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_grouped_binding_0",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "999999999.9999999990"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-100000000.0000000000"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_grouped_binding_1",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_grouped_binding_2",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_having",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_having_binding_0",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING SUM(DECIMAL_FROM_SCALED(v, 10)) \u003e 0\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "999999999.9999999990"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_having_binding_1",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING SUM(DECIMAL_FROM_SCALED(v, 10)) \u003e 0\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_having_binding_2",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING SUM(DECIMAL_FROM_SCALED(v, 10)) \u003e 0\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_sort",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_sort_binding_0",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result ASC\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-100000000.0000000000"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "999999999.9999999990"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 3,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_sort_binding_1",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result ASC\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_sort_binding_2",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result ASC\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_mixed",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_mixed_binding_0",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, COUNT(v) AS count FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "999999999.9999999990"
+                      }
+                    }
+                  },
+                  {
+                    "name": "count",
+                    "value": {
+                      "int": {
+                        "value": "10"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-100000000.0000000000"
+                      }
+                    }
+                  },
+                  {
+                    "name": "count",
+                    "value": {
+                      "int": {
+                        "value": "2"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  },
+                  {
+                    "name": "count",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_mixed_binding_1",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, COUNT(v) AS count FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  },
+                  {
+                    "name": "count",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_mixed_binding_2",
+          "query": "SELECT host, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, COUNT(v) AS count FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_safe_integer",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_safe_integer_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, SUM(v) AS integer_sum FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:10000}}\"}},{\"str\":{\"value\":\"{{time:12000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-100000000.0000000000"
+                      }
+                    }
+                  },
+                  {
+                    "name": "integer_sum",
+                    "value": {
+                      "int": {
+                        "value": "-1000000000000000000"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 2,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_safe_integer_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, SUM(v) AS integer_sum FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  },
+                  {
+                    "name": "integer_sum",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_safe_integer_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 10)) AS result, SUM(v) AS integer_sum FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  },
+                  {
+                    "name": "integer_sum",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_cancellation",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_cancellation_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v - v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "0.0000000000"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_cancellation_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v - v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_cancellation_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v - v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_numeric_order",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_numeric_order_binding_0",
+          "query": "SELECT rid, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY rid ORDER BY result ASC, rid ASC\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "11"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "-0.0000000001"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "12"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "1"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "2"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "3"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "4"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "5"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "6"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "7"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "8"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "9"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "99999999.9999999999"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "10"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "13"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 13,
+          "aggregate_groups": 13,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_numeric_order_binding_1",
+          "query": "SELECT rid, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY rid ORDER BY result ASC, rid ASC\n#!params: [{\"str\":{\"value\":\"{{time:12000}}\"}},{\"str\":{\"value\":\"{{time:13000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "rid",
+                        "value": {
+                          "int": {
+                            "value": "13"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_numeric_order_binding_2",
+          "query": "SELECT rid, SUM(DECIMAL_FROM_SCALED(v, 10)) AS result FROM replicated_group.ql_t07_decimal WHERE time \u003e= ? AND time \u003c ? GROUP BY rid ORDER BY result ASC, rid ASC\n#!params: [{\"str\":{\"value\":\"{{time:14000}}\"}},{\"str\":{\"value\":\"{{time:15000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "ordered": true
+        }
+      ]
     }
   ],
   "fixture_digest": "a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258",
@@ -549642,6 +551738,10 @@
     },
     {
       "id": "qg2.composition",
+      "status": "supported"
+    },
+    {
+      "id": "qg3.decimal",
       "status": "supported"
     },
     {

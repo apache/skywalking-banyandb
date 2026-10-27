@@ -39,6 +39,7 @@ const (
 	ColumnTypeStrArray
 	ColumnTypeTagValue
 	ColumnTypeFieldValue
+	ColumnTypeDecimal
 )
 
 // String returns a human label used in diagnostics and error messages.
@@ -60,6 +61,8 @@ func (c ColumnType) String() string {
 		return "tagvalue"
 	case ColumnTypeFieldValue:
 		return "fieldvalue"
+	case ColumnTypeDecimal:
+		return "decimal"
 	}
 	return "unknown"
 }

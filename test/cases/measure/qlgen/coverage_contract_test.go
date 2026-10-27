@@ -66,7 +66,7 @@ func TestCoverageContractRequiresIndependentInventory(t *testing.T) {
 // production parser. A grammar change must update both the capability inventory
 // and this fingerprint after checking which generated witnesses/gaps it affects.
 func TestMeasureGrammarCoverageAudit(t *testing.T) {
-	const audited = "b11c1b9b60233b1fc4382956da2314b8a670098eb7cd9e16bf66994580d3b794"
+	const audited = "f3c6ca6e68af8cc8b3963096e7f6fdf22959c406e8c1718337308b754c769aa3"
 	var contract bytes.Buffer
 	writeGrammarShape(&contract, reflect.TypeFor[bydbql.Grammar](), make(map[reflect.Type]bool))
 	writeLexerAndSyntaxGuards(t, &contract)

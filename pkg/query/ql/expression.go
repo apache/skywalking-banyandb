@@ -17,7 +17,10 @@
 
 package ql
 
-import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+)
 
 // ExpressionType distinguishes SQL values without assigning new wire types.
 type ExpressionType uint8
@@ -33,6 +36,7 @@ const (
 	ExpressionTimestamp
 	ExpressionIntArray
 	ExpressionStringArray
+	ExpressionDecimal
 )
 
 // ExpressionScalar holds one typed literal; Expression.Type selects its payload.
@@ -41,6 +45,7 @@ type ExpressionScalar struct {
 	Bytes   []byte
 	Ints    []int64
 	Strings []string
+	Decimal decimal.Int128
 	Int64   int64
 	Float64 float64
 	Bool    bool
@@ -58,6 +63,7 @@ type Expression struct {
 	Source  vectorized.ColumnDef
 	Literal ExpressionScalar
 	Type    ExpressionType
+	Scale   uint8
 }
 
 // ExpressionOutput pairs an expression with its existing response column identity.

@@ -23,6 +23,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -79,6 +80,51 @@ func TestAggregateCompositionReleasesOnCancellationAndBudgetFailure(t *testing.T
 		}
 		ctx, cancel := context.WithCancel(vectorized.WithQueryMemoryTracker(t.Context(), budget))
 		op, err := WrapRaw(ctx, source, plan)
+		if budget == 1 {
+			require.ErrorIs(t, err, vectorized.ErrMemoryBudgetExceeded)
+		} else {
+			require.NoError(t, err)
+			require.NoError(t, op.Init(ctx))
+			cancel()
+			_, err = op.NextBatch(ctx)
+			require.ErrorIs(t, err, context.Canceled)
+			require.NoError(t, op.Close())
+		}
+		cancel()
+		require.Equal(t, 1, source.closes)
+		require.Zero(t, vectorized.QueryMemoryTracker(ctx, 0).Used())
+	}
+}
+
+func TestScaledDecimalAggregate(t *testing.T) {
+	source, defs := aggregateFixture(false)
+	input := defs[1]
+	sum := aggregateField("sum", vectorized.ColumnTypeDecimal)
+	sum.Scale = 10
+	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 1<<20)
+	op, err := WrapAggregate(ctx, source, &AggregatePlan{
+		Calls:   []AggregateCall{{Source: input, Function: AggregateSum, Decimal: true, DecimalScale: 10}},
+		Outputs: []AggregateOutput{{Column: sum, Index: 0}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, op.Init(ctx))
+	batch, err := op.NextBatch(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "0.0000000012", batch.Columns[0].(*vectorized.TypedColumn[decimal.Int128]).Data()[0].String(10))
+	require.NoError(t, op.Close())
+	require.Zero(t, vectorized.QueryMemoryTracker(ctx, 0).Used())
+}
+
+func TestScaledDecimalAggregateBudgetAndCancellation(t *testing.T) {
+	for _, budget := range []int64{1, 1 << 20} {
+		source, defs := aggregateFixture(false)
+		output := aggregateField("sum", vectorized.ColumnTypeDecimal)
+		output.Scale = 10
+		ctx, cancel := context.WithCancel(vectorized.WithQueryMemoryTracker(t.Context(), budget))
+		op, err := WrapAggregate(ctx, source, &AggregatePlan{
+			Calls:   []AggregateCall{{Source: defs[1], Function: AggregateSum, Decimal: true, DecimalScale: 10}},
+			Outputs: []AggregateOutput{{Column: output, Index: 0}},
+		})
 		if budget == 1 {
 			require.ErrorIs(t, err, vectorized.ErrMemoryBudgetExceeded)
 		} else {
