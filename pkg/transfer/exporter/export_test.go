@@ -39,7 +39,10 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
@@ -157,14 +160,14 @@ func exportOptions(t *testing.T, _ *fakeLiaison) (testOptions, *syncBuffer) {
 // environment of an export through them.
 func envFor(t *testing.T, opts testOptions, fakes ...*fakeLiaison) Env {
 	t.Helper()
-	liaisons := &Liaisons{}
+	liaisons := &cluster.Liaisons{}
 	for _, f := range fakes {
 		addr := serveLiaison(t, f)
-		liaisons.All = append(liaisons.All, &Liaison{Addr: addr, Conn: dial(t, addr)})
+		liaisons.All = append(liaisons.All, &cluster.Liaison{Addr: addr, Conn: dial(t, addr)})
 	}
 	return Env{
 		Log: opts.Log, Out: opts.Out, Terminal: opts.Terminal, Confirm: opts.Confirm, Liaisons: liaisons, Groups: fakes[0].groups,
-		Cluster: &ClusterInfo{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
+		Cluster: &cluster.ClusterInfo{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
 	}
 }
 
@@ -189,7 +192,7 @@ func shortHeartbeat(t *testing.T, d time.Duration) {
 
 func requireExit(t *testing.T, err error, code int, contains string) {
 	t.Helper()
-	var exitErr *ExitError
+	var exitErr *exitcode.ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != code || !strings.Contains(err.Error(), contains) {
 		t.Fatalf("want exit %d containing %q, got %v", code, contains, err)
 	}
@@ -372,7 +375,7 @@ func TestRunExport_CRCMismatchIsNotRenamed(t *testing.T) {
 	f.exportScript = tamper(func(ff *fakeFile) { ff.badCRC = true })
 	opts, log := exportOptions(t, f)
 	err := runExport(t, f, opts)
-	requireExit(t, err, ExitRuntime, "is corrupt")
+	requireExit(t, err, exitcode.ExitRuntime, "is corrupt")
 	final := filepath.Join(opts.Output, "nodes", manifest.NodeDir(nodeA), "measure", "sw_metric", "seg-20260930", "shard-0-00001.csv")
 	if _, statErr := os.Stat(final); !os.IsNotExist(statErr) {
 		t.Fatalf("a corrupt file must not be renamed: %v", statErr)
@@ -399,7 +402,7 @@ func TestRunExport_RejectsUnsafePaths(t *testing.T) {
 		onlyNodeA(f)
 		f.exportScript = tamper(func(ff *fakeFile) { ff.path = p })
 		opts, log := exportOptions(t, f)
-		requireExit(t, runExport(t, f, opts), ExitRuntime, "relative path")
+		requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "relative path")
 		requireKept(t, f, log)
 		if _, err := os.Stat(filepath.Join(filepath.Dir(opts.Output), "evil.csv")); !os.IsNotExist(err) {
 			t.Fatalf("%s escaped the output directory", p)
@@ -418,7 +421,7 @@ func TestRunExport_ExistingTargetIsRejected(t *testing.T) {
 		return sendUnit(stream, append(files, files[0]), nil)
 	})
 	opts, _ := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "already exists")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "already exists")
 }
 
 // The layout is built from every resource of the group, so a resource the node does not
@@ -447,7 +450,7 @@ func TestRunExport_LayoutResourceSetMismatchFails(t *testing.T) {
 			onlyNodeA(f)
 			f.exportScript = tamper(func(ff *fakeFile) { ff.revs = tc.revs })
 			opts, log := exportOptions(t, f)
-			requireExit(t, runExport(t, f, opts), ExitRuntime, tc.expect)
+			requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, tc.expect)
 			requireKept(t, f, log)
 		})
 	}
@@ -458,7 +461,7 @@ func TestRunExport_SchemaChangeDuringExportFails(t *testing.T) {
 	onlyNodeA(f)
 	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 99} })
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "schema of measure sw_metric/service_cpm changed during export")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "schema of measure sw_metric/service_cpm changed during export")
 	requireKept(t, f, log)
 }
 
@@ -471,7 +474,7 @@ func TestRunExport_RefusesANonEmptyOutputDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(opts.Output, "old"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	requireExit(t, runExport(t, f, opts), ExitUsage, "is not empty")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "is not empty")
 	if f.lastPlan() != nil {
 		t.Fatal("nothing may be planned for a non-empty output directory")
 	}
@@ -490,7 +493,7 @@ func TestRunExport_OccupiedClusterExits2(t *testing.T) {
 	f := exportFake()
 	f.listed = listedOn("b0b0")
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitPreflight, "give --preempt to take it over")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitPreflight, "give --preempt to take it over")
 	if !strings.Contains(log.String(), "export session feedfeed created") || strings.Contains(log.String(), "kept") {
 		t.Fatalf("a refused create was rolled back by the liaison; nothing is kept:\n%s", log)
 	}
@@ -522,7 +525,7 @@ func TestRunExport_AsksBeforeTakingOver(t *testing.T) {
 			}
 			continue
 		}
-		requireExit(t, err, ExitPreflight, "left as they are; give --preempt to take them over")
+		requireExit(t, err, exitcode.ExitPreflight, "left as they are; give --preempt to take them over")
 		if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
 			t.Fatalf("a no leaves the output directory empty: %v", checkErr)
 		}
@@ -541,7 +544,7 @@ func TestRunExport_InterruptedAtTheQuestion(t *testing.T) {
 		return false
 	}
 	err := RunExport(ctx, envFor(t, opts, f), opts.Export)
-	requireExit(t, err, ExitRuntime, "export interrupted before its session was created")
+	requireExit(t, err, exitcode.ExitRuntime, "export interrupted before its session was created")
 	if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
 		t.Fatalf("an interrupted export leaves the output directory empty: %v", checkErr)
 	}
@@ -575,7 +578,7 @@ func TestRunExport_HeartbeatLostAborts(t *testing.T) {
 	f.exportScript = blockUntilCanceled
 	opts, log := exportOptions(t, f)
 	shortHeartbeat(t, 20*time.Millisecond)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "export session feedfeed lost")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "export session feedfeed lost")
 	requireKept(t, f, log)
 }
 
@@ -592,7 +595,7 @@ func TestRunExport_FailFastCancelsOtherWorkers(t *testing.T) {
 	}
 	opts, log := exportOptions(t, f)
 	start := time.Now()
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "snapshot unit missing")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "snapshot unit missing")
 	if time.Since(start) > 10*time.Second {
 		t.Fatal("the failure of one node must cancel the others")
 	}
@@ -669,7 +672,7 @@ func TestRunExport_IdleTimeoutFires(t *testing.T) {
 	f.exportScript = bigFile(1, 10, time.Second)
 	opts, log := exportOptions(t, f)
 	opts.NodeIdleTimeout = 200 * time.Millisecond
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "--node-idle-timeout")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "--node-idle-timeout")
 	requireKept(t, f, log)
 }
 
@@ -705,7 +708,7 @@ func TestRunExport_RetriesABusyNode(t *testing.T) {
 		return status.Error(codes.ResourceExhausted, "busy (injected)")
 	}
 	opts2, _ := exportOptions(t, f2)
-	requireExit(t, runExport(t, f2, opts2), ExitRuntime, "busy")
+	requireExit(t, runExport(t, f2, opts2), exitcode.ExitRuntime, "busy")
 }
 
 func TestRunExport_SchemaOnly(t *testing.T) {
@@ -731,7 +734,7 @@ func TestRunExport_NativeIsNotImplemented(t *testing.T) {
 	f := exportFake()
 	opts, _ := exportOptions(t, f)
 	opts.Format = transferv1.Format_FORMAT_NATIVE
-	requireExit(t, runExport(t, f, opts), ExitUsage, "native export format is not implemented yet")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "native export format is not implemented yet")
 }
 
 func TestSchemaSync_ListsOnlyTheKindsOfEachCatalog(t *testing.T) {
@@ -843,7 +846,7 @@ func TestRunExport_StreamErrorMidFileLeavesOnlyTheTmp(t *testing.T) {
 		return status.Error(codes.Internal, "part read failed (injected)")
 	})
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "part read failed")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "part read failed")
 	final := filepath.Join(opts.Output, "nodes", manifest.NodeDir(nodeA), "measure", "sw_metric", "seg-20260930", "shard-0-00001.csv")
 	if _, err := os.Stat(final); !os.IsNotExist(err) {
 		t.Fatalf("an interrupted file must not get its final name: %v", err)
@@ -910,7 +913,7 @@ func TestRunExport_WithoutSchema(t *testing.T) {
 	}
 	opts2, _ := exportOptions(t, f)
 	opts2.IncludeSchema, opts2.SchemaOnly = false, true
-	requireExit(t, runExport(t, exportFake(), opts2), ExitUsage, "--include-schema=false")
+	requireExit(t, runExport(t, exportFake(), opts2), exitcode.ExitUsage, "--include-schema=false")
 }
 
 // The manifest labels an unspecified compression as the csv default gzip.
@@ -1039,7 +1042,7 @@ func TestRunExport_PropertyUnitIgnoresTheStage(t *testing.T) {
 		t.Fatalf("want one property unit, got %+v", props)
 	}
 	p := props[0]
-	if p.Group != "ui" || p.Stage != DefaultStageName || len(p.Sources) != 2 || p.Sources[0].Node != nodeA || p.Sources[1].Node != nodeB ||
+	if p.Group != "ui" || p.Stage != transfer.DefaultStageName || len(p.Sources) != 2 || p.Sources[0].Node != nodeA || p.Sources[1].Node != nodeB ||
 		len(p.Sources[0].Shards) != 2 || len(p.Sources[1].Shards) != 1 || p.Sources[1].Shards[0].DocCount != 3 {
 		t.Fatalf("property unit = %+v", p)
 	}
@@ -1098,7 +1101,7 @@ func TestUnitSource_CountsRowsWhereTheFilesBelong(t *testing.T) {
 
 // Node ids that differ only in case get one subtree each, told apart by the hash suffix.
 func TestBuildJobs_KeepsSimilarNodeIDsApart(t *testing.T) {
-	plan := &PlanResult{Frames: []*transferv1.UnitFrame{{NodeId: "data-1:17912"}, {NodeId: "Data-1:17912"}}}
+	plan := &cluster.PlanResult{Frames: []*transferv1.UnitFrame{{NodeId: "data-1:17912"}, {NodeId: "Data-1:17912"}}}
 	jobs, err := buildJobs(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -1113,7 +1116,7 @@ func TestStartFile_RefusesAnUnrequestedShard(t *testing.T) {
 	n := &nodeExport{job: &nodeJob{nodeID: nodeA}, root: t.TempDir()}
 	u := &plannedUnit{property: &transferv1.PropertyInventory{Group: "ui", Shards: []*transferv1.PropertyShardStat{{ShardId: 0}}}}
 	_, err := n.startFile(u, &transferv1.FileStarted{RelativePath: "property/ui/shard-3-00001.csv", ShardId: 3})
-	requireExit(t, err, ExitRuntime, "is of shard 3, which the unit did not ask for")
+	requireExit(t, err, exitcode.ExitRuntime, "is of shard 3, which the unit did not ask for")
 }
 
 // The .tmp of a received file is created exclusively: an existing one is never truncated.

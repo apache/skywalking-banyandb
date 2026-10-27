@@ -93,6 +93,7 @@ type schemaRepo struct {
 	indexRuleMap           sync.Map
 	bindingForwardMap      sync.Map
 	bindingBackwardMap     sync.Map
+	bindingMap             sync.Map
 	latestModRevision      atomic.Int64
 	workerNum              int
 	closeEventChOnce       sync.Once
@@ -199,6 +200,7 @@ func (sr *schemaRepo) processEvent(ctx context.Context, evt MetadataEvent) error
 			sr.reindexBoundSubjects(key)
 		case EventKindIndexRuleBinding:
 			indexRuleBinding := evt.Metadata.(*databasev1.IndexRuleBinding)
+			sr.bindingMap.Delete(getKey(indexRuleBinding.GetMetadata()))
 			col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{
 				Name:  indexRuleBinding.Subject.GetName(),
 				Group: indexRuleBinding.GetMetadata().GetGroup(),
@@ -426,6 +428,7 @@ func (sr *schemaRepo) purgeGroupFromCaches(group string) {
 	deleteByPrefix(&sr.indexRuleMap)
 	deleteByPrefix(&sr.bindingForwardMap)
 	deleteByPrefix(&sr.bindingBackwardMap)
+	deleteByPrefix(&sr.bindingMap)
 }
 
 func (sr *schemaRepo) DropGroup(name string) error {
@@ -581,11 +584,26 @@ func (sr *schemaRepo) storeIndexRuleBinding(indexRuleBinding *databasev1.IndexRu
 			changed = true
 		}
 	}
-	if !changed {
-		return
+	if changed {
+		sr.updateLatestModRevision(indexRuleBinding.GetMetadata().GetModRevision())
+		sr.updateIndex(indexRuleBinding)
 	}
-	sr.updateLatestModRevision(indexRuleBinding.GetMetadata().GetModRevision())
-	sr.updateIndex(indexRuleBinding)
+	sr.markBindingApplied(indexRuleBinding)
+}
+
+// markBindingApplied records a binding whose subject index was refreshed, keeping the newest
+// revision; ResourceRevision reports it, so a recorded binding is already applied.
+func (sr *schemaRepo) markBindingApplied(binding *databasev1.IndexRuleBinding) {
+	key := getKey(binding.GetMetadata())
+	for {
+		prev, loaded := sr.bindingMap.LoadOrStore(key, binding)
+		if !loaded || prev.(*databasev1.IndexRuleBinding).GetMetadata().GetModRevision() > binding.GetMetadata().GetModRevision() {
+			return
+		}
+		if sr.bindingMap.CompareAndSwap(key, prev, binding) {
+			return
+		}
+	}
 }
 
 func (sr *schemaRepo) updateIndex(binding *databasev1.IndexRuleBinding) {
@@ -684,10 +702,14 @@ func (sr *schemaRepo) ResourceRevision(kind schema.Kind, groupName, name string)
 				return gs.GetMetadata().GetModRevision(), true
 			}
 		}
-	case schema.KindIndexRuleBinding, schema.KindTopNAggregation,
-		schema.KindNode, schema.KindProperty, schema.KindMask:
-		// schemaRepo only caches resources, index rules, and groups; other kinds
-		// (bindings, top-n aggregations, nodes, properties, masks) have no entry here.
+	case schema.KindIndexRuleBinding:
+		// A binding is recorded only after its subject's index was refreshed.
+		if v, ok := sr.bindingMap.Load(key); ok {
+			return v.(*databasev1.IndexRuleBinding).GetMetadata().GetModRevision(), true
+		}
+	case schema.KindTopNAggregation, schema.KindNode, schema.KindProperty, schema.KindMask:
+		// schemaRepo only caches resources, index rules, bindings and groups; other kinds
+		// (top-n aggregations, nodes, properties, masks) have no entry here.
 	}
 	return 0, false
 }

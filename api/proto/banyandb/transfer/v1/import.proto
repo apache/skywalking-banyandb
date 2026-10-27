@@ -1,0 +1,187 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+syntax = "proto3";
+
+package banyandb.transfer.v1;
+
+import "banyandb/common/v1/common.proto";
+import "banyandb/measure/v1/write.proto";
+import "banyandb/model/v1/common.proto";
+import "banyandb/property/v1/property.proto";
+import "banyandb/property/v1/rpc.proto";
+import "banyandb/stream/v1/write.proto";
+import "banyandb/trace/v1/write.proto";
+import "banyandb/transfer/v1/common.proto";
+import "validate/validate.proto";
+
+option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1";
+option java_package = "org.apache.skywalking.banyandb.transfer.v1";
+
+// ImportService is served by the liaison gRPC endpoint (17912) in both cluster and
+// standalone deployments. It replays the rows of a CSV artifact into the data nodes of a
+// target stage. Every method must be registered in GlobalMethodPolicies(), otherwise the
+// liaison refuses to start.
+service ImportService {
+  // ImportRows replays rows of one (catalog, group, stage). The first request frame is init;
+  // every later frame is one batch, acknowledged by one response echoing its batch_seq once
+  // every target data node accepted it. A failed batch ends the stream with a gRPC status
+  // whose message starts with "batch_seq=<n>". A failure not tied to a received batch (a
+  // receive error, an oversized frame, a frame that is not a batch, a canceled stream)
+  // carries no batch_seq and is attributed to the oldest unacknowledged batch.
+  rpc ImportRows(stream ImportRowsRequest) returns (stream ImportRowsResponse);
+  // Targets reports, read-only, the data nodes each shard of one (group, stage) is written to.
+  rpc Targets(TargetsRequest) returns (TargetsResponse);
+}
+
+message ImportRowsRequest {
+  // Init opens the stream for one (catalog, group, stage).
+  message Init {
+    common.v1.Catalog catalog = 1 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    string group = 2 [(validate.rules).string.min_len = 1];
+    // stage is the lifecycle stage of the target group; empty means "hot". A lifecycle stage
+    // the group names "hot" (case-insensitive) takes precedence; otherwise "hot" is the
+    // default stage: the nodes matching no stage, narrowed by the liaison's data node
+    // selector, with the group's top-level shard_num and replicas. A stage the target group
+    // does not define falls back to "hot". Ignored for property.
+    string stage = 3;
+    // liaison_bytes_per_second caps the bytes this liaison receives for imports, shared by
+    // every import stream of the process; the stream opened last sets it. 0 means unlimited.
+    uint64 liaison_bytes_per_second = 4;
+    // rate_limit caps what each target data node admits from every import, however many
+    // liaisons write to it: the liaison forwards it to the node in the init frame of every write
+    // stream, and the node pays each batch, replicas included, before writing it. The import
+    // that wrote last sets the node's rates. A batch the node cannot admit soon enough is
+    // answered busy unwritten, and the liaison resends it.
+    RateLimit rate_limit = 5;
+  }
+  // StreamRow is one stream element.
+  message StreamRow {
+    string name = 1 [(validate.rules).string.min_len = 1];
+    // element carries the tag families in the declaration order of the target schema.
+    stream.v1.ElementValue element = 2;
+    // raw_element_id is the stored element id of the source, kept as is by the receiver.
+    uint64 raw_element_id = 3 [(validate.rules).uint64.gt = 0];
+  }
+  // MeasureRow is one measure data point.
+  message MeasureRow {
+    string name = 1 [(validate.rules).string.min_len = 1];
+    // point carries tag families and fields in the declaration order of the target schema;
+    // its version must not be 0.
+    measure.v1.DataPointValue point = 2;
+  }
+  // TraceRow is one span.
+  message TraceRow {
+    string name = 1 [(validate.rules).string.min_len = 1];
+    // tags follow the declaration order of the target schema.
+    repeated model.v1.TagValue tags = 2 [(validate.rules).repeated = {
+      min_items: 1
+      max_items: 512
+    }];
+    bytes span = 3;
+  }
+  // PropertyRow is one property revision; its group must equal the init group.
+  message PropertyRow {
+    property.v1.Property property = 1;
+    // delete_time is 0 for a live revision, otherwise the source deletion time.
+    int64 delete_time = 2;
+  }
+  message StreamRows {
+    repeated StreamRow rows = 1 [(validate.rules).repeated.max_items = 10000];
+  }
+  message MeasureRows {
+    repeated MeasureRow rows = 1 [(validate.rules).repeated.max_items = 10000];
+  }
+  message TraceRows {
+    repeated TraceRow rows = 1 [(validate.rules).repeated.max_items = 10000];
+  }
+  message PropertyRows {
+    repeated PropertyRow rows = 1 [(validate.rules).repeated.max_items = 10000];
+  }
+  // RowBatch carries rows of exactly one catalog, the one of init.
+  message RowBatch {
+    // batch_seq is monotonic within the stream, starting at 0.
+    uint64 batch_seq = 1;
+    oneof rows {
+      StreamRows stream = 2;
+      MeasureRows measure = 3;
+      TraceRows trace = 4;
+      PropertyRows property = 5;
+    }
+  }
+  oneof frame {
+    option (validate.required) = true;
+    Init init = 1;
+    RowBatch batch = 2;
+  }
+}
+
+// ImportRowsResponse acknowledges one batch. Accepted means every target data node wrote the
+// batch: a node writes again the rows that failed before they were stored, for a bounded time,
+// and answers with an error the rows it still could not write.
+message ImportRowsResponse {
+  uint64 batch_seq = 1;
+}
+
+// TargetsRequest names one (group, stage) of the target cluster; one per call keeps every
+// response small.
+message TargetsRequest {
+  string group = 1 [(validate.rules).string.min_len = 1];
+  string stage = 2;
+}
+
+// TargetsResponse is the placement of one (group, stage).
+message TargetsResponse {
+  // Shard lists the nodes one shard is written to.
+  message Shard {
+    uint32 shard_id = 1;
+    repeated string node_ids = 2;
+  }
+  string group = 1;
+  // stage is the stage actually used: "hot" after a fallback.
+  string stage = 2;
+  uint32 shard_num = 3;
+  // copies is replicas + 1, the number of nodes each shard should be written to.
+  uint32 copies = 4;
+  repeated Shard shards = 5;
+  // inactive_node_ids lists the route's nodes this liaison is not connected to right now.
+  repeated string inactive_node_ids = 7;
+  // group_deleting reports that the stored group is being deleted, so writes would be refused.
+  bool group_deleting = 8;
+}
+
+// ImportWrite is one frame a liaison sends to a data node on an import topic. A batch opens
+// with an init frame and carries one row in every later frame.
+message ImportWrite {
+  // init is set on the first frame only.
+  ImportWriteInit init = 1;
+  oneof row {
+    measure.v1.InternalWriteRequest measure = 2;
+    stream.v1.InternalWriteRequest stream = 3;
+    trace.v1.InternalWriteRequest trace = 4;
+    property.v1.InternalRepairRequest property = 5;
+  }
+}
+
+// ImportWriteInit is what an import asks of the data node receiving its rows.
+message ImportWriteInit {
+  // rate_limit is the import's Init.rate_limit; unset means unlimited.
+  RateLimit rate_limit = 1;
+}

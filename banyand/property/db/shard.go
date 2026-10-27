@@ -18,11 +18,11 @@
 package db
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"path"
-	"sort"
 	"strconv"
 	"time"
 
@@ -238,6 +238,11 @@ func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte
 	if err != nil {
 		return nil, fmt.Errorf("lookup existing documents failure: %w", err)
 	}
+	return s.buildDeleteDocuments(existing, deleteTime)
+}
+
+// buildDeleteDocuments rebuilds each property from its stored source as a tombstone at deleteTime.
+func (s *shard) buildDeleteDocuments(existing []*queryProperty, deleteTime int64) ([]index.Document, error) {
 	removeDocList := make([]index.Document, 0, len(existing))
 	for _, property := range existing {
 		p := &propertyv1.Property{}
@@ -274,13 +279,25 @@ func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryReque
 	return s.nativeStore.query(ctx, request, order, limit)
 }
 
+// entityRevisions returns the newest stored revision and the live revisions of the entity
+// request selects, in one native read.
+func (s *shard) entityRevisions(ctx context.Context, request *propertyv1.QueryRequest) (newest *queryProperty, live []*queryProperty, err error) {
+	if s.testBeforeNativeRead != nil {
+		s.testBeforeNativeRead()
+	}
+	if s.nativeStore == nil {
+		return nil, nil, errors.New("native property store is not configured")
+	}
+	return s.nativeStore.entityRevisions(ctx, request)
+}
+
 func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
 	start := time.Now()
 	var (
 		search1Elapsed     time.Duration
 		deletePhaseElapsed time.Duration
 		updateElapsed      time.Duration
-		olderCount         int
+		liveCount          int
 		deleteCount        int
 	)
 	defer func() {
@@ -292,7 +309,7 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 				Int64("search1_ms", search1Elapsed.Milliseconds()).
 				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
 				Int64("update_ms", updateElapsed.Milliseconds()).
-				Int("older_count", olderCount).
+				Int("live_count", liveCount).
 				Int("delete_count", deleteCount).
 				Msg("property repair failed")
 		case elapsed >= 5*time.Second:
@@ -301,23 +318,22 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 				Int64("search1_ms", search1Elapsed.Milliseconds()).
 				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
 				Int64("update_ms", updateElapsed.Milliseconds()).
-				Int("older_count", olderCount).
+				Int("live_count", liveCount).
 				Int("delete_count", deleteCount).
 				Msg("slow property repair")
 		}
 	}()
 	search1Start := time.Now()
-	olderProperties, err := s.searchNative(ctx, &propertyv1.QueryRequest{
+	newest, live, err := s.entityRevisions(ctx, &propertyv1.QueryRequest{
 		Groups: []string{property.Metadata.Group}, Name: property.Metadata.Name, Ids: []string{property.Id},
-	}, nil, 100)
+	})
 	search1Elapsed = time.Since(search1Start)
 	if err != nil {
 		return false, nil, fmt.Errorf("query older properties failed: %w", err)
 	}
-	olderCount = len(olderProperties)
-	sort.Sort(queryPropertySlice(olderProperties))
+	liveCount = len(live)
 	// if there no older properties, we can insert the latest document.
-	if len(olderProperties) == 0 {
+	if newest == nil {
 		var doc *index.Document
 		doc, err = s.buildUpdateDocument(id, property, deleteTime)
 		if err != nil {
@@ -334,22 +350,21 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 
 	// if the lastest property in shard is bigger than the repaired property,
 	// then the repaired process should be stopped.
-	if (olderProperties[len(olderProperties)-1].timestamp > property.Metadata.ModRevision) ||
-		olderProperties[len(olderProperties)-1].timestamp == property.Metadata.ModRevision &&
-			olderProperties[len(olderProperties)-1].deleteTime == deleteTime {
-		return false, olderProperties[len(olderProperties)-1], nil
+	if newest.timestamp > property.Metadata.ModRevision ||
+		newest.timestamp == property.Metadata.ModRevision && !sameRevisionIncomingWins(newest.deleteTime, deleteTime) {
+		return false, newest, nil
 	}
 
-	docIDList := s.buildNotDeletedDocIDList(olderProperties)
+	propertyID := GetPropertyID(property)
 	deletePhaseStart := time.Now()
-	deletedDocuments, err := s.buildDeleteFromTimeDocuments(ctx, docIDList, time.Now().UnixNano())
+	deletedDocuments, err := s.buildDeleteDocuments(s.buildNotDeletedList(live, propertyID), time.Now().UnixNano())
 	deletePhaseElapsed = time.Since(deletePhaseStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("build delete older documents failed: %w", err)
 	}
 	deleteCount = len(deletedDocuments)
 	// update the property to mark it as delete
-	updateDoc, err := s.buildUpdateDocument(GetPropertyID(property), property, deleteTime)
+	updateDoc, err := s.buildUpdateDocument(propertyID, property, deleteTime)
 	if err != nil {
 		return false, nil, fmt.Errorf("build repair document failure: %w", err)
 	}
@@ -365,28 +380,26 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	return true, nil, nil
 }
 
-func (s *shard) buildNotDeletedDocIDList(properties []*queryProperty) [][]byte {
-	docIDList := make([][]byte, 0, len(properties))
+// sameRevisionIncomingWins reports whether an incoming document must replace the local one
+// that has the same ModRevision. A tombstone beats a live document, and between two
+// tombstones the smaller deleteTime wins, so every replica converges regardless of order.
+func sameRevisionIncomingWins(localDeleteTime, incomingDeleteTime int64) bool {
+	if incomingDeleteTime <= 0 {
+		return false
+	}
+	return localDeleteTime <= 0 || incomingDeleteTime < localDeleteTime
+}
+
+// buildNotDeletedList collects the live documents to be re-tombstoned, skipping excludeID,
+// which is overwritten by the repaired document itself.
+func (s *shard) buildNotDeletedList(properties []*queryProperty, excludeID []byte) []*queryProperty {
+	result := make([]*queryProperty, 0, len(properties))
 	for _, p := range properties {
-		if p.deleteTime > 0 {
+		if p.deleteTime > 0 || bytes.Equal(p.id, excludeID) {
 			// If the property is already deleted, ignore it.
 			continue
 		}
-		docIDList = append(docIDList, p.id)
+		result = append(result, p)
 	}
-	return docIDList
-}
-
-type queryPropertySlice []*queryProperty
-
-func (q queryPropertySlice) Len() int {
-	return len(q)
-}
-
-func (q queryPropertySlice) Less(i, j int) bool {
-	return q[i].timestamp < q[j].timestamp
-}
-
-func (q queryPropertySlice) Swap(i, j int) {
-	q[i], q[j] = q[j], q[i]
+	return result
 }

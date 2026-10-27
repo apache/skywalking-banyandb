@@ -209,13 +209,18 @@ func TestResolve_ErrorsNameTheSource(t *testing.T) {
 }
 
 func TestLoadPlan_RejectsUnknownFields(t *testing.T) {
-	// A misspelled field, and the plan fields that only a resumed export or an import reads
-	// (they land with those steps), are all unknown to the strict parser.
+	// A misspelled field, and the plan fields that only a resumed export or import reads, or
+	// that the import does not implement, are all unknown to the strict parser.
 	for _, body := range []string{
 		"connection:\n  nodes: [a:17912]\nexport:\n  outpt: ./x\n",
 		"connection:\n  nodes: [a:17912]\nexport:\n  checkpoint: ./x\n",
 		"connection:\n  nodes: [a:17912]\nexport:\n  archive: tar\n",
-		"connection:\n  nodes: [a:17912]\nimport:\n  input: ./x\n",
+		"connection:\n  nodes: [a:17912]\nimport:\n  checkpoint: ./x\n",
+		"import:\n  input: ./x\n  workDir: /tmp/x\n",
+		"import:\n  archive: tar\n",
+		"import:\n  schemaConflictPolicy:\n    unknown: x\n",
+		"import:\n  schemaConflictPolicy: error\n",
+		"import:\n  dryRun: true\n",
 		"connection:\n  nodesTLS:\n    verify: true\n",
 		"export:\n  preempt: true\n",
 		"export:\n  dryRun: true\n",

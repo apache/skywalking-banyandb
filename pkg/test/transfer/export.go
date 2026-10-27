@@ -28,7 +28,9 @@ import (
 	"github.com/onsi/gomega"
 	"github.com/spf13/pflag"
 
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 )
 
@@ -45,7 +47,7 @@ func (r ExportRun) ExitCode() int {
 	if r.Err == nil {
 		return 0
 	}
-	return exporter.ExitCodeFor(r.Err)
+	return exitcode.ExitCodeFor(r.Err)
 }
 
 // SessionID returns the session id the run announced, or "".
@@ -116,17 +118,17 @@ func RunExport(ctx context.Context, addr string, opts config.Export, hook func(l
 	defer cancel()
 	// A preflight failure is returned, not asserted, so a caller retrying inside Eventually
 	// (a busy target right after an import) can try again.
-	liaisons, cluster, err := exporter.Preflight(preflightCtx, append([]string{addr}, moreAddrs...), exporter.ConnectOptions{Timeout: 10 * time.Second, Log: logW})
+	liaisons, info, err := cluster.Preflight(preflightCtx, append([]string{addr}, moreAddrs...), cluster.ConnectOptions{Timeout: 10 * time.Second, Log: logW})
 	if err != nil {
 		return ExportRun{Err: err, Log: logW.String()}
 	}
 	defer func() { _ = liaisons.Close() }()
-	groups, err := exporter.FetchGroups(preflightCtx, liaisons.Primary())
+	groups, err := cluster.FetchGroups(preflightCtx, liaisons.Primary())
 	if err != nil {
 		return ExportRun{Err: err, Log: logW.String()}
 	}
 	outW := &lineWriter{hook: hook}
-	err = exporter.RunExport(ctx, exporter.Env{Log: logW, Out: outW, Cluster: cluster, Liaisons: liaisons, Groups: groups}, opts)
+	err = exporter.RunExport(ctx, exporter.Env{Log: logW, Out: outW, Cluster: info, Liaisons: liaisons, Groups: groups}, opts)
 	run := ExportRun{Err: err, Log: logW.String(), Out: outW.String()}
 	ginkgo.GinkgoWriter.Printf("export into %s: err=%v\n%s%s", opts.Output, err, run.Log, run.Out)
 	return run

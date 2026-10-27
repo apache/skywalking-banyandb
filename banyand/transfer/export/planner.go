@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -252,7 +253,7 @@ func sessionID(req *transferv1.PlanRequest) string {
 
 // planGroups lists the groups a request inventories: the group directories under the root of
 // every catalog the selectors name (every catalog without selectors) that the schema registry
-// still knows. Only the root differs between the modes: the live data directory for a dry run,
+// still knows, but the groups the server creates for its own bookkeeping. Only the root differs between the modes: the live data directory for a dry run,
 // the session snapshot otherwise. A directory whose group the registry no longer knows is
 // skipped with a warning. A selector naming a catalog without a root is refused: in a session
 // that catalog holds no snapshot, and silently skipping it would hide a half-lost session.
@@ -286,6 +287,9 @@ func (p *Planner) planGroups(ctx context.Context, req *transferv1.PlanRequest, r
 		}
 		for _, e := range entries {
 			if !e.IsDir() {
+				continue
+			}
+			if common.IsInternalGroup(e.Name()) {
 				continue
 			}
 			g, registeredGroup := known[catalog][e.Name()]

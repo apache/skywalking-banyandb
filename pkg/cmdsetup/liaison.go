@@ -102,6 +102,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
+		StreamDataNodeSelector:     streamDataNodeSel,
+		MeasureDataNodeSelector:    measureDataNodeSel,
+		TraceDataNodeSelector:      traceDataNodeSel,
 	}, metricSvc, pm, routeProviders)
 	internalPipeline.SetMetadataRepo(metaSvc)
 	internalPipeline.SetNodeSchemaStatusRepo(metaSvc)

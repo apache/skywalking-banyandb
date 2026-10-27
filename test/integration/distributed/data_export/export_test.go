@@ -35,23 +35,18 @@ import (
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
-// rowsByNode sums, per node, the total_count of one catalog and group's shards in a dry-run plan.
+// rowsByNode sums, per node, the total_count of one catalog and group's shards in a dry-run
+// plan; nodes without rows are left out.
 func rowsByNode(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) map[string]uint64 {
 	out := map[string]uint64{}
-	for _, f := range transfertest.UnitFrames(frames) {
-		for _, u := range f.GetUnits() {
-			seg := u.GetSegment()
-			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
-				continue
-			}
-			for _, sh := range seg.GetShards() {
-				out[f.GetNodeId()] += sh.GetTotalCount()
-			}
+	for _, byNode := range transfertest.RowsByStageNode(frames, catalog, group) {
+		for node, rows := range byNode {
+			out[node] += rows
 		}
 	}
 	return out
@@ -62,11 +57,7 @@ func liveStreamRows() uint64 {
 	frames := transfertest.MustPlan(conn, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{
 		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{transfertest.StreamGroup}},
 	}})
-	var n uint64
-	for _, rows := range rowsByNode(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup) {
-		n += rows
-	}
-	return n
+	return transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
 }
 
 // expectNoExportSession asserts that no data node holds an export session or a snapshot.
@@ -116,7 +107,7 @@ func exportSpecs() {
 
 func csvExportSpecs() {
 	suiteData := func() transfertest.SuiteData {
-		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: writeInterval}
+		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: transfertest.WriteInterval}
 	}
 
 	ginkgo.BeforeAll(func() {
@@ -128,16 +119,12 @@ func csvExportSpecs() {
 				g.Expect(rowsByNode(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.HaveKeyWithValue(n, uint64(5)), "stream on %s", n)
 				// The written points and at least one _top_n_result row on every replica.
 				g.Expect(rowsByNode(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
-					To(gomega.HaveKeyWithValue(n, gomega.BeNumerically(">", measureRows+topNSourcePoints)), "measure and Top-N results on %s", n)
+					To(gomega.HaveKeyWithValue(n, gomega.BeNumerically(">", transfertest.MeasureRows+transfertest.TopNSourcePoints)), "measure and Top-N results on %s", n)
 			}
-			var spans uint64
-			for _, n := range rowsByNode(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup) {
-				spans += n
-			}
-			g.Expect(spans).To(gomega.Equal(uint64(13)), "trace")
+			g.Expect(transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.Equal(uint64(13)), "trace")
 			g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
 			// The live property and the tombstone on both replicas.
-			g.Expect(propertyDocs(frames, transfertest.PropertyGroup)).To(gomega.BeNumerically(">=", 4), "property")
+			g.Expect(transfertest.PropertyDocs(frames, transfertest.PropertyGroup)).To(gomega.BeNumerically(">=", 4), "property")
 		}, flags.EventuallyTimeout, time.Second).Should(gomega.Succeed())
 		expectNoExportSession()
 	})
@@ -210,7 +197,7 @@ func csvExportSpecs() {
 				return
 			}
 			wrote = true
-			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), writeInterval)
+			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), transfertest.WriteInterval)
 			gomega.Eventually(liveStreamRows, flags.EventuallyTimeout, time.Second).Should(gomega.BeNumerically(">", before),
 				"the late rows reach the live parts while the export runs")
 		})
@@ -249,7 +236,7 @@ func csvExportSpecs() {
 		expectExportSessionEverywhere(holder)
 
 		refused := transfertest.RunExport(context.Background(), liaisonAddr, transfertest.DefaultExportOptions(filepath.Join(ginkgo.GinkgoT().TempDir(), "second")), nil)
-		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exporter.ExitPreflight), refused.Log)
+		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exitcode.ExitPreflight), refused.Log)
 		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring(holder))
 		expectExportSessionEverywhere(holder)
 
@@ -263,7 +250,7 @@ func csvExportSpecs() {
 
 		var first transfertest.ExportRun
 		gomega.Eventually(firstDone, flags.EventuallyTimeout).Should(gomega.Receive(&first))
-		gomega.Expect(first.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), first.Log)
+		gomega.Expect(first.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), first.Log)
 		gomega.Expect(first.SessionID()).To(gomega.Equal(holder))
 		transfertest.ExpectAbortedOutput(firstOut)
 		expectNoExportSession()
@@ -281,7 +268,7 @@ func csvExportSpecs() {
 				once.Do(func() { time.AfterFunc(2*time.Second, cancel) })
 			}
 		})
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), run.Log)
 		id := run.SessionID()
 		gomega.Expect(id).NotTo(gomega.BeEmpty())
 		gomega.Expect(run.Log).To(gomega.ContainSubstring("bydbctl data release-session --id " + id))
@@ -300,7 +287,7 @@ func csvExportSpecs() {
 		out := ginkgo.GinkgoT().TempDir()
 		gomega.Expect(os.WriteFile(filepath.Join(out, "leftover"), []byte("x"), 0o600)).To(gomega.Succeed())
 		run := transfertest.RunExport(context.Background(), liaisonAddr, transfertest.DefaultExportOptions(out), nil)
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitUsage), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), run.Log)
 		expectNoExportSession()
 	})
 }

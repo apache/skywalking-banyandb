@@ -37,7 +37,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
 // resolveConnection resolves a data command's connection from args and planFile.
@@ -186,9 +186,9 @@ func TestReleaseSession_RunsWithoutHome(t *testing.T) {
 
 func TestReleaseSession_ReportsPartialFailure(t *testing.T) {
 	out, errOut, err := runRelease(t, releaseFrame("data-a", "done"), releaseFrame("data-b", "disk busy"))
-	var exitErr *exporter.ExitError
+	var exitErr *exitcode.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
-	assert.Equal(t, exporter.ExitRuntime, exitErr.Code, "a partial release must exit non-zero")
+	assert.Equal(t, exitcode.ExitRuntime, exitErr.Code, "a partial release must exit non-zero")
 	assert.Contains(t, err.Error(), "released except on [data-b]")
 	assert.Equal(t, "release failed on data-b: disk busy\n", errOut, "one line per failed node")
 	assert.Empty(t, out, "a partial release must not claim success")
@@ -196,9 +196,9 @@ func TestReleaseSession_ReportsPartialFailure(t *testing.T) {
 
 func TestReleaseSession_ReportsTotalFailure(t *testing.T) {
 	out, _, err := runRelease(t, releaseFrame("data-a", "disk busy"), releaseFrame("data-b", "none"))
-	var exitErr *exporter.ExitError
+	var exitErr *exitcode.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
-	assert.Equal(t, exporter.ExitRuntime, exitErr.Code)
+	assert.Equal(t, exitcode.ExitRuntime, exitErr.Code)
 	assert.Contains(t, err.Error(), "session abcdabcdabcdabcdabcdabcdabcdabcd could not be released on [data-a]")
 	assert.NotContains(t, err.Error(), "released except on", "nothing was released")
 	assert.Empty(t, out)
@@ -206,9 +206,9 @@ func TestReleaseSession_ReportsTotalFailure(t *testing.T) {
 
 func TestReleaseSession_UnknownSessionIsAnError(t *testing.T) {
 	out, _, err := runRelease(t, releaseFrame("data-a", "none"), releaseFrame("data-b", "none"))
-	var exitErr *exporter.ExitError
+	var exitErr *exitcode.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
-	assert.Equal(t, exporter.ExitPreflight, exitErr.Code, "a session no node holds is a preflight rejection")
+	assert.Equal(t, exitcode.ExitPreflight, exitErr.Code, "a session no node holds is a preflight rejection")
 	assert.Contains(t, err.Error(), "export session abcdabcdabcdabcdabcdabcdabcdabcd is not held on any data node")
 	assert.Empty(t, out, "nothing was released")
 }
@@ -230,9 +230,9 @@ func TestDataExport_SelectorRejectsDuplicateGroup(t *testing.T) {
 	// 127.0.0.1:1 never answers: the selector must be rejected before the preflight.
 	c := mustParsed(t, "--dry-run", "--nodes", "127.0.0.1:1", "--selector", "catalog=stream,groups=a;a")
 	err := c.PreRunE(c, nil)
-	var exitErr *exporter.ExitError
+	var exitErr *exitcode.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
-	assert.Equal(t, exporter.ExitUsage, exitErr.Code)
+	assert.Equal(t, exitcode.ExitUsage, exitErr.Code)
 	assert.Contains(t, err.Error(), `--selector: [0]: group "a" given twice`)
 }
 
@@ -246,9 +246,9 @@ func preRunExport(t *testing.T, args ...string) error {
 
 func requireUsage(t *testing.T, err error, contains string) {
 	t.Helper()
-	var exitErr *exporter.ExitError
+	var exitErr *exitcode.ExitError
 	require.True(t, errors.As(err, &exitErr), "want an exit error, got %v", err)
-	assert.Equal(t, exporter.ExitUsage, exitErr.Code, "%v", err)
+	assert.Equal(t, exitcode.ExitUsage, exitErr.Code, "%v", err)
 	assert.Contains(t, err.Error(), contains)
 }
 
@@ -338,9 +338,19 @@ func TestDataExport_PlanFilePrecedence(t *testing.T) {
 // mustParsed parses args on a fresh `data export` command.
 func mustParsed(t *testing.T, args ...string) *cobra.Command {
 	t.Helper()
+	c, _ := parseDataCmd(t, newDataExportCmd, args...)
+	return c
+}
+
+// parseDataCmd parses args on a fresh command built by newCmd, with the global flags reset
+// before and after the test, and returns the command with its captured stderr.
+func parseDataCmd(t *testing.T, newCmd func() *cobra.Command, args ...string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
 	ResetFlags()
 	t.Cleanup(ResetFlags)
-	c := newDataExportCmd()
+	c := newCmd()
+	var errOut bytes.Buffer
+	c.SetErr(&errOut)
 	require.NoError(t, c.ParseFlags(args))
-	return c
+	return c, &errOut
 }

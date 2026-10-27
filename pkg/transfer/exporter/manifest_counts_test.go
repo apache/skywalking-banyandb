@@ -30,6 +30,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
@@ -100,8 +101,8 @@ const (
 //   - ui_template: a property group held by data-a in stage warm and by data-b in stage hot.
 //
 // data-b's frame comes first and data-a's units come in two frames of different stages.
-func countsPlan() *PlanResult {
-	return &PlanResult{Frames: []*transferv1.UnitFrame{
+func countsPlan() *cluster.PlanResult {
+	return &cluster.PlanResult{Frames: []*transferv1.UnitFrame{
 		{NodeId: nodeB, Stage: "hot", Units: []*transferv1.UnitInventory{
 			segmentInv(commonv1.Catalog_CATALOG_STREAM, "sw_stream", "20261004",
 				shardStat(2, 900, 1800, 2048, partStat(31, 900, 1300, 40), partStat(32, 1300, 1800, 45))),
@@ -226,11 +227,11 @@ func countsManifest(t *testing.T) (*manifest.Manifest, []*nodeJob) {
 		group("sw_idx", commonv1.Catalog_CATALOG_MEASURE), group("sw_rep", commonv1.Catalog_CATALOG_STREAM),
 		group("ui_template", commonv1.Catalog_CATALOG_PROPERTY),
 	}, nil)
-	cluster := &ClusterInfo{DataNodes: []*databasev1.Node{
+	info := &cluster.ClusterInfo{DataNodes: []*databasev1.Node{
 		{Metadata: &commonv1.Metadata{Name: nodeA}, TzName: "Asia/Shanghai"},
 		{Metadata: &commonv1.Metadata{Name: nodeB}, TzName: "UTC"},
 	}}
-	fillManifest(m, cluster, jobs)
+	fillManifest(m, info, jobs)
 	return m, jobs
 }
 
@@ -510,27 +511,6 @@ func TestRenderSummary_CountsAndTimesOfTheManifest(t *testing.T) {
 		}
 		if line != want {
 			t.Fatalf("line %d without elapsed: %q, want %q", i, line, want)
-		}
-	}
-}
-
-// Durations round to a tenth of a second below a minute and to whole seconds from a minute
-// on: 59.95s rounds up into the minute.
-func TestFormatDuration_AroundTheMinute(t *testing.T) {
-	for _, c := range []struct {
-		want string
-		d    time.Duration
-	}{
-		{d: 59*time.Second + 900*time.Millisecond, want: "59.9s"},
-		{d: 59*time.Second + 949*time.Millisecond, want: "59.9s"},
-		{d: 59*time.Second + 950*time.Millisecond, want: "1m0s"},
-		{d: time.Minute, want: "1m0s"},
-		{d: time.Minute + 449*time.Millisecond, want: "1m0s"},
-		{d: time.Minute + 450*time.Millisecond, want: "1m1s"},
-		{d: 89*time.Second + 500*time.Millisecond, want: "1m30s"},
-	} {
-		if got := formatDuration(c.d); got != c.want {
-			t.Fatalf("formatDuration(%s) = %q, want %q", c.d, got, c.want)
 		}
 	}
 }

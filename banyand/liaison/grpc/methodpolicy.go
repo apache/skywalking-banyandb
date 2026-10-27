@@ -219,6 +219,7 @@ func registeredServiceDescriptors(activation ServiceActivation) []grpclib.Servic
 		databasev1.ClusterStateService_ServiceDesc,
 		databasev1.NodeQueryService_ServiceDesc,
 		transferv1.ExportService_ServiceDesc,
+		transferv1.ImportService_ServiceDesc,
 		grpc_health_v1.Health_ServiceDesc,
 	}
 	if activation.SchemaBarrier {
@@ -251,6 +252,8 @@ func GlobalMethodPolicies() MethodPolicyTable {
 		permissionPolicy("/banyandb.transfer.v1.ExportService/Plan", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.transfer.v1.ExportService/Sessions", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.transfer.v1.ExportService/Export", auth.PermissionClusterAdmin, ScopeGlobal),
+		permissionPolicy("/banyandb.transfer.v1.ImportService/ImportRows", auth.PermissionClusterAdmin, ScopeGlobal),
+		permissionPolicy("/banyandb.transfer.v1.ImportService/Targets", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),

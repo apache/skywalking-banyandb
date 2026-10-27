@@ -312,10 +312,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				common.RecordRowFailure(ctx, i, fmt.Errorf("stream: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("stream: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -328,6 +330,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -342,13 +345,17 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				index := es.tsTable.Index()
 				// The raw elements are stored above; finish index admission even
 				// if the request has been canceled since.
-				if err := index.WriteContext(context.WithoutCancel(ctx), es.docs); err != nil {
+				// A refused batch admits none of its documents, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return index.WriteContext(context.WithoutCancel(ctx), es.docs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write element index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write element index: %w", groupName, err))
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
-				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
+				// Inserting a series that exists is a no-op, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return es.segment.IndexDB().Insert(es.seriesDocs.docs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write series index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write series index: %w", groupName, err))
 				}
 			}
 		}

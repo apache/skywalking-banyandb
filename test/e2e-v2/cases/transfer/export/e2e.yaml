@@ -25,6 +25,13 @@
 # case need a script: the CSV exports, one per catalog plus a --schema-only one, whose artifacts
 # the export checker (checker/, a Go program built in setup) validates row by row on the host,
 # and the degraded-node scenario, which has to stop and restart a container between two reports.
+# The last four cases import the source's full export (artifact A) into a second, empty cluster
+# (liaison_dst, data_dst_hot1, data_dst_warm1; host ports 27912/27913) in order: an import
+# without the schema that the empty destination refuses, a schema conflict that refuses the
+# import, each checked as a dry run and for real, a dry run whose decision table the real import must repeat,
+# and the round trip that re-exports the destination and compares it with A row by row and by
+# queries. They share state through markers in a fixed work directory (scripts/import-common.sh)
+# that the setup empties, so a retry never imports twice.
 #
 # Run locally after building the testing image (see test/docker/Dockerfile; TARGET_OS=linux):
 #   set -a; source <(grep -v '^#' test/e2e-v2/script/env); set +a
@@ -50,6 +57,8 @@ setup:
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
     - name: report events so the stream catalog holds data
       command: bash test/e2e-v2/cases/transfer/export/scripts/report-events.sh ${oap_host}:${oap_11800}
+    - name: reset the work directory of the import cases
+      command: bash -c 'source test/e2e-v2/cases/transfer/export/scripts/import-common.sh && rm -rf "$IMPORT_WORK"'
 
 verify:
   # Every case is idempotent (csv-export.sh exports into a new directory and releases the session
@@ -87,6 +96,16 @@ verify:
       expected: expected/csv-export-schema-only.yaml
     - query: bash test/e2e-v2/cases/transfer/export/scripts/degraded.sh ${liaison_host}:${liaison_17912}
       expected: expected/degraded.yaml
+    # Import cases, in this order (see scripts/import-common.sh for the markers that make them
+    # safe to retry). The source liaison is only needed to freeze artifact A and for the queries.
+    - query: bash test/e2e-v2/cases/transfer/export/scripts/import-noschema.sh ${liaison_host}:${liaison_17912}
+      expected: expected/import-noschema.yaml
+    - query: bash test/e2e-v2/cases/transfer/export/scripts/import-conflict.sh ${liaison_host}:${liaison_17912}
+      expected: expected/import-conflict.yaml
+    - query: bash test/e2e-v2/cases/transfer/export/scripts/import-dryrun.sh
+      expected: expected/import-dryrun.yaml
+    - query: bash test/e2e-v2/cases/transfer/export/scripts/import-roundtrip.sh ${liaison_host}:${liaison_17912}
+      expected: expected/import-roundtrip.yaml
 
 cleanup:
   on: always
@@ -102,6 +121,18 @@ cleanup:
           - /tmp/property/
           - /tmp/lifecycle-report/ # only present once run-lifecycle.sh ran; missing before that
       - service: data-warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_warm1
         paths:
           - /tmp/stream/
           - /tmp/measure/

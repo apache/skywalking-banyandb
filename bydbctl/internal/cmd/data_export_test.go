@@ -42,7 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
@@ -165,9 +165,9 @@ var _ = Describe("Data Export Dry Run", func() {
 		planFile := filepath.Join(dataDir, "plan.yaml")
 		Expect(os.WriteFile(planFile, []byte("connection:\n  nodes: [127.0.0.1:1]\nexport:\n  selectors:\n    - catalog: stream\n"), 0o600)).To(Succeed())
 		_, _, err := run("data", "export", "--dry-run", "--plan", planFile)
-		var exitErr *exporter.ExitError
+		var exitErr *exitcode.ExitError
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "unreachable plan.yaml nodes must exit 2: %v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitPreflight))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitPreflight))
 		_, _, err = run("data", "export", "--dry-run", "--plan", planFile, "--nodes", grpcAddr)
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -201,31 +201,31 @@ var _ = Describe("Data Export Dry Run", func() {
 	It("validates -o and --id before connecting", func() {
 		// 127.0.0.1:1 never answers: reaching the preflight would fail with exit 2, not 1.
 		_, _, err := run("data", "export", "--dry-run", "--nodes", "127.0.0.1:1", "-o", "xml")
-		var exitErr *exporter.ExitError
+		var exitErr *exitcode.ExitError
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 		Expect(err).To(MatchError(ContainSubstring("--output-format")))
 		// The request rule admits an empty id (ACTION_LIST ignores it); release-session must not.
 		for _, id := range []string{"FEED-FEED", ""} {
 			_, _, err = run("data", "release-session", "--id", id, "--nodes", "127.0.0.1:1")
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-			Expect(exitErr.Code).To(Equal(exporter.ExitUsage), "%q", id)
+			Expect(exitErr.Code).To(Equal(exitcode.ExitUsage), "%q", id)
 			Expect(err).To(MatchError(ContainSubstring("--id")), "%q", id)
 		}
 	})
 
 	It("refuses the real-export flags in a dry run and a native export", func() {
-		var exitErr *exporter.ExitError
+		var exitErr *exitcode.ExitError
 		for _, flag := range []string{"--output=" + filepath.Join(dataDir, "out"), "--preempt", "--schema-only"} {
 			_, _, err := run("data", "export", "--dry-run", flag, "--nodes", grpcAddr)
 			Expect(err).To(MatchError(ContainSubstring("cannot be combined with --dry-run")), flag)
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-			Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+			Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 		}
 		_, _, err := run("data", "export", "--format=native", "--output", filepath.Join(dataDir, "out"), "--nodes", grpcAddr)
 		Expect(err).To(MatchError(ContainSubstring("native export format is not implemented yet")))
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 	})
 
 	It("lets --selector override the plan.yaml selectors and checks the plan.yaml ones", func() {
@@ -241,9 +241,9 @@ var _ = Describe("Data Export Dry Run", func() {
 		} {
 			Expect(os.WriteFile(planFile, []byte(body), 0o600)).To(Succeed())
 			_, _, err = run("data", "export", "--dry-run", "--nodes", grpcAddr, "--plan", planFile)
-			var exitErr *exporter.ExitError
+			var exitErr *exitcode.ExitError
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-			Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+			Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 			Expect(err).To(MatchError(ContainSubstring(want)))
 		}
 	})
@@ -251,9 +251,9 @@ var _ = Describe("Data Export Dry Run", func() {
 	It("ignores the config file and takes nodes from BYDBCTL_NODES below plan.yaml", func() {
 		// No address anywhere: there is no default liaison, and no config file is created.
 		_, stderr, err := run("data", "export", "--dry-run")
-		var exitErr *exporter.ExitError
+		var exitErr *exitcode.ExitError
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 		Expect(err).To(MatchError(ContainSubstring("no liaison address")))
 		Expect(configFile).NotTo(BeAnExistingFile(), "a data command must not create the config file")
 		Expect(stderr).NotTo(ContainSubstring("Using config file"))
@@ -264,7 +264,7 @@ var _ = Describe("Data Export Dry Run", func() {
 		// An explicit --config is refused rather than silently ignored.
 		_, _, err = run("--config", configFile, "data", "export", "--dry-run", "--nodes", grpcAddr)
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 		Expect(err).To(MatchError(ContainSubstring("--config does not apply to data commands")))
 		Expect(os.Setenv("BYDBCTL_NODES", grpcAddr)).To(Succeed())
 		DeferCleanup(func() { _ = os.Unsetenv("BYDBCTL_NODES") })
@@ -275,7 +275,7 @@ var _ = Describe("Data Export Dry Run", func() {
 		Expect(os.WriteFile(planFile, []byte("connection:\n  nodes: [127.0.0.1:1]\n"), 0o600)).To(Succeed())
 		_, _, err = run("data", "export", "--dry-run", "--plan", planFile)
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
-		Expect(exitErr.Code).To(Equal(exporter.ExitPreflight))
+		Expect(exitErr.Code).To(Equal(exitcode.ExitPreflight))
 	})
 
 	It("names the source of an invalid parallelism", func() {
@@ -314,9 +314,9 @@ var _ = Describe("Data Export Dry Run", func() {
 		// so the command says so and exits 2.
 		for _, gone := range []string{id, strings.Repeat("ab", 16)} {
 			_, _, err = run("data", "release-session", "--id", gone, "--nodes", grpcAddr)
-			var exitErr *exporter.ExitError
+			var exitErr *exitcode.ExitError
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "want an exit error, got %v", err)
-			Expect(exitErr.Code).To(Equal(exporter.ExitPreflight))
+			Expect(exitErr.Code).To(Equal(exitcode.ExitPreflight))
 			Expect(err).To(MatchError(ContainSubstring("export session " + gone + " is not held on any data node")))
 		}
 		_, _, err = run("data", "release-session", "extra", "--id", id, "--nodes", grpcAddr)

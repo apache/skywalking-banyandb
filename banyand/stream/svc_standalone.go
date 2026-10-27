@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 var (
@@ -323,6 +324,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	err = s.pipeline.Subscribe(data.TopicStreamWrite, writeListener)
 	if err != nil {
+		return err
+	}
+	if err = s.pipeline.Subscribe(data.TopicStreamImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))

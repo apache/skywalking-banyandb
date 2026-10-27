@@ -94,6 +94,14 @@ func (ds *discoveryService) navigateByLocator(metadata *commonv1.Metadata, tagFa
 	if !existed {
 		return nil, common.ShardID(0), errors.Wrapf(errNotExist, "finding the shard num by: %v", metadata)
 	}
+	return ds.navigateByLocatorWithShardNum(metadata, tagFamilies, specEntityLocator, specShardingKeyLocator, shardNum)
+}
+
+// navigateByLocatorWithShardNum locates the entity and shard of a write within shardNum shards
+// instead of the group's top-level shard number.
+func (ds *discoveryService) navigateByLocatorWithShardNum(metadata *commonv1.Metadata, tagFamilies []*modelv1.TagFamilyForWrite,
+	specEntityLocator *specLocator, specShardingKeyLocator *specLocator, shardNum uint32,
+) (pbv1.EntityValues, common.ShardID, error) {
 	id := getID(metadata)
 	var entityRouter, shardingKeyRouter partition.Router
 	if specEntityLocator != nil {
@@ -133,6 +141,15 @@ type groupRepo struct {
 	resourceOpts map[string]*commonv1.ResourceOpts
 	inflight     map[string]*groupInflight
 	sync.RWMutex
+}
+
+// pendingDeletion tells whether the group is being deleted, the condition acquireRequest
+// refuses writes on.
+func (s *groupRepo) pendingDeletion(groupName string) bool {
+	s.RWMutex.RLock()
+	defer s.RWMutex.RUnlock()
+	item, ok := s.inflight[groupName]
+	return ok && item.done != nil
 }
 
 func (s *groupRepo) acquireRequest(groupName string) error {

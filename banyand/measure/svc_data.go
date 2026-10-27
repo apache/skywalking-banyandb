@@ -50,6 +50,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 const (
@@ -352,6 +353,9 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
 	err = s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 	if err != nil {
+		return err
+	}
+	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
 		return err
 	}
 	// only subscribe metricPipeline for data node

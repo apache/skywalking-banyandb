@@ -212,6 +212,47 @@ func (a *Artifact) RowsOf(catalog, group, name string) map[string][]map[string]s
 	return out
 }
 
+// LatestProperties returns the latest revision of every entity of the suites' property
+// resource across nodes, keyed by _id: the row with the largest _mod_revision, a tombstone
+// winning over a live row of the same revision. Older revisions are dropped.
+func (a *Artifact) LatestProperties() map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for _, rows := range a.RowsOf("property", PropertyGroup, PropertyName) {
+		for _, r := range rows {
+			cur, ok := out[r["_id"]]
+			if !ok {
+				out[r["_id"]] = r
+				continue
+			}
+			rev, err := strconv.ParseInt(r["_mod_revision"], 10, 64)
+			gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "_mod_revision of %s", r["_id"])
+			curRev, err := strconv.ParseInt(cur["_mod_revision"], 10, 64)
+			gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred(), "_mod_revision of %s", r["_id"])
+			if rev > curRev || (rev == curRev && !IsLiveProperty(r) && IsLiveProperty(cur)) {
+				out[r["_id"]] = r
+			}
+		}
+	}
+	return out
+}
+
+// IsLiveProperty reports whether a property row is live: its _delete_time is 0 or null.
+func IsLiveProperty(r map[string]string) bool {
+	return r["_delete_time"] == "0" || IsNull(r["_delete_time"])
+}
+
+// LiveProperty returns the latest revision of the first entity, by _id, of the suites'
+// property resource whose latest revision is live and that is not the tombstone, or nil.
+func (a *Artifact) LiveProperty() map[string]string {
+	latest := a.LatestProperties()
+	for _, id := range slices.Sorted(maps.Keys(latest)) {
+		if r := latest[id]; IsLiveProperty(r) && id != TombstoneProperty().GetId() {
+			return r
+		}
+	}
+	return nil
+}
+
 // VerifyManifest checks the manifest against the files on disk: the file sets are equal,
 // every file has the announced bytes and CRC-32, the rowCounts of every shard and of every
 // source's segment files are the rows its files hold and totalCount is their sum, the schema

@@ -23,7 +23,7 @@ import (
 	"testing"
 )
 
-// TestParseRate covers every documented rate form and rejection.
+// TestParseRate covers every accepted rate form and rejection.
 func TestParseRate(t *testing.T) {
 	const mib = 1 << 20
 	accepted := []struct {

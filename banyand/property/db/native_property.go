@@ -234,6 +234,76 @@ func (s *nativePropertyStore) query(ctx context.Context, request *propertyv1.Que
 	return result, nil
 }
 
+// entityRevisions reads, from one view, the newest stored revision of the entity request selects
+// and every live (not deleted) revision. It applies no limit: matchRequest visits every revision,
+// and only the deletion marker is projected for each hit, so the _source of a tombstone that is
+// not the newest revision is never read. newest is nil when the entity has no stored revision; a
+// live newest revision is also in live.
+func (s *nativePropertyStore) entityRevisions(ctx context.Context, request *propertyv1.QueryRequest) (newest *queryProperty, live []*queryProperty, err error) {
+	if request == nil {
+		return nil, nil, errors.New("property query is nil")
+	}
+	view, err := s.owner.Acquire(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer view.Close()
+	hits, err := s.matchRequest(ctx, view, request)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(hits) == 0 {
+		return nil, nil, nil
+	}
+	if err = query.Charge(ctx, uint64(len(hits))*64); err != nil {
+		return nil, nil, err
+	}
+	newestIndex := 0
+	for i := range hits {
+		if hits[i].Timestamp > hits[newestIndex].Timestamp {
+			newestIndex = i
+		}
+	}
+	project := func(hit native.QueryHit) (*queryProperty, error) {
+		projected, projectErr := view.ProjectHit(ctx, hit, sourceField, deleteField)
+		if projectErr != nil {
+			return nil, projectErr
+		}
+		if chargeErr := query.ChargeResult(ctx, uint64(len(firstProjectedValue(projected, sourceField)))+128); chargeErr != nil {
+			return nil, chargeErr
+		}
+		return propertyFromNativeProjection(projected, nil, false)
+	}
+	for i, hit := range hits {
+		if err = ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if i == newestIndex {
+			if newest, err = project(hit); err != nil {
+				return nil, nil, err
+			}
+			if newest.deleteTime <= 0 {
+				live = append(live, newest)
+			}
+			continue
+		}
+		marker, projectErr := view.ProjectHit(ctx, hit, deleteField)
+		if projectErr != nil {
+			return nil, nil, projectErr
+		}
+		// A malformed marker falls through to project, which reports it as corrupt.
+		if deleted := marker.Fields[deleteField]; len(deleted) > 0 && len(deleted[0]) == 8 && convert.BytesToInt64(deleted[0]) > 0 {
+			continue
+		}
+		property, projectErr := project(hit)
+		if projectErr != nil {
+			return nil, nil, projectErr
+		}
+		live = append(live, property)
+	}
+	return newest, live, nil
+}
+
 func firstProjectedValue(projected native.ProjectedHit, field string) []byte {
 	values := projected.Fields[field]
 	if len(values) == 0 {

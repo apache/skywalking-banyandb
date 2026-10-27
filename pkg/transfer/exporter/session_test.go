@@ -31,6 +31,7 @@ import (
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
 func TestReleaseSession(t *testing.T) {
@@ -103,22 +104,22 @@ func TestReleaseSession_UnexpectedOutcomeFails(t *testing.T) {
 
 func TestExitCodeFor(t *testing.T) {
 	cases := map[int]error{
-		ExitUsage:     status.Error(codes.InvalidArgument, "bad id"),
-		ExitPreflight: status.Error(codes.PermissionDenied, "no"),
-		ExitRuntime:   status.Error(codes.Unavailable, "down"),
+		exitcode.ExitUsage:     status.Error(codes.InvalidArgument, "bad id"),
+		exitcode.ExitPreflight: status.Error(codes.PermissionDenied, "no"),
+		exitcode.ExitRuntime:   status.Error(codes.Unavailable, "down"),
 	}
 	for want, err := range cases {
-		if got := ExitCodeFor(err); got != want {
-			t.Fatalf("ExitCodeFor(%v) = %d, want %d", err, got, want)
+		if got := exitcode.ExitCodeFor(err); got != want {
+			t.Fatalf("exitcode.ExitCodeFor(%v) = %d, want %d", err, got, want)
 		}
 	}
 	for _, code := range []codes.Code{codes.Unauthenticated, codes.FailedPrecondition, codes.NotFound, codes.Unimplemented} {
-		if got := ExitCodeFor(status.Error(code, "x")); got != ExitPreflight {
-			t.Fatalf("ExitCodeFor(%v) = %d, want %d", code, got, ExitPreflight)
+		if got := exitcode.ExitCodeFor(status.Error(code, "x")); got != exitcode.ExitPreflight {
+			t.Fatalf("exitcode.ExitCodeFor(%v) = %d, want %d", code, got, exitcode.ExitPreflight)
 		}
 	}
-	if ExitCodeFor(errors.New("plain")) != ExitRuntime || ExitCodeFor(Exit(ExitUsage, "u")) != ExitUsage {
-		t.Fatal("a plain error is a runtime failure; an ExitError keeps its code")
+	if exitcode.ExitCodeFor(errors.New("plain")) != exitcode.ExitRuntime || exitcode.ExitCodeFor(exitcode.Exit(exitcode.ExitUsage, "u")) != exitcode.ExitUsage {
+		t.Fatal("a plain error is a runtime failure; an exitcode.ExitError keeps its code")
 	}
 }
 
@@ -193,8 +194,8 @@ func TestCreateSession_RefusesOccupantWithoutPreempt(t *testing.T) {
 	conn := dial(t, serveLiaison(t, f))
 	var announced string
 	_, _, err := CreateSession(context.Background(), conn, nil, SessionOptions{OnCreated: func(id string) { announced = id }})
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != ExitPreflight {
+	var exitErr *exitcode.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitPreflight {
 		t.Fatalf("want exit 2, got %v", err)
 	}
 	beat := time.Unix(0, f.listed[0].GetSession().GetLastHeartbeatAt()).UTC().Format(time.RFC3339)
@@ -245,8 +246,8 @@ func TestCreateSession_ConfirmTakesOverOnYesOnly(t *testing.T) {
 			}
 			continue
 		}
-		var exitErr *ExitError
-		if !errors.As(err, &exitErr) || exitErr.Code != ExitPreflight || f.createAttempts != 1 ||
+		var exitErr *exitcode.ExitError
+		if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitPreflight || f.createAttempts != 1 ||
 			!strings.Contains(err.Error(), "left as they are") || !strings.Contains(err.Error(), "bydbctl data release-session --id b0b0") {
 			t.Fatalf("a no is a refusal naming how to release the occupant, made once: err=%v attempts=%d", err, f.createAttempts)
 		}
@@ -273,8 +274,8 @@ func TestCreateSession_FailureAfterCreatedExitsRuntime(t *testing.T) {
 	f.failAfterFirstFrame = true
 	conn := dial(t, serveLiaison(t, f))
 	_, _, err := CreateSession(context.Background(), conn, nil, SessionOptions{})
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != ExitRuntime || !strings.Contains(err.Error(), "session feedfeed") ||
+	var exitErr *exitcode.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitRuntime || !strings.Contains(err.Error(), "session feedfeed") ||
 		!strings.Contains(err.Error(), "release it with: bydbctl data release-session --id feedfeed") {
 		t.Fatalf("a failure after the session id is known exits 3 naming the session and how to release it, got %v", err)
 	}
@@ -292,8 +293,8 @@ func TestCreateSession_AlreadyExistsAfterAnAnnouncedAttempt(t *testing.T) {
 		message  string
 		code     int
 	}{
-		{"the earlier attempt still holds", "feedfeed", "release it with: bydbctl data release-session --id feedfeed", ExitRuntime},
-		{"another session holds", "b0b0", "give --preempt to take it over", ExitPreflight},
+		{"the earlier attempt still holds", "feedfeed", "release it with: bydbctl data release-session --id feedfeed", exitcode.ExitRuntime},
+		{"another session holds", "b0b0", "give --preempt to take it over", exitcode.ExitPreflight},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			shortenRetries(t)
@@ -329,9 +330,9 @@ func TestCreateSession_ExhaustedRetriesReportEveryAttempt(t *testing.T) {
 	f.failCreateTimes = createRetries + 10
 	conn := dial(t, serveLiaison(t, f))
 	_, _, err := CreateSession(context.Background(), conn, nil, SessionOptions{})
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != ExitRuntime {
-		t.Fatalf("UNAVAILABLE before any frame maps through ExitCodeFor, got %v", err)
+	var exitErr *exitcode.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitRuntime {
+		t.Fatalf("UNAVAILABLE before any frame maps through exitcode.ExitCodeFor, got %v", err)
 	}
 	for i := 1; i <= createRetries; i++ {
 		if !strings.Contains(err.Error(), fmt.Sprintf("#%d", i)) {
@@ -422,9 +423,9 @@ func TestCreateExitCode(t *testing.T) {
 		want    int
 		started bool
 	}{
-		{name: "refused before the id", err: status.Error(codes.FailedPrecondition, "x"), want: ExitPreflight},
-		{name: "failed after the id", err: status.Error(codes.Internal, "x"), started: true, want: ExitRuntime},
-		{name: "a node without data export", err: status.Error(codes.Unimplemented, "x"), started: true, want: ExitPreflight},
+		{name: "refused before the id", err: status.Error(codes.FailedPrecondition, "x"), want: exitcode.ExitPreflight},
+		{name: "failed after the id", err: status.Error(codes.Internal, "x"), started: true, want: exitcode.ExitRuntime},
+		{name: "a node without data export", err: status.Error(codes.Unimplemented, "x"), started: true, want: exitcode.ExitPreflight},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := createExitCode(c.started, c.err); got != c.want {

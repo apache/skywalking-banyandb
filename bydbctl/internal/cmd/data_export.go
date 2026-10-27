@@ -23,9 +23,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -34,7 +32,9 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 )
 
@@ -68,11 +68,11 @@ func newDataExportCmd() *cobra.Command {
 // The artifact format is checked in both modes, so --format native is refused the same way
 // with or without --dry-run.
 func validateExport(sources config.Sources, opts *config.Export) error {
-	if err := exporter.ValidateOutputFormat(opts.OutputFormat); err != nil {
-		return exporter.Exit(exporter.ExitUsage, "%s: %w", sources.Label("output-format"), err)
+	if err := validateOutputFormat(sources, opts.OutputFormat); err != nil {
+		return err
 	}
 	if opts.Format == transferv1.Format_FORMAT_NATIVE {
-		return exporter.Exit(exporter.ExitUsage, "native export format is not implemented yet")
+		return exitcode.Exit(exitcode.ExitUsage, "native export format is not implemented yet")
 	}
 	if opts.DryRun {
 		// A real-export setting given explicitly, as a flag or in plan.yaml, contradicts a
@@ -82,17 +82,16 @@ func validateExport(sources config.Sources, opts *config.Export) error {
 			set  bool
 		}{{"output", opts.Output != ""}, {"preempt", opts.Preempt}, {"schema-only", opts.SchemaOnly}} {
 			if sources.FromFlag(s.flag) || (sources.FromPlan(s.flag) && s.set) {
-				return exporter.Exit(exporter.ExitUsage, "%s cannot be combined with --dry-run, which writes nothing", sources.Label(s.flag))
+				return exitcode.Exit(exitcode.ExitUsage, "%s cannot be combined with --dry-run, which writes nothing", sources.Label(s.flag))
 			}
 		}
 		return nil
 	}
 	if sources.FromFlag("strict-coverage") {
-		return exporter.Exit(exporter.ExitUsage, "--strict-coverage applies to --dry-run only; a real export fails on any unreachable node")
+		return exitcode.Exit(exitcode.ExitUsage, "--strict-coverage applies to --dry-run only; a real export fails on any unreachable node")
 	}
-	if opts.SchemaOnly && !opts.IncludeSchema {
-		return exporter.Exit(exporter.ExitUsage, "%s needs the schema; it cannot be combined with %s=false",
-			sources.Label("schema-only"), sources.Label("include-schema"))
+	if err := config.CheckSchemaOnly(sources, opts.SchemaOnly, opts.IncludeSchema); err != nil {
+		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
 	return exporter.CheckOutputDir(opts.Output)
 }
@@ -102,32 +101,26 @@ func validateExport(sources config.Sources, opts *config.Export) error {
 func runRealExport(cmd *cobra.Command, conn *config.Connection, opts *config.Export) error {
 	// Ctrl-C or SIGTERM cancels the export so that it stops cleanly and prints how to release
 	// the session it keeps.
-	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	errOut := cmd.ErrOrStderr()
-	preflightCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	defer cancel()
-	liaisons, cluster, err := exporter.Preflight(preflightCtx, conn.Nodes, connectOptions(cmd, conn))
+	out := cmd.OutOrStdout()
+	lc, err := connectLiaisons(cmd, conn, 3*time.Minute, out)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = liaisons.Close() }()
-	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "liaison: %s (standalone=%v), data nodes: %d\n", cluster.Liaison, cluster.Standalone, len(cluster.DataNodes))
-	groups, err := exporter.FetchGroups(preflightCtx, liaisons.Primary())
+	defer lc.close()
+	groups, err := cluster.FetchGroups(lc.bounded, lc.liaisons.Primary())
 	if err != nil {
 		return err
 	}
 	if err = exporter.ValidateSelectors(groups, opts.Selectors); err != nil {
-		return exporter.Exit(exporter.ExitUsage, "%w", err)
+		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
-	return exporter.RunExport(ctx, exporter.Env{
-		Log:      errOut,
+	return exporter.RunExport(lc.ctx, exporter.Env{
+		Log:      cmd.ErrOrStderr(),
 		Out:      out,
 		Terminal: terminalSize(out),
 		Confirm:  terminalConfirm(cmd.InOrStdin(), out),
-		Cluster:  cluster,
-		Liaisons: liaisons,
+		Cluster:  lc.cluster,
+		Liaisons: lc.liaisons,
 		Groups:   groups,
 	}, *opts)
 }
@@ -183,29 +176,26 @@ func askYes(ctx context.Context, in io.Reader, out io.Writer, question string) b
 
 // runDryRun is the read-only inventory of `data export --dry-run`.
 func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export) error {
-	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
-	defer cancel()
-	liaisons, cluster, err := exporter.Preflight(ctx, conn.Nodes, connectOptions(cmd, conn))
+	errOut := cmd.ErrOrStderr()
+	lc, err := connectLiaisons(cmd, conn, 10*time.Minute, errOut)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = liaisons.Close() }()
-	primary := liaisons.Primary()
-	errOut := cmd.ErrOrStderr()
-	fmt.Fprintf(errOut, "liaison: %s (standalone=%v), data nodes: %d\n", cluster.Liaison, cluster.Standalone, len(cluster.DataNodes))
+	defer lc.close()
+	ctx, info, primary := lc.bounded, lc.cluster, lc.liaisons.Primary()
 
-	groups, err := exporter.FetchGroups(ctx, primary)
+	groups, err := cluster.FetchGroups(ctx, primary)
 	if err != nil {
 		return err
 	}
 	if err = exporter.ValidateSelectors(groups, opts.Selectors); err != nil {
-		return exporter.Exit(exporter.ExitUsage, "%w", err)
+		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
-	result, err := exporter.RunPlan(ctx, primary, opts.Selectors)
+	result, err := cluster.RunPlan(ctx, primary, opts.Selectors)
 	if err != nil {
-		return exporter.Exit(exporter.ExitCodeFor(err), "%w", err)
+		return exitcode.Exit(exitcode.ExitCodeFor(err), "%w", err)
 	}
-	report := exporter.BuildReport(cluster, result)
+	report := exporter.BuildReport(info, result)
 	for _, w := range exporter.StageWarnings(groups, result) {
 		fmt.Fprintln(errOut, "WARN "+w)
 	}
@@ -219,12 +209,12 @@ func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export)
 		}
 	}
 	if err = exporter.Render(cmd.OutOrStdout(), opts.OutputFormat, report); err != nil {
-		return exporter.Exit(exporter.ExitRuntime, "render report: %w", err)
+		return exitcode.Exit(exitcode.ExitRuntime, "render report: %w", err)
 	}
 	if len(report.MissingNodes) > 0 {
 		msg := fmt.Sprintf("%d data node(s) returned no inventory: %s", len(report.MissingNodes), strings.Join(report.MissingNodes, ", "))
 		if opts.StrictCoverage {
-			return exporter.Exit(exporter.ExitPreflight, "coverage gap: %s", msg)
+			return exitcode.Exit(exitcode.ExitPreflight, "coverage gap: %s", msg)
 		}
 		fmt.Fprintln(errOut, "WARN "+msg)
 	}
