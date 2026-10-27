@@ -282,14 +282,14 @@ func measureBucketWidth(raw string, intervals []string) (time.Duration, error) {
 	return width, nil
 }
 
-func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan, error) {
+func (m *MeasureTemplate) bindExpressions(bound *BoundQuery, aggregate *ql.AggregatePlan) (*ql.ExpressionPlan, error) {
 	if m.expressions == nil {
 		return nil, nil
 	}
 	plan := &ql.ExpressionPlan{Outputs: make([]ql.ExpressionOutput, 0, len(m.expressions))}
 	seen := make(map[measureColumnKey]bool, len(m.expressions))
 	for _, output := range m.expressions {
-		expression, err := output.expression.bind(bound)
+		expression, err := output.expression.bindCompleted(bound, aggregate)
 		if err != nil {
 			return nil, err
 		}

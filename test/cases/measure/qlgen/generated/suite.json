@@ -383733,16 +383733,6 @@
     },
     {
       "ticket": "T14",
-      "name": "t14_reject_aggregate_argument",
-      "query": "SELECT host, SUM(v) AS total FROM replicated_group.ql_t14 WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING SUM(v + 1) \u003e 3\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
-      "features": [
-        "t14.invalid_reference"
-      ],
-      "want_code": 3,
-      "no_scan": true
-    },
-    {
-      "ticket": "T14",
       "name": "t14_reject_non_boolean",
       "query": "SELECT host, SUM(v) AS total FROM replicated_group.ql_t14 WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING SUM(v)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
       "features": [
@@ -463108,6 +463098,304 @@
         }
       ],
       "branches": 2
+    },
+    {
+      "name": "qg2_native_float_coalesce",
+      "kind": "query",
+      "cases": [
+        {
+          "ticket": "T08",
+          "name": "qg2_native_float_coalesce_binding_0",
+          "query": "SELECT host, region, COALESCE(SUM(f), 0.0) AS result FROM replicated_group.ql_t08 WHERE time \u003e= ? AND time \u003c ? AND host IN (?) AND region IN (?) GROUP BY host, region\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}},{\"strArray\":{\"value\":[\"a\",\"b\",\"c\"]}},{\"strArray\":{\"value\":[\"east\",\"west\"]}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 1
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "east"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 0.125
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "west"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 1.5
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "east"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 0
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "west"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "t08.native_float",
+            "t08.null_empty",
+            "t08.tuple_keys",
+            "t08.rebind"
+          ],
+          "aggregate_inputs": 8,
+          "aggregate_groups": 4
+        },
+        {
+          "ticket": "T08",
+          "name": "qg2_native_float_coalesce_binding_1",
+          "query": "SELECT host, region, COALESCE(SUM(f), 0.0) AS result FROM replicated_group.ql_t08 WHERE time \u003e= ? AND time \u003c ? AND host IN (?) AND region IN (?) GROUP BY host, region\n#!params: [{\"str\":{\"value\":\"{{time:1000}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}},{\"strArray\":{\"value\":[\"a\",\"b\",\"c\"]}},{\"strArray\":{\"value\":[\"east\",\"west\"]}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 0.75
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "east"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 0.125
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "west"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 1.5
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      },
+                      {
+                        "key": "region",
+                        "value": {
+                          "str": {
+                            "value": "east"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "t08.native_float",
+            "t08.null_empty",
+            "t08.tuple_keys",
+            "t08.rebind"
+          ],
+          "aggregate_inputs": 5,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T08",
+          "name": "qg2_native_float_coalesce_binding_2",
+          "query": "SELECT host, region, COALESCE(SUM(f), 0.0) AS result FROM replicated_group.ql_t08 WHERE time \u003e= ? AND time \u003c ? AND host IN (?) AND region IN (?) GROUP BY host, region\n#!params: [{\"str\":{\"value\":\"{{time:200000}}\"}},{\"str\":{\"value\":\"{{time:201000}}\"}},{\"strArray\":{\"value\":[\"a\",\"b\",\"c\"]}},{\"strArray\":{\"value\":[\"east\",\"west\"]}}]",
+          "want": {},
+          "features": [
+            "t08.native_float",
+            "t08.null_empty",
+            "t08.tuple_keys",
+            "t08.rebind"
+          ]
+        }
+      ],
+      "branches": 2
     }
   ],
   "aggregate_readiness": [
@@ -516216,7 +516504,7 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_1",
-      "query": "SELECT host, SUM(v) AS s FROM replicated_group.ql_t07",
+      "query": "SELECT SUM(SUM(v)) AS s FROM replicated_group.ql_t07",
       "features": [
         "t07.invalid_shape"
       ],
@@ -516226,7 +516514,7 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_2",
-      "query": "SELECT zone, SUM(v) AS s FROM replicated_group.ql_t07 GROUP BY host",
+      "query": "SELECT (((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((SUM(v)))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) AS s FROM replicated_group.ql_t07",
       "features": [
         "t07.invalid_shape"
       ],
@@ -516236,7 +516524,7 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_3",
-      "query": "SELECT SUM(v) AS same, AVG(f) AS same FROM replicated_group.ql_t07",
+      "query": "SELECT COALESCE(SUM(v), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) AS s FROM replicated_group.ql_t07",
       "features": [
         "t07.invalid_shape"
       ],
@@ -516246,7 +516534,7 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_4",
-      "query": "SELECT SUM(zone) AS s FROM replicated_group.ql_t07",
+      "query": "SELECT SUM(v) + v AS s FROM replicated_group.ql_t07",
       "features": [
         "t07.invalid_shape"
       ],
@@ -516256,7 +516544,7 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_5",
-      "query": "SELECT COUNT(absent) AS c FROM replicated_group.ql_t07",
+      "query": "SELECT host, SUM(v) AS s FROM replicated_group.ql_t07",
       "features": [
         "t07.invalid_shape"
       ],
@@ -516266,12 +516554,70 @@
     {
       "ticket": "T07",
       "name": "t07_invalid_shape_6",
+      "query": "SELECT zone, SUM(v) AS s FROM replicated_group.ql_t07 GROUP BY host",
+      "features": [
+        "t07.invalid_shape"
+      ],
+      "want_code": 3,
+      "no_scan": true
+    },
+    {
+      "ticket": "T07",
+      "name": "t07_invalid_shape_7",
+      "query": "SELECT SUM(v) AS same, AVG(f) AS same FROM replicated_group.ql_t07",
+      "features": [
+        "t07.invalid_shape"
+      ],
+      "want_code": 3,
+      "no_scan": true
+    },
+    {
+      "ticket": "T07",
+      "name": "t07_invalid_shape_8",
+      "query": "SELECT SUM(zone) AS s FROM replicated_group.ql_t07",
+      "features": [
+        "t07.invalid_shape"
+      ],
+      "want_code": 3,
+      "no_scan": true
+    },
+    {
+      "ticket": "T07",
+      "name": "t07_invalid_shape_9",
+      "query": "SELECT COUNT(absent) AS c FROM replicated_group.ql_t07",
+      "features": [
+        "t07.invalid_shape"
+      ],
+      "want_code": 3,
+      "no_scan": true
+    },
+    {
+      "ticket": "T07",
+      "name": "t07_invalid_shape_10",
       "query": "SELECT SUM(v) AS s FROM replicated_group.ql_t07 GROUP BY TIME_BUCKET('0s')",
       "features": [
         "t07.invalid_shape"
       ],
       "want_code": 3,
       "no_scan": true
+    },
+    {
+      "ticket": "T07",
+      "name": "qg2_overflow_0",
+      "query": "SELECT SUM(COALESCE(v, 0) + 9223372036854775807) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+      "features": [
+        "t08.integer_overflow"
+      ],
+      "want_code": 3
+    },
+    {
+      "ticket": "T07",
+      "name": "qg2_overflow_1",
+      "query": "SELECT SUM(COALESCE(v, 9223372036854775807)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+      "features": [
+        "t08.integer_overflow"
+      ],
+      "want_code": 2
     }
   ],
   "aggregate_scenarios": [
@@ -540127,6 +540473,965 @@
           "aggregate_groups": 1
         }
       ]
+    },
+    {
+      "name": "qg2_coalesce_sum",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_coalesce_sum_binding_0",
+          "query": "SELECT COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "12"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_coalesce_sum_binding_1",
+          "query": "SELECT COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_coalesce_sum_binding_2",
+          "query": "SELECT COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_depth_limit",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_depth_limit_binding_0",
+          "query": "SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((SUM(v))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "12"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_depth_limit_binding_1",
+          "query": "SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((SUM(v))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_depth_limit_binding_2",
+          "query": "SELECT ((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((SUM(v))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))))) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_repeated_aggregate",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_repeated_aggregate_binding_0",
+          "query": "SELECT COALESCE(SUM(v), 0) + COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "24"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_repeated_aggregate_binding_1",
+          "query": "SELECT COALESCE(SUM(v), 0) + COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_repeated_aggregate_binding_2",
+          "query": "SELECT COALESCE(SUM(v), 0) + COALESCE(SUM(v), 0) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_expression_argument",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_expression_argument_binding_0",
+          "query": "SELECT SUM(COALESCE(v, 0) + v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "24"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_expression_argument_binding_1",
+          "query": "SELECT SUM(COALESCE(v, 0) + v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_expression_argument_binding_2",
+          "query": "SELECT SUM(COALESCE(v, 0) + v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_float_promotion",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_float_promotion_binding_0",
+          "query": "SELECT SUM(v + 1.5) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "float": {
+                        "value": 18
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_float_promotion_binding_1",
+          "query": "SELECT SUM(v + 1.5) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_float_promotion_binding_2",
+          "query": "SELECT SUM(v + 1.5) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_distinct_expression",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_distinct_expression_binding_0",
+          "query": "SELECT COUNT(DISTINCT (v + 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "4"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_distinct_expression_binding_1",
+          "query": "SELECT COUNT(DISTINCT (v + 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_distinct_expression_binding_2",
+          "query": "SELECT COUNT(DISTINCT (v + 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg2_grouped_composition",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_composition_binding_0",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "4"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "5"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "7"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_composition_binding_1",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_composition_binding_2",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qg2_grouped_having",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_having_binding_0",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING COALESCE(SUM(v), 0) \u003e= 0\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "4"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "a"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "5"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "7"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "c"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 3
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_having_binding_1",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING COALESCE(SUM(v), 0) \u003e= 0\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_having_binding_2",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host HAVING COALESCE(SUM(v), 0) \u003e= 0\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "qg2_grouped_order_alias",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_order_alias_binding_0",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result DESC LIMIT 1 OFFSET 1\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "5"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "host",
+                        "value": {
+                          "str": {
+                            "value": "b"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 3,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_order_alias_binding_1",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result DESC LIMIT 1 OFFSET 1\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1,
+          "ordered": true
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_grouped_order_alias_binding_2",
+          "query": "SELECT host, COALESCE(SUM(v), 0) + COUNT(v) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? GROUP BY host ORDER BY result DESC LIMIT 1 OFFSET 1\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "ordered": true
+        }
+      ]
+    },
+    {
+      "name": "qg2_argument_parameter",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg2_argument_parameter_binding_0",
+          "query": "SELECT SUM(v + ?) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"int\":{\"value\":\"1\"}},{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "16"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_argument_parameter_binding_1",
+          "query": "SELECT SUM(v + ?) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"int\":{\"value\":\"2\"}},{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "int": {
+                        "value": "20"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg2_argument_parameter_binding_2",
+          "query": "SELECT SUM(v + ?) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ?\n#!params: [{\"int\":{\"value\":\"3\"}},{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg2.composition",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
     }
   ],
   "fixture_digest": "a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258",
@@ -548333,6 +549638,10 @@
     },
     {
       "id": "projection.typed",
+      "status": "supported"
+    },
+    {
+      "id": "qg2.composition",
       "status": "supported"
     },
     {

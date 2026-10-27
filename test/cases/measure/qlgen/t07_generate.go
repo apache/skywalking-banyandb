@@ -149,6 +149,11 @@ func generateT07(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario, erro
 	if b.err != nil {
 		return nil, nil, b.err
 	}
+	composition, compositionErr := generateQG2Composition(b)
+	if compositionErr != nil {
+		return nil, nil, compositionErr
+	}
+	scenarios = append(scenarios, composition...)
 	return readiness, scenarios, nil
 }
 
@@ -158,6 +163,10 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 	source := " FROM " + FixtureGroup + "." + T07FixtureName
 	for index, shape := range []struct{ projection, suffix string }{
 		{"SUM(DISTINCT v) AS c", ""},
+		{"SUM(SUM(v)) AS s", ""},
+		{strings.Repeat("(", 63) + "SUM(v)" + strings.Repeat(")", 63) + " AS s", ""},
+		{"COALESCE(SUM(v), " + strings.Repeat("0, ", 4096) + "0) AS s", ""},
+		{"SUM(v) + v AS s", ""},
 		{"host, SUM(v) AS s", ""},
 		{"zone, SUM(v) AS s", " GROUP BY host"},
 		{"SUM(v) AS same, AVG(f) AS same", ""},
@@ -168,6 +177,23 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 		b.reject(fmt.Sprintf("t07_invalid_shape_%d", index), prefix+shape.projection+source+shape.suffix, "t07.invalid_shape", codes.InvalidArgument)
 		b.cases[len(b.cases)-1].Ticket = "T07"
 		b.cases[len(b.cases)-1].NoScan = true
+	}
+	for index, expression := range []string{
+		"SUM(COALESCE(v, 0) + 9223372036854775807)",
+		"SUM(COALESCE(v, 9223372036854775807))",
+	} {
+		q := t07Query{Fixture: T07FixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 6000}
+		query, err := renderT07(q)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		query = strings.Replace(query, "SUM(v) AS result", expression+" AS result", 1)
+		code := codes.Unknown
+		if index == 0 {
+			code = codes.InvalidArgument
+		}
+		b.cases = append(b.cases, Case{Name: fmt.Sprintf("qg2_overflow_%d", index), Ticket: "T07", Query: query, WantCode: code, Features: []string{"t08.integer_overflow"}})
 	}
 	cases := b.cases[start:]
 	b.cases = b.cases[:start]

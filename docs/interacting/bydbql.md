@@ -544,7 +544,7 @@ from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"
 projection        ::= ["DISTINCT"] column_list | top_clause
 top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= column ("," column)*
-column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
+column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] expression ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
 	/* expression syntax and current composition limits are in section 5.9 */
 stage_list        ::= identifier ("," identifier)*
 agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
@@ -868,7 +868,7 @@ show lower planning time and allocations but no established RPC latency gain.
 
 ### 5.8. Extended measure aggregation
 
-Measure queries support multiple `COUNT`, `COUNT(DISTINCT ...)`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over named columns. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
+Measure queries support multiple `COUNT`, `COUNT(DISTINCT ...)`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over scalar expressions. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
 
 ```sql
 SELECT host AS node, COUNT(value) AS samples, SUM(value) AS total,
@@ -878,7 +878,9 @@ WHERE time >= ? AND time < ?
 GROUP BY host
 ```
 
-All aggregate calls use the complete, deduplicated input after the time, tag and field filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, their names are `COUNT(value)`, `SUM(value)`, and so on. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
+For example, `COALESCE(SUM(value), 0)` applies a scalar expression to the aggregate result, while `SUM(COALESCE(value, 0) + other_value)` evaluates its argument for each input row. `COUNT(DISTINCT value + 1)` counts distinct non-null computed values. These forms can be combined with grouping, HAVING, output aliases and ordering. Expression evaluation observes the usual null and overflow rules; nested aggregates such as `SUM(SUM(value))` are rejected. Expressions are limited to 64 levels of nesting and 4,096 nodes.
+
+All aggregate calls use the complete, deduplicated input after the time, tag and field filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, direct named-column calls use names such as `COUNT(value)` and `SUM(value)`; computed-argument aggregates and other expression projections use generated `expr_N` names. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
 
 The extended aggregate rules are:
 
@@ -897,7 +899,7 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.13. Aggregate arguments must still be named columns.
+Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.13. Aggregate arguments may be scalar expressions evaluated on each input row. Computed arguments use local aggregation over the complete raw input; eligible named-column aggregates may use native reduction. Nested aggregate calls and ungrouped source references in aggregate-result expressions are rejected.
 
 Extended count-distinct queries consume the complete deduplicated raw input; they do not sum potentially overlapping native distinct counts. Distinct state uses the shared query memory tracker and the existing compact grouping-key storage. NULLs are excluded, signed floating zeros compare equal, and NaN representations share a distinct key. Exhausting the budget fails the entire query with `ResourceExhausted`; disk spilling is not implemented. A small final LIMIT does not bound the input scan or the distinct state. Existing single-aggregate native queries retain their routing/stage restrictions and legacy pagination defaults.
 
@@ -911,7 +913,7 @@ ORDER BY unique_users DESC, service_id ASC
 LIMIT ? OFFSET ?
 ```
 
-The secondary key gives deterministic ordering for a fixed input. Separate page requests do not share a snapshot; retained-result sessions remain deferred. Aggregate arguments remain named columns: computed arguments such as `COUNT(DISTINCT CASE ... END)` are not supported.
+The secondary key gives deterministic ordering for a fixed input. Separate page requests do not share a snapshot; retained-result sessions remain deferred. Computed scalar arguments are also supported by `COUNT(DISTINCT ...)`.
 
 #### Native aggregate execution
 
@@ -959,7 +961,7 @@ Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no m
 
 Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
 
-SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.13. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.14. Query memory limits still apply; disk spilling is not implemented.
+SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.13. When a SELECT expression contains an aggregate result, it may combine that result with grouping keys and constants. Other grouped SELECT expressions must match a grouping expression. Scalar expressions may also be used as aggregate arguments. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.14. Query memory limits still apply; disk spilling is not implemented.
 
 ### 5.10. Field and expression filters
 
@@ -1004,7 +1006,7 @@ HAVING SUM(value::FIELD) > ?
 LIMIT 10
 ```
 
-HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls, computed aggregate arguments and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
+HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
 
 Within a measure predicate, `CONTAINS` and `NOT CONTAINS` are aliases of the existing infix `HAVING` and `NOT HAVING` operators. CONTAINS is contextual, so existing tags named `contains` and resources named `contains-svc` remain valid. The new aliases are limited to measure queries; other resource types keep their existing syntax.
 

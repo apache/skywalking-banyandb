@@ -362,7 +362,7 @@ func (p *expressionParser) functionPrefix() (*GrammarExpression, bool, error) {
 }
 
 func (p *expressionParser) aggregatePrefix() (*GrammarExpression, bool, error) {
-	if !p.having || p.pos+1 >= len(p.tokens) || p.tokens[p.pos+1].text != "(" {
+	if p.where || p.pos+1 >= len(p.tokens) || p.tokens[p.pos+1].text != "(" {
 		return nil, false, nil
 	}
 	if _, err := sqlAggregateFunction(p.tokens[p.pos].text); err != nil {
@@ -373,6 +373,9 @@ func (p *expressionParser) aggregatePrefix() (*GrammarExpression, bool, error) {
 }
 
 func (p *expressionParser) aggregate() (*GrammarExpression, error) {
+	if p.aggregateContext == "GROUP BY" {
+		return nil, fmt.Errorf("aggregate functions are not allowed in GROUP BY")
+	}
 	function := strings.ToUpper(p.tokens[p.pos].text)
 	p.pos += 2
 	distinct := p.take("DISTINCT")
@@ -383,16 +386,17 @@ func (p *expressionParser) aggregate() (*GrammarExpression, error) {
 	if err = p.need(")"); err != nil {
 		return nil, err
 	}
-	if argument.Op != "column" {
-		clause := "HAVING"
-		if p.aggregateContext != "" {
-			clause = p.aggregateContext
-		}
-		return nil, fmt.Errorf("%s in %s requires a source column; nested aggregates and computed arguments are not supported", function, clause)
+	if havingHasAggregate(argument) {
+		return nil, fmt.Errorf("nested aggregate functions are not supported")
 	}
-	expression := &GrammarExpression{
-		Op: "aggregate", Aggregate: &GrammarAggregateFunction{Function: function, Column: argument.Identifier, Distinct: distinct},
-		TypeSpec: argument.TypeSpec,
+	aggregate := &GrammarAggregateFunction{Function: function, Distinct: distinct}
+	expression := &GrammarExpression{Op: "aggregate", Aggregate: aggregate}
+	if argument.Op == "column" {
+		aggregate.Column = argument.Identifier
+		expression.TypeSpec = argument.TypeSpec
+	} else {
+		aggregate.Argument = argument
+		expression.Args = []*GrammarExpression{argument}
 	}
 	if p.pos+1 < len(p.tokens) && p.tokens[p.pos].text == "::" {
 		typeSpec := strings.ToUpper(p.tokens[p.pos+1].text)
@@ -479,7 +483,12 @@ func validateExpressionDepth(expression *GrammarExpression) error {
 		depth      int
 	}
 	pending := []entry{{expression: expression, depth: 1}}
+	count := 0
 	for len(pending) > 0 {
+		count++
+		if count > 4096 {
+			return fmt.Errorf("expression exceeds maximum size of 4096 nodes")
+		}
 		item := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
 		if item.depth > maxParenDepth {

@@ -83,13 +83,13 @@ func measureOrderKeys(order *GrammarSelectOrderByClause) []*GrammarOrderKey {
 func (m *MeasureTemplate) sortColumns() []vectorized.ColumnDef {
 	var definitions []vectorized.ColumnDef
 	switch {
-	case m.aggregate != nil:
-		for _, output := range m.aggregate.Outputs {
-			definitions = append(definitions, output.Column)
-		}
 	case m.expressions != nil:
 		for _, output := range m.expressions {
 			definitions = append(definitions, output.column)
+		}
+	case m.aggregate != nil:
+		for _, output := range m.aggregate.Outputs {
+			definitions = append(definitions, output.Column)
 		}
 	default:
 		for _, slot := range m.slots {
@@ -109,7 +109,7 @@ func (m *MeasureTemplate) compileSort(columns *measureColumns) error {
 		return nil
 	}
 	m.sortVisible = len(m.sortColumns())
-	if m.having != nil {
+	if m.having != nil && m.expressions == nil {
 		m.sortVisible = len(m.havingOutputs)
 	}
 	inputs := newMeasureExpressionInputs(m.slots)
@@ -189,7 +189,7 @@ func (m *MeasureTemplate) compileSortExpression(
 			if m.aggregate == nil {
 				return nil, true, fmt.Errorf("aggregate sort keys require grouping or a selected aggregate")
 			}
-			call, definition, err := resolveMeasureAggregate(subtree.Aggregate, subtree.TypeSpec, columns)
+			call, definition, err := m.resolveAggregateInput(subtree.Aggregate, subtree.TypeSpec, columns, m.aggregate, inputs.add)
 			if err != nil {
 				return nil, true, err
 			}
@@ -206,8 +206,18 @@ func (m *MeasureTemplate) compileSortExpression(
 			if index < 0 {
 				index = addMeasureAggregateCall(m.aggregate, call)
 			}
-			inputs.add(call.Source)
-			return havingCompletedOutput(m.aggregate, definition, index, false), true, nil
+			if subtree.Aggregate.Argument == nil {
+				inputs.add(call.Source)
+			}
+			completed := havingCompletedOutput(m.aggregate, definition, index, false)
+			if m.expressions != nil {
+				outputIndex := len(m.expressions)
+				m.expressions = append(m.expressions, measureExpressionOutput{
+					expression: completed, column: vectorized.ColumnDef{Name: m.hiddenSortName(columns), Role: vectorized.RoleField}, computed: true,
+				})
+				return &measureExpression{sortOutput: &outputIndex}, true, nil
+			}
+			return completed, true, nil
 		}
 		if havingHasAggregate(subtree) {
 			return nil, false, nil
@@ -227,7 +237,15 @@ func (m *MeasureTemplate) compileSortExpression(
 			if m.statement.template.Select.Distinct && !m.visibleAggregate(index, true) {
 				return nil, true, fmt.Errorf("group sort key must be derivable from visible DISTINCT output")
 			}
-			return havingCompletedOutput(m.aggregate, m.groups[index].column, index, true), true, nil
+			completed := havingCompletedOutput(m.aggregate, m.groups[index].column, index, true)
+			if m.expressions != nil {
+				outputIndex := len(m.expressions)
+				m.expressions = append(m.expressions, measureExpressionOutput{
+					expression: completed, column: vectorized.ColumnDef{Name: m.hiddenSortName(columns), Role: vectorized.RoleField}, computed: true,
+				})
+				return &measureExpression{sortOutput: &outputIndex}, true, nil
+			}
+			return completed, true, nil
 		}
 		if index := m.visibleSortExpression(recipe); index >= 0 {
 			return &measureExpression{sortOutput: &index}, true, nil
@@ -257,6 +275,18 @@ func (m *MeasureTemplate) compileSortExpression(
 
 func (m *MeasureTemplate) visibleAggregate(index int, group bool) bool {
 	if index < 0 {
+		return false
+	}
+	if m.expressions != nil {
+		for _, expression := range m.expressions[:m.sortVisible] {
+			if expression.expression.completedOutput == nil {
+				continue
+			}
+			output := m.aggregate.Outputs[*expression.expression.completedOutput]
+			if output.Index == index && output.IsGroup == group {
+				return true
+			}
+		}
 		return false
 	}
 	for _, output := range m.aggregate.Outputs[:m.sortVisible] {
@@ -298,15 +328,15 @@ func (m *MeasureTemplate) hiddenSortName(columns *measureColumns) string {
 }
 
 func boundSortOutputs(plan *ql.RawPlan) []ql.Slot {
-	if plan.Having != nil {
-		return plan.Having.Outputs
-	}
 	if plan.Expressions != nil {
 		outputs := make([]ql.Slot, len(plan.Expressions.Outputs))
 		for index, output := range plan.Expressions.Outputs {
 			outputs[index] = ql.Slot{Source: output.Column, Output: output.Column, Timestamp: output.Expr.Type == ql.ExpressionTimestamp}
 		}
 		return outputs
+	}
+	if plan.Having != nil {
+		return plan.Having.Outputs
 	}
 	if plan.Aggregate != nil {
 		outputs := make([]ql.Slot, len(plan.Aggregate.Outputs))

@@ -192,11 +192,11 @@ cache-on/cache-off timing uses the separate, bounded T05 benchmark.
 ## T07 complete SQL aggregation
 
 The artifact declares `aggregate_scenarios`, independent `aggregate_readiness`
-queries, and `aggregate_rejections`. Its 41 scenarios each bind the exact same
+queries, and `aggregate_rejections`. Scenarios bind the exact same
 statement three times: the full input, null-only or smaller input, and empty
 input. The runner executes these calls cold and warm, then repeats all three
-with the compiled cache bypassed. Seven additional statements reject unsupported
-aggregation shapes before scanning. The existing 293 legacy and T03 cases and
+with the compiled cache bypassed. Additional statements reject unsupported
+aggregation shapes before scanning. The legacy and T03 cases and
 18 T05 processes keep their original query texts and expected values.
 
 `ql_t07` contains exactly fixture F's six rows. `ql_t07_groups` separately adds
@@ -217,6 +217,8 @@ NULL and empty strings remain separate. Counts retain integer type; AVG/MEAN
 divide the complete sum by the non-null count. Null-only and empty scalar COUNT
 is zero; other scalar aggregates are null, and grouped empty input has no rows.
 
+The QG2 cases use literal expected values for scalar and grouped aggregate composition, computed arguments, COUNT DISTINCT expressions, repeated aggregates, HAVING, ordered aliases with pagination, and changed expression parameters. They include all-null and empty windows, nested-aggregate and depth rejection, and run through the same standalone and distributed Query RPC harness. Computed aggregate inputs use local aggregation over complete raw input.
+
 Every successful aggregate RPC checks exact consumed rows after deduplication,
 actual group cardinality, one local aggregate execution, absence of source
 identity/timestamps on synthesized rows, and restored group/native memory
@@ -236,7 +238,7 @@ T07's new SQL semantics execute over one complete native raw scan.
 ## T08 native aggregate pushdown and keyed merge
 
 The artifact adds `native_aggregate_scenarios`, `native_aggregate_readiness`,
-and `native_aggregate_rejections`. The 30 scenarios retain three identical query
+and `native_aggregate_rejections`. The scenarios retain three identical query
 texts with independently evaluated changed bindings. Eligible native cohorts
 run cold, warm, with the compiled cache bypassed, and with native aggregation
 disabled so the identical SQL also exercises T07. Unsafe cohorts must use T07
