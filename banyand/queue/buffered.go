@@ -96,7 +96,8 @@ type BufferedRequest struct {
 	// latest. For a stuck delivery it runs while Deliver may still read and
 	// write the request, so it must read only what is safe to share with it.
 	Done func(Outcome)
-	// Release frees the request: exactly once, after Done, when no Deliver can still read it.
+	// Release frees the request: exactly once, after Done has returned, when
+	// neither Deliver nor Close can still read it.
 	Release func()
 	// Bytes is what the request holds, charged against the allowance until Release.
 	Bytes    int64
@@ -167,7 +168,10 @@ type bufferedPublisher struct {
 	queue    chan *BufferedRequest
 	stop     chan struct{}
 	stopped  chan struct{}
-	batch    []any
+	// settled is closed when abandon no longer reads the batch it took over,
+	// Done calls included.
+	settled chan struct{}
+	batch   []any
 	// held is what the delivery goroutine took from queue and has not
 	// delivered, oldest first; delivery is the batch in Deliver. Both are
 	// guarded by mu, because Close takes them over when a delivery is stuck.
@@ -201,6 +205,7 @@ func NewBufferedPublisher(ctx context.Context, cfg BufferedConfig) BufferedPubli
 		queue:   make(chan *BufferedRequest, cfg.MaxCount),
 		stop:    make(chan struct{}),
 		stopped: make(chan struct{}),
+		settled: make(chan struct{}),
 	}
 }
 
@@ -424,7 +429,10 @@ func (p *bufferedPublisher) deliver(d Delivery, batch []*BufferedRequest, retain
 	p.mu.Unlock()
 	if abandoned {
 		// Close settled this batch at its deadline, so only the memory is left
-		// to free, now that Deliver no longer reads it.
+		// to free, now that Deliver no longer reads it. Close may still be
+		// running a Done for it, so the batch is freed only once Close is done
+		// with it. Only the delivery goroutine waits, so Close stays bounded.
+		<-p.settled
 		for _, r := range batch {
 			p.finish(r, Outcome{Reason: OutcomeShutdownDeadline})
 		}
@@ -476,7 +484,8 @@ func (p *bufferedPublisher) call(d Delivery, batch []any) (err error) {
 // abandon runs when the drain deadline passes with the delivery goroutine
 // still busy, most likely in a Deliver that does not return. Everything it
 // holds is settled now. What is not in that Deliver is freed now too; what is
-// in it is freed by the delivery goroutine if Deliver ever returns.
+// in it is freed by the delivery goroutine if Deliver ever returns, after
+// abandon closes settled.
 func (p *bufferedPublisher) abandon() {
 	p.mu.Lock()
 	p.abandoned = true
@@ -486,6 +495,7 @@ func (p *bufferedPublisher) abandon() {
 	for _, r := range inDelivery {
 		p.complete(r, Outcome{Reason: OutcomeShutdownDeadline})
 	}
+	close(p.settled)
 	for _, r := range held {
 		p.finish(r, Outcome{Reason: OutcomeShutdownDeadline})
 	}

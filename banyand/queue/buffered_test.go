@@ -673,6 +673,69 @@ func TestStuckDeliveryIsSettledOnTimeAndReleasedLater(t *testing.T) {
 	assert.Zero(t, charged(p))
 }
 
+// TestReleaseWaitsForTheDoneCloseIsRunning returns a stuck delivery while
+// Close is still inside the Done it runs at the deadline. The request must not
+// be released, and so reused, until that Done has returned.
+func TestReleaseWaitsForTheDoneCloseIsRunning(t *testing.T) {
+	cfg := testConfig()
+	cfg.BatchCount = 1
+	cfg.DrainTimeout = 50 * time.Millisecond
+	p := NewBufferedPublisher(context.Background(), cfg)
+	entered, unblock := make(chan struct{}, 1), make(chan struct{})
+	p.Start(&recorder{deliver: func(context.Context, []any) error {
+		entered <- struct{}{}
+		<-unblock
+		return nil
+	}})
+	var inDone, overlapped atomic.Bool
+	doneEntered, resumeDone, released := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	req := &BufferedRequest{
+		Data:  "stuck",
+		Bytes: 10,
+		Done: func(Outcome) {
+			inDone.Store(true)
+			close(doneEntered)
+			<-resumeDone
+			inDone.Store(false)
+		},
+		Release: func() {
+			overlapped.Store(inDone.Load())
+			close(released)
+		},
+	}
+	require.Equal(t, Accepted, p.Offer(req))
+	<-entered
+
+	closed := make(chan struct{})
+	//panicdiag:allow-rawgo test closer
+	go func() {
+		p.Close()
+		close(closed)
+	}()
+	<-doneEntered
+	close(unblock)
+	require.Eventually(t, func() bool {
+		_, inFlight := p.Bytes()
+		return inFlight == 0
+	}, 3*time.Second, time.Millisecond, "the stuck delivery did not return")
+	select {
+	case <-released:
+		t.Fatal("released while Close was still running Done")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(resumeDone)
+	for name, ch := range map[string]chan struct{}{"Close did not return": closed, "never released": released} {
+		select {
+		case <-ch:
+		case <-time.After(3 * time.Second):
+			t.Fatal(name)
+		}
+	}
+	assert.False(t, overlapped.Load(), "Release ran before Done returned")
+	assert.Zero(t, charged(p))
+}
+
 type ctxKey struct{}
 
 var testTopic = bus.BiTopic("buffered-test")
