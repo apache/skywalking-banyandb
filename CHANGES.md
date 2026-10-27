@@ -55,6 +55,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Guard shared empty posting list against in-place mutations in query filters without adding allocations to the empty-search path.
 - Fix unintroduced merged and flushed parts leaking open file descriptors and orphaned directories on shutdown in measure and stream.
 - Stop rejecting stream, trace and property queries whose limit + offset exceeds 1792 when no memory limit is configured. Admission estimated 4 KiB per requested row before reading data, so OAP's default LIMIT 10000 failed with RESOURCE_EXHAUSTED even on tiny datasets; memory is still bounded by the 100,000-row window ceiling, the preallocation caps and the charges for data actually read.
 - Apply trace query limits after span-ID and other residual filters so older matching traces remain queryable.
