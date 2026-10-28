@@ -62,7 +62,7 @@ after="$(dst_schema_digest "$work/schema-after")"
 ttl_after="$(export-checker ttl-rows "$ARTIFACT_A")"
 echo "dry run exited $dry_rc" >&2
 cat "$work/dryrun.stdout" >&2
-tail -50 "$work/dryrun.stderr" >&2
+tail -n 50 "$work/dryrun.stderr" >&2
 if [ "$dry_rc" -ne 0 ]; then
   echo "dryRunExitCode: $dry_rc"
   exit 1
@@ -80,7 +80,7 @@ bydbctl data import --plan "$plan" --input "$ARTIFACT_A" --force-ttl >"$work/imp
 # Diagnostic only: a failure here must not stop the script before a successful import is marked done.
 ttl_import="$(export-checker ttl-rows "$ARTIFACT_A")" || ttl_import="unknown"
 echo "import exited $rc" >&2
-tail -80 "$work/import.stdout" "$work/import.stderr" >&2
+tail -n 80 "$work/import.stdout" "$work/import.stderr" >&2
 case "$rc" in
   0) ;;
   1 | 2)

@@ -53,7 +53,7 @@ run_import() {
   bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_A" --include-schema=false "$@" \
     >"$work/$name.stdout" 2>"$work/$name.stderr" || rc=$?
   echo "schema-less $name exited $rc" >&2
-  tail -40 "$work/$name.stdout" "$work/$name.stderr" >&2
+  tail -n 40 "$work/$name.stdout" "$work/$name.stderr" >&2
   echo "$rc"
 }
 dry_rc="$(run_import dryrun --dry-run)"

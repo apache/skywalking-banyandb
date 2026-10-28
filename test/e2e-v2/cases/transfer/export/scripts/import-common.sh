@@ -69,7 +69,7 @@ export_all() {
   release_hinted_sessions "$2.log" "$1"
   if [ "$rc" -ne 0 ]; then
     echo "export through $1 into $2 exited $rc:" >&2
-    tail -50 "$2.stdout" "$2.log" >&2
+    tail -n 50 "$2.stdout" "$2.log" >&2
     return 1
   fi
 }
@@ -91,7 +91,7 @@ dst_schema_digest() {
   rm -rf "$1"
   if ! bydbctl data export --nodes "$DST_GRPC" --output "$1" --schema-only "${ALL_CATALOGS[@]}" >"$1.log" 2>&1; then
     echo "schema-only export of the destination failed:" >&2
-    tail -50 "$1.log" >&2
+    tail -n 50 "$1.log" >&2
     return 1
   fi
   cat "$1"/schema/*.jsonl | LC_ALL=C sort | cksum

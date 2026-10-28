@@ -51,7 +51,7 @@ fi
 
 compare_rc=0
 export-checker compare "$ARTIFACT_A" "$work/B" 2>"$work/compare.log" || compare_rc=$?
-tail -50 "$work/compare.log" >&2
+tail -n 50 "$work/compare.log" >&2
 echo "compareExitCode: $compare_rc"
 
 queries_rc=0

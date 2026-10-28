@@ -76,7 +76,7 @@ echo "conflict dry run exited $dry_rc" >&2
 rc=0
 bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_A" >"$work/import.stdout" 2>"$work/import.stderr" || rc=$?
 echo "conflict import exited $rc" >&2
-tail -80 "$work/import.stdout" "$work/import.stderr" >&2
+tail -n 80 "$work/import.stdout" "$work/import.stderr" >&2
 if [ "$rc" -ne 1 ] && [ "$rc" -ne 2 ]; then
   mark_failed "the conflict import exited $rc instead of 2"
   replay_failed

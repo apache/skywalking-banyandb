@@ -27,8 +27,13 @@ import (
 )
 
 func TestRecordWriteFailureWithoutARecorderDoesNothing(t *testing.T) {
-	// Nothing to assert beyond not panicking: a regular write carries no recorder.
+	// A regular write carries no recorder, so a recorder on another context stays empty.
+	r := &WriteRecorder{}
+	_ = WithWriteRecorder(context.Background(), r)
 	RecordWriteFailure(context.Background(), errors.New("cannot handle write event"))
+	if got := r.Failures(); len(got) != 0 {
+		t.Fatalf("failures = %v, want none", got)
+	}
 }
 
 func TestRecordWriteFailureKeepsTheOrder(t *testing.T) {
@@ -107,7 +112,12 @@ func TestRecordRowFailureKeepsTheFirstFailureOfARowByRow(t *testing.T) {
 }
 
 func TestRecordRowFailureWithoutARecorderDoesNothing(t *testing.T) {
+	r := NewWriteRecorder(time.Time{})
+	_ = WithWriteRecorder(context.Background(), r)
 	RecordRowFailure(context.Background(), 1, errors.New("cannot load tsdb"))
+	if got := r.RowFailures(); len(got) != 0 {
+		t.Fatalf("row failures = %v, want none", got)
+	}
 }
 
 func TestRetryWriteWithoutARecorderRunsOnce(t *testing.T) {
