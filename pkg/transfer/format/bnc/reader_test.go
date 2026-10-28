@@ -106,10 +106,16 @@ func TestOpen_FooterEncoding(t *testing.T) {
 	good := rawEntry{path: "a", size: 3, crc: crcOf(member)}
 	long := rawEntry{path: strings.Repeat("p", 26), size: 3, crc: crcOf(member)}
 	cases := map[string][]byte{
-		"truncated count":    {0x80},
-		"overlong count":     append([]byte{0x81, 0x00}, rawFooter(good)[1:]...),
-		"count beyond bytes": binary.AppendUvarint(nil, 3),
-		"count above max":    binary.AppendUvarint(nil, maxEntries+1),
+		"no header":          {},
+		"no last flag":       {1},
+		"volume 0":           append([]byte{0, 1}, rawFooter(good)[2:]...),
+		"volume above max":   append(binary.AppendUvarint(nil, maxVolumes+1), rawFooter(good)[1:]...),
+		"overlong volume":    append([]byte{0x81, 0x00}, rawFooter(good)[1:]...),
+		"last flag 2":        append([]byte{1, 2}, rawFooter(good)[2:]...),
+		"truncated count":    hdr(0x80),
+		"overlong count":     append(hdr(0x81, 0x00), rawFooter(good)[3:]...),
+		"count beyond bytes": binary.AppendUvarint(hdr(), 3),
+		"count above max":    binary.AppendUvarint(hdr(), maxEntries+1),
 		// Each of these declares two entries over enough bytes to pass the count bound, so the
 		// decoder reaches the second entry and fails there.
 		"truncated path length": twoEntries(long, 0x80),
@@ -162,12 +168,12 @@ func TestOpen_FooterEncoding(t *testing.T) {
 
 // twoEntries encodes a footer declaring two entries: first, then the raw bytes of the second.
 func twoEntries(first rawEntry, second ...byte) []byte {
-	b := append(binary.AppendUvarint(nil, 2), rawFooter(first)[1:]...)
+	b := append(binary.AppendUvarint(hdr(), 2), rawFooter(first)[3:]...)
 	return append(b, second...)
 }
 
 func TestOpen_HugeEntryCountDoesNotAllocate(t *testing.T) {
-	b := rawContainer(nil, binary.AppendUvarint(nil, maxEntries), magic)
+	b := rawContainer(nil, binary.AppendUvarint(hdr(), maxEntries), magic)
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
 	_, err := openBytes(b)

@@ -37,13 +37,14 @@ type Writer struct {
 	entries    []Entry
 	buf        []byte
 	off        int64
-	footerSize int
+	footerSize int // entry count and entries; headerSize(seq) comes on top
 	fileCRC    uint32
+	seq        uint32 // volume number written into the footer
 }
 
 // NewWriter returns a Writer that writes a container to w.
 func NewWriter(w io.Writer) *Writer {
-	return &Writer{w: w, paths: newPathSet(), footerSize: uvarintLen(0)}
+	return &Writer{w: w, paths: newPathSet(), footerSize: uvarintLen(0), seq: 1}
 }
 
 // Add copies exactly size bytes of r as member path, checking ctx before each block. It reads r
@@ -75,7 +76,7 @@ func (w *Writer) addPiece(ctx context.Context, path string, fileOffset, size, fi
 		return w.fail(fmt.Errorf("a container holds at most %d members", maxEntries))
 	}
 	footerSize := w.footerSize + encodedEntrySize(path, fileOffset, fileSize) + uvarintLen(uint64(len(w.entries)+1)) - uvarintLen(uint64(len(w.entries)))
-	if footerSize > maxFooterSize {
+	if footerSize+headerSize(w.seq) > maxFooterSize {
 		return w.fail(fmt.Errorf("member %q would grow the footer beyond %d bytes", path, maxFooterSize))
 	}
 	if err := w.paths.add(path); err != nil {
@@ -117,15 +118,21 @@ func (w *Writer) addPiece(ctx context.Context, path string, fileOffset, size, fi
 }
 
 // Close appends the footer, its CRC-32, its length and the magic, and returns the totals of
-// the container. A container needs at least one member.
+// the container. A container needs at least one member. A container a Writer writes alone is
+// volume 1, and the last one.
 func (w *Writer) Close() (Summary, error) {
+	return w.close(true)
+}
+
+// close finishes the container as volume w.seq, last telling whether it ends the container.
+func (w *Writer) close(last bool) (Summary, error) {
 	if w.err != nil {
 		return Summary{}, w.err
 	}
 	if len(w.entries) == 0 {
 		return Summary{}, w.fail(errors.New("a container needs at least one member"))
 	}
-	footer := encodeFooter(w.entries, w.footerSize)
+	footer := encodeFooter(w.seq, last, w.entries, headerSize(w.seq)+w.footerSize)
 	trailer := make([]byte, 0, trailerSize)
 	trailer = binary.LittleEndian.AppendUint32(trailer, crc32.ChecksumIEEE(footer))
 	trailer = binary.LittleEndian.AppendUint32(trailer, uint32(len(footer)))

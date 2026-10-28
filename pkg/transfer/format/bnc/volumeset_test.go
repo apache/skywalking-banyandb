@@ -20,6 +20,7 @@ package bnc
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"os"
@@ -70,16 +71,17 @@ func TestVolumeSet_RejectsVolumesThatDoNotFit(t *testing.T) {
 
 func TestVolumeSet_RejectsPiecesThatDoNotFit(t *testing.T) {
 	data := []byte("abcdef")
-	piece := func(p string, from, to, fileOffset, fileSize uint64) []byte {
-		return rawContainer(data[from:to], rawFooter(rawEntry{path: p, size: to - from, fileOffset: fileOffset, fileSize: fileSize, crc: crcOf(data[from:to])}), magic)
+	piece := func(seq uint64, p string, from, to, fileOffset, fileSize uint64) []byte {
+		e := rawEntry{path: p, size: to - from, fileOffset: fileOffset, fileSize: fileSize, crc: crcOf(data[from:to])}
+		return rawContainer(data[from:to], rawVolumeFooter(seq, seq == 2, e), magic)
 	}
-	first := piece("a", 0, 3, 0, 6)
+	first := piece(1, "a", 0, 3, 0, 6)
 	cases := map[string][]byte{
-		"another file":       piece("b", 3, 6, 3, 6),
-		"another file size":  piece("a", 3, 6, 3, 7),
-		"a gap":              piece("a", 4, 6, 4, 6),
-		"an overlap":         piece("a", 2, 6, 2, 6),
-		"a new file instead": piece("b", 0, 3, 0, 3),
+		"another file":       piece(2, "b", 3, 6, 3, 6),
+		"another file size":  piece(2, "a", 3, 6, 3, 7),
+		"a gap":              piece(2, "a", 4, 6, 4, 6),
+		"an overlap":         piece(2, "a", 2, 6, 2, 6),
+		"a new file instead": piece(2, "b", 0, 3, 0, 3),
 	}
 	for name, second := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -87,7 +89,7 @@ func TestVolumeSet_RejectsPiecesThatDoNotFit(t *testing.T) {
 			require.ErrorIs(t, err, ErrCorrupt)
 		})
 	}
-	s, err := newSet(first, piece("a", 3, 6, 3, 6))
+	s, err := newSet(first, piece(2, "a", 3, 6, 3, 6))
 	require.NoError(t, err)
 	got, err := s.ReadFile(s.Files()[0], 6)
 	require.NoError(t, err)
@@ -95,10 +97,42 @@ func TestVolumeSet_RejectsPiecesThatDoNotFit(t *testing.T) {
 }
 
 func TestVolumeSet_RejectsPathsRepeatedAcrossVolumes(t *testing.T) {
-	a, _ := writeContainer(t, testMember{"a", []byte("x")})
-	ab, _ := writeContainer(t, testMember{"a/b", []byte("y")})
-	for name, volumes := range map[string][][]byte{"repeat": {a, a}, "file under a file": {a, ab}, "file over a file": {ab, a}} {
+	vol := func(seq uint64, p string) []byte {
+		return rawContainer([]byte("x"), rawVolumeFooter(seq, seq == 2, rawEntry{path: p, size: 1, crc: crcOf([]byte("x"))}), magic)
+	}
+	for name, volumes := range map[string][][]byte{
+		"repeat":            {vol(1, "a"), vol(2, "a")},
+		"file under a file": {vol(1, "a"), vol(2, "a/b")},
+		"file over a file":  {vol(1, "a/b"), vol(2, "a")},
+	} {
 		_, err := newSet(volumes...)
+		require.ErrorIs(t, err, ErrCorrupt, name)
+	}
+	_, err := newSet(vol(1, "a"), vol(2, "b"))
+	require.NoError(t, err)
+}
+
+// Volumes that end between whole files join at any boundary: only their numbers and the last
+// flag tell a missing, misplaced or trailing volume.
+func TestVolumeSet_NumbersAndLastFlag(t *testing.T) {
+	vol := func(seq uint64, last bool, p string) []byte {
+		return rawContainer([]byte("x"), rawVolumeFooter(seq, last, rawEntry{path: p, size: 1, crc: crcOf([]byte("x"))}), magic)
+	}
+	v1, v2, v3 := vol(1, false, "a"), vol(2, false, "b"), vol(3, true, "c")
+	s, err := newSet(v1, v2, v3)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"a", "b", "c"}, entryPaths(s.Files()))
+	cases := map[string][][]byte{
+		"middle volume missing": {v1, v3},
+		"first volume missing":  {v2, v3},
+		"last volume missing":   {v1, v2},
+		"out of order":          {v1, v3, v2},
+		"repeated":              {v1, v2, v2, v3},
+		"another container":     {v1, v2, vol(3, true, "c"), vol(4, true, "d")},
+		"last flag too early":   {v1, vol(2, true, "b"), v3},
+	}
+	for name, volumes := range cases {
+		_, err = newSet(volumes...)
 		require.ErrorIs(t, err, ErrCorrupt, name)
 	}
 }
@@ -186,4 +220,45 @@ func TestVolumeSet_ShardAcrossVolumes(t *testing.T) {
 	assert.Equal(t, []string{id1 + "/primary.bin"}, entryPaths(layout.Parts[0].Subs[0].Files))
 	assert.Greater(t, len(layout.Parts[0].Subs[0].Files[0].pieces), 1, "the primary file crosses volumes")
 	assert.Equal(t, []string{"18e29603bfcd2125.snp"}, entryPaths(layout.Snapshots))
+}
+
+// A set from OpenVolumes keeps no file open: a volume is reopened for each read and must still
+// be the volume the set was built from.
+func TestOpenVolumes_ReopensOnDemand(t *testing.T) {
+	v, files, members := splitVolumes(t)
+	dir := t.TempDir()
+	var paths []string
+	for i, data := range v {
+		p := filepath.Join(dir, fmt.Sprintf("shard-0-%05d.bnc", i+1))
+		require.NoError(t, os.WriteFile(p, data, 0o600))
+		paths = append(paths, p)
+	}
+	s, err := OpenVolumes(paths)
+	require.NoError(t, err)
+	for _, vol := range s.volumes {
+		assert.Nil(t, vol.c, "no volume is held open")
+	}
+
+	// A reader stopped halfway releases its volume on Close.
+	r, err := s.Open(s.Files()[1])
+	require.NoError(t, err)
+	_, err = io.ReadFull(r, make([]byte, 10))
+	require.NoError(t, err)
+	require.NoError(t, r.Close())
+
+	// Replacing a volume with another valid one is caught when it is read.
+	other, _ := writeContainer(t, testMember{"x", []byte("y")})
+	require.NoError(t, os.WriteFile(paths[1], other, 0o600))
+	_, err = s.ReadFile(s.Files()[1], members[1].Size)
+	require.ErrorIs(t, err, ErrCorrupt)
+	_, err = s.Verify(context.Background())
+	require.ErrorIs(t, err, ErrCorrupt)
+	got, err := s.ReadFile(s.Files()[0], members[0].Size)
+	require.NoError(t, err, "files of the other volumes still read")
+	assert.Equal(t, files[members[0].Path], got)
+
+	require.NoError(t, os.Remove(paths[1]))
+	_, err = s.ReadFile(s.Files()[1], members[1].Size)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.NoError(t, s.Close())
 }

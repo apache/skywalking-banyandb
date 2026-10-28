@@ -96,9 +96,19 @@ func uvarintLen(v uint64) int {
 	return binary.PutUvarint(buf[:], v)
 }
 
-// encodeFooter encodes the footer of entries, whose sizes the caller has checked.
-func encodeFooter(entries []Entry, size int) []byte {
+// headerSize is the footer bytes before the entry count: the volume number and the last flag.
+func headerSize(seq uint32) int { return uvarintLen(uint64(seq)) + 1 }
+
+// encodeFooter encodes the footer of volume seq of a container, last telling whether it is the
+// final volume, holding entries whose sizes the caller has checked.
+func encodeFooter(seq uint32, last bool, entries []Entry, size int) []byte {
 	b := make([]byte, 0, size)
+	b = binary.AppendUvarint(b, uint64(seq))
+	if last {
+		b = append(b, 1)
+	} else {
+		b = append(b, 0)
+	}
 	b = binary.AppendUvarint(b, uint64(len(entries)))
 	for _, e := range entries {
 		b = binary.AppendUvarint(b, uint64(len(e.Path)))
@@ -111,9 +121,28 @@ func encodeFooter(entries []Entry, size int) []byte {
 	return b
 }
 
-// decodeFooter decodes footer b of a container whose members take membersLen bytes. It checks
-// every bound before it allocates, so a small footer cannot claim a large allocation.
-func decodeFooter(b []byte, membersLen int64) ([]Entry, error) {
+// decodeFooter decodes footer b of a container whose members take membersLen bytes: its volume
+// number, whether it is the last volume, and its entries. It checks every bound before it
+// allocates, so a small footer cannot claim a large allocation.
+func decodeFooter(b []byte, membersLen int64) (uint32, bool, []Entry, error) {
+	seq, n := readUvarint(b)
+	if n <= 0 || seq == 0 || seq > maxVolumes {
+		return 0, false, nil, corruptf("footer volume number is missing, not minimally encoded or out of 1..%d", maxVolumes)
+	}
+	b = b[n:]
+	if len(b) == 0 || b[0] > 1 {
+		return 0, false, nil, corruptf("footer last-volume flag is missing or not 0 or 1")
+	}
+	last := b[0] == 1
+	b = b[1:]
+	entries, err := decodeEntries(b, membersLen)
+	if err != nil {
+		return 0, false, nil, err
+	}
+	return uint32(seq), last, entries, nil
+}
+
+func decodeEntries(b []byte, membersLen int64) ([]Entry, error) {
 	count, n := readUvarint(b)
 	if n <= 0 {
 		return nil, corruptf("footer entry count is truncated or not minimally encoded")

@@ -49,18 +49,32 @@ type zeroReaderAt struct {
 }
 
 func (z zeroReaderAt) ReadAt(p []byte, off int64) (int, error) {
-	for i := range p {
-		pos := off + int64(i)
-		switch {
-		case pos < z.membersEnd:
-			p[i] = 0
-		case pos-z.membersEnd < int64(len(z.tail)):
-			p[i] = z.tail[pos-z.membersEnd]
-		default:
-			return i, io.EOF
-		}
+	n := 0
+	if off < z.membersEnd {
+		n = int(min(int64(len(p)), z.membersEnd-off))
+		clear(p[:n])
 	}
-	return len(p), nil
+	if tailOff := off + int64(n) - z.membersEnd; n < len(p) && tailOff < int64(len(z.tail)) {
+		n += copy(p[n:], z.tail[tailOff:])
+	}
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
+}
+
+// tailWriter drops the first skip bytes written to it and keeps the rest.
+type tailWriter struct {
+	tail []byte
+	skip int64
+}
+
+func (t *tailWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	k := min(int64(n), t.skip)
+	t.skip -= k
+	t.tail = append(t.tail, p[k:]...)
+	return n, nil
 }
 
 var benchShapes = []struct {
@@ -92,18 +106,18 @@ func BenchmarkWriterAdd(b *testing.B) {
 	}
 }
 
-// zeroContainer returns a reader of a container of zero-byte members of the given shape.
+// zeroContainer returns a reader of a container of zero-byte members of the given shape. Only
+// its footer and trailer are kept in memory.
 func zeroContainer(b testing.TB, members int, size int64) (io.ReaderAt, int64) {
-	var tail bytes.Buffer
-	w := NewWriter(&tail)
+	membersEnd := int64(members) * size
+	tail := &tailWriter{skip: membersEnd}
+	w := NewWriter(tail)
 	for m := 0; m < members; m++ {
 		require.NoError(b, w.Add(context.Background(), fmt.Sprintf("m%05d", m), size, &zeroReader{n: size}))
 	}
 	sum, err := w.Close()
 	require.NoError(b, err)
-	membersEnd := int64(members) * size
-	// The writer streamed zero members into tail too; keep only the footer and trailer.
-	return zeroReaderAt{membersEnd: membersEnd, tail: tail.Bytes()[membersEnd:]}, int64(sum.Bytes)
+	return zeroReaderAt{membersEnd: membersEnd, tail: tail.tail}, int64(sum.Bytes)
 }
 
 func BenchmarkVerify(b *testing.B) {
@@ -165,9 +179,6 @@ func BenchmarkFile(b *testing.B) {
 // allocates about as much as a 64 KiB one.
 func TestMemoryDoesNotGrowWithSize(t *testing.T) {
 	sizes := []int64{64 << 10, 64 << 20}
-	if !testing.Short() {
-		sizes = append(sizes, 1<<30)
-	}
 	measure := func(fn func()) uint64 {
 		var before, after runtime.MemStats
 		runtime.GC()

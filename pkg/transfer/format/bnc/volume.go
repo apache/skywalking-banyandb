@@ -87,7 +87,7 @@ func (v *VolumeWriter) Add(ctx context.Context, m Member) error {
 	}
 	// A canceled export must not seal a volume or start one it would abandon at once.
 	if err := ctx.Err(); err != nil {
-		return err
+		return v.fail(err)
 	}
 	if m.Size < 0 {
 		return v.fail(fmt.Errorf("member %q has a negative size %d", m.Path, m.Size))
@@ -108,10 +108,18 @@ func (v *VolumeWriter) Add(ctx context.Context, m Member) error {
 
 func (v *VolumeWriter) copy(ctx context.Context, m Member, r io.Reader) error {
 	for off := int64(0); ; {
+		// Opening the source or sealing a volume may outlast a cancel: check before each step
+		// that creates or finishes a volume.
+		if err := ctx.Err(); err != nil {
+			return v.fail(err)
+		}
 		take, seal, err := v.plan.place(m.Path, off, m.Size)
 		if seal {
-			if sealErr := v.seal(); sealErr != nil {
+			if sealErr := v.seal(false); sealErr != nil {
 				return sealErr
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return v.fail(ctxErr)
 			}
 		}
 		if err != nil {
@@ -146,6 +154,7 @@ func (v *VolumeWriter) start() error {
 	}
 	v.cur = NewWriter(sinkWriter{v.sink})
 	v.cur.buf = v.buf
+	v.cur.seq = v.plan.n
 	return nil
 }
 
@@ -156,7 +165,7 @@ func (v *VolumeWriter) Close() error {
 	}
 	var err error
 	if v.cur != nil {
-		err = v.seal()
+		err = v.seal(true)
 	}
 	if err == nil {
 		v.err = errClosed
@@ -164,8 +173,8 @@ func (v *VolumeWriter) Close() error {
 	return err
 }
 
-func (v *VolumeWriter) seal() error {
-	sum, err := v.cur.Close()
+func (v *VolumeWriter) seal(last bool) error {
+	sum, err := v.cur.close(last)
 	if err != nil {
 		return v.fail(err)
 	}
@@ -247,7 +256,7 @@ func (p *volumePlan) place(path string, fileOffset, fileSize int64) (take int64,
 // entry bytes: all of them, or as many as fit when that is at least one byte. ok is false when
 // the entry does not fit with a byte of a non-empty file, or at all.
 func (p *volumePlan) room(entry int, remaining int64) (int64, bool) {
-	footer := p.footer + entry + uvarintLen(uint64(p.entries+1))
+	footer := headerSize(p.n) + p.footer + entry + uvarintLen(uint64(p.entries+1))
 	if p.entries >= maxEntries || footer > maxFooterSize {
 		return 0, false
 	}

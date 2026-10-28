@@ -40,8 +40,10 @@ type Container struct {
 	r       io.ReaderAt
 	closer  io.Closer
 	entries []Entry
-	tail    []byte // footer and trailer as Open read them
+	tail    []byte
 	size    int64
+	seq     uint32
+	last    bool
 }
 
 // Open checks the structure of the container of size bytes in r with two ReadAt calls, without
@@ -76,11 +78,11 @@ func Open(r io.ReaderAt, size int64) (*Container, error) {
 	if crc32.ChecksumIEEE(footer) != binary.LittleEndian.Uint32(trailer) {
 		return nil, corruptf("footer checksum mismatch")
 	}
-	entries, err := decodeFooter(footer, membersEnd)
+	seq, last, entries, err := decodeFooter(footer, membersEnd)
 	if err != nil {
 		return nil, err
 	}
-	return &Container{r: r, size: size, entries: entries, tail: tail}, nil
+	return &Container{r: r, size: size, entries: entries, tail: tail, seq: seq, last: last}, nil
 }
 
 // OpenFile opens and checks the container in the regular file at path, sizing it on the open

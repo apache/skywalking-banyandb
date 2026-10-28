@@ -63,6 +63,11 @@ import (
 const (
 	writeInterval     = 500 * time.Millisecond
 	topNSourceMeasure = "service_instance_cpm_minute"
+	// The rows the suite writes, as the data_export suites count them.
+	streamRows       = 5
+	measureRows      = 6
+	topNSourcePoints = 6
+	traceSpans       = 13
 	// leaseFile is the lease of an export session, the one file of a session snapshot that is
 	// not engine data.
 	leaseFile = ".lease"
@@ -365,6 +370,7 @@ func importAll(out, restored string, sums map[string]bnc.Summary) int {
 			r, openErr := set.Open(f)
 			gomega.Expect(openErr).NotTo(gomega.HaveOccurred())
 			gomega.Expect(writeNewFile(filepath.Join(dir, filepath.FromSlash(f.Path)), r)).To(gomega.Succeed(), "%s holds %s once", prefix, f.Path)
+			gomega.Expect(r.Close()).To(gomega.Succeed())
 		}
 		gomega.Expect(set.Close()).To(gomega.Succeed())
 	}
@@ -425,6 +431,38 @@ func fullTree(root string, skip ...string) map[string]string {
 	return out
 }
 
+// groupRows adds up the flushed rows the inventory reports for a group.
+func groupRows(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) uint64 {
+	var n uint64
+	for _, f := range transfertest.UnitFrames(frames) {
+		for _, u := range f.GetUnits() {
+			seg := u.GetSegment()
+			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
+				continue
+			}
+			for _, sh := range seg.GetShards() {
+				n += sh.GetTotalCount()
+			}
+		}
+	}
+	return n
+}
+
+// propertyDocs adds up the documents the inventory reports for a property group.
+func propertyDocs(frames []*transferv1.PlanResponse, group string) uint64 {
+	var n uint64
+	for _, f := range transfertest.UnitFrames(frames) {
+		for _, u := range f.GetUnits() {
+			if p := u.GetProperty(); p.GetGroup() == group {
+				for _, sh := range p.GetShards() {
+					n += sh.GetDocCount()
+				}
+			}
+		}
+	}
+	return n
+}
+
 // queryItems runs a BydbQL query and returns its result items, each encoded deterministically
 // and sorted, so two processes compare regardless of the order they return them in.
 func queryItems(c *grpc.ClientConn, query string, params ...*modelv1.TagValue) []string {
@@ -467,30 +505,20 @@ func timeParam(t time.Time) *modelv1.TagValue {
 
 var _ = ginkgo.Describe("BNC containers of a standalone export snapshot", ginkgo.Ordered, func() {
 	ginkgo.BeforeAll(func() {
+		// An export snapshot links the parts on disk only, so every written row must be flushed
+		// before the session is created; the inventory counts flushed rows only.
 		ginkgo.By("Waiting for every catalog to be flushed")
 		gomega.Eventually(func(g gomega.Gomega) {
 			frames, planErr := transfertest.Plan(conn, &transferv1.PlanRequest{})
 			g.Expect(planErr).NotTo(gomega.HaveOccurred())
-			parts := map[commonv1.Catalog]int{}
-			var docs uint64
-			for _, f := range transfertest.UnitFrames(frames) {
-				for _, u := range f.GetUnits() {
-					for _, sh := range u.GetSegment().GetShards() {
-						parts[u.GetSegment().GetUnit().GetCatalog()] += int(sh.GetPartsCount())
-					}
-					if p := u.GetProperty(); p.GetGroup() == transfertest.PropertyGroup {
-						for _, sh := range p.GetShards() {
-							docs += sh.GetDocCount()
-						}
-					}
-				}
-			}
-			g.Expect(parts[commonv1.Catalog_CATALOG_STREAM]).To(gomega.BeNumerically(">", 0))
-			g.Expect(parts[commonv1.Catalog_CATALOG_MEASURE]).To(gomega.BeNumerically(">", 0))
-			g.Expect(parts[commonv1.Catalog_CATALOG_TRACE]).To(gomega.BeNumerically(">", 0))
+			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.Equal(uint64(streamRows)), "stream")
+			// The written points and at least one _top_n_result row the Top-N processor wrote.
+			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
+				To(gomega.BeNumerically(">", measureRows+topNSourcePoints), "measure and Top-N results")
+			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.Equal(uint64(traceSpans+largeSpans)), "trace")
 			g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
 			// The property index commits on its own schedule: wait for the live property and the tombstone.
-			g.Expect(docs).To(gomega.BeNumerically(">=", 2))
+			g.Expect(propertyDocs(frames, transfertest.PropertyGroup)).To(gomega.BeNumerically(">=", 2), "property")
 		}, flags.EventuallyTimeout, time.Second).Should(gomega.Succeed())
 	})
 

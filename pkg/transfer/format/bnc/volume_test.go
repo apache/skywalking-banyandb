@@ -70,6 +70,8 @@ func checkVolumes(t *testing.T, sink *memSink, files memFiles, members []Member,
 		assert.Equal(t, uint32(i+1), f.seq)
 		assert.Equal(t, fmt.Sprintf("stream/g/seg-20261028/shard-0-%05d.bnc", i+1), f.path)
 		c := mustOpen(t, f.data)
+		assert.Equal(t, uint32(i+1), c.seq, "volume %d knows its number", i+1)
+		assert.Equal(t, i == len(sink.files)-1, c.last, "only the final volume is the last")
 		sum, verifyErr := c.Verify(context.Background())
 		require.NoError(t, verifyErr)
 		assert.Equal(t, f.sum, sum, "FinishFile reports what the volume holds")
@@ -378,4 +380,67 @@ func TestVolumeWriter_SealError(t *testing.T) {
 	require.ErrorIs(t, err, errSink)
 	require.Len(t, sink.files, 1, "the next volume is not started after the seal failed")
 	assert.Equal(t, err, v.Close())
+}
+
+// A canceled Add fails the writer for good: the open volume is never sealed as if complete.
+func TestVolumeWriter_CancelSticks(t *testing.T) {
+	rng := rand.New(rand.NewPCG(19, 20)) //nolint:gosec // a fixed seed keeps failures reproducible
+	files := memFiles{}
+	members := randomFiles(rng, files, 10, 10)
+	sink := &memSink{}
+	v, err := NewVolumeWriter(sink, "p", 0, files.open)
+	require.NoError(t, err)
+	require.NoError(t, v.Add(context.Background(), members[0]))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, v.Add(ctx, members[1]), context.Canceled)
+	require.ErrorIs(t, v.Add(context.Background(), members[1]), context.Canceled)
+	require.ErrorIs(t, v.Close(), context.Canceled)
+	require.Len(t, sink.files, 1)
+	assert.False(t, sink.files[0].finished, "the volume is not sealed")
+}
+
+// A cancel while a source opens, or while a volume is sealed, starts no further volume.
+func TestVolumeWriter_CancelStartsNoVolume(t *testing.T) {
+	rng := rand.New(rand.NewPCG(21, 22)) //nolint:gosec // a fixed seed keeps failures reproducible
+	t.Run("while the source opens", func(t *testing.T) {
+		files := memFiles{}
+		members := randomFiles(rng, files, MinFileSize, 10)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sink := &memSink{}
+		v, err := NewVolumeWriter(sink, "p", MinFileSize, func(p string) (io.ReadCloser, error) {
+			if p == members[1].Path {
+				cancel()
+			}
+			return files.open(p)
+		})
+		require.NoError(t, err)
+		require.NoError(t, v.Add(ctx, members[0]))
+		started := len(sink.files)
+		require.ErrorIs(t, v.Add(ctx, members[1]), context.Canceled)
+		assert.Len(t, sink.files, started, "no volume is started after the cancel")
+	})
+	t.Run("while a volume is sealed", func(t *testing.T) {
+		files := memFiles{}
+		members := randomFiles(rng, files, 2*MinFileSize)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		sink := &cancelOnFinish{cancel: cancel}
+		v, err := NewVolumeWriter(sink, "p", MinFileSize, files.open)
+		require.NoError(t, err)
+		require.ErrorIs(t, v.Add(ctx, members[0]), context.Canceled)
+		assert.Len(t, sink.files, 1, "the next volume is not started")
+	})
+}
+
+// cancelOnFinish cancels a context when a volume is finished.
+type cancelOnFinish struct {
+	cancel context.CancelFunc
+	memSink
+}
+
+func (s *cancelOnFinish) FinishFile(sum Summary) error {
+	s.cancel()
+	return s.memSink.FinishFile(sum)
 }

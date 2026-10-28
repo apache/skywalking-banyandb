@@ -104,9 +104,19 @@ type rawEntry struct {
 	crc        uint32
 }
 
-// rawFooter encodes entries by hand, so tests can build footers the Writer refuses to write.
-func rawFooter(entries ...rawEntry) []byte {
-	b := binary.AppendUvarint(nil, uint64(len(entries)))
+// rawFooter encodes the footer of a container of one volume by hand, so tests can build footers
+// the Writer refuses to write.
+func rawFooter(entries ...rawEntry) []byte { return rawVolumeFooter(1, true, entries...) }
+
+// rawVolumeFooter encodes the footer of volume seq by hand.
+func rawVolumeFooter(seq uint64, last bool, entries ...rawEntry) []byte {
+	b := binary.AppendUvarint(nil, seq)
+	if last {
+		b = append(b, 1)
+	} else {
+		b = append(b, 0)
+	}
+	b = binary.AppendUvarint(b, uint64(len(entries)))
 	for _, e := range entries {
 		b = binary.AppendUvarint(b, uint64(len(e.path)))
 		b = append(b, e.path...)
@@ -121,6 +131,9 @@ func rawFooter(entries ...rawEntry) []byte {
 	}
 	return b
 }
+
+// hdr returns the footer header of a container of one volume followed by rest.
+func hdr(rest ...byte) []byte { return append([]byte{1, 1}, rest...) }
 
 // rawContainer assembles members, footer and a trailer with a correct footer CRC-32.
 func rawContainer(members, footer []byte, mag string) []byte {

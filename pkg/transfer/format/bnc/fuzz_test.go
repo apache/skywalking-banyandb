@@ -92,12 +92,13 @@ func FuzzOpen(f *testing.F) {
 		// A verified container has exactly one encoding: rewriting its members reproduces it.
 		var buf bytes.Buffer
 		w := NewWriter(&buf)
+		w.seq = c.seq
 		for _, e := range entries {
 			if err = w.addPiece(context.Background(), e.Path, e.FileOffset, e.Size, e.FileSize, bytes.NewReader(data[e.Offset:e.Offset+e.Size])); err != nil {
 				t.Fatalf("rewrite: %v", err)
 			}
 		}
-		written, err := w.Close()
+		written, err := w.close(c.last)
 		if err != nil {
 			t.Fatalf("rewrite: %v", err)
 		}
@@ -132,11 +133,11 @@ func checkFuzzEntries(t *testing.T, c *Container, entries []Entry, size int64) {
 	}
 }
 
-// checkFuzzSet checks that a volume alone is a set exactly when it holds whole files only, and
-// that Shard groups every file of such a set.
+// checkFuzzSet checks that a volume alone is a set exactly when it is volume 1, the last one,
+// and holds whole files only, and that Shard groups every file of such a set.
 func checkFuzzSet(t *testing.T, c *Container, entries []Entry) {
 	set, err := NewVolumeSet([]*Container{c})
-	whole := entries[0].FileOffset == 0 && entries[len(entries)-1].ends()
+	whole := c.seq == 1 && c.last && entries[0].FileOffset == 0 && entries[len(entries)-1].ends()
 	if (err == nil) != whole {
 		t.Fatalf("NewVolumeSet of a volume holding whole files %v: %v", whole, err)
 	}
