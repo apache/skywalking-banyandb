@@ -1397,33 +1397,83 @@ func (s *recordingSchemaServer) WatchSchemas(stream grpc.BidiStreamingServer[sch
 		if err != nil {
 			return err
 		}
-		metadataOnly := len(req.TagProjection) > 0
-		maxRevision := extractMaxRevisionFromCriteria(req.Criteria)
-		s.mu.Lock()
-		for _, stored := range s.schemas {
-			parsed := property.ParseTags(stored.prop.GetTags())
-			if maxRevision > 0 && parsed.UpdatedAt <= maxRevision {
-				continue
-			}
-			eventType := schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT
-			if stored.deleteTime > 0 {
-				eventType = schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE
-			}
-			if sendErr := stream.Send(&schemav1.WatchSchemasResponse{
-				EventType:    eventType,
-				Property:     stored.prop,
-				MetadataOnly: metadataOnly,
-				DeleteTime:   stored.deleteTime,
-			}); sendErr != nil {
-				s.mu.Unlock()
-				return sendErr
-			}
+		if err = s.replay(stream, req); err != nil {
+			return err
 		}
-		s.mu.Unlock()
+	}
+}
+
+// replay answers one watch request with the stored schemas and a REPLAY_DONE.
+func (s *recordingSchemaServer) replay(stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse],
+	req *schemav1.WatchSchemasRequest,
+) error {
+	metadataOnly := len(req.TagProjection) > 0
+	maxRevision := extractMaxRevisionFromCriteria(req.Criteria)
+	s.mu.Lock()
+	for _, stored := range s.schemas {
+		parsed := property.ParseTags(stored.prop.GetTags())
+		if maxRevision > 0 && parsed.UpdatedAt <= maxRevision {
+			continue
+		}
+		eventType := schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT
+		if stored.deleteTime > 0 {
+			eventType = schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_DELETE
+		}
 		if sendErr := stream.Send(&schemav1.WatchSchemasResponse{
-			EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE,
+			EventType:    eventType,
+			Property:     stored.prop,
+			MetadataOnly: metadataOnly,
+			DeleteTime:   stored.deleteTime,
 		}); sendErr != nil {
+			s.mu.Unlock()
 			return sendErr
+		}
+	}
+	s.mu.Unlock()
+	return stream.Send(&schemav1.WatchSchemasResponse{
+		EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_REPLAY_DONE,
+	})
+}
+
+// lateWriteSchemaServer is a recordingSchemaServer whose full-sync replays are delayed by
+// replayDelay, and which, right after its first full-sync replay, stores late and pushes it
+// as a watch event: a schema written just after the sync snapshot was taken.
+type lateWriteSchemaServer struct {
+	*recordingSchemaServer
+	late        *propertyv1.Property
+	replayDelay time.Duration
+	pushMu      sync.Mutex
+}
+
+func (s *lateWriteSchemaServer) WatchSchemas(stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse]) error {
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		fullSync := len(req.TagProjection) > 0
+		if fullSync {
+			time.Sleep(s.replayDelay)
+		}
+		if err = s.replay(stream, req); err != nil {
+			return err
+		}
+		if !fullSync {
+			continue
+		}
+		s.pushMu.Lock()
+		late := s.late
+		s.late = nil
+		s.pushMu.Unlock()
+		if late == nil {
+			continue
+		}
+		s.addSchema(late)
+		if err = stream.Send(&schemav1.WatchSchemasResponse{
+			EventType: schemav1.SchemaEventType_SCHEMA_EVENT_TYPE_INSERT,
+			Property:  late,
+		}); err != nil {
+			return err
 		}
 	}
 }
@@ -1804,6 +1854,49 @@ func TestFullSyncServerDown(t *testing.T) {
 				"Group should not be deleted after server restart")
 		}
 	})
+}
+
+// A schema written just after a full sync took its snapshot reaches the cache through the
+// watch before the sync finishes; the sync must not take it for one deleted on the server.
+func TestFullSyncKeepsASchemaWrittenDuringTheSync(t *testing.T) {
+	newServer := func(late *propertyv1.Property, replayDelay time.Duration) string {
+		mock := &lateWriteSchemaServer{recordingSchemaServer: newRecordingSchemaServer(), late: late, replayDelay: replayDelay}
+		mock.addSchema(buildMockGroupProperty(t))
+		lis, lisErr := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, lisErr)
+		srv := grpc.NewServer()
+		schemav1.RegisterSchemaManagementServiceServer(srv, mock)
+		schemav1.RegisterSchemaUpdateServiceServer(srv, mock)
+		healthSrv := health.NewServer()
+		healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+		grpc_health_v1.RegisterHealthServer(srv, healthSrv)
+		go func() { _ = srv.Serve(lis) }()
+		t.Cleanup(srv.Stop)
+		return lis.Addr().String()
+	}
+	// The first server answers the sync at once and then pushes the late stream; the second
+	// answers a while later, so the stream is cached before the sync compares.
+	first := newServer(buildMockStreamProperty(t, "late-stream", time.Now()), 0)
+	second := newServer(nil, 500*time.Millisecond)
+
+	reg := newTestRegistryWithConfig(t, &property.ClientConfig{
+		SyncInterval:       time.Second,
+		SyncTimeout:        5 * time.Second,
+		FullReconcileEvery: 1,
+	}, first, second)
+	handler := &testEventHandler{}
+	reg.RegisterHandler("test-handler", schema.KindGroup|schema.KindStream, handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	require.NoError(t, reg.Start(ctx))
+
+	waitForAddOrUpdateEvent(t, handler, schema.KindStream, "late-stream")
+	// Let the full sync that raced with the push finish, and one more after it.
+	time.Sleep(3 * time.Second)
+	for _, evt := range handler.getDeleteEvents() {
+		assert.False(t, evt.Kind == schema.KindStream && evt.Name == "late-stream",
+			"the stream written during the full sync was deleted")
+	}
 }
 
 func TestWatchPush(t *testing.T) {

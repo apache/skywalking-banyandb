@@ -1657,6 +1657,9 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 	req := &syncRequest{
 		tagProjection: basicTagKeys,
 	}
+	// Snapshot the cache before the servers take theirs: an entry the watch delivers while
+	// the sync runs may be missing from the digests, and must not be taken for a deleted one.
+	cachedEntries := r.cache.GetAllEntries()
 	allDigests, err := r.sendSyncRequest(ctx, sessions, req)
 	if allDigests == nil {
 		return
@@ -1670,7 +1673,6 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 	}
 
 	merged := r.mergeDigests(allDigests)
-	cachedEntries := r.cache.GetAllEntries()
 	r.l.Debug().Int("respondedNodes", len(allDigests)).Int("mergedCount", len(merged)).Int("cachedCount", len(cachedEntries)).
 		Msg("performFullSync: comparing server digests with local cache")
 
