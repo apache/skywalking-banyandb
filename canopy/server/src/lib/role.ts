@@ -19,10 +19,27 @@
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
 
+export type Role = 'admin' | 'readonly';
+
+// The single place where configured role names map onto Canopy's two roles.
+// Horizon's `viewer` is read-only; `maintainer`, `operator` and `admin` can write.
+const ROLE_ALIASES: Readonly<Record<string, Role>> = {
+  readonly: 'readonly',
+  viewer: 'readonly',
+  admin: 'admin',
+  maintainer: 'admin',
+  operator: 'admin',
+};
+
+/** Maps a configured role name to a Canopy role, or undefined when it is unknown. */
+export function mapRole(value: unknown): Role | undefined {
+  return typeof value === 'string' && Object.hasOwn(ROLE_ALIASES, value) ? ROLE_ALIASES[value] : undefined;
+}
+
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export function isReadOnlySession(request: FastifyRequest): boolean {
-  return request.session?.role === 'readonly';
+  return request.principal?.role === 'readonly';
 }
 
 export async function enforceRole(request: FastifyRequest, reply: FastifyReply): Promise<void> {
