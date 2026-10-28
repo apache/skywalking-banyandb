@@ -213,6 +213,7 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 | Measure WHERE expression | `WHERE value::FIELD > CAST(? AS DOUBLE)` | Same value types as SELECT expressions; see section 5.10 |
 | Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
 | `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
+| Measure pattern | `tag LIKE ?`, `tag ILIKE ?` | scalar `str`, `null`; section 5.15 |
 | `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `HAVING` / `NOT HAVING` values | `HAVING ?`, `HAVING (?)` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `LIMIT` count | `LIMIT ?` | `int` only |
@@ -532,7 +533,7 @@ LIMIT 100;
 
 ## 5. BydbQL for Measures
 
-BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, time and field expressions in `WHERE`, and post-aggregation `HAVING`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.11.
+BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, time and field expressions in `WHERE`, and post-aggregation `HAVING`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.15.
 
 ### 5.1. Grammar
 
@@ -562,6 +563,8 @@ time_value        ::= string_literal | "?" | "now" "(" ")"
 interval_adjustment ::= ("+" | "-") "INTERVAL" string_literal
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "CONTAINS" | "NOT CONTAINS" | "MATCH"
+pattern_predicate ::= identifier_path ["::TAG"] ("LIKE" | "ILIKE") (string_literal | "?" | "NULL") ["ESCAPE" string_literal]
+    /* positive WHERE conjuncts only; section 5.15 */
 order_expression  ::= sort_key ("," sort_key)* | "ASC" | "DESC"
 sort_key          ::= (expression | positive_select_ordinal) ["ASC" | "DESC"] ["NULLS" ("FIRST" | "LAST")]
 value             ::= string_literal | integer_literal | "NULL" | "?"
@@ -1094,6 +1097,81 @@ Raw queries may order by unselected columns or expressions. Grouped queries may 
 Ordering runs after filtering, aggregation, HAVING and visible-tuple DISTINCT. OFFSET and LIMIT apply last. With no LIMIT, the liaison sorts all completed rows. A finite LIMIT retains at most OFFSET + LIMIT candidate rows in a heap, then sorts those candidates and applies the requested page. The sum uses uint64 arithmetic; large offsets can still require substantial memory. LIMIT 0 performs no data scan.
 
 Accepted candidates own copies of their values and do not retain source batches. Key buffers, candidate storage and output share the query memory budget. A full sort or a large top-k fails with `ResourceExhausted` when that budget is exhausted; temporary-file spilling remains deferred. Native input materialization has its own residency costs, so a small LIMIT does not bound total scan work or query memory. Simple timestamp and explicit index-rule ordering retain their existing native execution paths.
+
+
+### 5.15. Indexed LIKE and ILIKE
+
+Measure queries support two whole-value pattern predicates:
+
+```sql
+SELECT name, COUNT(DISTINCT member) AS members
+FROM MEASURE activity IN metrics
+WHERE time >= ? AND time < ? AND name ILIKE ? AND value::FIELD > 0
+GROUP BY name
+ORDER BY members DESC, name ASC
+LIMIT 20;
+```
+
+Bind `%amber%` to find names containing `amber`. `LIKE` is case-sensitive;
+`ILIKE` uses locale-independent Unicode simple folding. Matching preserves the
+original value for projection, grouping and distinct counting.
+
+| Pattern | Meaning |
+|---------|---------|
+| `amber` | The complete value `amber` |
+| `amber%` | A value starting with `amber` |
+| `%amber%` | A value containing `amber` |
+| `a_b` | `a`, exactly one Unicode character, then `b` |
+| Empty string | Only an empty value |
+
+`%` matches zero or more Unicode characters; `_` matches exactly one. Both
+include newlines. Spaces, punctuation, `*`, `?` and regular-expression symbols
+are ordinary literal characters. No tokenization or trimming occurs.
+
+The default pattern escape character is backslash. `ESCAPE '!'` chooses another
+single Unicode character; `ESCAPE ''` disables escaping. An escape quotes the
+following character, so `name LIKE 'a!_b' ESCAPE '!'` matches the literal `a_b`.
+A trailing escape is invalid. Prefer bound patterns: QL string literals retain
+their existing backslash decoding, which differs from PostgreSQL standard
+string literals. The `ESCAPE` argument must be a literal, not a parameter or NULL.
+
+The source must be a scalar STRING tag with a bound single-tag inverted index
+whose analyzer is omitted, empty or `keyword`. Tokenizing analyzers such as
+`simple`, `standard` and `url` cannot preserve whole-value matching and are
+rejected. Missing indexes, arrays and ambiguous tag names are also rejected.
+Exactly one distinct valid rule may cover the source tag; multiple rules are
+rejected even when both use `keyword`, because writes populate only one of them.
+Repeated bindings of the same identified rule do not introduce ambiguity.
+No special analyzer or index rebuild is needed for existing whole-value indexes.
+Index visibility follows the existing query model; missing postings do not
+trigger a raw-data scan or consistency barrier.
+
+Patterns accept scalar string literals, string parameters or NULL. NULL sources
+or patterns produce UNKNOWN and do not pass WHERE. Numeric coercion and computed
+patterns are unsupported. These predicates support positive AND conjunctions
+with time, tag and field filters; OR/NOT, NOT LIKE/NOT ILIKE, SELECT expressions
+and HAVING are unsupported. Indexed selection runs before field residuals and
+aggregation. Raw pattern queries must order by time or an explicit native index
+rule; they do not fall back to sorting raw rows. Completed aggregate and DISTINCT
+results retain their existing ordering behavior.
+
+ILIKE does not apply locale-specific collations, accent removal, Unicode
+normalization or multi-character case expansion. It is not a promise of equality
+with every PostgreSQL collation.
+
+Each query accepts at most 16 pattern predicates of at most 1 KiB each. Workers
+share a 1,000,000-unit dictionary/automaton work limit, 100,000 expanded-term
+limit and 16 MiB cumulative pattern-allocation limit; each automaton also has a
+1 MiB bound. Existing query memory limits can stop execution sooner. Exceeding a
+limit fails the query with ResourceExhausted rather than returning partial counts.
+Cached QL plans retain recipes; bound patterns and automata belong to one execution.
+The operator words are contextual: existing resource and group names such as
+`like-rate` and `escape-group` remain valid.
+
+The external QL RPC and protobuf definitions are unchanged. Distributed pattern queries use
+a versioned internal request envelope. All participating query nodes must support
+it; an older node rejects the request and fails the query. Existing MATCH token
+search and native protobuf queries keep their current semantics.
 
 ## 6. BydbQL for Top-N
 

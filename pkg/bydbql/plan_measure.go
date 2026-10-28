@@ -52,6 +52,7 @@ type MeasureTemplate struct {
 	having         *measureExpression
 	havingOutputs  []ql.Slot
 	filterTags     map[measureColumnKey]bool
+	patterns       []measurePattern
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
 	expressions    []measureExpressionOutput
@@ -287,6 +288,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	if err != nil {
 		return nil, invalidMeasure(err)
 	}
+
 	if stmt.Limit != nil {
 		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
 		plan.Limit = &limit
@@ -320,10 +322,11 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	request.Offset = 0
 	request.Limit = math.MaxUint32
 	plan.NativeAggregate = m.bindNativeAggregate(request, plan)
+
 	if err = m.bindMeasureEntities(request, plan); err != nil {
 		return nil, invalidMeasure(err)
 	}
-	return &MeasureExecution{Request: request, Plan: plan}, nil
+	return m.finishPatternExecution(request, plan)
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {

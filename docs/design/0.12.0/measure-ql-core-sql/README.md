@@ -1,5 +1,7 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
+Follow-up: [indexed LIKE and ILIKE](indexed-patterns.md) build on merged PR #1438 (`b54a9fc76`). This adds a versioned internal byte envelope for QL patterns while preserving protobuf definitions and index formats. The original PR 4 scope and verification below remain historical records.
+
 This branch prepares **PR 4 of 4**: visible-tuple DISTINCT, computed/ordinal
 grouping, selectable time buckets, multi-key ordering, compact top-k pagination
 and exact count-distinct composition (T15/T16/T17 and the composition follow-up).

@@ -848,3 +848,47 @@ After the empty-scalar correction, both container selections pass all nine specs
 including cached and bypassed executions with changed bindings. The final reports
 are `/mnt/d/qlb-empty-scalar-standalone-report.json` and
 `/mnt/d/qlb-empty-scalar-distributed-report.json`.
+
+### Indexed LIKE and ILIKE
+
+`pattern_fixture.go`, `pattern_generate.go`, `pattern_review_generate.go` and
+`pattern_oracle.go` generate 31 scenarios for neutral names in an explicit keyword index and an index with its
+analyzer omitted. Tokenized and missing indexes are rejection controls. One
+identity has two timestamps, ensuring COUNT DISTINCT is applied after pattern
+selection and field residuals. Tests retain separate case-distinct names.
+
+The independent oracle tokenizes SQL `%`, `_` and escapes and uses dynamic
+programming over Unicode scalars. It never calls production parser, evaluator or
+native automaton helpers. `testdata/pattern-postgres.sql` and the saved JSON pin
+20 ASCII/escape/NULL/empty/Unicode-character expectations from PostgreSQL 17.6
+under C.UTF-8; provenance records the image digest. Unicode simple-fold behavior
+has explicit independent unit expectations, including the final-sigma cycle and
+no multi-character expansion.
+
+The generated cohort covers whole-value/exact/prefix/suffix/infix matches,
+consecutive percent signs, punctuation/newline/Unicode scalars, empty and NULL,
+custom/disabled/default escapes, literal versus bound percent, invalid binding
+recovery, omitted analyzer parity, field residuals, grouped COUNT DISTINCT/SUM
+and HAVING, native index ordering with pagination, and explicit unsupported
+Boolean/index/type shapes. Missing-index validation also runs with a NULL
+pattern. Six additional ambiguity scenarios reject tags covered by two keyword
+rules (both numeric-ID orders), standard plus keyword rules, or multi-tag plus
+keyword rules (both binding orders). NULL and unmatched patterns must reject too.
+The ambiguity tags are separate from the readiness indexes. Six additional
+fixtures preserve `like`, `ilike`, `escape` and their hyphenated resource/group
+names through ordinary indexed readiness and actual LIKE/ESCAPE queries.
+LIKE/ILIKE/ESCAPE are contextual expression words; the audited grammar fingerprint
+still includes their custom expression parser and the global reservation list.
+These narrow source-name witnesses do not cover the broader pending quoted/dotted
+identifier inventory. Each scenario executes through the QL RPC with normal and bypassed
+plan caches. Ownership counters must return to their previous values.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QL-patterns' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QL-patterns' -ginkgo.fail-on-empty
+```
+
+Run topologies sequentially. The focused benchmark and before/after exact-query
+control are documented in `verification/dpo85bench/README.md` at repository root.

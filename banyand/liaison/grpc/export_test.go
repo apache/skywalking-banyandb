@@ -455,11 +455,19 @@ func TestExportPlan_FailedPlanLeavesNoGoroutine(t *testing.T) {
 		testNodeB: {expired: map[string]bool{testSessionAbcdID: true}},
 	})
 	plan := func() {
-		if err := svc.Plan(transfer.ReadRequest(testSessionAbcdID), &recordingStream{ctx: context.Background()}); err == nil {
-			t.Fatal("an expired session must fail the call")
+		if err := svc.Plan(transfer.ReadRequest(testSessionAbcdID), &recordingStream{ctx: context.Background()}); status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("an expired session must fail with FailedPrecondition, got %v", err)
 		}
 	}
-	plan() // warm up the connections
+	// A failed fan-out can cancel its sibling before that node's connection finishes
+	// starting. A successful dry run warms both transports before counting goroutines.
+	warmup := &recordingStream{ctx: context.Background()}
+	if err := svc.Plan(&transferv1.PlanRequest{}, warmup); err != nil {
+		t.Fatal(err)
+	}
+	if answered := lastSummary(t, warmup.frames).GetAnsweredNodes(); !slices.Equal(answered, []string{testNodeA, testNodeB}) {
+		t.Fatalf("warm-up must reach both nodes, got %v", answered)
+	}
 	before := runtime.NumGoroutine()
 	for i := 0; i < 20; i++ {
 		plan()

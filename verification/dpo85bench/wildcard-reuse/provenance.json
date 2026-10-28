@@ -1,0 +1,35 @@
+{
+  "started_at": "2026-10-28T23:00:39.133525+00:00",
+  "baseline_commit": "b54a9fc76e74baa1c0ecbf75513a082c32649a72",
+  "baseline_tracked_sources_verified": 953,
+  "candidate_head": "b54a9fc76e74baa1c0ecbf75513a082c32649a72",
+  "candidate_status": "Uncommitted shared native wildcard implementation; source-hashes.json identifies measured files.",
+  "toolchain": "go version go1.26.10 linux/amd64",
+  "image": "sha256:09c665d7ce2302ef883da73a11f72161ee18a66336dfb7d03f52fd817875d877",
+  "cpuset": "0,1",
+  "cpu_quota": 2,
+  "memory_bytes": 4294967296,
+  "memory_plus_swap_bytes": 4294967296,
+  "gomaxprocs": 2,
+  "query_allocation_allowance_bytes": 268435456,
+  "dictionary_terms": 10000,
+  "rounds": 3,
+  "iterations_per_arm": 100,
+  "process_policy": "Fresh process and identical index fixture for every arm/revision/round; alternate revision order each round.",
+  "container_limits": [
+    "200000 100000",
+    "0-1",
+    "4294967296",
+    "0"
+  ],
+  "harness_sha256": "c4ae8ca0de13ab9a7001e45ce3df35c65aa2e306cb7e1e0204cf839cd6d477c1",
+  "source_hashes_sha256": "dba2c1ea2e3b7f4c1c75e402fa15cc401997f0bdfab1bc767a1cc2f3e0dadb29",
+  "binary_sha256": {
+    "baseline": "c216c72eeae6a8f4d4ae359b03e2f432ebeef2896fae303a8e95568f117a23a5",
+    "candidate": "c0d464faea8702a2d0d5890fc523f80bb67acc730cff8cd83a65bfb38bc83274"
+  },
+  "completed_at": "2026-10-28T23:00:49.372582+00:00",
+  "samples_sha256": "4907cd2e6ebd7f1c0f9d27f8b8f30fa714396db033c3f4292c8114237402dd07",
+  "summary_sha256": "3121ddda686c2f2ff8e45e1ef213305a2b24fecd6fb56ae668aee00399b1de2c",
+  "source_drift": false
+}

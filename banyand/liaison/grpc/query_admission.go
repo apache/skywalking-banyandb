@@ -22,6 +22,7 @@ import (
 
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -75,7 +76,8 @@ func queryStatus(err error) error {
 	if errors.Is(err, protector.ErrQueryTooLarge) || errors.Is(err, ql.ErrInvalidExpression) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	if errors.Is(err, protector.ErrQueryResourceExhausted) || errors.Is(err, protector.ErrQueryWindowPressure) || errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
+	if errors.Is(err, native.ErrQueryLimit) || errors.Is(err, protector.ErrQueryResourceExhausted) ||
+		errors.Is(err, protector.ErrQueryWindowPressure) || errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	return err

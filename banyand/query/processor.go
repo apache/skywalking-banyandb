@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -543,16 +544,20 @@ type measureQueryProcessor struct {
 
 // measureExecutionContext holds the common execution context for measure queries.
 type measureExecutionContext struct {
-	ml       *logger.Logger
-	ecc      []executor.MeasureExecutionContext
-	metadata []*commonv1.Metadata
-	schemas  []logical.Schema
+	ml         *logger.Logger
+	ecc        []executor.MeasureExecutionContext
+	metadata   []*commonv1.Metadata
+	schemas    []logical.Schema
+	indexRules [][]*databasev1.IndexRule
 }
 
 // buildMeasureContext builds the execution context for a measure query.
-func buildMeasureContext(measureService measure.Service, log *logger.Logger, queryCriteria *measurev1.QueryRequest, logPrefix string) (*measureExecutionContext, error) {
+func buildMeasureContext(measureService measure.Service, log *logger.Logger, queryCriteria *measurev1.QueryRequest,
+	logPrefix string, patterns ...model.IndexedPattern,
+) (*measureExecutionContext, error) {
 	var metadata []*commonv1.Metadata
 	var schemas []logical.Schema
+	var indexRules [][]*databasev1.IndexRule
 	var ecc []executor.MeasureExecutionContext
 	for i := range queryCriteria.Groups {
 		meta := &commonv1.Metadata{
@@ -563,20 +568,25 @@ func buildMeasureContext(measureService measure.Service, log *logger.Logger, que
 		if ecErr != nil {
 			return nil, fmt.Errorf("fail to get execution context for measure %s: %w", meta.GetName(), ecErr)
 		}
-		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		rules := ec.GetIndexRules()
+		s, schemaErr := logical_measure.BuildSchema(ec.GetSchema(), rules)
 		if schemaErr != nil {
 			return nil, fmt.Errorf("fail to build schema for measure %s: %w", meta.GetName(), schemaErr)
 		}
 		ecc = append(ecc, ec)
 		schemas = append(schemas, s)
+		if len(patterns) > 0 {
+			indexRules = append(indexRules, rules)
+		}
 		metadata = append(metadata, meta)
 	}
 	ml := log.Named(logPrefix, queryCriteria.Groups[0], queryCriteria.Name)
 	return &measureExecutionContext{
-		metadata: metadata,
-		schemas:  schemas,
-		ecc:      ecc,
-		ml:       ml,
+		metadata:   metadata,
+		schemas:    schemas,
+		indexRules: indexRules,
+		ecc:        ecc,
+		ml:         ml,
 	}, nil
 }
 
@@ -600,9 +610,9 @@ func executeMeasurePlan(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
-	emitPartial bool,
+	emitPartial bool, patterns ...model.IndexedPattern,
 ) (executor.MIterator, string, error) {
-	mit, planStr, dispatchErr := dispatchMeasure(ctx, queryCriteria, mctx, emitPartial)
+	mit, planStr, dispatchErr := dispatchMeasure(ctx, queryCriteria, mctx, emitPartial, patterns...)
 	if dispatchErr != nil {
 		return nil, "", fmt.Errorf("fail to dispatch the query request for measure %s: %w", queryCriteria.GetName(), dispatchErr)
 	}
@@ -624,9 +634,9 @@ func executeMeasurePlan(
 // partial value column, and the liaison's distributed plan dedupes and
 // applies the global Top across the per-node partial top-Ns.
 func dispatchMeasure(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext,
-	emitPartial bool,
+	emitPartial bool, patterns ...model.IndexedPattern,
 ) (executor.MIterator, string, error) {
-	result, planStr, err := dispatchMeasureBatches(ctx, queryCriteria, mctx, emitPartial)
+	result, planStr, err := dispatchMeasureBatches(ctx, queryCriteria, mctx, emitPartial, patterns...)
 	if err != nil {
 		return nil, planStr, err
 	}
@@ -638,7 +648,7 @@ func dispatchMeasureBatches(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
-	emitPartial bool,
+	emitPartial bool, patterns ...model.IndexedPattern,
 ) (*vecplan.BatchResult, string, error) {
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
 	for groupIdx, ec := range mctx.ecc {
@@ -653,9 +663,31 @@ func dispatchMeasureBatches(
 	if len(vecs) > 0 {
 		ctx = vectorized.WithQueryMemoryTracker(ctx, int64(vecs[0].VectorizedConfig().QueryMemoryMiB)*1024*1024)
 	}
+	var resolved [][]native.TermSetRequest
+	if len(patterns) > 0 {
+		resolved = make([][]native.TermSetRequest, len(vecs))
+		tracker := vectorized.QueryMemoryTracker(ctx, 0)
+		budget := native.NewWildcardBudgetWithMemory(native.WildcardLimits{}, tracker.Reserve, tracker.Release)
+		// Index matching is eager inside ec.Query; retain cached programs across
+		// group allocation scopes, then release them after all source construction.
+		defer func() { _ = budget.Close() }()
+		for i, vec := range vecs {
+			if i >= len(mctx.indexRules) {
+				return nil, "", fmt.Errorf("LIKE requires live index rules")
+			}
+			var resolveErr error
+			resolved[i], resolveErr = model.ResolveIndexedPatterns(vec.GetSchema(), mctx.indexRules[i], patterns)
+			if resolveErr != nil {
+				return nil, "", resolveErr
+			}
+			for j := range resolved[i] {
+				resolved[i][j].PatternBudget = budget
+			}
+		}
+	}
 	if len(mctx.ecc) == 1 {
 		return vecplan.DispatchBatches(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
-			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false)
+			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false, groupPatternRequests(resolved, 0)...)
 	}
 	// Multi-measure projection validation: a tag/field is valid if it
 	// resolves in ANY group's schema (mirrors the mergeSchema(ss) union).
@@ -679,7 +711,7 @@ func dispatchMeasureBatches(
 	planStrs := make([]string, 0, len(mctx.ecc))
 	for groupIdx, vec := range vecs {
 		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true, groupPatternRequests(resolved, groupIdx)...)
 		if dispatchErr == nil {
 			var group *vecplan.GroupBatches
 			group, dispatchErr = merge.Collect(ctx, result, planStr)
@@ -716,7 +748,7 @@ func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.Intern
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	if batchRequest, batchOK := message.Data().(*vmeasure.BatchQueryRequest); batchOK {
-		return p.executeBatchQuery(ctx, batchRequest.Request)
+		return p.executeBatchQuery(ctx, batchRequest.Request, batchRequest.Patterns...)
 	}
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
@@ -729,7 +761,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	return
 }
 
-func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *measurev1.QueryRequest) (resp bus.Message) {
+func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *measurev1.QueryRequest, patterns ...model.IndexedPattern) (resp bus.Message) {
 	now := bus.MessageID(time.Now().UnixNano())
 	if req == nil || len(req.Groups) == 0 {
 		return bus.NewMessage(now, common.NewError("measure query requires a group"))
@@ -739,7 +771,7 @@ func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *meas
 			resp = bus.NewMessage(now, common.NewError("panic: %v", recovered))
 		}
 	}()
-	mctx, err := buildMeasureContext(p.measureService, p.log, req, "measure")
+	mctx, err := buildMeasureContext(p.measureService, p.log, req, "measure", patterns...)
 	if err != nil {
 		return bus.NewMessage(now, err)
 	}
@@ -749,7 +781,7 @@ func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *meas
 		tracer, ctx = query.NewTracer(ctx, time.Now().Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
 	}
-	result, planStr, err := dispatchMeasureBatches(ctx, req, mctx, false)
+	result, planStr, err := dispatchMeasureBatches(ctx, req, mctx, false, patterns...)
 	if err != nil {
 		if span != nil {
 			span.Error(err)
@@ -888,8 +920,43 @@ type measureInternalQueryProcessor struct {
 	metricSvc observability.MetricsRegistry
 }
 
+func (p *measureInternalQueryProcessor) reservePatternDecode(ctx context.Context, body []byte) (context.Context, func(), error) {
+	if len(body) > vmeasure.MaxMeasurePatternRequestBytes {
+		return ctx, nil, fmt.Errorf("measure pattern request exceeds message limit: %w", native.ErrQueryLimit)
+	}
+	policy, hasPolicy := p.measureService.(interface {
+		VectorizedConfig() vmeasure.VectorizedConfig
+	})
+	if !hasPolicy {
+		return ctx, nil, fmt.Errorf("measure pattern request requires query memory policy")
+	}
+	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(policy.VectorizedConfig().QueryMemoryMiB)*1024*1024)
+	tracker := vectorized.QueryMemoryTracker(ctx, 0)
+	decodeBytes := vmeasure.MeasurePatternDecodeReservationBytes(body)
+	if err := tracker.Reserve(decodeBytes); err != nil {
+		return ctx, nil, err
+	}
+	return ctx, query.RegisterTransportRelease(ctx, func() { tracker.Release(decodeBytes) }), nil
+}
+
 func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	internalRequest, ok := message.Data().(*measurev1.InternalQueryRequest)
+	var patterns []model.IndexedPattern
+	if body, isEnvelope := message.Data().([]byte); isEnvelope {
+		var releaseDecode func()
+		var decodeErr error
+		ctx, releaseDecode, decodeErr = p.reservePatternDecode(ctx, body)
+		if decodeErr != nil {
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("%v", decodeErr))
+		}
+		defer releaseDecode()
+		internalRequest, patterns, decodeErr = vmeasure.DecodeMeasurePatternRequest(body)
+		if decodeErr != nil {
+			return bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("%v", decodeErr))
+		}
+		ok = true
+	}
+
 	n := time.Now()
 	now := n.UnixNano()
 	if !ok {
@@ -908,7 +975,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		}
 	}()
 
-	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "internal-measure")
+	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "internal-measure", patterns...)
 	if buildErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
 		return
@@ -923,7 +990,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
 	}
-	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial())
+	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial(), patterns...)
 	if execErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
 		return
@@ -971,8 +1038,6 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 				closeIterator()
 				span.Error(emitErr)
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
-				return
 			}
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
 			return
@@ -984,8 +1049,6 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 				closeIterator()
 				span.Error(emitErr)
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalQueryResponse{Trace: tracer.ToProto()})
-				return
 			}
 			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
 			return
@@ -1501,4 +1564,11 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 
 	p.logSlowQuery(queryCriteria, traces, n)
 	return
+}
+
+func groupPatternRequests(groups [][]native.TermSetRequest, index int) []native.TermSetRequest {
+	if len(groups) == 0 {
+		return nil
+	}
+	return groups[index]
 }

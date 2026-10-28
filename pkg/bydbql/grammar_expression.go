@@ -191,6 +191,8 @@ func (p *expressionParser) parse(minPrecedence int) (*GrammarExpression, error) 
 		}
 		p.pos++
 		switch op {
+		case "LIKE", "ILIKE":
+			left, err = p.pattern(left, op, precedence)
 		case "::":
 			left, err = p.castSuffix(left)
 		case "IS":
@@ -247,7 +249,7 @@ func expressionPrecedence(op string) int {
 		return 1
 	case "AND":
 		return 2
-	case "=", "!=", "<>", "<", "<=", ">", ">=", "IS", "IN", "NOT", "CONTAINS", "HAVING":
+	case "=", "!=", "<>", "<", "<=", ">", ">=", "IS", "IN", "NOT", "CONTAINS", "HAVING", "LIKE", "ILIKE":
 		return 3
 	case "+", "-":
 		return 4
