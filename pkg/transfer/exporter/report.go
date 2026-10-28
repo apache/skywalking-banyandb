@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 )
 
 // Row is one (node, catalog, group) line of the dry-run table.
@@ -90,23 +91,23 @@ func (r *Report) LargestNodeCompressedBytes() (node string, size uint64) {
 
 // BuildReport folds Plan frames into the table, the multi-source list and the NODES gap.
 // Every list is non-nil so the json and yaml renderings print [] rather than null.
-func BuildReport(cluster *ClusterInfo, result *PlanResult) *Report {
+func BuildReport(info *cluster.Info, result *cluster.PlanResult) *Report {
 	rep := &Report{
 		Rows:             []Row{},
 		MultiSource:      []MultiSource{},
-		DataNodes:        nonNil(uniqueSorted(slices.Concat(result.AnsweredNodes, result.UnreachableNodes))),
+		DataNodes:        nonNil(transfer.UniqueSorted(slices.Concat(result.AnsweredNodes, result.UnreachableNodes))),
 		MissingNodes:     nonNil(result.UnreachableNodes),
 		UnreachableNodes: nonNil(result.UnreachableNodes),
 		AnsweredNodes:    nonNil(result.AnsweredNodes),
-		Standalone:       cluster.Standalone,
+		Standalone:       info.Standalone,
 	}
 	rows := map[string]*Row{}
 	shardIDs := map[string]map[uint32]struct{}{} // row key -> distinct shard ids
 	units := map[string][]Source{}
 	for _, f := range result.Frames {
-		stage := NormalizeStage(f.GetStage())
+		stage := transfer.NormalizeStage(f.GetStage())
 		for _, u := range f.GetUnits() {
-			catalog, group := transfer.CatalogName(unitCatalog(u)), unitGroup(u)
+			catalog, group := transfer.CatalogName(cluster.UnitCatalog(u)), cluster.UnitGroup(u)
 			rowKey := f.GetNodeId() + "\x00" + catalog + "\x00" + group
 			row, ok := rows[rowKey]
 			if !ok {
@@ -140,7 +141,7 @@ func BuildReport(cluster *ClusterInfo, result *PlanResult) *Report {
 				row.EstRows += s.GetTotalCount()
 				row.CompressedBytes += s.GetEstimatedCompressedBytes()
 				row.UncompressedBytes += s.GetEstimatedUncompressedBytes()
-				mergeRange(&row.MinTimestamp, &row.MaxTimestamp, s.GetMinTimestamp(), s.GetMaxTimestamp())
+				transfer.MergeRange(&row.MinTimestamp, &row.MaxTimestamp, s.GetMinTimestamp(), s.GetMaxTimestamp())
 				unitKey := multiSourceKey(catalog, group, stage, seg.GetUnit().GetSegmentSuffix(), s.GetShardId())
 				units[unitKey] = append(units[unitKey], Source{
 					Node: f.GetNodeId(), Rows: s.GetTotalCount(), MinTimestamp: s.GetMinTimestamp(), MaxTimestamp: s.GetMaxTimestamp(),
@@ -183,19 +184,4 @@ func nonNil(s []string) []string {
 // multiSourceKey names one shard of one segment unit.
 func multiSourceKey(catalog, group, stage, segment string, shard uint32) string {
 	return fmt.Sprintf("%s/%s/%s/%s/shard-%d", catalog, group, stage, segment, shard)
-}
-
-// mergeRange widens [minDst, maxDst] by a source range. A source without a minimum (0) has no
-// flushed timestamps and is skipped, so a 0 minDst always means no source was merged yet and
-// the result does not depend on the merge order.
-func mergeRange(minDst, maxDst *int64, minSrc, maxSrc int64) {
-	if minSrc == 0 {
-		return
-	}
-	if *minDst == 0 || minSrc < *minDst {
-		*minDst = minSrc
-	}
-	if maxSrc > *maxDst {
-		*maxDst = maxSrc
-	}
 }

@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 )
 
@@ -55,7 +56,7 @@ func (l *framesLiaison) Plan(_ *transferv1.PlanRequest, stream transferv1.Export
 
 // roundTrip serves the split frames of units over gRPC with the receive limit the export
 // client uses and returns what the client collected.
-func roundTrip(t *testing.T, units []*transferv1.UnitInventory, budget int) *exporter.PlanResult {
+func roundTrip(t *testing.T, units []*transferv1.UnitInventory, budget int) *cluster.PlanResult {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -74,7 +75,7 @@ func roundTrip(t *testing.T, units []*transferv1.UnitInventory, budget int) *exp
 	t.Cleanup(func() { _ = conn.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	res, err := exporter.RunPlan(ctx, conn, nil)
+	res, err := cluster.RunPlan(ctx, conn, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +84,7 @@ func roundTrip(t *testing.T, units []*transferv1.UnitInventory, budget int) *exp
 
 // assertRoundTrip checks that the client reassembles exactly units, in order, and reports them
 // exactly as it reports the unsplit inventory.
-func assertRoundTrip(t *testing.T, units []*transferv1.UnitInventory, res *exporter.PlanResult) {
+func assertRoundTrip(t *testing.T, units []*transferv1.UnitInventory, res *cluster.PlanResult) {
 	t.Helper()
 	var got []*transferv1.UnitInventory
 	for _, f := range res.Frames {
@@ -97,11 +98,11 @@ func assertRoundTrip(t *testing.T, units []*transferv1.UnitInventory, res *expor
 			t.Fatalf("unit %d (%s) did not survive the round trip", i, units[i].GetSegment().GetUnit().GetSegmentSuffix())
 		}
 	}
-	want := exporter.BuildReport(&exporter.ClusterInfo{}, &exporter.PlanResult{
+	want := exporter.BuildReport(&cluster.Info{}, &cluster.PlanResult{
 		Frames:        []*transferv1.UnitFrame{{NodeId: roundTripNode, Stage: "warm", Units: units}},
 		AnsweredNodes: []string{roundTripNode},
 	})
-	if rep := exporter.BuildReport(&exporter.ClusterInfo{}, res); !reflect.DeepEqual(rep, want) {
+	if rep := exporter.BuildReport(&cluster.Info{}, res); !reflect.DeepEqual(rep, want) {
 		t.Fatalf("the reassembled report differs from the unsplit one:\n got %+v\nwant %+v", rep, want)
 	}
 }

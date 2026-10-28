@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
 const (
@@ -2117,115 +2118,10 @@ func rateInit(target string, bytesPerSecond uint64) *transferv1.ExportRequest {
 	return req
 }
 
-func assertRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
+func assertRelayRate(t *testing.T, r *ratelimit.Relay, wantLimit rate.Limit) {
 	t.Helper()
-	r.mu.Lock()
-	limit := r.limiter.Limit()
-	r.mu.Unlock()
-	if limit != wantLimit {
+	if limit := r.Limit(); limit != wantLimit {
 		t.Fatalf("got limit %v, want limit %v", limit, wantLimit)
-	}
-}
-
-func TestRelayLimiter_LastWinsAndIdleIsUnlimited(t *testing.T) {
-	r := newRelayLimiter()
-	assertRelayRate(t, r, rate.Inf)
-
-	releaseA := r.open(100)
-	assertRelayRate(t, r, 100)
-	if r.pieceSize() != 100 {
-		t.Fatalf("a rate below one chunk per second relays pieces of one second's worth, got %d", r.pieceSize())
-	}
-	releaseShared := r.open(100)
-	if r.pieceSize() != 50 {
-		t.Fatalf("two relays share one second's worth, got %d", r.pieceSize())
-	}
-	releaseShared()
-	releaseB := r.open(4 << 20)
-	assertRelayRate(t, r, 4<<20)
-	releaseC := r.open(0)
-	assertRelayRate(t, r, rate.Inf) // 0 overrides an earlier limit
-	releaseC()
-	assertRelayRate(t, r, rate.Inf) // closing a stream does not restore an older value
-	releaseD := r.open(1 << 40)
-	assertRelayRate(t, r, 1<<40)
-	releaseB()
-	releaseD()
-	assertRelayRate(t, r, 1<<40) // A is still active
-	releaseA()
-	assertRelayRate(t, r, rate.Inf)
-	if r.pieceSize() != relayBurst {
-		t.Fatalf("an idle relay goes back to whole chunks, got %d", r.pieceSize())
-	}
-}
-
-func TestRelayLimiter_TakeLargerThanBurstWaits(t *testing.T) {
-	r := newRelayLimiter()
-	defer r.open(2 << 20)()
-	start := time.Now()
-	// The bucket starts full at one 1 MiB burst, so the other 2 MiB wait about one second.
-	if err := r.wait(context.Background(), 3<<20); err != nil {
-		t.Fatalf("a take larger than the burst must wait, not fail: %v", err)
-	}
-	if elapsed := time.Since(start); elapsed < 750*time.Millisecond || elapsed > 5*time.Second {
-		t.Fatalf("waited %v, want about 1s", elapsed)
-	}
-}
-
-// A relay opening with a lower rate shrinks the burst under a wait that sized its step for the
-// old one: the wait takes smaller steps instead of failing.
-func TestRelayLimiter_LowerRateDuringWaitTakesSmallerSteps(t *testing.T) {
-	r := newRelayLimiter()
-	defer r.open(8 << 20)()
-	done := make(chan struct{})
-	//panicdiag:allow-rawgo the test toggles the shared rate while waits run
-	go func() {
-		defer close(done)
-		for i := 0; i < 200; i++ {
-			// The last relay opened sets the rate: a low one shrinks the burst for a moment,
-			// the high one restores it.
-			r.open(64 << 10)()
-			r.open(8 << 20)()
-			time.Sleep(time.Millisecond)
-		}
-	}()
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	for waits := 0; ; waits++ {
-		if err := r.wait(ctx, 256<<10); err != nil {
-			<-done
-			t.Fatalf("wait %d failed while the rate changed: %v", waits, err)
-		}
-		select {
-		case <-done:
-			return
-		default:
-		}
-	}
-}
-
-func TestRelayLimiter_UnlimitedDoesNotWait(t *testing.T) {
-	r := newRelayLimiter()
-	start := time.Now()
-	if err := r.wait(context.Background(), 1<<30); err != nil {
-		t.Fatal(err)
-	}
-	defer r.open(0)()
-	if err := r.wait(context.Background(), 1<<30); err != nil {
-		t.Fatal(err)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("an unlimited relay must not wait, took %v", elapsed)
-	}
-}
-
-func TestRelayLimiter_CanceledWaitReturnsCanceled(t *testing.T) {
-	r := newRelayLimiter()
-	defer r.open(1)()
-	ctx, cancel := context.WithCancel(context.Background())
-	time.AfterFunc(50*time.Millisecond, cancel)
-	if err := r.wait(ctx, 2<<20); status.Code(err) != codes.Canceled {
-		t.Fatalf("got %v, want Canceled", err)
 	}
 }
 
@@ -2362,13 +2258,11 @@ func TestExportRelay_CanceledClientWhileThrottledEndsRelay(t *testing.T) {
 }
 
 // waitRelayRate waits for the relay handler to return and the limiter to settle.
-func waitRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
+func waitRelayRate(t *testing.T, r *ratelimit.Relay, wantLimit rate.Limit) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		r.mu.Lock()
-		limit := r.limiter.Limit()
-		r.mu.Unlock()
+		limit := r.Limit()
 		if limit == wantLimit {
 			return
 		}
@@ -2377,4 +2271,271 @@ func waitRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// gatedChunkNode answers init with ready and, once gate is closed, one chunk per size whose
+// byte i is byte(i).
+type gatedChunkNode struct {
+	transferv1.UnimplementedExportServiceServer
+	gate   <-chan struct{}
+	exited chan struct{}
+	sizes  []int
+	rows   uint64
+}
+
+func (g *gatedChunkNode) Export(stream transferv1.ExportService_ExportServer) error {
+	defer close(g.exited)
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(readyFrame()); err != nil {
+		return err
+	}
+	select {
+	case <-g.gate:
+	case <-stream.Context().Done():
+		return stream.Context().Err()
+	}
+	for _, size := range g.sizes {
+		content := make([]byte, size)
+		for i := range content {
+			content[i] = byte(i)
+		}
+		if err := stream.Send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: content, Rows: g.rows}}}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// relayedChunks is what one client received: every chunk frame and how the stream ended.
+type relayedChunks struct {
+	err    error
+	chunks []*transferv1.DataChunk
+}
+
+// openRelays starts one relay per node at bytesPerSecond and returns their streams once each
+// has relayed ready, so every relay is open on the liaison.
+func openRelays(t *testing.T, client transferv1.ExportServiceClient, bytesPerSecond uint64,
+	nodes ...string,
+) []transferv1.ExportService_ExportClient {
+	t.Helper()
+	streams := make([]transferv1.ExportService_ExportClient, 0, len(nodes))
+	for _, node := range nodes {
+		stream, err := client.Export(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = stream.Send(rateInit(node, bytesPerSecond)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = stream.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		_ = stream.CloseSend()
+		streams = append(streams, stream)
+	}
+	return streams
+}
+
+// receiveAll drains every stream concurrently until it ends.
+func receiveAll(streams []transferv1.ExportService_ExportClient) []*relayedChunks {
+	out := make([]*relayedChunks, len(streams))
+	done := make(chan struct{}, len(streams))
+	for i, stream := range streams {
+		got := &relayedChunks{}
+		out[i] = got
+		//panicdiag:allow-rawgo the test reads every relay at once so that they share the rate
+		go func() {
+			defer func() { done <- struct{}{} }()
+			for {
+				frame, err := stream.Recv()
+				if errors.Is(err, io.EOF) {
+					return
+				}
+				if err != nil {
+					got.err = err
+					return
+				}
+				if chunk := frame.GetChunk(); chunk != nil {
+					got.chunks = append(got.chunks, chunk)
+				}
+			}
+		}()
+	}
+	for range streams {
+		<-done
+	}
+	return out
+}
+
+// assertChunkBytes checks that the chunks rebuild size bytes where byte i is byte(i), each
+// chunk carrying rows.
+func assertChunkBytes(t *testing.T, got *relayedChunks, size int, rows uint64) {
+	t.Helper()
+	if got.err != nil {
+		t.Fatal(got.err)
+	}
+	var content []byte
+	for _, c := range got.chunks {
+		if c.GetRows() != rows {
+			t.Fatalf("a piece carries %d rows, want the chunk's %d", c.GetRows(), rows)
+		}
+		content = append(content, c.GetContent()...)
+	}
+	if len(content) != size {
+		t.Fatalf("got %d bytes, want %d", len(content), size)
+	}
+	for i, b := range content {
+		if b != byte(i) {
+			t.Fatalf("byte %d is %d: the pieces must keep the chunk's bytes in order", i, b)
+		}
+	}
+}
+
+// Two relays at one rate share it: each relays pieces of half the burst, together they take
+// the time the shared rate needs, both streams arrive whole and in order, and once both end
+// the rate is unlimited again with the full burst.
+func TestExportRelay_TwoRelaysShareOneRate(t *testing.T) {
+	const bytesPerSecond, size = 128 << 10, 160 << 10
+	gate := make(chan struct{})
+	nodeA := &gatedChunkNode{gate: gate, exited: make(chan struct{}), sizes: []int{size}, rows: 3}
+	nodeB := &gatedChunkNode{gate: gate, exited: make(chan struct{}), sizes: []int{size}, rows: 5}
+	svc, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: nodeA, testNodeB: nodeB}, fanOutExtras{})
+	streams := openRelays(t, client, bytesPerSecond, testNodeA, testNodeB)
+	waitRelayRate(t, svc.relayRate, bytesPerSecond)
+	if piece := svc.relayRate.PieceSize(); piece != bytesPerSecond/2 {
+		t.Fatalf("two relays get pieces of %d bytes, want half the burst %d", piece, bytesPerSecond/2)
+	}
+	start := time.Now()
+	close(gate)
+	got := receiveAll(streams)
+	elapsed := time.Since(start)
+
+	assertChunkBytes(t, got[0], size, 3)
+	assertChunkBytes(t, got[1], size, 5)
+	for i, g := range got {
+		for _, c := range g.chunks {
+			if len(c.GetContent()) > bytesPerSecond/2 {
+				t.Fatalf("relay %d sent a piece of %d bytes, want at most half the burst %d", i, len(c.GetContent()), bytesPerSecond/2)
+			}
+		}
+		if len(g.chunks) != 3 {
+			t.Fatalf("relay %d sent %d pieces, want 3 (64 KiB, 64 KiB, 32 KiB)", i, len(g.chunks))
+		}
+	}
+	// 320 KiB at a shared 128 KiB/s from a full 128 KiB bucket: about 1.5s, not 0.25s per relay.
+	if want := 1500 * time.Millisecond; elapsed < want*85/100 || elapsed > want+5*time.Second {
+		t.Fatalf("both relays finished in %v, want about %v", elapsed, want)
+	}
+
+	waitClosed(t, nodeA.exited, "node a's handler must end")
+	waitClosed(t, nodeB.exited, "node b's handler must end")
+	waitRelayRate(t, svc.relayRate, rate.Inf)
+	if piece := svc.relayRate.PieceSize(); piece != ratelimit.MaxBurst {
+		t.Fatalf("an idle relay goes back to whole chunks, got pieces of %d", piece)
+	}
+	if burst := svc.relayRate.Burst(); burst != ratelimit.MaxBurst {
+		t.Fatalf("an idle relay goes back to a burst of %d, got %d", ratelimit.MaxBurst, burst)
+	}
+}
+
+// Unlimited relays forward every chunk as it is, a full 1 MiB chunk included, whether one
+// relay is active or two.
+func TestExportRelay_UnlimitedRelaysNeverSplitChunks(t *testing.T) {
+	sizes := []int{1 << 20, 16}
+	for name, nodes := range map[string][]string{"one relay": {testNodeA}, "two relays": {testNodeA, testNodeB}} {
+		t.Run(name, func(t *testing.T) {
+			gate := make(chan struct{})
+			servers := map[string]transferv1.ExportServiceServer{}
+			var exited []chan struct{}
+			for _, node := range nodes {
+				n := &gatedChunkNode{gate: gate, exited: make(chan struct{}), sizes: sizes, rows: 1}
+				servers[node] = n
+				exited = append(exited, n.exited)
+			}
+			svc, client := newExportRelayService(t, servers, fanOutExtras{})
+			streams := openRelays(t, client, 0, nodes...)
+			close(gate)
+			for i, g := range receiveAll(streams) {
+				if g.err != nil {
+					t.Fatal(g.err)
+				}
+				var got []int
+				for _, c := range g.chunks {
+					got = append(got, len(c.GetContent()))
+				}
+				if len(got) != len(sizes) || got[0] != sizes[0] || got[1] != sizes[1] {
+					t.Fatalf("relay %d sent chunks of %v bytes, want them unsplit: %v", i, got, sizes)
+				}
+			}
+			for _, ch := range exited {
+				waitClosed(t, ch, "the node's handler must end")
+			}
+			waitRelayRate(t, svc.relayRate, rate.Inf)
+		})
+	}
+}
+
+// A relay opening with a lower rate while another relay is in the middle of a chunk shrinks
+// that relay's next pieces right away: it keeps receiving a frame about every second instead
+// of waiting until the piece sized for the old rate has passed at the new one.
+func TestExportRelay_LowerRateMidChunkKeepsDeliveringPieces(t *testing.T) {
+	const fast, slow = 64 << 10, 1 << 10
+	gate := make(chan struct{})
+	close(gate)
+	nodeA := &gatedChunkNode{gate: gate, exited: make(chan struct{}), sizes: []int{1 << 20}, rows: 1}
+	nodeB := &gatedChunkNode{gate: make(chan struct{}), exited: make(chan struct{}), sizes: []int{16}, rows: 1}
+	svc, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: nodeA, testNodeB: nodeB}, fanOutExtras{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	open := func(node string, bytesPerSecond uint64) transferv1.ExportService_ExportClient {
+		stream, err := client.Export(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = stream.Send(rateInit(node, bytesPerSecond)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = stream.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		return stream
+	}
+	streamA := open(testNodeA, fast)
+	// The full bucket passes the first fast piece at once.
+	frame, err := streamA.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(frame.GetChunk().GetContent()); got != fast {
+		t.Fatalf("the first piece holds %d bytes, want %d", got, fast)
+	}
+	open(testNodeB, slow)
+	waitRelayRate(t, svc.relayRate, slow)
+	// At the slow rate a fast piece would take a minute. The piece already reserved at the fast
+	// rate passes; every piece after it is a share of the slow burst and arrives within about
+	// a second.
+	small := 0
+	for i := 0; small < 2; i++ {
+		if i == 4 {
+			t.Fatalf("got no two pieces of the slow burst within %d pieces", i)
+		}
+		start := time.Now()
+		if frame, err = streamA.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		if elapsed := time.Since(start); elapsed > 5*time.Second {
+			t.Fatalf("piece %d after the rate dropped took %v, want about a second", i, elapsed)
+		}
+		switch got := len(frame.GetChunk().GetContent()); {
+		case got <= slow/2:
+			small++
+		case small > 0 || got > fast:
+			t.Fatalf("piece %d after the rate dropped holds %d bytes, want at most the shared slow burst %d", i, got, slow/2)
+		}
+	}
+	cancel()
+	waitClosed(t, nodeA.exited, "node a's handler must end")
+	waitClosed(t, nodeB.exited, "node b's handler must end")
 }

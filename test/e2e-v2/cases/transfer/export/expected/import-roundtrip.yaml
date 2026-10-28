@@ -1,0 +1,96 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/import-roundtrip.sh: the destination re-exported into artifact B holds exactly
+# the logical rows of artifact A over A's groups (no diff; firstDiffs lists the first ones
+# otherwise), every catalog has rows and B has as many as A, and so do the stages the source spreads
+# its data over (sw_records and sw_property on hot, the migrated trace and minute metrics on warm),
+# which shows the import routed every unit to its stage. _top_n_result rows are part of the
+# measure comparison. The same queries on both clusters then answer the same rows: a measure and a
+# stream by entity, the stream by an indexed non-entity tag, every trace of one unit ordered by
+# its timestamp index and one trace by id. The index-mode measure (which the source keeps
+# upserting) and the _top_n_result points of one unit (whose rows checker compare already
+# matched against A; a plain source query merges unmerged versions differently) only have to
+# answer rows on the destination. srcRows is printed as observed, dstRows must equal it for
+# compared queries.
+exportExitCode: 0
+diffs: 0
+catalogs:
+{{- contains .catalogs }}
+- catalog: measure
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- catalog: property
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- catalog: stream
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- catalog: trace
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+{{- end }}
+stageCounts:
+{{- contains .stageCounts }}
+- key: stream/sw_records/hot
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- key: property/sw_property/hot
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- key: measure/sw_metricsMinute/warm
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+- key: trace/sw_trace/warm
+  rowsA: {{ gt .rowsA 0 }}
+  rowsB: {{ .rowsA }}
+{{- end }}
+firstDiffs: []
+compareExitCode: 0
+queries:
+  measureByEntity:
+    resource: {{ notEmpty .queries.measureByEntity.resource }}
+    srcRows: {{ gt .queries.measureByEntity.srcRows 0 }}
+    dstRows: {{ .queries.measureByEntity.srcRows }}
+    equal: true
+  measureIndexMode:
+    resource: {{ notEmpty .queries.measureIndexMode.resource }}
+    srcRows: {{ ge .queries.measureIndexMode.srcRows 0 }}
+    dstRows: {{ gt .queries.measureIndexMode.dstRows 0 }}
+  streamByEntity:
+    resource: {{ notEmpty .queries.streamByEntity.resource }}
+    srcRows: {{ gt .queries.streamByEntity.srcRows 0 }}
+    dstRows: {{ .queries.streamByEntity.srcRows }}
+    equal: true
+  streamByIndexedTag:
+    resource: {{ notEmpty .queries.streamByIndexedTag.resource }}
+    srcRows: {{ gt .queries.streamByIndexedTag.srcRows 0 }}
+    dstRows: {{ .queries.streamByIndexedTag.srcRows }}
+    equal: true
+  traceOrdered:
+    resource: {{ notEmpty .queries.traceOrdered.resource }}
+    srcRows: {{ gt .queries.traceOrdered.srcRows 0 }}
+    dstRows: {{ .queries.traceOrdered.srcRows }}
+    equal: true
+  traceByID:
+    resource: {{ notEmpty .queries.traceByID.resource }}
+    srcRows: {{ gt .queries.traceByID.srcRows 0 }}
+    dstRows: {{ .queries.traceByID.srcRows }}
+    equal: true
+  topNResult:
+    resource: {{ notEmpty .queries.topNResult.resource }}
+    srcRows: {{ ge .queries.topNResult.srcRows 0 }}
+    dstRows: {{ gt .queries.topNResult.dstRows 0 }}
+queriesExitCode: 0

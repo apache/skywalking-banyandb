@@ -35,6 +35,8 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
 const (
@@ -122,7 +124,7 @@ func ListSessions(ctx context.Context, conn *grpc.ClientConn) ([]*transferv1.Ses
 func sessions(ctx context.Context, conn *grpc.ClientConn, req *transferv1.SessionsRequest) ([]*transferv1.SessionsResponse, error) {
 	stream, err := transferv1.NewExportServiceClient(conn).Sessions(ctx, req)
 	if err != nil {
-		return nil, unsupported(err)
+		return nil, cluster.Unsupported(err)
 	}
 	var out []*transferv1.SessionsResponse
 	for {
@@ -131,7 +133,7 @@ func sessions(ctx context.Context, conn *grpc.ClientConn, req *transferv1.Sessio
 			return out, nil
 		}
 		if recvErr != nil {
-			return nil, unsupported(recvErr)
+			return nil, cluster.Unsupported(recvErr)
 		}
 		out = append(out, frame)
 	}
@@ -191,7 +193,7 @@ func ClassifySessions(frames []*transferv1.SessionsResponse) Classification {
 // The liaison rolls a failed create back itself, so a failure leaves no session behind.
 // Transient failures are retried with jitter; a failure after the session id was announced
 // exits 3 because snapshots may have been taken in between.
-func CreateSession(ctx context.Context, conn *grpc.ClientConn, selectors []*transferv1.Selector, opts SessionOptions) (*Session, *PlanResult, error) {
+func CreateSession(ctx context.Context, conn *grpc.ClientConn, selectors []*transferv1.Selector, opts SessionOptions) (*Session, *cluster.PlanResult, error) {
 	req := &transferv1.PlanRequest{
 		Selectors: selectors,
 		Session:   &transferv1.PlanRequest_Create{Create: &transferv1.CreateSession{Preempt: opts.Preempt}},
@@ -236,27 +238,27 @@ retry:
 		}
 	}
 	code := createExitCode(len(announced) > 0, last)
-	if code == ExitRuntime && len(announced) > 0 {
+	if code == exitcode.ExitRuntime && len(announced) > 0 {
 		// The liaison rolls back a create that fails on its side, but one the client gave up
 		// on after the id was announced may stand: name how to release it.
 		hints := make([]string, len(announced))
 		for i, id := range announced {
 			hints[i] = "bydbctl data release-session --id " + id
 		}
-		return nil, nil, Exit(code, "create export session: %w; a session that was announced may still be held, release it with: %s",
+		return nil, nil, exitcode.Exit(code, "create export session: %w; a session that was announced may still be held, release it with: %s",
 			errors.Join(errs...), strings.Join(hints, "; "))
 	}
-	return nil, nil, Exit(code, "create export session: %w", errors.Join(errs...))
+	return nil, nil, exitcode.Exit(code, "create export session: %w", errors.Join(errs...))
 }
 
-// createExitCode follows ExitCodeFor while no attempt got past the first frame, and is
-// ExitRuntime afterwards; a data node without data export is a preflight refusal either
+// createExitCode follows exitcode.For while no attempt got past the first frame, and is
+// exitcode.ExitRuntime afterwards; a data node without data export is a preflight refusal either
 // way, since the liaison rolls the half-created session back.
 func createExitCode(started bool, last error) int {
 	if started && status.Code(last) != codes.Unimplemented {
-		return ExitRuntime
+		return exitcode.ExitRuntime
 	}
-	return ExitCodeFor(last)
+	return exitcode.For(last)
 }
 
 // refusedByOccupant lists the sessions once so the refusal names the occupant(s) with
@@ -282,15 +284,15 @@ func refusedByOccupant(ctx context.Context, conn *grpc.ClientConn, errs []error,
 		for i, id := range own {
 			hints[i] = "bydbctl data release-session --id " + id
 		}
-		return nil, Exit(ExitRuntime, "create export session: %w; an earlier attempt announced a session that may still be held, release it with: %s",
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "create export session: %w; an earlier attempt announced a session that may still be held, release it with: %s",
 			errors.Join(errs...), strings.Join(hints, "; "))
 	}
 	if err != nil {
 		errs = append(errs, err)
-		return nil, Exit(ExitPreflight, "another export session is held; give --preempt to take it over: %w", errors.Join(errs...))
+		return nil, exitcode.Exit(exitcode.ExitPreflight, "another export session is held; give --preempt to take it over: %w", errors.Join(errs...))
 	}
 	c := ClassifySessions(frames)
-	return &c, Exit(ExitPreflight, "another export session is held; give --preempt to take it over "+
+	return &c, exitcode.Exit(exitcode.ExitPreflight, "another export session is held; give --preempt to take it over "+
 		"(check its last heartbeat before you do):\n%s%w", c, errors.Join(errs...))
 }
 
@@ -301,7 +303,7 @@ func declinedTakeover(occupants *Classification) error {
 	for _, o := range occupants.Occupants {
 		hints = append(hints, "bydbctl data release-session --id "+o.Lease.GetSessionId())
 	}
-	return Exit(ExitPreflight, "the export session(s) above are left as they are; give --preempt to take them over, or release them with: %s",
+	return exitcode.Exit(exitcode.ExitPreflight, "the export session(s) above are left as they are; give --preempt to take them over, or release them with: %s",
 		strings.Join(hints, "; "))
 }
 
@@ -316,26 +318,26 @@ func retryableCreate(err error) bool {
 
 // createOnce runs one create attempt. The returned Session is non-nil as soon as the first
 // frame announced the id, even on failure, so the caller knows snapshots may have existed.
-func createOnce(ctx context.Context, conn *grpc.ClientConn, req *transferv1.PlanRequest, onCreated func(string)) (*Session, *PlanResult, error) {
+func createOnce(ctx context.Context, conn *grpc.ClientConn, req *transferv1.PlanRequest, onCreated func(string)) (*Session, *cluster.PlanResult, error) {
 	planCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stream, err := transferv1.NewExportServiceClient(conn).Plan(planCtx, req)
 	if err != nil {
-		return nil, nil, unsupported(err)
+		return nil, nil, cluster.Unsupported(err)
 	}
 	first, err := stream.Recv()
 	if err != nil {
-		return nil, nil, unsupported(err)
+		return nil, nil, cluster.Unsupported(err)
 	}
 	created := first.GetCreated()
 	if created.GetSessionId() == "" {
-		return nil, nil, Exit(ExitRuntime, "the first Plan frame of a create must announce the session id, got %T", first.GetFrame())
+		return nil, nil, exitcode.Exit(exitcode.ExitRuntime, "the first Plan frame of a create must announce the session id, got %T", first.GetFrame())
 	}
 	sess := &Session{ID: created.GetSessionId()}
 	if onCreated != nil {
 		onCreated(sess.ID)
 	}
-	result, err := collectPlanFrames(stream)
+	result, err := cluster.CollectPlanFrames(stream)
 	if err != nil {
 		return sess, nil, fmt.Errorf("session %s: %w", sess.ID, err)
 	}
@@ -439,7 +441,7 @@ func ReleaseSession(ctx context.Context, conn *grpc.ClientConn, sessionID string
 	req := &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_RELEASE, SessionId: sessionID}
 	stream, err := transferv1.NewExportServiceClient(conn).Sessions(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("release session %s: %w", sessionID, unsupported(err))
+		return nil, fmt.Errorf("release session %s: %w", sessionID, cluster.Unsupported(err))
 	}
 	result := &ReleaseResult{}
 	for {
@@ -448,7 +450,7 @@ func ReleaseSession(ctx context.Context, conn *grpc.ClientConn, sessionID string
 			return result, nil
 		}
 		if recvErr != nil {
-			return nil, fmt.Errorf("release session %s: %w", sessionID, unsupported(recvErr))
+			return nil, fmt.Errorf("release session %s: %w", sessionID, cluster.Unsupported(recvErr))
 		}
 		switch outcome := frame.GetOutcome().(type) {
 		case *transferv1.SessionsResponse_Done:

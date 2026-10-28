@@ -50,33 +50,51 @@ const (
 	kindSelector
 	kindFormat
 	kindCompress
+	kindConflictRules
+	kindConflictPolicy
+	kindCount
 )
 
 var (
 	parseKinds = map[string]kind{
 		"size": kindSize, "rate-bytes": kindRateBytes, "rate-rows": kindRateRows, "parallelism": kindParallelism,
 		"selector": kindSelector, "format": kindFormat, "compress": kindCompress,
+		"conflict-rules": kindConflictRules, "conflict-policy": kindConflictPolicy, "count": kindCount,
 	}
 	kindTypes = map[kind]reflect.Type{
-		kindString:      reflect.TypeOf(""),
-		kindBool:        reflect.TypeOf(false),
-		kindStrings:     reflect.TypeOf([]string(nil)),
-		kindDuration:    reflect.TypeOf(time.Duration(0)),
-		kindSize:        reflect.TypeOf(uint64(0)),
-		kindRateBytes:   reflect.TypeOf(float64(0)),
-		kindRateRows:    reflect.TypeOf(float64(0)),
-		kindParallelism: reflect.TypeOf(0),
-		kindSelector:    reflect.TypeOf([]*transferv1.Selector(nil)),
-		kindFormat:      reflect.TypeOf(transferv1.Format(0)),
-		kindCompress:    reflect.TypeOf(transferv1.Compress(0)),
+		kindString:         reflect.TypeOf(""),
+		kindBool:           reflect.TypeOf(false),
+		kindStrings:        reflect.TypeOf([]string(nil)),
+		kindDuration:       reflect.TypeOf(time.Duration(0)),
+		kindSize:           reflect.TypeOf(uint64(0)),
+		kindRateBytes:      reflect.TypeOf(float64(0)),
+		kindRateRows:       reflect.TypeOf(float64(0)),
+		kindParallelism:    reflect.TypeOf(0),
+		kindSelector:       reflect.TypeOf([]*transferv1.Selector(nil)),
+		kindFormat:         reflect.TypeOf(transferv1.Format(0)),
+		kindCompress:       reflect.TypeOf(transferv1.Compress(0)),
+		kindConflictRules:  reflect.TypeOf([]ConflictRule(nil)),
+		kindConflictPolicy: reflect.TypeOf(""),
+		kindCount:          reflect.TypeOf(0),
 	}
 )
+
+// planOnly is the flag tag of a setting that only plan.yaml carries.
+const planOnly = "-"
 
 // field is one tagged option.
 type field struct {
 	flag, short, plan, env, def, usage string
 	index                              int
 	kind                               kind
+}
+
+// key names the setting in Sources: its flag, or its plan path for a plan-only setting.
+func (f field) key() string {
+	if f.flag == planOnly {
+		return f.plan
+	}
+	return f.flag
 }
 
 // fieldsOf reads the tags of the struct opts points to (or is). A malformed declaration is a
@@ -123,8 +141,14 @@ func fieldsOf(opts any) (reflect.Value, []field) {
 		if sf.Type != kindTypes[f.kind] {
 			panic(fmt.Sprintf("config: %s.%s is a %s, its grammar needs a %s", t.Name(), sf.Name, sf.Type, kindTypes[f.kind]))
 		}
-		if f.kind == kindSelector && (f.env != "" || f.def != "") {
-			panic(fmt.Sprintf("config: %s.%s: selectors take no env or default tag", t.Name(), sf.Name))
+		if (f.kind == kindSelector || f.kind == kindConflictRules) && (f.env != "" || f.def != "") {
+			panic(fmt.Sprintf("config: %s.%s: lists of objects take no env or default tag", t.Name(), sf.Name))
+		}
+		if f.kind == kindConflictRules && f.flag != planOnly {
+			panic(fmt.Sprintf("config: %s.%s: conflict rules have no flag grammar, declare them flag:\"-\"", t.Name(), sf.Name))
+		}
+		if f.flag == planOnly && (f.plan == "" || f.short != "" || f.env != "") {
+			panic(fmt.Sprintf("config: %s.%s: a plan-only setting needs a plan tag and takes no short or env tag", t.Name(), sf.Name))
 		}
 		if f.def == "" && f.kind == kindBool {
 			f.def = "false"
@@ -153,6 +177,9 @@ func Bind(fs *pflag.FlagSet, opts ...any) {
 func bindFields(fs *pflag.FlagSet, opts any) {
 	_, fields := fieldsOf(opts)
 	for _, f := range fields {
+		if f.flag == planOnly {
+			continue
+		}
 		usage := f.usage
 		var also []string
 		if f.plan != "" {
@@ -183,8 +210,9 @@ func bindFields(fs *pflag.FlagSet, opts any) {
 	}
 }
 
-// Sources records where each resolved setting came from, by flag name: "--<flag>",
-// "plan.yaml <path>" or "BYDBCTL_<NAME>"; a setting left at its default is absent.
+// Sources records where each resolved setting came from, by flag name (by plan path for a
+// plan-only setting): "--<flag>", "plan.yaml <path>" or "BYDBCTL_<NAME>"; a setting left at
+// its default is absent.
 type Sources map[string]string
 
 // FromFlag reports whether the setting was given as an explicit flag.
@@ -193,10 +221,15 @@ func (s Sources) FromFlag(flag string) bool { return s[flag] == "--"+flag }
 // FromPlan reports whether the setting came from plan.yaml.
 func (s Sources) FromPlan(flag string) bool { return strings.HasPrefix(s[flag], "plan.yaml ") }
 
-// Label names the source of a setting for messages; "--<flag>" for a default.
+// Label names the source of a setting for messages; "--<flag>" for a default, or
+// "plan.yaml <path>" for a plan-only setting left at its default.
 func (s Sources) Label(flag string) string {
 	if l := s[flag]; l != "" {
 		return l
+	}
+	// Flag names never contain a dot; plan paths always do.
+	if strings.Contains(flag, ".") {
+		return "plan.yaml " + flag
 	}
 	return "--" + flag
 }
@@ -225,10 +258,10 @@ func Resolve(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), opts ...a
 			dst := v.Field(f.index)
 			source, resolveErr := resolveField(fs, plan, lookupEnv, f, dst)
 			if source != "" {
-				sources[f.flag] = source
+				sources[f.key()] = source
 			}
 			if resolveErr != nil {
-				return nil, fmt.Errorf("%s: %w", sources.Label(f.flag), resolveErr)
+				return nil, fmt.Errorf("%s: %w", sources.Label(f.key()), resolveErr)
 			}
 		}
 	}
@@ -238,7 +271,7 @@ func Resolve(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), opts ...a
 // resolveField picks the source of one setting and parses its value into dst. It returns
 // the source label, "" for the default.
 func resolveField(fs *pflag.FlagSet, plan map[string]any, lookupEnv func(string) (string, bool), f field, dst reflect.Value) (string, error) {
-	if fl := fs.Lookup(f.flag); fl != nil && fl.Changed {
+	if fl := fs.Lookup(f.flag); f.flag != planOnly && fl != nil && fl.Changed {
 		source := "--" + f.flag
 		switch f.kind {
 		case kindStrings:
@@ -280,7 +313,7 @@ func resolveField(fs *pflag.FlagSet, plan map[string]any, lookupEnv func(string)
 			return source, setText(dst, f.kind, text)
 		}
 	}
-	if f.kind == kindStrings || f.kind == kindSelector {
+	if f.kind == kindStrings || f.kind == kindSelector || f.kind == kindConflictRules {
 		dst.Set(reflect.Zero(dst.Type()))
 		return "", nil
 	}
@@ -352,14 +385,26 @@ func setText(dst reflect.Value, k kind, text string) error {
 			return err
 		}
 		dst.SetInt(int64(c))
+	case kindConflictPolicy:
+		p, err := ParseConflictPolicy(text)
+		if err != nil {
+			return err
+		}
+		dst.SetString(p)
+	case kindCount:
+		n, err := ParseCount(text)
+		if err != nil {
+			return err
+		}
+		dst.SetInt(int64(n))
 	default:
 		return fmt.Errorf("grammar %d takes no text", k)
 	}
 	return nil
 }
 
-// setPlanValue converts a decoded plan.yaml value. Sizes, rates and the parallelism take a
-// YAML number or a string, booleans a YAML boolean, lists a YAML sequence, and every other
+// setPlanValue converts a decoded plan.yaml value. Sizes, rates, counts and the parallelism
+// take a YAML number or a string, booleans a YAML boolean, lists a YAML sequence, and every other
 // scalar a string.
 func setPlanValue(dst reflect.Value, k kind, raw any) error {
 	switch k {
@@ -399,7 +444,14 @@ func setPlanValue(dst reflect.Value, k kind, raw any) error {
 			return fmt.Errorf("must be a list of {catalog, groups}: %w", err)
 		}
 		return setSelectors(dst, cfgs)
-	case kindSize, kindRateBytes, kindRateRows, kindParallelism, kindDuration:
+	case kindConflictRules:
+		rules, err := decodeConflictRules(raw)
+		if err != nil {
+			return err
+		}
+		dst.Set(reflect.ValueOf(rules))
+		return nil
+	case kindSize, kindRateBytes, kindRateRows, kindParallelism, kindDuration, kindCount:
 		// A bare number is only meaningful for a duration when it is 0, which
 		// time.ParseDuration accepts.
 		switch v := raw.(type) {

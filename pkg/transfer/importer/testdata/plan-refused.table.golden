@@ -1,0 +1,25 @@
+TARGET    liaison-dst:17912 (ROLE_LIAISON) | data nodes 2
+SOURCE    ./artifact  csv  artifactVersion=1  exported at 2026-10-19T08:00:00Z
+DUPLICATES  1 work item(s) were exported from more than one node; each is imported once unless the copies differ
+            measure/sw_metric/hot/20261018/shard-0: import from data-b; skip data-a (same data as data-b)
+
+CATALOG   GROUP      STAGE  UNITS  SOURCES  ROWS  SCHEMA    CHANNEL          TARGET-NODES  STATUS   TIME-RANGE(UTC)
+measure   sw_metric  hot    2      2        194   CONFLICT  row replay       dst-hot1      refused  10-12 ~ 10-18
+measure   sw_metric  warm   1      1        80    CONFLICT  row replay       dst-warm1     refused  10-10 ~ 10-12
+property  sw_prop    -      1      2        10    OK        property/repair  dst-hot1      ok       -
+stream    sw_stream  hot    1      1        2.0K  IGNORE    row replay       -             ok       10-18 ~ 10-18
+TOTAL     5 unit(s), 8 work item(s), 2.3K rows
+          of which refused: 3 unit(s), 5 work item(s), 274 rows
+
+SCHEMA
+  GROUP      RESOURCES  RESULT
+  sw_metric  2          1 conflict, 1 ok
+  sw_prop    2          2 ok
+  sw_stream  2          1 ignore, 1 ok
+
+PROBLEMS
+  - measure/sw_metric/cpm conflicts with the target: policy=error (default); tagFamilies[default].tags[tier].type is TAG_TYPE_STRING in the artifact, TAG_TYPE_INT on the target; to accept it, add the schemaConflictPolicy rule "match: measure/sw_metric/cpm" with policy ignore or overwrite
+  - warning: group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row is written to every one of them
+  - warning: group sw_stream: the target has no stage "cold"; its units go to hot
+
+RESULT    refused, nothing written (exit 2)

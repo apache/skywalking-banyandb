@@ -35,6 +35,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -226,6 +227,76 @@ var _ = ginkgo.Describe("Publish and Broadcast", func() {
 			failedNodes, closeErr := batchPublisher.Close()
 			gomega.Expect(closeErr).ShouldNot(gomega.HaveOccurred())
 			gomega.Expect(failedNodes).Should(gomega.BeEmpty())
+		})
+
+		ginkgo.It("should publish to a healthy node on a topic without a registered handler", func() {
+			address := getAddress()
+			closeServer := setup(address, codes.OK, 0)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeServer()
+			}()
+			p.OnAddOrUpdate(getDataNode("node1", address))
+			gomega.Eventually(func() int {
+				return p.connMgr.ActiveCount()
+			}, flags.EventuallyTimeout).Should(gomega.Equal(1))
+			_, hasHandler := p.handlers[data.TopicTraceWrite]
+			gomega.Expect(hasHandler).Should(gomega.BeFalse())
+
+			bp := p.NewBatchPublisher(15 * time.Second)
+			for i := 0; i < 3; i++ {
+				_, err := bp.Publish(context.Background(), data.TopicTraceWrite,
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &tracev1.InternalWriteRequest{}),
+				)
+				// A typed-nil *common.Error passes HaveOccurred, so compare the interface itself.
+				gomega.Expect(err == nil).Should(gomega.BeTrue())
+			}
+			// The rows must reach the node: a silently dropped batch never opens a stream.
+			gomega.Expect(bp.(*batchPublisher).streams).Should(gomega.HaveKey("node1"))
+			cee, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+			gomega.Expect(cee).Should(gomega.BeEmpty())
+		})
+
+		ginkgo.It("should report a not writable node on a topic without a handler with a non-nil error", func() {
+			address := getAddress()
+			_, closeServer := setupWithStatus(address, modelv1.Status_STATUS_DISK_FULL)
+			p := newPub()
+			defer func() {
+				p.GracefulStop()
+				closeServer()
+			}()
+			p.OnAddOrUpdate(getDataNode("node1", address))
+			gomega.Eventually(func() int {
+				return p.connMgr.ActiveCount()
+			}, flags.EventuallyTimeout).Should(gomega.Equal(1))
+
+			bp := p.NewBatchPublisher(15 * time.Second)
+			// The second publish takes the failed-node path of the batch publisher.
+			for i := 0; i < 2; i++ {
+				_, err := bp.Publish(context.Background(), data.TopicTraceWrite,
+					bus.NewBatchMessageWithNode(bus.MessageID(i), "node1", &tracev1.InternalWriteRequest{}),
+				)
+				gomega.Expect(err).Should(gomega.HaveOccurred())
+				var ce *common.Error
+				gomega.Expect(errors.As(err, &ce)).Should(gomega.BeTrue())
+				gomega.Expect(ce).ShouldNot(gomega.BeNil())
+				gomega.Expect(ce.Status()).Should(gomega.Equal(modelv1.Status_STATUS_DISK_FULL))
+				gomega.Expect(ce.Error()).ShouldNot(gomega.BeEmpty())
+			}
+			_, err := bp.Close()
+			gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
+		})
+
+		ginkgo.It("should report a node without a client as not writable with a non-nil error", func() {
+			p := newPub()
+			defer p.GracefulStop()
+			writable, ce := p.checkWritable(context.Background(), "missing", data.TopicTraceWrite)
+			gomega.Expect(writable).Should(gomega.BeFalse())
+			gomega.Expect(ce).ShouldNot(gomega.BeNil())
+			gomega.Expect(ce.Status()).Should(gomega.Equal(modelv1.Status_STATUS_INTERNAL_ERROR))
+			gomega.Expect(ce.Error()).Should(gomega.ContainSubstring("no client for node missing"))
 		})
 	})
 

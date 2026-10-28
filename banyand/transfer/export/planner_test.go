@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
@@ -430,6 +431,23 @@ func TestPlanInventory_SkipsGroupDirectoriesTheRegistryDoesNotKnow(t *testing.T)
 		&transferv1.Selector{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"sw_log"}})))
 	if len(named) != 0 {
 		t.Fatalf("a selector naming an unregistered group finds nothing, got %+v", named)
+	}
+}
+
+// The groups the server creates for its own bookkeeping are no data to export, even when
+// the registry knows them and they have a directory.
+func TestPlanInventory_SkipsInternalGroups(t *testing.T) {
+	groups := append(defaultGroups(), &commonv1.Group{Metadata: &commonv1.Metadata{Name: common.DeletionTaskGroup}, Catalog: commonv1.Catalog_CATALOG_PROPERTY})
+	fx := newTestPlanner(t, nil, groups, nil)
+	writeFile(t, filepath.Join(fx.backends[commonv1.Catalog_CATALOG_PROPERTY].GetDataPath(), common.DeletionTaskGroup, "shard-0", "x"), []byte("p"))
+	var got []string
+	for _, f := range unitFrames(collect(t, fx.planner, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_PROPERTY}}})) {
+		for _, u := range f.Units {
+			got = append(got, u.GetProperty().GetGroup())
+		}
+	}
+	if !slices.Equal(got, []string{"sw_prop"}) {
+		t.Fatalf("property groups planned = %v, want only sw_prop", got)
 	}
 }
 

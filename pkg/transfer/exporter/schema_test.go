@@ -23,6 +23,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 )
 
 // groupWithStages builds a *commonv1.Group with the given stage names declared in ResourceOpts.
@@ -53,28 +54,6 @@ func planFrame(nodeID, stage, group string) *transferv1.UnitFrame {
 	return &transferv1.UnitFrame{NodeId: nodeID, Stage: stage, Units: []*transferv1.UnitInventory{segmentUnit(group)}}
 }
 
-func TestUniqueSorted_NilForEmptyInput(t *testing.T) {
-	if got := uniqueSorted(nil); got != nil {
-		t.Fatalf("uniqueSorted(nil) = %v, want nil", got)
-	}
-	if got := uniqueSorted([]string{}); got != nil {
-		t.Fatalf("uniqueSorted([]) = %v, want nil", got)
-	}
-}
-
-func TestUniqueSorted_DedupsAndSorts(t *testing.T) {
-	got := uniqueSorted([]string{"c", "a", "b", "a", "c"})
-	want := []string{"a", "b", "c"}
-	if len(got) != len(want) {
-		t.Fatalf("uniqueSorted = %v, want %v", got, want)
-	}
-	for i, v := range want {
-		if got[i] != v {
-			t.Fatalf("uniqueSorted[%d] = %q, want %q", i, got[i], v)
-		}
-	}
-}
-
 func TestStageWarnings_NoWarningWhenStagesDeclared(t *testing.T) {
 	// Group with no declared stages: StageNames returns ["hot"].
 	gHot := groupWithStages("g-hot")
@@ -84,9 +63,9 @@ func TestStageWarnings_NoWarningWhenStagesDeclared(t *testing.T) {
 	propertyFrame := &transferv1.UnitFrame{NodeId: "node1", Stage: "hot", Units: []*transferv1.UnitInventory{
 		{Kind: &transferv1.UnitInventory_Property{Property: &transferv1.PropertyInventory{Group: "g-hot"}}},
 	}}
-	result := &PlanResult{
+	result := &cluster.PlanResult{
 		Frames: []*transferv1.UnitFrame{
-			// RunPlan normalizes the default tier to "hot", which is in StageNames of both groups.
+			// cluster.RunPlan normalizes the default tier to "hot", which is in StageNames of both groups.
 			planFrame("node1", "hot", "g-hot"),
 			planFrame("node1", "hot", "g-warm"),
 			// "warm" is declared for g-warm.
@@ -104,7 +83,7 @@ func TestStageWarnings_NoWarningWhenStagesDeclared(t *testing.T) {
 func TestStageWarnings_WarnWhenStageNotDeclaredForGroup(t *testing.T) {
 	// Group declares no stages beyond "hot" (the default).
 	g := groupWithStages("g1")
-	result := &PlanResult{
+	result := &cluster.PlanResult{
 		Frames: []*transferv1.UnitFrame{
 			planFrame("node1", "warm", "g1"),
 		},
@@ -121,7 +100,7 @@ func TestStageWarnings_WarnWhenStageNotDeclaredForGroup(t *testing.T) {
 
 func TestStageWarnings_WarnWhenGroupAbsentFromSchema(t *testing.T) {
 	g := groupWithStages("g1")
-	result := &PlanResult{
+	result := &cluster.PlanResult{
 		Frames: []*transferv1.UnitFrame{
 			planFrame("node1", "hot", "unknown-group"),
 		},
@@ -139,7 +118,7 @@ func TestStageWarnings_IdenticalWarningsAreCollapsed(t *testing.T) {
 	g := groupWithStages("g1")
 	// Two units in the same frame with the same group produce identical warning text.
 	frame := &transferv1.UnitFrame{NodeId: "node1", Stage: "warm", Units: []*transferv1.UnitInventory{segmentUnit("g1"), segmentUnit("g1")}}
-	result := &PlanResult{Frames: []*transferv1.UnitFrame{frame}}
+	result := &cluster.PlanResult{Frames: []*transferv1.UnitFrame{frame}}
 	warnings := StageWarnings([]*commonv1.Group{g}, result)
 	if len(warnings) != 1 {
 		t.Fatalf("identical warnings must be collapsed to 1, got %v", warnings)

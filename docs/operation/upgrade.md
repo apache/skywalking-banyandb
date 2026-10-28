@@ -117,6 +117,12 @@ One shape reaches this: an `orderBy` naming a tag that no longer resolves agains
   dry run reports it as unreachable (a coverage gap, exit `2` with `--strict-coverage`) instead of failing, while a real export
   cannot create its session on it and fails, so finish the upgrade before exporting.
 
+### Data import
+
+0.12 adds the liaison `ImportService` (`ImportRows`, `Targets`) used by `bydbctl data import`:
+
+- With RBAC enabled, `ImportService` `ImportRows` and `Targets` require `cluster:admin`.
+
 ## Upgrading to 0.11
 
 This section describes breaking changes and important behavioral changes when upgrading to BanyanDB 0.11.0.

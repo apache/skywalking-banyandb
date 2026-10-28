@@ -32,6 +32,9 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
 func dial(t *testing.T, addr string) *grpc.ClientConn {
@@ -44,12 +47,6 @@ func dial(t *testing.T, addr string) *grpc.ClientConn {
 	return conn
 }
 
-func TestNormalizeStage(t *testing.T) {
-	if NormalizeStage("") != "hot" || NormalizeStage("warm") != "warm" {
-		t.Fatal("empty stage must normalize to hot")
-	}
-}
-
 func TestRunPlan_CollectsFramesAndDropsUnreachableNodes(t *testing.T) {
 	f := newFakeLiaison()
 	f.planFrames = []*transferv1.PlanResponse{
@@ -60,14 +57,14 @@ func TestRunPlan_CollectsFramesAndDropsUnreachableNodes(t *testing.T) {
 	conn := dial(t, serveLiaison(t, f))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := RunPlan(ctx, conn, []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_MEASURE}})
+	res, err := cluster.RunPlan(ctx, conn, []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_MEASURE}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Frames) != 1 || res.Frames[0].GetNodeId() != "data-a:17912" {
 		t.Fatalf("frames of an unreachable node must be dropped, got %+v", res.Frames)
 	}
-	if res.Frames[0].GetStage() != DefaultStageName {
+	if res.Frames[0].GetStage() != transfer.DefaultStageName {
 		t.Fatalf("stage must be normalized, got %q", res.Frames[0].GetStage())
 	}
 	if !slices.Equal(res.UnreachableNodes, []string{"data-b:17912"}) || !slices.Equal(res.AnsweredNodes, []string{"data-a:17912"}) {
@@ -108,14 +105,14 @@ func TestRunPlan_MergesSegmentPiecesAcrossFrames(t *testing.T) {
 	conn := dial(t, serveLiaison(t, f))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := RunPlan(ctx, conn, nil)
+	res, err := cluster.RunPlan(ctx, conn, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Frames) != 2 || !proto.Equal(res.Frames[0], whole.GetUnits()) || !proto.Equal(res.Frames[1], other.GetUnits()) {
 		t.Fatalf("the pieces must merge into the whole segment, got %+v", res.Frames)
 	}
-	rep := BuildReport(&ClusterInfo{}, res)
+	rep := BuildReport(&cluster.Info{}, res)
 	if len(rep.Rows) != 2 || rep.Rows[0].Segments != 1 || rep.Rows[0].Shards != 3 || len(rep.MultiSource) != 1 {
 		t.Fatalf("a merged segment counts once with no extra sources: %+v %+v", rep.Rows, rep.MultiSource)
 	}
@@ -137,7 +134,7 @@ func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
 		s := &transferv1.ShardStat{ShardId: id, PartsCount: uint32(len(ps)), EstimatedCompressedBytes: 64 * uint64(len(ps)), EstimatedUncompressedBytes: 256 * uint64(len(ps))}
 		for _, p := range ps {
 			s.TotalCount += p.TotalCount
-			mergeRange(&s.MinTimestamp, &s.MaxTimestamp, p.MinTimestamp, p.MaxTimestamp)
+			transfer.MergeRange(&s.MinTimestamp, &s.MaxTimestamp, p.MinTimestamp, p.MaxTimestamp)
 		}
 		s.Parts = ps
 		return s
@@ -185,7 +182,7 @@ func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
 	conn := dial(t, serveLiaison(t, f))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	res, err := RunPlan(ctx, conn, nil)
+	res, err := cluster.RunPlan(ctx, conn, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,8 +190,8 @@ func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
 		!proto.Equal(res.Frames[1], other.GetUnits()) {
 		t.Fatalf("the shard pieces must merge into the whole segment, got %+v", res.Frames)
 	}
-	got := BuildReport(&ClusterInfo{}, res)
-	want := BuildReport(&ClusterInfo{}, &PlanResult{
+	got := BuildReport(&cluster.Info{}, res)
+	want := BuildReport(&cluster.Info{}, &cluster.PlanResult{
 		Frames: []*transferv1.UnitFrame{
 			{NodeId: node, Stage: "warm", Units: []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Segment{Segment: whole}}}},
 			other.GetUnits(),
@@ -206,33 +203,6 @@ func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
 	}
 	if got.Rows[0].Shards != 3 || got.Rows[0].Parts != 10 || len(got.MultiSource) != 1 {
 		t.Fatalf("a split shard counts once and adds no source: %+v %+v", got.Rows, got.MultiSource)
-	}
-}
-
-func TestMergeShardPieces_AddsContinuationsToTheShard(t *testing.T) {
-	merged := mergeShardPieces([]*transferv1.ShardStat{
-		{ShardId: 3, Parts: []*transferv1.PartStat{{Id: 5}}},
-		{
-			ShardId: 1, MinTimestamp: 10, MaxTimestamp: 20, PartsCount: 3, TotalCount: 30, EstimatedCompressedBytes: 7, EstimatedUncompressedBytes: 9,
-			Parts: []*transferv1.PartStat{{Id: 1}},
-		},
-		{ShardId: 3, MinTimestamp: 1, MaxTimestamp: 2, PartsCount: 1, TotalCount: 4, Parts: []*transferv1.PartStat{{Id: 6}}},
-		{ShardId: 1, Parts: []*transferv1.PartStat{{Id: 2}, {Id: 3}}},
-	})
-	want := []*transferv1.ShardStat{
-		{
-			ShardId: 1, MinTimestamp: 10, MaxTimestamp: 20, PartsCount: 3, TotalCount: 30, EstimatedCompressedBytes: 7, EstimatedUncompressedBytes: 9,
-			Parts: []*transferv1.PartStat{{Id: 1}, {Id: 2}, {Id: 3}},
-		},
-		{ShardId: 3, MinTimestamp: 1, MaxTimestamp: 2, PartsCount: 1, TotalCount: 4, Parts: []*transferv1.PartStat{{Id: 5}, {Id: 6}}},
-	}
-	if len(merged) != len(want) {
-		t.Fatalf("want %d shards, got %d", len(want), len(merged))
-	}
-	for i := range want {
-		if !proto.Equal(merged[i], want[i]) {
-			t.Fatalf("shard %d: got %v, want %v", i, merged[i], want[i])
-		}
 	}
 }
 
@@ -263,9 +233,9 @@ func TestRunPlan_RejectsProtocolViolations(t *testing.T) {
 			f.skipSummary = true
 			f.planFrames = tc.frames
 			conn := dial(t, serveLiaison(t, f))
-			_, err := RunPlan(context.Background(), conn, nil)
-			var exitErr *ExitError
-			if !errors.As(err, &exitErr) || exitErr.Code != ExitRuntime || !strings.Contains(err.Error(), tc.want) {
+			_, err := cluster.RunPlan(context.Background(), conn, nil)
+			var exitErr *exitcode.ExitError
+			if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitRuntime || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("want exit 3 mentioning %q, got %v", tc.want, err)
 			}
 		})
@@ -276,11 +246,11 @@ func TestRunPlan_ServerWithoutExportService(t *testing.T) {
 	f := newFakeLiaison()
 	f.noExport = true
 	conn := dial(t, serveLiaison(t, f))
-	_, err := RunPlan(context.Background(), conn, nil)
+	_, err := cluster.RunPlan(context.Background(), conn, nil)
 	if err == nil || !strings.Contains(err.Error(), "does not support data export (needs 0.12+)") {
 		t.Fatalf("an older server must get the upgrade hint, got %v", err)
 	}
-	if code := ExitCodeFor(err); code != ExitPreflight {
+	if code := exitcode.For(err); code != exitcode.ExitPreflight {
 		t.Fatalf("UNIMPLEMENTED is a preflight rejection, got exit %d", code)
 	}
 }
@@ -289,7 +259,7 @@ func TestRunPlan_RejectsUnstampedFrames(t *testing.T) {
 	f := newFakeLiaison()
 	f.planFrames = []*transferv1.PlanResponse{unitFrame("", "", "m", 1, 2, 1)}
 	conn := dial(t, serveLiaison(t, f))
-	if _, err := RunPlan(context.Background(), conn, nil); err == nil || !strings.Contains(err.Error(), "node_id") {
+	if _, err := cluster.RunPlan(context.Background(), conn, nil); err == nil || !strings.Contains(err.Error(), "node_id") {
 		t.Fatalf("a units frame without node_id must be rejected, got %v", err)
 	}
 }
@@ -320,9 +290,9 @@ func TestCollectPlanFrames_StreamEndsWithoutSummaryFrame(t *testing.T) {
 	conn := dial(t, serveLiaison(t, f))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err := RunPlan(ctx, conn, nil)
-	var exitErr *ExitError
-	if !errors.As(err, &exitErr) || exitErr.Code != ExitRuntime || !strings.Contains(err.Error(), "without a summary frame") {
+	_, err := cluster.RunPlan(ctx, conn, nil)
+	var exitErr *exitcode.ExitError
+	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitRuntime || !strings.Contains(err.Error(), "without a summary frame") {
 		t.Fatalf("a stream without the summary frame leaves the coverage unknown and must fail with exit 3, got %v", err)
 	}
 }

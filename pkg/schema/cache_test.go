@@ -20,6 +20,7 @@ package schema
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -393,4 +394,48 @@ func TestDeleteGroup_PurgesChildCaches(t *testing.T) {
 	require.False(t, hasRule, "index rule entry must be purged")
 	require.False(t, hasForward, "forward binding entry must be purged")
 	require.False(t, hasBackward, "backward binding entry must be purged")
+}
+
+func buildBinding(modRevision int64) *databasev1.IndexRuleBinding {
+	return &databasev1.IndexRuleBinding{
+		Metadata: &commonv1.Metadata{Group: "g", Name: "b", ModRevision: modRevision},
+		Subject:  &databasev1.Subject{Name: "s", Catalog: commonv1.Catalog_CATALOG_STREAM},
+		Rules:    []string{"r1"},
+	}
+}
+
+// TestResourceRevision_IndexRuleBinding verifies that a stored binding is reported at its
+// newest revision and that a delete removes it from the record and the forward map alike.
+func TestResourceRevision_IndexRuleBinding(t *testing.T) {
+	sr := newTestSchemaRepo()
+	sr.l = testLogger()
+	_, present := sr.ResourceRevision(schema.KindIndexRuleBinding, "g", "b")
+	assert.False(t, present, "an unknown binding must be absent")
+
+	add := func(rev int64) {
+		require.NoError(t, sr.processEvent(context.Background(), MetadataEvent{
+			Metadata: buildBinding(rev), Typ: EventAddOrUpdate, Kind: EventKindIndexRuleBinding,
+		}))
+	}
+	add(10)
+	rev, present := sr.ResourceRevision(schema.KindIndexRuleBinding, "g", "b")
+	assert.True(t, present)
+	assert.Equal(t, int64(10), rev)
+	assert.False(t, sr.IsAbsent(schema.KindIndexRuleBinding, "g", "b"))
+
+	add(20)
+	add(15)
+	rev, _ = sr.ResourceRevision(schema.KindIndexRuleBinding, "g", "b")
+	assert.Equal(t, int64(20), rev, "an older binding must not replace a newer one")
+
+	require.NoError(t, sr.processEvent(context.Background(), MetadataEvent{
+		Metadata: buildBinding(20), Typ: EventDelete, Kind: EventKindIndexRuleBinding,
+	}))
+	rev, present = sr.ResourceRevision(schema.KindIndexRuleBinding, "g", "b")
+	assert.False(t, present, "a delete must remove the binding")
+	assert.Zero(t, rev)
+	col, _ := sr.bindingForwardMap.Load(getKey(&commonv1.Metadata{Group: "g", Name: "s"}))
+	require.NotNil(t, col)
+	_, bound := col.(*sync.Map).Load(getKey(&commonv1.Metadata{Group: "g", Name: "b"}))
+	assert.False(t, bound, "a delete must drop the binding from the forward map too")
 }

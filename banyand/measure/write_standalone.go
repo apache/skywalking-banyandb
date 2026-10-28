@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -119,8 +120,9 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
+// handle stores the data point of writeEvent and, unless skipTopN, feeds it into Top-N aggregation.
 func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, skipTopN bool,
 ) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
@@ -199,7 +201,9 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	if !skipTopN {
+		w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	}
 	return dst, nil
 }
 
@@ -442,6 +446,25 @@ func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *p
 	return fields
 }
 
+// decodeWriteEvent returns the write request an event carries and whether it skips Top-N
+// aggregation, which only a data import's in-process write does.
+func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) {
+	switch e := event.(type) {
+	case *measurev1.InternalWriteRequest:
+		return e, false, nil
+	case *data.ImportedMeasureWrite:
+		return e.InternalWriteRequest, true, nil
+	case []byte:
+		writeEvent := &measurev1.InternalWriteRequest{}
+		if err := proto.Unmarshal(e, writeEvent); err != nil {
+			return nil, false, fmt.Errorf("unmarshal event: %w", err)
+		}
+		return writeEvent, false, nil
+	default:
+		return nil, false, fmt.Errorf("invalid event data type %T", event)
+	}
+}
+
 func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
@@ -456,18 +479,10 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
 	for i := range events {
-		var writeEvent *measurev1.InternalWriteRequest
-		switch e := events[i].(type) {
-		case *measurev1.InternalWriteRequest:
-			writeEvent = e
-		case []byte:
-			writeEvent = &measurev1.InternalWriteRequest{}
-			if err := proto.Unmarshal(e, writeEvent); err != nil {
-				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
-				continue
-			}
-		default:
-			w.l.Warn().Msg("invalid event data type")
+		writeEvent, skipTopN, err := decodeWriteEvent(events[i])
+		if err != nil {
+			w.l.Error().Err(err).Msg("cannot decode write event")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("measure: cannot decode write event: %w", err))
 			continue
 		}
 		req := writeEvent.Request
@@ -477,9 +492,10 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
+		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec, skipTopN)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -495,13 +511,17 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				releaseDataPoints(dps.dataPoints)
 			}
 			if len(dps.metadataDocs) > 0 {
-				if err := dps.segment.IndexDB().Insert(dps.metadataDocs); err != nil {
+				// Inserting a series that exists is a no-op, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return dps.segment.IndexDB().Insert(dps.metadataDocs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write metadata")
+					common.RecordWriteFailure(ctx, fmt.Errorf("measure group %s: cannot write series metadata: %w", groupName, err))
 				}
 			}
 			if len(dps.indexModeDocs) > 0 {
-				if err := dps.segment.IndexDB().Update(dps.indexModeDocs); err != nil {
+				// Documents are upserted, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return dps.segment.IndexDB().Update(dps.indexModeDocs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("measure group %s: cannot write index-mode documents: %w", groupName, err))
 				}
 			}
 		}

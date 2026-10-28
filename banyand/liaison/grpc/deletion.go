@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -38,7 +39,7 @@ import (
 )
 
 const (
-	internalDeletionTaskGroup        = "_deletion_task"
+	internalDeletionTaskGroup        = common.DeletionTaskGroup
 	internalDeletionTaskPropertyName = "_deletion_task"
 	taskDataTagName                  = "task_data"
 	taskStaleTimeout                 = 10 * time.Minute

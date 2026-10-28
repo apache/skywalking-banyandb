@@ -1,0 +1,25 @@
+TARGET    liaison-dst:17912 (ROLE_LIAISON) | data nodes 2
+SOURCE    ./artifact  csv  artifactVersion=1  exported at 2026-10-19T08:00:00Z
+DUPLICATES  1 work item(s) were exported from more than one node; each is imported once unless the copies differ
+            measure/sw_metric/hot/20261018/shard-0: import from data-b; skip data-a (same data as data-b)
+
+CATALOG   GROUP      STAGE  UNITS  SOURCES  ROWS  SCHEMA  CHANNEL          TARGET-NODES  STATUS   TIME-RANGE(UTC)
+measure   sw_metric  hot    2      2        194   CREATE  row replay       dst-hot1      expired  10-12 ~ 10-18
+measure   sw_metric  warm   1      1        80    CREATE  row replay       dst-warm1     ok       10-10 ~ 10-12
+property  sw_prop    -      1      2        10    CREATE  property/repair  dst-hot1      ok       -
+stream    sw_stream  hot    1      1        2.0K  CREATE  row replay       -             ok       10-18 ~ 10-18
+TOTAL     5 unit(s), 8 work item(s), 2.3K rows
+          of which refused: 1 unit(s), 1 work item(s), 30 rows
+
+SCHEMA
+  GROUP      RESOURCES  RESULT
+  sw_metric  2          2 create
+  sw_prop    2          2 create
+  sw_stream  2          2 create
+
+PROBLEMS
+  - measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target retention (newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it
+  - warning: group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row is written to every one of them
+  - warning: group sw_stream: the target has no stage "cold"; its units go to hot
+
+RESULT    import 7 work item(s), 2.3K rows; 1 work item(s) skipped

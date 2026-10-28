@@ -639,7 +639,7 @@ func segmentOf(frame *transferv1.PlanResponse) *transferv1.SegmentInventory {
 	return frame.GetUnits().GetUnits()[0].GetSegment()
 }
 
-// unitFrames unwraps `units` frames into the UnitFrame list a PlanResult carries.
+// unitFrames unwraps `units` frames into the UnitFrame list a cluster.PlanResult carries.
 func unitFrames(frames ...*transferv1.PlanResponse) []*transferv1.UnitFrame {
 	out := make([]*transferv1.UnitFrame, 0, len(frames))
 	for _, f := range frames {

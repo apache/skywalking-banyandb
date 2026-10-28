@@ -24,6 +24,13 @@
 #   - no SkyWalking agent/provider/consumer, trace-mocker is the only data source;
 #   - the liaison publishes 17912 on the host (plan.yaml carries a static address);
 #   - OAP enables only the warm stage and sets every hot TTL to one day.
+# The import cases add a second, empty destination cluster with the same topology (one hot and one
+# warm data node behind liaison_dst, its own discovery file nodes-dst.yaml) and no OAP: the export
+# of the source cluster is imported into it and re-exported (see scripts/import-*.sh). Its liaison
+# does not extend the base liaison, whose host port 17913 belongs to the source liaison, and
+# publishes 27912/27913 instead (plan-dst.yaml carries the static gRPC address). Service keys use
+# underscores; every destination node also gets its hyphenated hostname as a network alias, the
+# address nodes-dst.yaml lists.
 
 services:
   data-hot1:
@@ -90,6 +97,59 @@ services:
     depends_on:
       liaison:
         condition: service_healthy
+
+  data_dst_hot1:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data-dst-hot1
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=hot
+    volumes:
+      - ./nodes-dst.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      e2e:
+        aliases:
+          - data-dst-hot1
+
+  data_dst_warm1:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data-dst-warm1
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --node-labels type=warm
+    volumes:
+      - ./nodes-dst.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      e2e:
+        aliases:
+          - data-dst-warm1
+
+  liaison_dst:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    cpus: 4
+    mem_limit: 2g
+    hostname: liaison-dst
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --data-node-selector type=hot
+    healthcheck:
+      test: ["CMD", "./bydbctl", "health", "--config=-", "--addr=http://liaison-dst:17913"]
+      interval: 5s
+      timeout: 120s
+      retries: 120
+    expose:
+      - 17912
+      - 17913
+      - 2121
+      - 6060
+    ports:
+      # plan-dst.yaml and the import scripts carry static addresses, so both ports are pinned on the host.
+      - 27912:17912
+      - 27913:17913
+    volumes:
+      - ./nodes-dst.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      e2e:
+        aliases:
+          - liaison-dst
 
   trace-mocker:
     image: "ghcr.io/apache/skywalking/trace-mocker:${SW_TRACE_MOCKER_COMMIT}"

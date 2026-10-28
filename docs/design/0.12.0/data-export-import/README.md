@@ -1,6 +1,6 @@
 # Data Export and Import
 
-Status: the export dry run, the session RPCs (`Plan` create/read, `Sessions`) and the CSV export (`Export` RPC, `bydbctl data export`) are implemented (2026-10-10); native export, export resume and the whole import are still **design** — see [4.9 Remaining work](#49-remaining-work).
+Status: the export dry run, the session RPCs (`Plan` create/read, `Sessions`) and the CSV export (`Export` RPC, `bydbctl data export`) are implemented (2026-10-10), and so is the CSV import (`ImportService`, `bydbctl data import`, 2026-10-19) — see [5.4 CSV import as implemented](#54-csv-import-as-implemented); native export, native import, export and import resume are still **design** — see [4.9 Remaining work](#49-remaining-work).
 
 > **NIDX-03/04/05 note.** This document was written while the per-segment
 > series index (`seg-*/sidx/`) was still backed by a third-party index
@@ -88,7 +88,9 @@ export:                               # Export only: scope and options
   nodeIdleTimeout: 10m                # Fail a node stream that delivers nothing for this long; 0 = never
   sendRetryTimeout: 15m               # Window for reopening a refused export stream on the next liaison
   checkpoint: ""                      # Empty = <output>/.export-progress.json
-  selectors:                          # Empty or omitted = all catalogs and groups in the cluster
+  selectors:                          # Empty or omitted = all catalogs and groups in the cluster, but the
+                                      #   groups the server creates for itself (_deletion_task,
+                                      #   _property_gossip), which no export includes
     - catalog: stream
       groups: [sw_record, sw_log]     # One selector can include multiple groups under the same catalog
     - catalog: measure
@@ -107,13 +109,18 @@ import:                               # Import only: import policy; scope is rea
                                  #   topNAggregation (case-sensitive; group takes two segments only)
     - match: group/sw_metric     # Example: allow topology differences only for this group
       policy: ignore
-  parallelism: max               # Source-node subtrees (nodes/<node-dir>/) processed concurrently;
-                                 #   max = the artifact's source-node count, one unit in flight per worker
+  parallelism: max               # Work items imported concurrently; max = the union of target data
+                                 #   nodes reported by Targets, capped at the number of work items
   writeRateLimit: 0              # Row rate limit (rows/s) shared by CSV row replay and property import;
                                  #   0 = unlimited
+  nodeRateLimit: 0               # CSV only: byte rate each target data node admits from the imports,
+                                 #   however many liaisons write to it, e.g. "50MiB/s"; 0 = unlimited
+  nodeRowRateLimit: 0            # CSV only: row rate each target data node admits from the imports
+                                 #   (rows/s); 0 = unlimited
   partRateLimit: 0               # Native only: total outbound byte rate limit, e.g. "50MiB/s"; 0 = unlimited
   partChunkSize: 1MiB            # Native only: bytes per ImportParts frame; clamped to [64KiB, 4MiB]
-  writeBatchSize: 1000           # CSV only: rows per ImportRows batch; clamped to [1, 10000]
+  writeBatchSize: 1000           # CSV only: rows per ImportRows batch; 1-10000, out of range is a
+                                 #   usage error (exit 1); see §5.4.7 for writeBatchBytes and the rest
   checkpointEveryBatches: 64     # CSV only: batches between progress-file fsyncs
   resumeDuplicationPolicy:       # ONLY on a resumed run: what to do with a unit the
     default: ""                  # previous run never got confirmation for.
@@ -127,7 +134,7 @@ import:                               # Import only: import policy; scope is rea
   workDir: /data/import-work     # Local scratch directory, used only to unpack .tar/.tar.gz artifacts
 ```
 
-> **In the tree today** (CSV export step, 2026-10-10): the plan file is strict and accepts `connection.nodes`, `connection.nodesTLS`, `connection.rateLimit` and, under `export`, `output`, `format`, `compress`, `maxFileSize`, `includeSchema`, `schemaOnly`, `csvAnnotations`, `parallelism`, `nodeRateLimit`, `nodeRowRateLimit`, `nodeIdleTimeout`, `sendRetryTimeout` and `selectors`. Every option is declared once in `pkg/transfer/config` with struct tags naming its flag, plan path, `BYDBCTL_*` variable, default and grammar; one-shot switches (`--dry-run`, `--preempt`, `--strict-coverage`, `--output-format`) have a flag and a variable but no plan field. `export.checkpoint` and the whole `import:` section are read by export resume and by the import and are declared when those land; a file carrying them is rejected until then. `format: native` parses but is refused with exit `1` (not implemented). Explicit flags override the file, which overrides the `BYDBCTL_*` environment.
+> **In the tree today** (CSV export step, 2026-10-10): the plan file is strict and accepts `connection.nodes`, `connection.nodesTLS`, `connection.rateLimit` and, under `export`, `output`, `format`, `compress`, `maxFileSize`, `includeSchema`, `schemaOnly`, `csvAnnotations`, `parallelism`, `nodeRateLimit`, `nodeRowRateLimit`, `nodeIdleTimeout`, `sendRetryTimeout` and `selectors`. Every option is declared once in `pkg/transfer/config` with struct tags naming its flag, plan path, `BYDBCTL_*` variable, default and grammar; one-shot switches (`--dry-run`, `--preempt`, `--strict-coverage`, `--output-format`) have a flag and a variable but no plan field. Under `import` (CSV import, 2026-10-19) it accepts `input`, `includeSchema`, `schemaOnly`, `schemaConflictPolicy.{default, rules}` (`rules` is plan-only), `parallelism`, `writeRateLimit`, `nodeRateLimit`, `nodeRowRateLimit`, `writeBatchSize`, `writeBatchBytes`, `writeInflightBatches`, `sendRetryTimeout`, `verify` and `verifyTimeout`; `export.checkpoint`, `import.checkpoint`, `import.workDir`, `import.partRateLimit`, `import.partChunkSize`, `import.checkpointEveryBatches` and `import.resumeDuplicationPolicy` belong to resume, archives and the native channel and are rejected until those land. `format: native` parses but is refused with exit `1` (not implemented). Explicit flags override the file, which overrides the `BYDBCTL_*` environment.
 
 **An import reproduces what the export captured**, so a policy exists only where that leaves a real choice — and it does so in exactly one place: a resumed run, and there only for payloads carrying no idempotency key. A native `kind=PART` replay is recognised by `import_op_id` and writes nothing; only the element index and the CSV stream / trace payloads can duplicate on re-push or lose on skip. Everything else is pushed as-is. Overlapping sources on a first run are reported as a WARN; `--strict-coverage` turns that into an error.
 
@@ -165,6 +172,8 @@ The table lists only data that exists; it never derives "which shards ought to b
 
 ### 3.2 Import dry run
 
+> **CSV import as implemented (2026-10-19).** The CSV dry run runs steps 0–5 of [the implemented workflow](#541-workflow) — preflight, artifact check, read-only schema comparison, `ImportService.Targets`, the pure `decide()` and the rendered verdict table — and exits `0` (would proceed) or `2` (would be refused) without writing anything. Its table is byte-identical to the one the real import prints before it writes. Below the main table the CSV table prints SCHEMA, one line per group with its resource count and how many resources get each disposition; PROBLEMS, only when there are any, one sentence each: the groups of the missing resources together, every conflict with its differences and the `match:` rule that would accept it, the work items a route, TTL, coverage or row check refuses, and the warnings; and RESULT, the conclusion in one line. The main table's `STATUS` column is `ok`, `refused` or `expired`. Step 4 also runs the read-only row check (gate `ROWS`) over every row of the artifact, so the CSV dry run reads all the data, not only the manifest and schema. Of the gates below only **[1] schema**, **[4] TTL** and `ROWS` apply to CSV: the version and timezone gates are no-ops, and there is no topology gate because rows are re-routed by the target's own stage, shard number and replicas. The CSV TTL gate is coarser than item 6 below: it compares the unit's newest row with `now − cumulative TTL of the mapped target stage` (see [TTL gate](#545-gates)). The CSV table **has** a `TARGET-NODES` column, read from `Targets`, which the liaison computes with the same route the import uses. A group the import creates or overwrites has no route before its schema is written, so its `TARGET-NODES` is `-`; the re-check after the schema write routes it. The paragraph below about `LocateAll` applies only to the native design. The rest of this section is the native-aware design.
+
 Steps 1–7 of [the import workflow](#51-workflow) plus the channel decision, then exit — the same code path, stopping before step 8, the schema write, so **not one byte of the target changes**. Exit code `0` means the run would proceed and `2` that a gate would reject it, which makes it directly usable as a CI gate. `--input` is required here, unlike the export dry run, because the artifact has to be read.
 
 1. **Connection check** — poll `connection.nodes` until one liaison answers, confirm the `LIAISON` role, then `GetClusterState` once for every target data node.
@@ -199,13 +208,13 @@ There is **no `TARGET-NODES` column**: the liaison picks target nodes at executi
 
 All three verdict columns take closed value sets:
 
-- `SCHEMA` — `CREATE` / `OK` / `MISSING` / `CONFLICT` / `IGNORE` / `OVERWRITE` / `INVALID` / `SKIP`. `SKIP` covers only resources filtered out before comparison and never affects `GATE`.
+- `SCHEMA` — `CREATE` / `OK` / `MISSING` / `CONFLICT` / `IGNORE` / `OVERWRITE` / `INVALID`.
 - `CHANNEL` — `① part-push` / `① sidx only` (index-mode measure) / `② row replay` / `property/repair` / `REJECT(<gate>)`. **`② row replay` can only appear for a CSV artifact**: a native artifact has no fallback across a topology change, so it renders `REJECT(topology)`.
 - `GATE` — `ok` / `TTL!` / `BLOCK`. Any row whose `CHANNEL` is `REJECT(...)` is `BLOCK`, as is any row whose `SCHEMA` is `CONFLICT` or `INVALID`, whatever its channel; `TTL!` marks a row that clears every other gate and is stopped by the TTL gate alone, which `--force-ttl` overrides.
 
 `TOTAL` counts **every** row, blocked ones included, and `SEGMENTS` / `ROWS` / `SIZE` all use that same basis; the blocked subtotal is reported on its own line.
 
-`measure/<group>/_top_n_result` is filtered out before comparison and reported on its own `SKIP` line. The target creates it automatically from its own hardcoded schema, so including it only produces conflicts the user can neither fix nor should fix.
+`measure/<group>/_top_n_result` is never written and not compared as an ordinary resource: the target creates it automatically from its own hardcoded schema, so comparing it would only produce conflicts the user can neither fix nor should fix. Its **rows** are still imported (see [Top-N results](#546-top-n-results)), so its columns get a separate compatibility check: matching columns make it `OK`, counted with the identical resources and not listed, and an artifact `_top_n_result` whose tag or field names or types differ from the target's auto-created one is a `CONFLICT`.
 
 ## 4. Export
 
@@ -325,7 +334,7 @@ How each model is read:
 | trace | the parts of every requested shard | matched by the row's tag-name set, without the trace-id and span-id tags and without tags no trace of the group declares, against the group's traces. A group with one trace takes it directly; a row whose set equals one trace's takes it; otherwise a row (from a part written before a tag was removed) goes to the only trace whose tags include all of its tags, and a row that no trace or several traces include is dropped and counted; two traces with the same tag set make the group fail (use native, once it exists). Matching by tag set cannot tell an old row from a row of another trace with the same tags |
 | property | the live documents of every shard's store, decoded from `_source` and streamed one at a time; tombstones included | `Property.metadata.name` |
 
-`_top_n_result` is exported like any other measure: its binary `value` field carries the engine-internal Top-N encoding, base64-encoded. A point stored in several versions is exported as **one row per point**, the versions merged the way a query or a part merge combines them (`MergeTopNResults` in `banyand/measure/export_topn.go`), with the highest version, so an importer can write the rows verbatim instead of recomputing them. The warnings report dropped rows and why, stored tag and field values the current schema no longer declares or declares with another type, and property timestamps outside the int64 nanosecond range (counted per resource and tag), tags only a multi-tag index rule stores, a single row larger than the file size limit, and a unit whose shards yielded no row. A column that is null on every row is not reported: the source schemas commonly declare tags they never fill. None of them fails the export; all of them land in `manifest.warnings`, and each of them is data the artifact does not carry.
+`_top_n_result` is exported like any other measure: its binary `value` field carries the engine-internal Top-N encoding, base64-encoded. A point stored in several versions is exported as **one row per point**, the versions merged the way a query or a part merge combines them (`MergeTopNResults` in `banyand/measure/export_topn.go`), with the highest version. The import writes those rows verbatim and never recomputes them. The warnings report dropped rows and why, stored tag and field values the current schema no longer declares or declares with another type, and property timestamps outside the int64 nanosecond range (counted per resource and tag), tags only a multi-tag index rule stores, a single row larger than the file size limit, and a unit whose shards yielded no row. A column that is null on every row is not reported: the source schemas commonly declare tags they never fill. None of them fails the export; all of them land in `manifest.warnings`, and each of them is data the artifact does not carry.
 
 **The schema the rows were encoded with is checked.** Columns are bound by position and a group's layout is built from all of its resources, so every `file_finished` carries the `ModRevision` of every resource the node built the layout from, whether or not it wrote rows. The client compares that set with the revisions it saved in `schema/` (including `_top_n_result`); a missing or extra resource or any different revision fails the export (exit `3`, "schema … changed during export; export again"). With `--include-schema=false` there is nothing to compare against and the check is skipped.
 
@@ -472,7 +481,7 @@ In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<ca
 
 `schema/` always holds eight JSON Lines files, one per kind, in this order: `group.jsonl`, `stream.jsonl`, `measure.jsonl`, `trace.jsonl`, `property.jsonl`, `indexRule.jsonl`, `indexRuleBinding.jsonl`, `topNAggregation.jsonl`. Each line is one resource as protojson with unpopulated fields emitted. Only the selected groups and their resources are listed, and only the kinds a group's catalog can hold (index rules and bindings for stream, measure and trace; Top-N aggregations for measure). A kind with nothing to list still gets an empty file, so the file set does not depend on the data. The files are listed with their size and CRC32 in `manifest.schemaFiles`.
 
-`--include-schema=false` (or `export.includeSchema: false`) leaves the schema out entirely: no registry listing beyond the groups, no `schema/` files (`schemaFiles: []`), no mod revision check, and `groups[].indexMode` is recorded as `false` with a manifest warning that it is unknown. Without the schema the CSV columns cannot be interpreted, so an importer needs the same schema from elsewhere. `--schema-only` together with `--include-schema=false` is a usage error. `--schema-only` writes `schema/` and a `manifest.json` with `"schemaOnly": true` and no units, without creating a session.
+`--include-schema=false` (or `export.includeSchema: false`) leaves the schema out entirely: no registry listing beyond the groups, no `schema/` files (`schemaFiles: []`), no mod revision check, and `groups[].indexMode` is recorded as `false` with a manifest warning that it is unknown. An import then reads the CSV columns with the target's schema, which must be the schema the rows were exported with (see [CSV import as implemented](#54-csv-import-as-implemented)). `--schema-only` together with `--include-schema=false` is a usage error. `--schema-only` writes `schema/` and a `manifest.json` with `"schemaOnly": true` and no units, without creating a session.
 
 ### 4.5 manifest.json
 
@@ -791,7 +800,8 @@ enum Compress {
   COMPRESS_GZIP = 2;
 }
 
-// Enforced by the data node per Export stream; 0 = unlimited.
+// In transfer/v1/common.proto, shared by Export and ImportRows; 0 = unlimited. Enforced by
+// the data node: per Export stream, and for ImportRows on every row the node is sent.
 message RateLimit {
   uint64 bytes_per_second = 1;
   uint64 rows_per_second = 2;  // CSV only
@@ -979,7 +989,7 @@ The CSV export step (2026-10-10) completes the export path for CSV: the `Export`
 - **Export resume** — `.export-progress.json` ([Export progress file](#71-export-progress-file)), continuing against the same session with `Plan(read{id})`, `pointInTime: mixed`, plan comparison, `export.checkpoint` / `--checkpoint`, `--seal-partial`, and a `bydbctl data progress` command. Today the output directory must be new or empty and an interrupted export starts over.
 - **`--archive tar|tar.gz`** — packing the artifact into one file.
 - **Native format** — `.bnc` containers, `data extract`; `FORMAT_NATIVE`, its proto fields and the per-format producer interface are already reserved ([Native export](#42-native-export)).
-- **Import** — CSV import, property import and the cross-cluster e2e ([Import](#5-import)).
+- **Import** — the CSV import (including property) and the cross-cluster e2e landed with the CSV import step ([CSV import as implemented](#54-csv-import-as-implemented)); native import and import resume remain design.
 - **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot.
 
 The end-to-end case `test/e2e-v2/cases/transfer/export/` runs the dry run, `release-session` and the CSV export against one hot and one warm data node behind a liaison.
@@ -1000,6 +1010,8 @@ message Node { // api/proto/banyandb/database/v1/database.proto
 
 ### 5.1 Workflow
 
+> The workflow below is the original, native-aware design. The CSV import as implemented runs the steps in [5.4.1](#541-workflow): its checks are the schema and TTL gates only, and rows are re-routed by the target's own topology, so the topology gate (item 7) does not apply to CSV.
+
 1. **Connection check** — call `GetCurrentNode` on each node.
 2. **Artifact check** — validate `manifest.json`, the artifact version, and every file's CRC32.
 3. **Schema check** — compare the artifact's schemas with the target cluster's. Two resources compare equal unless they differ outside the ignore set `created_at`, `updated_at` and `Metadata.{id, create_revision, mod_revision}`; `created_at` always differs across clusters, so counting it would make every import a `CONFLICT`. `indexRule`'s `Metadata.id` is the exception — it is materialised into the inverted files, so the native channel compares it out of band and refuses a mismatch.
@@ -1012,7 +1024,7 @@ message Node { // api/proto/banyandb/database/v1/database.proto
 
 Two routing failures must be distinguished: zero nodes returns `nil` plus `no nodes available`, while an out-of-range shard returns `... is a unknown shard`. Separately, `LocateAll` deduplicates its result set, so it can silently return fewer targets than the requested `copies` with no error, log, or warning. The import side must compare `len(targets)` against the requested `copies` itself; `--strict-replicas` cannot use `len(targets)` as its denominator. A shortfall is a WARN by default, recorded and filled in on the next resume; `--strict-replicas` promotes it to an error that aborts the run.
 
-**Prerequisite: the liaison has no per-group stage resolution today, so multi-stage import cannot work until it is added.** `pub.ResolveStageResourceOpts` is called only by data nodes; every liaison-side `ResolveResourceOpts` returns the group's `ResourceOpts` unchanged, and `pkg/node/round_robin.go` builds its lookup table from `group.ResourceOpts.ShardNum` and `.Replicas` alone. The liaison's only notion of a stage is the `--data-node-selector` start-up flag, which pins the whole process to one tier. **Until that gap closes, importing into a group that has lifecycle stages is not supported at all — this is not "the routing may be off".** `banyand/backup/lifecycle/steps.go` already does the right thing and is the model: parse the target stage's `NodeSelector`, build a fresh selector over only the matching nodes, and route with that stage's shard number. Single-stage clusters are unaffected.
+**Stage routing.** `ImportService` places every `(group, stage)` with the cluster's own node selection: the hot stage with the data node selector the liaison's write queue syncs online writes with, any other stage with the round-robin selector a lifecycle migration uses for it; see [Stage-aware routing](#543-stage-aware-routing). Multi-stage CSV import is therefore supported. The paragraph above about `LocateAll` and `--strict-replicas` describes the native design; the CSV import writes to every available distinct node when a stage has fewer than `copies` nodes and reports the actual count.
 
 ### 5.2 Native fast push
 
@@ -1382,6 +1394,8 @@ Pushing `inflight.nodes` verbatim re-delivers to replicas that already succeeded
 
 For CSV, `bydbctl` reads the files directly, rebuilds the corresponding requests, and redistributes them to the target data nodes.
 
+> **Superseded by the implementation.** The protocol below is the original draft. The implemented `ImportService` (`api/proto/banyandb/transfer/v1/import.proto`) differs: one stream per `(catalog, group, stage)` with the resource name on every row, no `success`/`error` in the acknowledgement (a failed batch ends the stream), a read-only `Targets` RPC, and the liaison **fans every row out to all replicas itself** instead of writing replica 0. See [CSV import as implemented](#54-csv-import-as-implemented).
+
 ```protobuf
 service ImportService {
   // Bidirectional: the CSV checkpoint is recorded per batch, so the
@@ -1439,7 +1453,6 @@ message ImportRowsRequest {
 // cursor as batches land instead of only at end of stream.
 message ImportRowsResponse {
   uint64 batch_seq = 1;          // Echoes RowBatch.batch_seq
-  uint32 accepted_rows = 2;
   bool success = 3;
   string error = 4;
 }
@@ -1460,6 +1473,218 @@ A dedicated import RPC is required rather than reusing the public write API, bec
 This channel is **not** idempotent on replay, which is why its checkpoint is recorded at record-cursor granularity ([the import progress file](#72-import-progress-file)).
 
 Property rows must be applied with `db.Repair(ctx, id, shardID, property, deleteTime)`. `Update` has no `delete_time` parameter at all — its underlying call hardcodes `0` — so a tombstone imported through `Update` comes back to life. `Delete` searches for an existing document first and is meaningless against a fresh database.
+
+### 5.4 CSV import as implemented
+
+The CSV import landed on 2026-10-19 (`bydbctl data import`, `pkg/transfer/importer`, the liaison's `ImportService`). Where it differs from the design above, this section is authoritative. Native import and import resume are still future work.
+
+#### 5.4.1 Workflow
+
+```text
+bydbctl data import --input DIR [--plan plan.yaml] [--dry-run] [-o table|yaml|json] ...
+
+ 0  preflight        reuse the export preflight (several liaisons, standalone fallback, ROLE_LIAISON)
+ 1  artifact check   manifest.json, format=csv, artifactVersion <= 1, non-empty schemaFiles,
+                     every schema and unit file present with its size and CRC32; the server's
+                     internal groups an older export kept are left out with a warning
+ 2  schema compare   read-only, artifact schema/*.jsonl against the target registry
+ 3  Targets          ImportService.Targets for every (group, stage) involved, read-only
+ 4  decide()         [1] schema gate, [4] TTL gate, multiple-source selection, and the ROWS
+                     row check that reads every row (skipped with --schema-only) -> ImportPlan
+ 5  render           verdict table, byte-identical for --dry-run and the real run
+ -- a dry run exits here: 0 = would proceed, 2 = would be refused --
+ 6  schema write     dependency order group -> stream/measure/trace/property -> indexRule
+                     -> indexRuleBinding -> topNAggregation, through the registry Create / Update
+ 7  wait             SchemaBarrierService.AwaitSchemaApplied, including every group's auto-created
+                     _top_n_result
+ 8  re-check         collect + Targets + decide again; a changed data plan is printed and the
+                     run continues, or exits 5 with --abort-on-plan-change (schema written, no data);
+                     a route failure of a created or overwritten group exits 3 here
+ 9  verify baseline  with --verify
+10  push             worker pool, one ImportRows stream per (catalog, group, stage) per worker
+11  verify           poll and reconcile; a mismatch exits 4
+```
+
+The column layout is rebuilt from **all** resources of the group in the artifact's `schema/`, so it matches the export bit for bit whatever `--include-schema` says for the import, and the import logs that the schema is read from those files. An artifact exported with `--include-schema=false` carries no schema: the import logs an `info` line and rebuilds the layout from the **target's** resources of the group instead, compares and writes no schema (as `--include-schema=false`; a group the target lacks is `MISSING`, and `--schema-only` is a usage error), and refuses a file whose header or `#datatype` line differs from that layout. The target's schema must therefore be the one the rows were exported with; a column whose type alone changed is caught only by the `#datatype` line or by a row that fails to parse.
+
+#### 5.4.2 Protocol
+
+`api/proto/banyandb/transfer/v1/import.proto`, served on the liaison gRPC port in cluster and standalone mode. Both methods require `PermissionClusterAdmin` at global scope.
+
+```protobuf
+service ImportService {
+  rpc ImportRows(stream ImportRowsRequest) returns (stream ImportRowsResponse);
+  rpc Targets(TargetsRequest) returns (TargetsResponse); // read-only
+}
+
+message ImportRowsRequest {
+  message Init {
+    common.v1.Catalog catalog = 1;          // not CATALOG_UNSPECIFIED
+    string group = 2;
+    string stage = 3;                       // empty = default stage; an undefined stage resolves as "hot"
+                                            // (the explicit hot stage if defined, else the default); ignored for property
+    uint64 liaison_bytes_per_second = 4;    // process-wide import bucket, last stream wins; 0 = unlimited
+    RateLimit rate_limit = 5;               // per target data node, enforced by the node; last import wins
+  }
+  message StreamRow   { string name = 1; stream.v1.ElementValue element = 2; uint64 raw_element_id = 3; } // id > 0
+  message MeasureRow  { string name = 1; measure.v1.DataPointValue point = 2; }  // point.version != 0
+  message TraceRow    { string name = 1; repeated model.v1.TagValue tags = 2; bytes span = 3; } // 1..512 tags
+  message PropertyRow { property.v1.Property property = 1; int64 delete_time = 2; } // group == Init.group
+  message StreamRows   { repeated StreamRow rows = 1; }   // each list at most 10000
+  message MeasureRows  { repeated MeasureRow rows = 1; }
+  message TraceRows    { repeated TraceRow rows = 1; }
+  message PropertyRows { repeated PropertyRow rows = 1; }
+  message RowBatch {
+    uint64 batch_seq = 1;                   // monotonic from 0
+    oneof rows {                            // the catalog of Init
+      StreamRows stream = 2;
+      MeasureRows measure = 3;
+      TraceRows trace = 4;
+      PropertyRows property = 5;
+    }
+  }
+  oneof frame { Init init = 1; RowBatch batch = 2; } // required; init first
+}
+
+message ImportRowsResponse { uint64 batch_seq = 1; }
+
+message TargetsRequest  { string group = 1; string stage = 2; } // one (group, stage) per call keeps every response small
+message TargetsResponse {
+  message Shard { uint32 shard_id = 1; repeated string node_ids = 2; }
+  string group = 1;
+  string stage = 2;          // the stage actually used: "hot" after a fallback
+  uint32 shard_num = 3;
+  uint32 copies = 4;         // replicas + 1
+  repeated Shard shards = 5;
+  repeated string inactive_node_ids = 7;  // route nodes this liaison is not connected to
+  bool group_deleting = 8;
+}
+```
+
+- Rows carry tags and tag families **in the declaration order of the target schema** and no `TagFamilySpec` / `DataPointSpec`, like the lifecycle row replay. Every internal message carries its `Metadata`.
+- An acknowledgement means every target data node accepted the batch at batch level. A data node only logs per-row failures, so `--verify` is the only check that rows landed.
+- A failed batch ends the whole stream with a gRPC status whose message starts with `batch_seq=<n> node=<id>:`. Codes: disk full → `ResourceExhausted`, unknown schema → `NotFound`, unreachable node → `Unavailable`, anything else → `Internal`. A row the liaison refuses ends the stream with `InvalidArgument` and an ErrorInfo (reason `ROW_INVALID`) whose metadata holds `batch_seq` and `row`; its message starts with `batch_seq=<n>: row <i>:`. A batch naming a missing resource gets `NotFound` with reason `SCHEMA_NOT_FOUND` and `batch_seq` in the metadata. Only a frame refused by message validation, or an `Init` sent after the first frame, carries no `batch_seq`, and the client attributes it to the oldest unacknowledged batch.
+- A trace data node that answers `STATUS_SERVER_BUSY` is retried by the liaison with backoff for that node, bounded by the liaison's write pressure timeout; if it is still busy the batch fails with `ResourceExhausted`.
+- The liaison writes rows as `InternalWriteRequest`s wrapped in `transfer.v1.ImportWrite` frames straight to the data nodes' import topics, whose listener hands them to the catalog's write path, so the public write path's rewrites (a measure `version` of `0` replaced by a message ID) never apply; `version == 0` is refused with `InvalidArgument` instead. A row the write path cannot store is only logged for a regular write. The import listener puts a `common.WriteRecorder` in the context it calls the catalog's write listener with, and the write listener reports to it where it logs, its reply unchanged (without a recorder the calls do nothing): a row that failed **before it was stored** (a decode failure, its schema or TSDB not loaded on the node, a segment or table it could not create) by its index in the message (`common.RecordRowFailure`); an index write after the rows were stored is wrapped in `common.RetryWrite`, which under the recorder retries it with back-off, since every such write may be repeated (series and metadata documents are inserted if absent, index-mode and trace series documents upserted, a refused element-index batch admits nothing, a sidx instance is created once); what still fails is recorded with `common.RecordWriteFailure`. The node writes the rows not stored again, alone, with back-off, for at most `30s` shared with the index retries, so a retry stores no row twice. Rows still not written are answered as an error naming them (`k of n imported row(s) were not written after retries (rows …)`), and a failure after storing ends the batch at once, its message saying that importing the rows again would store stream and trace rows twice; either ends the import with `NODE_FAILED`.
+- The import listener hands measure rows to the write path wrapped in `data.ImportedMeasureWrite`, so it skips Top-N for them (see [Top-N results](#546-top-n-results)).
+
+#### 5.4.3 Stage-aware routing
+
+The liaison computes a route snapshot on every `Init` and every `Targets` call with the node selection API the cluster already places shards with, so imported rows land where the cluster's own writes and migrations put them:
+
+```text
+route(catalog, group, stage):
+  g := the target group (absent -> NotFound)
+  property: shardNum/replicas from g.ResourceOpts, nodes from the property node registry; done
+  want := lower(stage) or "hot"; a stage the group does not define -> "hot"
+  "hot" (the default stage, or a stage explicitly named hot):
+      shardNum/replicas from g.ResourceOpts (group level)
+      nodes := the catalog's data node selector LocateAll -- the selector the liaison's write queue
+               syncs online writes with, over the --data-node-selector nodes
+  any other stage:
+      shardNum/replicas from the stage
+      nodes := a round-robin selector over the registered nodes matching the stage's node selector,
+               laid out by every group -- the selector a lifecycle migration places the stage with
+  targets(shard) := nodes.LocateAll(group, shard, replicas + 1)  // sorted, distinct
+  a shard the selector cannot place -> FailedPrecondition
+```
+
+- The hot stage follows the online write placement exactly, the `--data-node-selector` included: a liaison without one places hot rows on every data node, as its online writes do.
+- A stage other than hot follows the lifecycle migration's placement. The round-robin selector is laid out by the group-level shard number, so, as for a migration, a stage with more shards than the group is refused (`unknown shard`).
+- The route borrows the selectors: it registers no handler on the shared tier-2 client, which would overwrite the online handlers. The data node selectors are the ones the write queues keep up to date; a stage's selector is built per call from the registered nodes and the listed groups.
+- A node that is down fails the batch instead of silently rerouting it.
+- **Replica fan-out**: stream, measure and trace rows go to every node of `targets(shard)` through one `BatchPublisher` per batch (`TopicStreamImport` / `TopicMeasureImport` / `TopicTraceImport`), each node's stream opening with an init frame. Property rows go to `TopicPropertyImport` the same way, one batch per node holding the revisions of an entity in batch order; the node's listener repairs them one at a time in that order and stops at the first failure. When a stage has fewer nodes than `copies`, every available distinct node is written, `Targets` reports the actual count, and the client warns.
+- Shard ids: stream and measure via the entity / sharding-key locator with the **route's** shard number (the group's for hot, the stage's otherwise); trace via `TraceShardID(traceID, routeShardNum)` after checking the tag count, a non-empty string trace and span id and a non-null, valid timestamp tag; property via the entity and the group shard number.
+- Standalone: `Targets` reports the local node, a non-hot stage falls back to `hot`, and rows go through the local queue.
+- The liaison rate limit (`Init.liaison_bytes_per_second`) is a bucket of its own, independent of the export's, charged once per received batch before the fan-out.
+- The node rate limit (`Init.rate_limit`) is one byte bucket and one row bucket **per target data node**, kept by the liaison and shared by every import stream it serves; the stream opened last sets the rates and they are lifted once no import stream is left. Before a batch is written to a node the liaison pays, in full, the internal write requests that node receives (`proto.Size` for bytes, one row per request), so every replica is paid on its own node; a property repair is paid per node the same way. A busy node's retry is not paid again: the node refused the batch before writing any of it. A bucket's burst is one second's worth (at most 1 MiB, at least one row) and a larger payment is paid in steps of the burst.
+
+#### 5.4.4 Rows
+
+| Catalog | Handling |
+|---|---|
+| stream | `_element_id` → `csvfmt.DecodeElementID` → `raw_element_id`, kept as is by the receiver (`0` means a corrupt artifact) |
+| measure | `_version` must be present and non-zero; fields in target schema order |
+| index-mode measure | as measure, no fields; when several sources of a segment are pushed, the client keeps the highest `_version` per `(name, entity)` within the unit, the later timestamp winning a tie |
+| trace | tags in target schema order with `trace_id` / `span_id` as string tags in their positions; `_span` → bytes; a null timestamp tag means a corrupt artifact |
+| property | `_updated_at` `\N` → unset; `_delete_time` `0` (or `\N`) = live, > 0 = tombstone, negative = corrupt. **Only each entity's latest state is kept**: a property work item is read once, source by source and file by file, and every row is sent as it is read, batched like the other catalogs, so memory does not depend on the item's size; nothing is indexed, sorted or folded on the client. The target's repair makes the result independent of the order: a revision older than the newest one the entity holds is refused, and a same-revision conflict resolves deterministically by the repair rule below, so every entity converges to its latest revision. Whether older revisions leave documents on the target is not guaranteed. The liaison keeps property batches, and the rows of one entity within a batch, sequential |
+
+The **repair rule** (`banyand/property/db/shard.go`), now applied to every caller — gossip anti-entropy, liaison read repair, `RepairSchema` and the import — for an incoming row with the same `mod_revision` as the local latest: a local tombstone beats an incoming live row (nothing is written); an incoming tombstone replaces a local live row with the incoming `deleteTime`; between two tombstones the smaller `deleteTime` wins, so replicas converge whatever the order; identical rows are a no-op.
+
+A resource name the target schema lacks, a header that does not match the layout, or a cell that does not parse or fails the liaison's row checks is a corrupt artifact. The row check (gate `ROWS`) reads every row before anything is written, in the dry run too, and refuses the import with exit `2`, naming the file and record number in the `[d] rows` details.
+
+#### 5.4.5 Gates
+
+**[1] Schema.** Resources compare equal unless they differ outside `created_at`, `updated_at` and `Metadata.{id, create_revision, mod_revision}`. Each difference is classified as identity, topology, shape or behavior, and resolved by `import.schemaConflictPolicy{default, rules[{match, policy}]}` (`match = <kind>/<group>[/<name>]`, first match wins; `--on-schema-conflict` sets only the default) to `error`, `ignore` or `overwrite`. Every `CONFLICT` prints a ready-to-paste `match:` line. Guards that no policy overrides:
+
+- G1 — an identity difference is always `CONFLICT`.
+- G4 — `overwrite` of a non-empty target group needs `--force`; "non-empty" is any count above zero in the target's `Plan`, failing closed when the inventory is incomplete. Rows not yet flushed are invisible to it.
+- G5 — a measure `index_mode` or `interval` difference is always `CONFLICT`.
+- G6 — an `overwrite` the registry's `Update` would refuse is `CONFLICT` up front, so no run writes half a schema: a changed stream or measure entity, a removed entity tag or its family, a changed existing measure field spec, a removed reserved trace tag, or enabling a sampler pipeline on a group with several traces.
+- `ignore` with a type difference in a tag or field present on both sides is `CONFLICT`; extra or missing columns are dropped or sent as null and listed.
+
+Artifact resources are re-validated (`INVALID`), and a missing dependency is `MISSING`. Any `CONFLICT`, `INVALID` or `MISSING` exits `2` with nothing written. `CREATE` uses the registry `Create` and `OVERWRITE` its `Update`, with `created_at`, `updated_at` and the metadata revisions cleared so the server stamps them. A resource someone else created between steps 2 and 6 makes `Create` fail with `AlreadyExists` (exit `3`). G0 (tombstones) is not implemented because the registry does not expose them; G2/G3 are native only.
+
+**[4] TTL.** The effective TTL is the group TTL plus every stage TTL up to the mapped target stage (`CumulativeTTL`, checked against `pub.ResolveStageResourceOpts`); the default stage, including a fallback, has the group TTL only; property is exempt. A unit's newest time is the largest `maxTimestamp` of its selected sources, or, for index-mode segment files, the segment end parsed in the source node's timezone. A unit whose newest time is before `now − effectiveTTL` is refused (`STATUS` `expired`) unless `--force-ttl`. The gate compares each unit's newest row with now − cumulative TTL of the target stage; it does not project units onto the target segment grid, so a unit just inside the window may still land in a segment that expires soon after. Some units refused and the rest imported exits `0`; all refused exits `2`.
+
+#### 5.4.6 Top-N results
+
+`_top_n_result` is **exported and imported verbatim**, never recomputed. A standalone server would recompute it from the imported source measures, and the recomputed values, carrying newer versions, would overwrite the imported ones; the import listener therefore hands each measure row to the write path wrapped in `data.ImportedMeasureWrite`, an in-process marker that skips the Top-N flow (a cluster data node never computes Top-N on writes anyway). The imported `_top_n_result` therefore equals the artifact's exactly in both deployments. The schema itself is not created (the target auto-creates it with each measure group, and step 7 waits for it), but its columns must match the target's: a mismatch is a `CONFLICT` that refuses the whole import. The cost: a target whose `TopNAggregation` differs keeps the source's historical Top-N; new traffic is computed by the target as usual.
+
+#### 5.4.7 Batches, parallelism and sources
+
+- A batch is sent when it reaches `writeBatchSize` rows (1–10000, default 1000) or `writeBatchBytes` (64 KiB–64 MiB, default 4 MiB), whichever comes first; a single row above the byte limit travels alone with a warning. Out-of-range values are usage errors. A `ResourceExhausted` reply names the file and record and both possible causes (the liaison's `--max-recv-msg-size` or a full disk).
+- Work items: one per shard of a segment unit; one per segment for index-mode segment files (decided by where the files are, not by `groups[].indexMode`); property grouped by source shard id. `--parallelism max` is the size of the **union of target nodes** returned by `Targets`, clamped to the number of work items; an explicit N is clamped the same way.
+- Each worker opens one `ImportRows` stream per `(catalog, group, stage)` lazily and reuses it; worker `i` uses liaison `i % L`. Only the first send or receive of a stream is retried (within `--send-retry-timeout`: `Unavailable` and load-protection `ResourceExhausted` move to the next liaison; `SCHEMA_NOT_FOUND`, or a `NotFound` without a detail, waits on the same liaison; `NOT_WRITTEN` (the liaison refused before writing anything, such as on a failed schema read) moves to the next liaison even after a stream or trace batch was sent; `NODE_FAILED` (including a full disk), `MESSAGE_TOO_LARGE` and `ROW_INVALID` are never retried); a later error is terminal, because re-sending a whole batch duplicates stream and trace rows. A failed worker cancels the rest (exit `3`).
+- After that first exchange (init plus `batch_seq` 0, the only batch that may be retried), a worker keeps up to `writeInflightBatches` (1–8, default 2) batches sent and not yet acknowledged on each stream: it builds and sends the next batch while the liaison works on the previous one, and takes the acknowledgements in `batch_seq` order. A batch is done only once acknowledged and a work item once all its batches are; a failed batch is named by the `batch_seq` the liaison reports. A worker holds at most `writeInflightBatches × writeBatchBytes` of rows.
+- Rate limiting has four knobs, set by the client; whichever binds first wins:
+
+  | Knob | Flag / plan field | Protobuf field | Enforced by, measured on |
+  |---|---|---|---|
+  | Client rows | `--write-rate-limit` / `import.writeRateLimit` | — | The client: one row bucket for the whole import, paid before each batch is sent |
+  | Liaison bytes | `--liaison-rate-limit` / `connection.rateLimit` | `Init.liaison_bytes_per_second` | Each liaison, process-wide: the serialized size of every received batch, before the fan-out |
+  | Node bytes | `--node-rate-limit` / `import.nodeRateLimit` | `Init.rate_limit.bytes_per_second` | Each target data node: the encoded rows it is sent, replicas included |
+  | Node rows | `--node-row-rate-limit` / `import.nodeRowRateLimit` | `Init.rate_limit.rows_per_second` | Each target data node: the rows it is sent, replicas included |
+
+  The node knobs reuse the export's `RateLimit` and flag names, and like the export the data node enforces them. The liaison writes import rows on their own topics, one per catalog (`stream-import`, `measure-import`, `trace-import`, `property-import`), each frame a `transfer.v1.ImportWrite`: every batch stream to a node opens with an init frame carrying `rate_limit`. The node's import listener charges the batch to one byte pace and one row pace that every import on the node shares, then hands the rows to the catalog's write path; only the import topics pay, so other writes are never limited. A pace is the time by which the node has paid out what it admitted, moved on by each batch's cost at the rate that batch names, so the import that wrote last sets the rate and a change carries no debt; one second's worth (at most 1 MiB) passes on an idle node without waiting. The rates hold on the node **whichever and however many liaisons** write to it; a process that runs several data nodes, as a test harness does, keeps one pace per node. A batch waits for its own share and for the batches admitted before it, but no more than its own share plus `10s`: a batch that would wait longer, or past its request's deadline, is answered `STATUS_SERVER_BUSY` (marked `import rate limit:`) before anything is charged or written. The liaison therefore waits `2 min` plus the batch's share (the slower of its bytes over the byte rate and its rows over the row rate) plus `10s` for an acknowledgement, and resends a batch refused by the rate limit to that node with backoff for as long as the stream lasts; unlike memory pressure, the rate limit is not bounded by the write pressure timeout, since it is expected to hold batches back. A standalone server admits the rows the same way in process. A data node older than the import topics refuses them, so a cluster must run one version for an import. The node knobs are ignored by `--dry-run`, as are the other two.
+- The schema write prints one summary line, `schema: <n> resource(s) written and applied on every node`; the plan table above it already lists every resource. During the push the client prints, like the export, a line for every finished work item (`<catalog> <group>/<stage>  [done/total] <position>  <rows> rows  <time>`) and one for every finished `(catalog, group, target stage)` (`✓ … done: <n> work item(s), <rows> rows in <time>`); on a terminal it also redraws one live line per group in flight with the rows written (acknowledged by the data nodes), the rows left of the planned ones, the row rate and the elapsed time (`<catalog> <group>/<stage>  <n> rows written, <m> left  <r> rows/s  <time>`). The rows written move one acknowledged batch at a time, so a small `writeBatchSize` makes them move more often.
+- Multiple sources follow [§6.3](#63-rules), keyed by `(group, stage, segment, shard)`: coverage from `parts[]`, counts from `shards[].totalCount`. Property and index-mode units push every source. `--all-sources` skips the selection; `--strict-coverage` refuses (exit `2`) any shard work item that would push more than one source; index-mode segment items and property, which deduplicate or merge, are exempt.
+
+#### 5.4.8 Verify
+
+`--verify` (default on, `--verify-timeout` 2m, any positive value) counts with `ExportService.Plan` without a session, narrowed to the imported groups, polling every 5 s (the default flush interval) because only flushed parts are counted; on a terminal a live line (`verify  <elapsed> / <timeout>  waiting for the target to flush: <what has not reconciled yet>`) is redrawn after every poll and erased when the check ends; without a terminal every poll that does not end the check logs one `verify: waiting for the target to flush (...)` line instead. For each `(catalog, group, stage, node, shard)` it takes Δ = post − pre over the segments present after the import (segments removed by retention are excluded with a warning). Any target node in `unreachable_nodes` makes verify incomplete.
+
+- stream / trace: for every shard with Δ > 0, exactly its target nodes have Δ > 0 and the same Δ, and the shards' Δ sum to the rows pushed.
+- measure: once the sum is stable across two samples a flush interval apart, rows pushed > 0 ⇒ ΣΔ > 0, Σ_nodes Δ ≤ rows pushed × copies, and a shard with Δ > 0 has Δ > 0 on all its target nodes; a negative Δ (merge folding) is only a warning.
+- index-mode measure: a target node that gained no segment document although rows were sent, and held none before, is a warning; nothing else is checked (one document per series and segment, and rows replayed onto held documents gain nothing).
+- property: not counted, since the target keeps each entity's latest revision; a failed repair already fails the import.
+
+Verify assumes no other writes reach the target during the import, does not cover index structures, and in standalone uses `copies = 1`, stage `hot`. Only a reconciliation difference or an incomplete coverage exits `4`. The push ends with `IMPORTED  <n> rows of <m> work item(s) in <time>`, and the report is one line, `VERIFY    ok in <time>` or `VERIFY    FAILED in <time> (exit 4)`, followed by one line per problem: a check that could not complete (`not checked: …`), a count mismatch, or a warning (`warning: …`). Work items refused by a gate are already listed under the plan's PROBLEMS, so verify does not repeat them.
+
+#### 5.4.9 Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | success, warnings included (also: some units refused by the TTL gate) |
+| `1` | usage error |
+| `2` | refused before anything was written (preflight, schema gate, row check `ROWS` including a corrupt artifact, all units refused, `--strict-coverage`) |
+| `3` | failure after writing started (schema write, wait, re-check route of a created or overwritten group, push) |
+| `4` | `--verify` failed |
+| `5` | the re-check found a different data plan and `--abort-on-plan-change` was given |
+
+Errors before step 6 map through `exitcode.For`; every error from step 6 on is `3`.
+
+#### 5.4.10 Known limitations
+
+- `_top_n_result` is transferred verbatim and never recomputed, so it keeps the source's Top-N caliber; an incompatible target `_top_n_result` refuses the import.
+- An acknowledgement is a batch-level acceptance; per-row failures on a data node are only logged and surface in `--verify`.
+- Stream and trace row replay is not idempotent, and there is no resume: re-running after a failure duplicates what had landed.
+- The TTL gate is coarse (newest row against cumulative TTL, no segment-grid projection).
+- G4's emptiness check cannot see unflushed rows; G0 is not implemented.
+- No `.tar` / `.tar.gz` input; it arrives with the export's `--archive`.
+- `--verify` does not cover index structures and needs a quiet target; content equality is proven by the integration and e2e tests, which re-export the target and compare logical rows with the source artifact (`pkg/transfer/rowdiff`). A property is compared by its entity `(group, _name, _id)` at its latest revision only (the largest `_mod_revision`, a tombstone winning over a live row of the same revision; `_delete_time` compared as live or tombstone); older revisions are ignored on both sides.
+- The same data held by source nodes in different timezones, or caught mid lifecycle migration, forms different units the multiple-source selection cannot match, so it is pushed more than once (duplicate trace spans), never lost.
+- Pre-existing and not fixed here: the lifecycle row replay writes replica 0 only, and builds its route table from the group-level shard number while computing shards with the stage's.
 
 ## 6. Multiple shard sources
 
@@ -1518,7 +1743,7 @@ Example, with `data-1 [00:00,23:59]` / 120,000 rows already selected:
 
 **measure does not apply the row-count condition** — a fully contained source is skipped outright. Its background merge collapses multiple versions of the same `(seriesID, timestamp)`, so the legitimate row-count skew is `(K−1)/K` for a source pushed K times: 66.7% at K=3. Any threshold below 100% is broken by the entirely normal "pushed a few times" case — and that skew is permanent rather than awaiting compaction, because equally sized parts are never merged under the production policy. The cost is that a measure orphan whose time range happens to be contained is skipped silently.
 
-Every decision and its reason is printed in the dry-run `MULTI-SRC` detail, because this is the only place in the import that can decide to *send less data*. `--strict-coverage` promotes a multi-source unit to an error and writes nothing; `--all-sources` skips the judgement and pushes everything. `--all-sources` must disable both the shard-level and the segment-level judgement — the escape hatch is one switch, not two. It then adds, for every source whose core parts were *not* selected, one `SERIES_INDEX` stream per target node in that source's `LocateAll` union.
+Every decision and its reason is printed in the import table's `DUPLICATES` section (`<key>: import from <node>; skip <node> (same data as <node>)`, with the reason when more than one copy is imported), because this is the only place in the import that can decide to *send less data*. `--strict-coverage` promotes a multi-source unit to an error and writes nothing; `--all-sources` skips the judgement and pushes everything. `--all-sources` must disable both the shard-level and the segment-level judgement — the escape hatch is one switch, not two. It then adds, for every source whose core parts were *not* selected, one `SERIES_INDEX` stream per target node in that source's `LocateAll` union.
 
 ### 6.4 Multiple-source push behavior
 
@@ -1527,12 +1752,12 @@ Every decision and its reason is printed in the dry-run `MULTI-SRC` detail, beca
 | measure | Each part from every selected source becomes its own stream; no merging | Correct; the latest version is selected | Grows with the number of copies, and is **not** merged back |
 | stream | Same as measure, plus the complete element index from every source | Correct; deduplicated by element ID | **Permanently** grows with the number of copies |
 | trace | Same as above, but each core part and its secondary indexes must be sent together | ⚠️ Correct when the selected sources have disjoint coverage; **duplicate spans are visible** only in the overlapping cases below | Grows with the number of copies |
-| property | The whole shard directory is sent and every record from every source is written | Correct when the `mod_revision`s differ. ⚠️ **Not** when they are equal and the delete states differ — under replication that is the ordinary convergence window, and two of six replay orders split one logical entity into two physical documents. `shard.repair` must be fixed so that on an equal revision the `deleteTime != 0` side wins and no tombstone is re-stamped | No amplification |
+| property | The whole shard directory is sent and every record from every source is written | Correct. On an equal `mod_revision` `shard.repair` now lets the tombstone win (a live row never resurrects it), keeps the smaller `deleteTime` between two tombstones and never re-stamps one with now (fixed with the CSV import). The "two physical documents" split no longer reproduces since the native store folds same-docID writes | No amplification |
 | index-mode measure | Only segment-level indexes exist. The import side must deduplicate **in memory by `_version` per docID across every source of a segment**, keep the maximum, then issue a single `UpdateSeriesBatch` — that primitive is last-write-wins and `InsertSeriesBatch` is keep-existing, so neither alone gives a reproducible winner across sources. The docID is the series' `EntityValues`, not the uint64 `series.ID` | Correct; the highest version is selected | No amplification |
 
 - **trace is the only catalog whose query result can be wrong**, and it does not self-heal. But the exposure is narrower than "any multi-source unit", and every case is closed on the import side — the read path is not changed.
 
-  **Selecting two sources does not by itself duplicate anything.** A second source is pushed because its coverage is *not* contained in the first, and disjoint time means disjoint spans — a span carries its own timestamp. Overlap only arises when a source is rescued by `count-spread` / `no-single-covering` (its coverage *is* contained) or when `--all-sources` skips the judgement. Both are pushed as-is and reported; `--strict-coverage` stops instead.
+  **Selecting two sources duplicates only where they overlap.** A second source is pushed because its coverage is *not* contained in the first, and a span carries its own timestamp, so only the time both sources cover can repeat. A source chosen to fill a coverage gap may still partly overlap the first one; that overlap is pushed twice, and the CSV dry run warns about it for stream and trace. Overlap also arises when a source is rescued by `count-spread` / `no-single-covering` (its coverage *is* contained) or when `--all-sources` skips the judgement. Both are pushed as-is and reported; `--strict-coverage` stops instead.
 
   > **Row-level deduplication was designed and rejected.** The key is cheap — `_element_id` for stream, `(trace_id, span_id)` for trace, both fixed columns needing no schema, measured at 12.1M keys / 92 MB / 2.2 s. It loses because **a content key cannot tell where a duplicate came from**: if the source already held the same span twice (a lifecycle migration window, say), deduplicating removes the source's copy too, and the target stops reproducing the source. So no channel deduplicates rows — native cannot decode them, and CSV will not.
 

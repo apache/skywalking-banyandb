@@ -387,7 +387,7 @@ func processTraces(schemaRepo *schemaRepo, tracesInTable *tracesInTable, writeEv
 	return processIndexRules(stm, tracesInTable, req, traceID, tagMap, sidxTags, metadata, specMap)
 }
 
-func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Message) {
+func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
@@ -409,10 +409,12 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			writeEvent = &tracev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				common.RecordRowFailure(ctx, i, fmt.Errorf("trace: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("trace: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -425,6 +427,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			common.RecordRowFailure(ctx, i, fmt.Errorf("trace %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -436,10 +439,16 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 			var sidxMemPartMap map[string]*sidx.MemPart
 			for sidxName, sidxReqs := range es.sidxReqsMap {
 				if len(sidxReqs) > 0 {
+					var sidxInstance sidx.SIDX
+					// Getting an instance that exists returns it, so the call may be retried.
 					//nolint:contextcheck // local SIDX cache/init path eventually hits ref-count cleanup without meaningful context use
-					sidxInstance, err := es.tsTable.getOrCreateSidx(sidxName)
+					err := common.RetryWrite(ctx, func() (getErr error) {
+						sidxInstance, getErr = es.tsTable.getOrCreateSidx(sidxName)
+						return getErr
+					})
 					if err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot get or create sidx instance")
+						common.RecordWriteFailure(ctx, fmt.Errorf("trace group %s: cannot get or create sidx %s: %w", groupName, sidxName, err))
 						continue
 					}
 					minTS := es.timeRange.Start.UnixNano()
@@ -447,6 +456,7 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 					var siMemPart *sidx.MemPart
 					if siMemPart, err = sidxInstance.ConvertToMemPart(sidxReqs, es.timeRange.Start.UnixNano(), &minTS, &maxTS); err != nil {
 						w.l.Error().Err(err).Str("sidx", sidxName).Msg("cannot write to secondary index")
+						common.RecordWriteFailure(ctx, fmt.Errorf("trace group %s: cannot write sidx %s: %w", groupName, sidxName, err))
 						continue
 					}
 					if sidxMemPartMap == nil {
@@ -456,8 +466,10 @@ func (w *writeCallback) Rev(_ context.Context, message bus.Message) (resp bus.Me
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
-				if err := es.segment.IndexDB().Update(es.seriesDocs.docs); err != nil {
+				// Series documents are upserted, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return es.segment.IndexDB().Update(es.seriesDocs.docs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write series index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("trace group %s: cannot write series index: %w", groupName, err))
 				}
 			}
 			es.tsTable.mustAddTraces(es.traces, sidxMemPartMap)

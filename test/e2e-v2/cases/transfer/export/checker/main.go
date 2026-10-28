@@ -21,6 +21,13 @@
 //	checker <stream|measure|trace|property> <artifact dir> [liaison host:grpc-port]
 //	checker schema-only <artifact dir>
 //
+// and serves the import cases with four more subcommands, described in their files:
+//
+//	checker compare <artifact A> <artifact B>                        (compare.go)
+//	checker conflict-schema <artifact A> <out dir>                   (conflict.go)
+//	checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>  (queries.go)
+//	checker ttl-rows <artifact A>                                    (ttl.go)
+//
 // Every row is checked against its group's schema, and the rows of known sources (the events
 // report-events.sh reports, trace-mocker's services and their metrics, OAP's General UI
 // templates) are printed under data, by resource, with their non-null columns, for the
@@ -80,6 +87,18 @@ const (
 var failed bool
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "compare":
+			os.Exit(runCompare(os.Args[2:]))
+		case "conflict-schema":
+			os.Exit(runConflictSchema(os.Args[2:]))
+		case "queries":
+			os.Exit(runQueries(os.Args[2:]))
+		case "ttl-rows":
+			os.Exit(runTTLRows(os.Args[2:]))
+		}
+	}
 	if len(os.Args) != 3 && len(os.Args) != 4 {
 		usage()
 	}
@@ -110,6 +129,10 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: checker <stream|measure|trace|property|schema-only> <artifact dir> [liaison host:grpc-port]")
+	fmt.Fprintln(os.Stderr, "       checker compare <artifact A> <artifact B>")
+	fmt.Fprintln(os.Stderr, "       checker conflict-schema <artifact A> <out dir>")
+	fmt.Fprintln(os.Stderr, "       checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>")
+	fmt.Fprintln(os.Stderr, "       checker ttl-rows <artifact A>")
 	os.Exit(2)
 }
 

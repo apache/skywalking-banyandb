@@ -48,6 +48,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 const (
@@ -241,6 +242,7 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
 		s.pipeline.Subscribe(data.TopicSnapshot, snapshotLis),
 		s.pipeline.Subscribe(data.TopicPropertyRepair, &repairListener{s: s}),
+		s.pipeline.Subscribe(data.TopicPropertyImport, transfer.ImportRowListener(s.nodeID, &repairListener{s: s})),
 	)
 }
 

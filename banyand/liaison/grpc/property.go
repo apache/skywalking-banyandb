@@ -36,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
@@ -147,6 +148,12 @@ func (ps *propertyServer) validatePropertyTags(ctx context.Context, property *pr
 	if len(propSchema.Tags) < len(property.Tags) {
 		return errors.Errorf("property %s tags count mismatch", property.Metadata.Name)
 	}
+	return checkPropertyTags(propSchema, property)
+}
+
+// checkPropertyTags refuses a tag of property its schema does not declare, or declares with
+// another type.
+func checkPropertyTags(propSchema *databasev1.Property, property *propertyv1.Property) error {
 	for _, tag := range property.Tags {
 		found := false
 		for _, ts := range propSchema.Tags {

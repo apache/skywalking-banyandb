@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -39,6 +40,7 @@ import (
 	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
 // Directory and file names of the snapshot layout; they mirror the storage engines.
@@ -73,8 +75,8 @@ func NewProducer(ctx context.Context, meta metadata.Repo, indexMode IndexModeRea
 		meta:      meta,
 		indexMode: indexMode,
 		settings: &streamSettings{
-			bytes:       newByteLimiter(limit.GetBytesPerSecond()),
-			rows:        newRowLimiter(limit.GetRowsPerSecond()),
+			bytes:       newBucket(limit.GetBytesPerSecond()),
+			rows:        newBucket(limit.GetRowsPerSecond()),
 			send:        send,
 			maxFileSize: init.GetMaxFileSize(),
 			gzip:        init.GetCompress() == transferv1.Compress_COMPRESS_GZIP,
@@ -214,7 +216,7 @@ func (fw *fileWriter) writeRow(resource string, cells []string) error {
 			}
 		}
 	}
-	if err := waitN(fw.run.ctx, fw.run.settings.rows, 1); err != nil {
+	if err := ratelimit.Wait(fw.run.ctx, fw.run.settings.rows, 1); err != nil {
 		return err
 	}
 	if err := fw.w.WriteRow(resource, cells); err != nil {
@@ -314,7 +316,7 @@ func (s *frameSink) flush() error {
 	if len(s.buf) == 0 {
 		return nil
 	}
-	if err := waitN(s.run.ctx, s.settings.bytes, len(s.buf)); err != nil {
+	if err := ratelimit.Wait(s.run.ctx, s.settings.bytes, len(s.buf)); err != nil {
 		return err
 	}
 	// The frame owns its bytes: gRPC may still hold the message after Send returns.
@@ -424,4 +426,38 @@ func readError(what string, err error) error {
 		return status.Errorf(codes.FailedPrecondition, "%s: the export session snapshot is gone (preempted or released): %v", what, err)
 	}
 	return status.Errorf(codes.Internal, "%s: %v", what, err)
+}
+
+const (
+	// chunkSize is the largest DataChunk an Export stream sends.
+	chunkSize = 1 << 20
+	// earlyFlush is how long a stream that waits for its row bucket at all holds the rows it
+	// has written before it sends them.
+	earlyFlush = time.Second
+	// earlyFlushWait is the wait for the row bucket before which a stream sends the rows it
+	// holds right away, so that a low row rate shows every row as it is written.
+	earlyFlushWait = 100 * time.Millisecond
+)
+
+// chunkLimit is the largest chunk a stream with the byte bucket l sends: chunkSize, or one
+// second's worth of a lower rate (the bucket's burst), so that a throttled stream still sends
+// a chunk every second; nil is unlimited.
+func chunkLimit(l *rate.Limiter) int {
+	if l == nil {
+		return chunkSize
+	}
+	return min(chunkSize, l.Burst())
+}
+
+// newBucket returns the per-stream bucket of perSecond bytes or rows, its burst one second's
+// worth, or nil when perSecond is 0 (unlimited). chunkLimit keeps a chunk within the burst.
+func newBucket(perSecond uint64) *rate.Limiter { return ratelimit.New(perSecond, math.MaxInt32) }
+
+// rowWait is how long taking one token from l would wait now.
+func rowWait(l *rate.Limiter) time.Duration {
+	tokens := l.Tokens()
+	if tokens >= 1 {
+		return 0
+	}
+	return time.Duration((1 - tokens) / float64(l.Limit()) * float64(time.Second))
 }

@@ -26,6 +26,7 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
@@ -65,6 +66,10 @@ var (
 		TopicMeasureDropGroup.String():          TopicMeasureDropGroup,
 		TopicStreamDropGroup.String():           TopicStreamDropGroup,
 		TopicTraceDropGroup.String():            TopicTraceDropGroup,
+		TopicStreamImport.String():              TopicStreamImport,
+		TopicMeasureImport.String():             TopicMeasureImport,
+		TopicTraceImport.String():               TopicTraceImport,
+		TopicPropertyImport.String():            TopicPropertyImport,
 	}
 
 	// TopicRequestMap is the map of topic name to request message.
@@ -169,6 +174,10 @@ var (
 		TopicTraceDropGroup: func() proto.Message {
 			return &databasev1.GroupRegistryServiceDeleteRequest{}
 		},
+		TopicStreamImport:   newImportWrite,
+		TopicMeasureImport:  newImportWrite,
+		TopicTraceImport:    newImportWrite,
+		TopicPropertyImport: newImportWrite,
 	}
 
 	// TopicResponseMap is the map of topic name to per-topic response codec.
@@ -277,6 +286,10 @@ var operationMap = map[bus.Topic]string{
 	TopicStreamSeriesIndexWrite:    OperationBatchWriteValue,
 	TopicStreamLocalIndexWrite:     OperationBatchWriteValue,
 	TopicTraceSidxSeriesWrite:      OperationBatchWriteValue,
+	TopicStreamImport:              OperationBatchWriteValue,
+	TopicMeasureImport:             OperationBatchWriteValue,
+	TopicTraceImport:               OperationBatchWriteValue,
+	TopicPropertyImport:            OperationBatchWriteValue,
 	TopicStreamQuery:               OperationQueryValue,
 	TopicMeasureQuery:              OperationQueryValue,
 	TopicInternalMeasureQuery:      OperationQueryValue,
@@ -306,8 +319,20 @@ func OperationOf(topic bus.Topic) string {
 }
 
 // GroupFromMessageData extracts the business group string from the pre-marshal request proto (pub side).
-func GroupFromMessageData(_ bus.Topic, payload any) string {
+func GroupFromMessageData(topic bus.Topic, payload any) string {
 	switch v := payload.(type) {
+	case *transferv1.ImportWrite:
+		// An init frame carries no row and no group.
+		switch r := v.GetRow().(type) {
+		case *transferv1.ImportWrite_Measure:
+			return GroupFromMessageData(topic, r.Measure)
+		case *transferv1.ImportWrite_Stream:
+			return GroupFromMessageData(topic, r.Stream)
+		case *transferv1.ImportWrite_Trace:
+			return GroupFromMessageData(topic, r.Trace)
+		case *transferv1.ImportWrite_Property:
+			return GroupFromMessageData(topic, r.Property)
+		}
 	case *measurev1.InternalWriteRequest:
 		return groupFromWriteMetadata(v.GetRequest().GetMetadata())
 	case *streamv1.InternalWriteRequest:
@@ -334,6 +359,10 @@ func GroupFromMessageData(_ bus.Topic, payload any) string {
 		return v.GetGroup()
 	}
 	return ""
+}
+
+func newImportWrite() proto.Message {
+	return &transferv1.ImportWrite{}
 }
 
 type groupGetter interface {

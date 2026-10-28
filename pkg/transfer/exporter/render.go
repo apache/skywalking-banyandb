@@ -18,7 +18,6 @@
 package exporter
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"slices"
@@ -28,44 +27,18 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"sigs.k8s.io/yaml"
-
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/output"
 )
-
-// ValidateOutputFormat accepts the dry-run renderings table (also ""), yaml and json and
-// rejects anything else as a usage error.
-func ValidateOutputFormat(format string) error {
-	switch format {
-	case "", "table", "yaml", "json":
-		return nil
-	default:
-		return Exit(ExitUsage, "unsupported output format %q (table|yaml|json)", format)
-	}
-}
 
 // Render writes the report in the requested format: table (default), json or yaml.
 func Render(w io.Writer, format string, rep *Report) error {
-	if err := ValidateOutputFormat(format); err != nil {
+	if err := output.ValidateOutputFormat(format); err != nil {
 		return err
 	}
-	switch format {
-	case "json":
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		return enc.Encode(rep)
-	case "yaml":
-		out, err := yaml.Marshal(rep)
-		if err != nil {
-			return err
-		}
-		_, err = w.Write(out)
-		return err
-	default:
-		return renderTable(w, rep)
-	}
+	return output.RenderAs(w, format, rep, func(tw io.Writer) error { return renderTable(tw, rep) })
 }
 
 func renderTable(w io.Writer, rep *Report) error {
@@ -83,7 +56,7 @@ func renderTable(w io.Writer, rep *Report) error {
 		for _, m := range rep.MultiSource {
 			parts := make([]string, 0, len(m.Sources))
 			for _, s := range m.Sources {
-				parts = append(parts, fmt.Sprintf("%s(%s rows, %s)", s.Node, humanCount(s.Rows), timeRange(s.MinTimestamp, s.MaxTimestamp)))
+				parts = append(parts, fmt.Sprintf("%s(%s rows, %s)", s.Node, output.HumanCount(s.Rows), output.TimeRange(s.MinTimestamp, s.MaxTimestamp)))
 			}
 			fmt.Fprintf(w, "          %s  <- %s\n", m.Key, strings.Join(parts, " + "))
 		}
@@ -99,7 +72,7 @@ func renderTable(w io.Writer, rep *Report) error {
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s / %s\t%s\n",
 			r.Node, r.Catalog, r.Group, r.Stage, segments, r.Shards, parts,
-			humanCount(r.EstRows), humanBytes(r.CompressedBytes), humanBytes(r.UncompressedBytes), timeRange(r.MinTimestamp, r.MaxTimestamp))
+			output.HumanCount(r.EstRows), output.HumanBytes(r.CompressedBytes), output.HumanBytes(r.UncompressedBytes), output.TimeRange(r.MinTimestamp, r.MaxTimestamp))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -109,50 +82,8 @@ func renderTable(w io.Writer, rep *Report) error {
 		node = "-"
 	}
 	_, err := fmt.Fprintf(w, "\nSNAPSHOT  each data node pins its own snapshot; the largest node (%s) needs about %s; check df there first\n",
-		node, humanBytes(size))
+		node, output.HumanBytes(size))
 	return err
-}
-
-var (
-	countSuffixes = []string{"", "K", "M", "G", "T"}
-	byteSuffixes  = []string{"B", "KiB", "MiB", "GiB", "TiB", "PiB"}
-)
-
-// humanCount renders a count with one decimal and a K/M/G/T suffix; a value that would
-// round up to 1000.0 of a unit carries into the next one (999_999 -> 1.0M).
-func humanCount(n uint64) string { return humanUnits(n, 1000, countSuffixes, "") }
-
-// humanBytes renders bytes in IEC units with one decimal (humanize.IBytes rounds to whole
-// units from 10 upwards, so 18.3 GiB would print as 18 GiB).
-func humanBytes(n uint64) string { return humanUnits(n, 1024, byteSuffixes, " ") }
-
-// humanUnits divides n by base until it fits one decimal below base and appends that
-// unit's suffix; suffixes[0] names the base unit, in which n prints as a plain integer.
-func humanUnits(n uint64, base float64, suffixes []string, sep string) string {
-	carry := base - 0.05
-	v := float64(n)
-	for i := 0; ; i++ {
-		if i == len(suffixes)-1 || v < carry {
-			if i == 0 {
-				return strconv.FormatUint(n, 10) + sep + suffixes[i]
-			}
-			return fmt.Sprintf("%.1f%s%s", v, sep, suffixes[i])
-		}
-		v /= base
-	}
-}
-
-// timeRange renders the bounds as MM-DD, with the year when the bounds fall in different years.
-func timeRange(minTS, maxTS int64) string {
-	if minTS == 0 && maxTS == 0 {
-		return "-"
-	}
-	lo, hi := time.Unix(0, minTS).UTC(), time.Unix(0, maxTS).UTC()
-	layout := "01-02"
-	if lo.Year() != hi.Year() {
-		layout = "2006-01-02"
-	}
-	return lo.Format(layout) + " ~ " + hi.Format(layout)
 }
 
 // summaryRow is one (node, catalog, group, stage) line of the real-export summary.
@@ -172,7 +103,7 @@ func elapsedKey(node, catalog, group string) string {
 // renderSummary prints what a finished export wrote, from its manifest: one row per node,
 // catalog, group and stage with the time its units took (elapsed, keyed by elapsedKey),
 // then the totals line with the time of the whole export.
-func renderSummary(w io.Writer, output string, m *manifest.Manifest, elapsed map[string]time.Duration, total time.Duration) error {
+func renderSummary(w io.Writer, dir string, m *manifest.Manifest, elapsed map[string]time.Duration, total time.Duration) error {
 	byKey := map[string]*summaryRow{}
 	var rows []*summaryRow
 	for _, u := range m.Units {
@@ -207,12 +138,12 @@ func renderSummary(w io.Writer, output string, m *manifest.Manifest, elapsed map
 	for _, r := range rows {
 		files, bytes = files+r.files, bytes+r.bytes
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n", r.node, r.catalog, r.group, r.stage, r.units, r.files, r.rows,
-			humanBytes(r.bytes), formatDuration(r.elapsed))
+			output.HumanBytes(r.bytes), output.FormatElapsed(r.elapsed))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
 	_, err := fmt.Fprintf(w, "\nexport written to %s: %d unit(s), %d file(s), %s, %d warning(s) in %s\n",
-		output, len(m.Units), files, humanBytes(bytes), len(m.Warnings), formatDuration(total))
+		dir, len(m.Units), files, output.HumanBytes(bytes), len(m.Warnings), output.FormatElapsed(total))
 	return err
 }
