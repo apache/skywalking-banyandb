@@ -853,8 +853,8 @@ are `/mnt/d/qlb-empty-scalar-standalone-report.json` and
 
 ### Indexed LIKE and ILIKE
 
-`pattern_fixture.go`, `pattern_generate.go`, `pattern_review_generate.go` and
-`pattern_oracle.go` generate 31 scenarios for neutral names in an explicit keyword index and an index with its
+`pattern_fixture.go`, `pattern_generate.go`, `pattern_review_generate.go`,
+`pattern_aggregate_generate.go` and `pattern_oracle.go` generate 34 scenarios for neutral names in an explicit keyword index and an index with its
 analyzer omitted. Tokenized and missing indexes are rejection controls. One
 identity has two timestamps, ensuring COUNT DISTINCT is applied after pattern
 selection and field residuals. Tests retain separate case-distinct names.
@@ -884,6 +884,13 @@ still includes their custom expression parser and the global reservation list.
 These narrow source-name witnesses do not cover the broader pending quoted/dotted
 identifier inventory. Each scenario executes through the QL RPC with normal and bypassed
 plan caches. Ownership counters must return to their previous values.
+
+Three combined-feature scenarios filter names with LIKE/ILIKE before computed
+integer and decimal sums, then apply COALESCE, grouped HAVING, numeric ordering
+and pagination. Their 15 bindings include matched, unmatched and NULL patterns;
+the complete cohort has 123 bindings and 246 verification RPCs per topology.
+Expected values use independent pattern matching and small-integer arithmetic,
+without calling the production expression or decimal implementation.
 
 ```sh
 go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \

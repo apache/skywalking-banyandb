@@ -39,16 +39,16 @@ const (
 	measurePatternDecodeExpansion      = 64
 )
 
-// MeasurePatternEncodeReservationBytes covers the temporary protobuf buffer and
+// PatternEncodeReservationBytes covers the temporary protobuf buffer and
 // the enclosing wire body, plus bounded pattern strings, records and allocation
 // overhead. The source request already exists; encoding does not recreate its
 // object graph. Reserve before encoding and retain the charge until all broadcast
 // futures finish, since transports can still reference the body after Broadcast.
-func MeasurePatternEncodeReservationBytes(req *measurev1.InternalQueryRequest, patterns []model.IndexedPattern) int64 {
+func PatternEncodeReservationBytes(req *measurev1.InternalQueryRequest, patterns []model.IndexedPattern) int64 {
 	return int64(proto.Size(req))*2 + int64(len(patterns)+1)*measurePatternAllocationSlackBytes
 }
 
-// MeasurePatternDecodeReservationBytes covers the retained wire body, copied
+// PatternDecodeReservationBytes covers the retained wire body, copied
 // strings and the object graph created by protobuf decoding. The conservative
 // expansion allowance is intentionally larger than encoding's byte-buffer charge:
 // compact repeated/nested messages can allocate much more than their wire size.
@@ -56,7 +56,7 @@ func MeasurePatternEncodeReservationBytes(req *measurev1.InternalQueryRequest, p
 // the transport scope. Callers must enforce MaxMeasurePatternRequestBytes first.
 // At that wire cap, this policy exceeds a 256 MiB query budget; the cap guarantees
 // bounded parsing, not admission under every configured query memory budget.
-func MeasurePatternDecodeReservationBytes(body []byte) int64 {
+func PatternDecodeReservationBytes(body []byte) int64 {
 	return int64(len(body))*measurePatternDecodeExpansion + measurePatternAllocationSlackBytes
 }
 

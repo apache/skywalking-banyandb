@@ -1441,7 +1441,7 @@ func (p *DistributedPlan) broadcastRequest(ctx context.Context, dctx executor.Di
 	topic := data.TopicInternalMeasureQuery
 	var payload any = request
 	if len(p.patterns) > 0 {
-		encodeBytes := vmeasure.MeasurePatternEncodeReservationBytes(request, p.patterns)
+		encodeBytes := vmeasure.PatternEncodeReservationBytes(request, p.patterns)
 		tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 		if err := tracker.Reserve(encodeBytes); err != nil {
 			return nil, release, err

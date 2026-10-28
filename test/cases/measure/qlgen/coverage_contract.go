@@ -27,6 +27,7 @@ var coverageContract = []Feature{
 	{ID: "patterns.contextual_identifiers", Status: "supported"},
 	{ID: "patterns.ambiguous_indexes", Status: "rejection"},
 	{ID: "patterns.composition", Status: "supported"},
+	{ID: "patterns.aggregate_composition", Status: "supported"},
 	{ID: "patterns.pagination", Status: "supported"},
 	{ID: "patterns.invalid", Status: "rejection"},
 	{ID: "patterns.LIKE", Status: "supported"},

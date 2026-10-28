@@ -64,9 +64,11 @@ type measureDistributedExecutable interface {
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	batchRequest, batchMode := message.Data().(*vmeasure.BatchQueryRequest)
+	var patterns []model.IndexedPattern
 	if batchMode {
 		queryCriteria = batchRequest.Request
 		ok = queryCriteria != nil
+		patterns = batchRequest.Patterns
 	}
 	n := time.Now()
 	now := n.UnixNano()
@@ -89,10 +91,6 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout().
 	if p.broadcastTimeout > 0 {
 		vecCfg.BroadcastTimeout = p.broadcastTimeout
-	}
-	var patterns []model.IndexedPattern
-	if batchMode {
-		patterns = batchRequest.Patterns
 	}
 	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg, patterns...)
 	if err != nil {

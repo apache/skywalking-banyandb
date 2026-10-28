@@ -46,8 +46,8 @@ import (
 
 type nativeOversizeServer struct {
 	clusterv1.UnimplementedServiceServer
-	bodyBytes     int
 	responseError string
+	bodyBytes     int
 }
 
 func (s *nativeOversizeServer) Send(stream grpc.BidiStreamingServer[clusterv1.SendRequest, clusterv1.SendResponse]) error {

@@ -83,7 +83,7 @@ func TestPatternOracle(t *testing.T) {
 func TestPatternScenarioCoverage(t *testing.T) {
 	suite, err := Generate()
 	require.NoError(t, err)
-	require.Len(t, suite.PatternScenarios, 31)
+	require.Len(t, suite.PatternScenarios, 34)
 	require.Len(t, suite.PatternReadiness, 7)
 	for _, scenario := range suite.PatternScenarios {
 		if strings.HasPrefix(scenario.Name, "patterns_reject_ambiguous_") {

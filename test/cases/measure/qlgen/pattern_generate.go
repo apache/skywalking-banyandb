@@ -115,6 +115,11 @@ func generatePatterns(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario,
 		return nil, nil, compositionErr
 	}
 	scenarios = append(scenarios, composition...)
+	aggregates, aggregateErr := generatePatternAggregateComposition(b, source)
+	if aggregateErr != nil {
+		return nil, nil, aggregateErr
+	}
+	scenarios = append(scenarios, aggregates...)
 
 	for _, rejection := range []struct{ name, predicate string }{
 		{"tokenized", "token_name LIKE ?"},
@@ -168,6 +173,7 @@ func validatePatterns(s Suite) error {
 		"LIKE_scalar", "ILIKE_scalar", "LIKE_escape", "ILIKE_escape", "LIKE_disabled_escape", "ILIKE_disabled_escape",
 		"omitted_analyzer", "field_residual", "bind_recovery", "grouped", "native_page", "reject_tokenized", "reject_unindexed", "reject_numeric_source",
 		"reject_or", "reject_not", "reject_not_like", "reject_escape_width", "reject_escape_null",
+		"aggregate_LIKE", "aggregate_ILIKE", "aggregate_decimal_page",
 		"identifier_like", "identifier_ilike", "identifier_escape", "identifier_like-rate", "identifier_ilike-rate", "identifier_escape-group",
 		"reject_ambiguous_keyword_high_first", "reject_ambiguous_keyword_low_first", "reject_ambiguous_standard_first",
 		"reject_ambiguous_keyword_before_standard", "reject_ambiguous_multitag_first", "reject_ambiguous_keyword_before_multitag",

@@ -1,21 +1,38 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-Follow-up: [indexed LIKE and ILIKE](indexed-patterns.md) build on merged PR #1438 (`b54a9fc76`). This adds a versioned internal byte envelope for QL patterns while preserving protobuf definitions and index formats. The original PR 4 scope and verification below remain historical records.
+The current follow-up combines three capabilities on merged PR #1438 (`b54a9fc76`):
 
-This branch prepares **PR 4 of 4**: visible-tuple DISTINCT, computed/ordinal
+- Scalar expressions around aggregate results and computed aggregate inputs,
+  including `COALESCE(SUM(value), 0)` and `SUM(value + 1)`.
+- Exact bounded decimal sums through `SUM(DECIMAL_FROM_SCALED(value, 10))`,
+  with numeric comparison and ordering before final decimal-text serialization.
+- [Indexed LIKE and ILIKE](indexed-patterns.md), backed by the shared native
+  wildcard engine with tracked allocations and bounded work.
+
+The [combined verification record](follow-up-verification.md) distinguishes
+current checks from the historical benchmarks accompanying each capability.
+Protobuf definitions and persisted formats are unchanged. Calendar rollups are
+deferred to upstream pipeline design; calendar TIME_BUCKET syntax, disk spilling,
+retained-result sessions and the withdrawn index-recovery experiment are not
+included. The original PR 4 scope and verification below remain historical records.
+
+## Original PR 4 scope
+
+Merged **PR 4 of 4 (#1438)** delivered visible-tuple DISTINCT, computed/ordinal
 grouping, selectable time buckets, multi-key ordering, compact top-k pagination
 and exact count-distinct composition (T15/T16/T17 and the composition follow-up).
-It depends on open [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432)
-for expressions and filtering, with main at `86659118` as the integration baseline.
+It used [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432)
+for expressions and filtering, with main at `86659118` as its integration baseline.
 See the [PR 4 verification record](pr4-verification.md) for isolated scope and
 current validation status.
 
-Status: **all original Catalog B capabilities are implemented in this branch.**
+Status: **all original Catalog B capabilities are merged.**
 PRs #1417 and #1424 provide the merged foundation and aggregation; PR #1432
 provides expressions, raw WHERE and HAVING. PR 4 completes grouping and output
 composition. This does not fulfill all SQL requirements in DPO #81/#79: relational
-joins, CTEs, computed aggregate arguments, aggregate FILTER, additional string
-functions and exact decimal arithmetic remain outside this PR.
+joins, CTEs, aggregate FILTER and additional string functions were outside that
+PR. Computed aggregate arguments and bounded decimal sums belong to the current
+follow-up described above; this does not promise general PostgreSQL NUMERIC support.
 
 DISTINCT keys the visible tuple, computed grouping evaluates keys before
 aggregation, and sorting runs after HAVING and deduplication. Finite LIMIT uses

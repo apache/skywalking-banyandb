@@ -77,6 +77,6 @@ func TestMeasurePatternEnvelopeMaximumPredicates(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, proto.Equal(req, decoded))
 	require.Equal(t, patterns, got)
-	require.GreaterOrEqual(t, MeasurePatternEncodeReservationBytes(req, patterns), int64(proto.Size(req)+len(body)),
+	require.GreaterOrEqual(t, PatternEncodeReservationBytes(req, patterns), int64(proto.Size(req)+len(body)),
 		"encoding reserves both live byte buffers even with maximum pattern fields")
 }

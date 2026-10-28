@@ -5849,6 +5849,481 @@
       ]
     },
     {
+      "name": "patterns_aggregate_LIKE",
+      "cases": [
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_LIKE_binding_0",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name LIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%amber%\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "2"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.02"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_LIKE_binding_1",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name LIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%Bird\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "6"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.06"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_LIKE_binding_2",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name LIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "32"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.32"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_LIKE_binding_3",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name LIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"no-match\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.00"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_LIKE_binding_4",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name LIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"null\":0}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.00"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "patterns_aggregate_ILIKE",
+      "cases": [
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_ILIKE_binding_0",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%amber%\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "11"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.11"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_ILIKE_binding_1",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%Bird\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "8"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.08"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_ILIKE_binding_2",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "32"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.32"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_ILIKE_binding_3",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"no-match\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.00"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_ILIKE_binding_4",
+          "query": "SELECT COALESCE(SUM(value::FIELD + 1), 0) AS total, COALESCE(SUM(DECIMAL_FROM_SCALED(value::FIELD + 1, 2)), 0) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"null\":0}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "total",
+                    "value": {
+                      "int": {
+                        "value": "0"
+                      }
+                    }
+                  },
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "0.00"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "patterns_aggregate_decimal_page",
+      "cases": [
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_decimal_page_binding_0",
+          "query": "SELECT category, SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ? GROUP BY category HAVING SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) \u003e 1 ORDER BY amount DESC, category ASC LIMIT 1 OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%amber%\"}},{\"int\":{\"value\":\"0\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "6.0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "category",
+                        "value": {
+                          "str": {
+                            "value": "one"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ],
+          "ordered": true
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_decimal_page_binding_1",
+          "query": "SELECT category, SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ? GROUP BY category HAVING SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) \u003e 1 ORDER BY amount DESC, category ASC LIMIT 1 OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"%\"}},{\"int\":{\"value\":\"1\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "5.0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "category",
+                        "value": {
+                          "str": {
+                            "value": "two"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ],
+          "ordered": true
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_decimal_page_binding_2",
+          "query": "SELECT category, SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ? GROUP BY category HAVING SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) \u003e 1 ORDER BY amount DESC, category ASC LIMIT 1 OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"a_b\"}},{\"int\":{\"value\":\"0\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "amount",
+                    "value": {
+                      "str": {
+                        "value": "3.0"
+                      }
+                    }
+                  }
+                ],
+                "tagFamilies": [
+                  {
+                    "name": "default",
+                    "tags": [
+                      {
+                        "key": "category",
+                        "value": {
+                          "str": {
+                            "value": "one"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "patterns.aggregate_composition"
+          ],
+          "ordered": true
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_decimal_page_binding_3",
+          "query": "SELECT category, SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ? GROUP BY category HAVING SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) \u003e 1 ORDER BY amount DESC, category ASC LIMIT 1 OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"str\":{\"value\":\"no-match\"}},{\"int\":{\"value\":\"0\"}}]",
+          "want": {},
+          "features": [
+            "patterns.aggregate_composition"
+          ],
+          "ordered": true
+        },
+        {
+          "ticket": "Patterns",
+          "name": "patterns_aggregate_decimal_page_binding_4",
+          "query": "SELECT category, SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) AS amount FROM MEASURE ql_patterns IN replicated_group WHERE time \u003e= ? AND time \u003c ? AND name ILIKE ? GROUP BY category HAVING SUM(DECIMAL_FROM_SCALED(value::FIELD * 10, 1)) \u003e 1 ORDER BY amount DESC, category ASC LIMIT 1 OFFSET ?\n#!params: [{\"str\":{\"value\":\"{{time:0}}\"}},{\"str\":{\"value\":\"{{time:2000}}\"}},{\"null\":0},{\"int\":{\"value\":\"0\"}}]",
+          "want": {},
+          "features": [
+            "patterns.aggregate_composition"
+          ],
+          "ordered": true
+        }
+      ]
+    },
+    {
       "name": "patterns_reject_tokenized",
       "cases": [
         {
@@ -551686,6 +552161,10 @@
     },
     {
       "id": "patterns.LIKE",
+      "status": "supported"
+    },
+    {
+      "id": "patterns.aggregate_composition",
       "status": "supported"
     },
     {

@@ -932,7 +932,7 @@ func (p *measureInternalQueryProcessor) reservePatternDecode(ctx context.Context
 	}
 	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(policy.VectorizedConfig().QueryMemoryMiB)*1024*1024)
 	tracker := vectorized.QueryMemoryTracker(ctx, 0)
-	decodeBytes := vmeasure.MeasurePatternDecodeReservationBytes(body)
+	decodeBytes := vmeasure.PatternDecodeReservationBytes(body)
 	if err := tracker.Reserve(decodeBytes); err != nil {
 		return ctx, nil, err
 	}

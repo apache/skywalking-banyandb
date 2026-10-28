@@ -101,7 +101,7 @@ func (a *wildcardAutomaton) addPosition(bits []uint64, position int) {
 }
 
 func (a *wildcardAutomaton) intern(key wildcardStateKey) int {
-	var hash uint64 = uint64(key.prefix)*1099511628211 + uint64(key.size)
+	hash := uint64(key.prefix)*1099511628211 + uint64(key.size)
 	for _, word := range key.bits {
 		hash = (hash ^ word) * 1099511628211
 	}
