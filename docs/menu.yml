@@ -131,6 +131,8 @@ catalog:
             path: "/operation/observability/tracing"
       - name: "Cluster Management"
         path: "/operation/cluster"
+      - name: "Node Discovery"
+        path: "/operation/node-discovery"
       - name: "Troubleshooting"
         catalog:
           - name: "Error Checklist"
@@ -175,8 +177,8 @@ catalog:
             path: "/operation/fodc/apis"
           - name: "Cluster Topology Rendering"
             path: "/operation/fodc/topology"
-      - name: "Property Background Repair"
-        path: "/concept/property-repair"
+      - name: "Property Background Repair Observability"
+        path: "/operation/property-repair"
       - name: "Benchmark"
         catalog:
           - name: "Single‑Model Benchmark (Trace / Log / Measure / Property)"
@@ -199,6 +201,8 @@ catalog:
         path: "/concept/tsdb"
       - name: "Data Rotation"
         path: "/concept/rotation"
+      - name: "Persistence Storage"
+        path: "/concept/persistence-storage"
       - name: "Property Background Repair"
         path: "/concept/property-repair"
   - name: "Contribute"

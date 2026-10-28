@@ -243,12 +243,19 @@ func TestRunPlan_RejectsProtocolViolations(t *testing.T) {
 		want   string
 		frames []*transferv1.PlanResponse
 	}{
-		"created frame in a dry run": {frames: []*transferv1.PlanResponse{created, summary}, want: "in a dry run"},
+		"created frame in a dry run": {frames: []*transferv1.PlanResponse{created, summary}, want: "unexpected frame *v1.PlanResponse_Created"},
 		"second summary":             {frames: []*transferv1.PlanResponse{summary, summary}, want: "after the summary"},
 		"units after the summary":    {frames: []*transferv1.PlanResponse{summary, unitFrame("data-a:17912", "", "m", 1, 2, 1)}, want: "after the summary"},
 		"units from an unlisted node": {
 			frames: []*transferv1.PlanResponse{unitFrame("data-z:17912", "", "m", 1, 2, 1), summary},
 			want:   "neither answered nor unreachable",
+		},
+		"segment without its unit": {
+			frames: []*transferv1.PlanResponse{{Frame: &transferv1.PlanResponse_Units{Units: &transferv1.UnitFrame{
+				NodeId: "data-a:17912",
+				Units:  []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Segment{Segment: &transferv1.SegmentInventory{}}}},
+			}}}, summary},
+			want: "segment inventory without its unit",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

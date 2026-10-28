@@ -1,6 +1,6 @@
 # Data Export and Import
 
-Status: the export dry run and the server-side session RPCs (`Plan` create/read, `Sessions`) are implemented (2026-10-09); the real export transfer and the whole import are still **design** — see [4.9 Remaining work](#49-remaining-work).
+Status: the export dry run, the session RPCs (`Plan` create/read, `Sessions`) and the CSV export (`Export` RPC, `bydbctl data export`) are implemented (2026-10-10); native export, export resume and the whole import are still **design** — see [4.9 Remaining work](#49-remaining-work).
 
 > **NIDX-03/04/05 note.** This document was written while the per-segment
 > series index (`seg-*/sidx/`) was still backed by a third-party index
@@ -67,9 +67,10 @@ All import and export operations are driven by a plan file holding the key confi
 
 ```yaml
 connection: # Shared by both commands
-  nodes: [liaison-1:17912, liaison-2:17912] # Liaison node list; the client polls these nodes
+  nodes: [liaison-1:17912, liaison-2:17912] # Liaison node list; every usable one shares the export streams
   nodesTLS: {enable: false, insecure: false, cert: ""}   # TLS for liaison node port 17912
-  rateLimit: 0                        # Per-liaison byte rate limit (bytes/s), 0 = unlimited, e.g. "800MiB/s".
+  rateLimit: 0                        # Per-liaison byte rate limit (bytes/s), enforced by each liaison,
+                                      #   0 = unlimited, e.g. "800MiB/s"
 
 export:                               # Export only: scope and options
   output: ./backup-20260708           # Export directory; CLI --output overrides this. Error if both are missing
@@ -77,11 +78,15 @@ export:                               # Export only: scope and options
   compress: gzip                      # none | gzip; default gzip for CSV, none for native (native accepts only none)
   maxFileSize: 1GiB                   # Shared by both formats: soft limit per output file, measured on bytes
                                       #   on disk after compression; 0 = unlimited
-  includeSchema: true
+  includeSchema: true                 # false = no schema/ files and no schema revision check
+  schemaOnly: false                   # true = write schema/ and manifest.json only: no session, no data
+  csvAnnotations: false               # CSV only: write a "#datatype" line before every header
   parallelism: max                    # Data nodes exported concurrently; max = the selected node count,
                                       #   clamped to min(N, nodes)
   nodeRateLimit: 0                    # per-node byte rate limit, 0 = unlimited, e.g. "50MiB/s"
   nodeRowRateLimit: 0                 # CSV only: per-node row rate limit (rows/s), 0 = unlimited
+  nodeIdleTimeout: 10m                # Fail a node stream that delivers nothing for this long; 0 = never
+  sendRetryTimeout: 15m               # Window for reopening a refused export stream on the next liaison
   checkpoint: ""                      # Empty = <output>/.export-progress.json
   selectors:                          # Empty or omitted = all catalogs and groups in the cluster
     - catalog: stream
@@ -122,7 +127,7 @@ import:                               # Import only: import policy; scope is rea
   workDir: /data/import-work     # Local scratch directory, used only to unpack .tar/.tar.gz artifacts
 ```
 
-> **In the tree today** (dry-run step): `LoadPlanFile` is strict and accepts only `connection.nodes`, `connection.nodesTLS`, `export.parallelism` and `export.selectors`. Every other field above is read by the real export or the import and is declared when those land; a file carrying them is rejected until then (2026-10-09).
+> **In the tree today** (CSV export step, 2026-10-10): the plan file is strict and accepts `connection.nodes`, `connection.nodesTLS`, `connection.rateLimit` and, under `export`, `output`, `format`, `compress`, `maxFileSize`, `includeSchema`, `schemaOnly`, `csvAnnotations`, `parallelism`, `nodeRateLimit`, `nodeRowRateLimit`, `nodeIdleTimeout`, `sendRetryTimeout` and `selectors`. Every option is declared once in `pkg/transfer/config` with struct tags naming its flag, plan path, `BYDBCTL_*` variable, default and grammar; one-shot switches (`--dry-run`, `--preempt`, `--strict-coverage`, `--output-format`) have a flag and a variable but no plan field. `export.checkpoint` and the whole `import:` section are read by export resume and by the import and are declared when those land; a file carrying them is rejected until then. `format: native` parses but is refused with exit `1` (not implemented). Explicit flags override the file, which overrides the `BYDBCTL_*` environment.
 
 **An import reproduces what the export captured**, so a policy exists only where that leaves a real choice — and it does so in exactly one place: a resumed run, and there only for payloads carrying no idempotency key. A native `kind=PART` replay is recognised by `import_op_id` and writes nothing; only the element index and the CSV stream / trace payloads can duplicate on re-push or lose on skip. Everything else is pushed as-is. Overlapping sources on a first run are reported as a WARN; `--strict-coverage` turns that into an error.
 
@@ -130,7 +135,7 @@ import:                               # Import only: import policy; scope is rea
 
 ## 3. Dry run
 
-Dry run walks the real workflow without importing or exporting anything. It is a strict prefix of the real run with two deliberate exceptions: `Plan` goes out without a `session`, so no snapshot is created; and schemas are loaded into memory but never written to `schema/`.
+Dry run walks the real workflow without importing or exporting anything. It is a strict prefix of the real run with two deliberate exceptions: `Plan` goes out without a `session`, so no snapshot is created; and no schema beyond the group list is listed, so nothing is written to `schema/`.
 
 ### 3.1 Export dry run
 
@@ -206,14 +211,20 @@ All three verdict columns take closed value sets:
 
 ### 4.1 Client
 
-1. **Connection check** — select an available liaison and call `GetClusterState` for the topology.
-2. **Fetch schema** — call the Schema gRPC service and load schemas into memory.
-3. **Plan request** — send one `Plan` request; the liaison fans it out to all `DATA`-role nodes.
-4. **Aggregate** — group results by node to decide what to export from each.
-5. **Execute export** — connect to the available liaisons and send export requests.
-6. **Write manifest** — write the summary file to the export root.
+`bydbctl data export` without `--dry-run` runs these steps (`pkg/transfer/exporter.RunExport`):
 
-The export side performs **no source selection**. Every source node's copy of a unit is carried away verbatim into its own `nodes/<node-dir>/` subtree, and all multi-source judgement happens on the import side ([Multiple shard sources](#6-multiple-shard-sources)). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run.
+1. **Check the output directory** — it must not exist or must be empty; anything else is exit `1`. There is no resume yet, so an export never mixes with what an earlier run left behind.
+2. **Connection check** — probe every address in `--nodes` (`GetCurrentNode`, `GetClusterState`). An unreachable candidate, or one that has not discovered any data node yet, is skipped with a `WARN`; refused credentials or an endpoint that is not a liaison fail at once (exit `2`). The first usable liaison is the primary: the schema, `Plan` and `Sessions` calls go through it, and the dry run and `release-session` use only it.
+3. **Fetch and write the schema** — list the groups, validate the selectors, then list every resource of the selected groups through the liaison's registry services and write `schema/<kind>.jsonl` ([Schema files](#441-schema-files)). The mod revision of every stream, measure, trace and property is kept in memory for the check in step 6. With `--include-schema=false` this step lists nothing beyond the groups and writes no `schema/` files, and step 6 skips the revision check. With `--schema-only` the client writes `manifest.json` (`schemaOnly: true`, no units) here and stops: no session, no snapshot, no data.
+4. **Create the session** — one `Plan{selectors, create{preempt}}`. The session id from the first (`created`) frame is printed at once, before the inventory arrives. A node holding another session refuses with `ALREADY_EXISTS`; the client lists the sessions once, prints every occupant with its start time, last heartbeat, catalogs and nodes, and exits `2` ([Taking over an existing session](#482-taking-over-an-existing-session)). Transient failures (`INTERNAL`, `UNAVAILABLE`, `ABORTED`) are attempted up to three times with jittered back-off. A create whose summary still names unreachable nodes is released again and fails, because their data would be missing.
+5. **Heartbeat** — `Sessions(ACTION_HEARTBEAT)` every 5 minutes in the background. A failed heartbeat is a `WARN` line and is retried on the next tick; `FAILED_PRECONDITION` (the session expired or its lease is unreadable) cancels every worker and exits `3`.
+6. **Export** — fold the Plan frames into one job per `node_id` and run up to `--parallelism` workers, one `Export` stream per node ([Full workflow](#47-full-workflow)). The nodes, sorted by id, are dealt round-robin over the usable liaisons, so node `i` streams through liaison `i mod L`; a stream that cannot be opened (`UNAVAILABLE`, `RESOURCE_EXHAUSTED`, or `NOT_FOUND` from a liaison that does not see the node) moves on to the next liaison within `--send-retry-timeout`. Each file lands as `<path>.tmp`, is checked against its `file_finished` (size, CRC32, and the schema mod revisions the node encoded with), fsynced, renamed, and its directory fsynced. The first failing worker cancels the others.
+7. **Write the manifest** — once every node finished, `manifest.json` is built from what was received and written atomically ([manifest.json](#45-manifestjson)); every warning is also printed as a `WARN` line.
+8. **Release** — `Sessions(ACTION_RELEASE)`. A failed release is a warning only: the artifact is complete and the lease reclaims the snapshot. The client then prints what was actually written — one `NODE CATALOG GROUP STAGE UNITS FILES ROWS SIZE TIME` row per node, catalog, group and stage (a property row shows its unit's stage, that of the unit's first source; `TIME` adds up the time its units took) — and one line with the units, files, bytes and warnings written and the time of the whole export. The snapshot is released at this point, so the dry run's `SNAPSHOT` budget line is not repeated.
+
+Once the session exists, a failure keeps it and prints `bydbctl data release-session --id <id>`; the run exits `3`. Files already renamed stay in the output directory, a file in flight stays as `.tmp`, and no `manifest.json` is written, so a partial directory never passes for an artifact. Ctrl-C or `SIGTERM` is handled the same way: the export stops, the session is kept and the same `bydbctl data release-session --id <id>` line is printed. After a successful export, a failed release (as a whole or on some node) is a `WARN` with exit `0`, followed by the same `bydbctl data release-session --id <id>` line.
+
+The export side performs **no source selection**. Every source node's copy of a unit is carried away into its own `nodes/<node-dir>/` subtree, and all multi-source judgement happens on the import side ([Multiple shard sources](#6-multiple-shard-sources)). This is deliberate: a wrong judgement on the export side loses bytes permanently, while a wrong judgement on the import side costs a re-run. Every source node is included, but a CSV copy is a reconstruction, not a byte copy: rows or values the format cannot represent under the current schema are left out with a warning ([CSV export](#43-csv-export)), and the export still succeeds. An export that exits `0` is therefore complete for migration only when `manifest.warnings` is empty, or when every warning in it is acceptable.
 
 #### 4.1.1 Node IDs are not path-safe
 
@@ -224,31 +235,33 @@ Two values are kept, and they have different jobs:
 | | Value | Where it lives |
 |---|---|---|
 | **Raw ID** | `10.0.0.5:17912` | `manifest.source.nodes[].id`, and every `node_id` field on the wire. This is the identity |
-| **Directory component** | `10-0-0-5-17912-3f9a1c2d` | `manifest.source.nodes[].dir`, and the `nodes/<node-dir>/` path. This is only a filename |
+| **Directory component** | `10-0-0-5-17912-8a05db98` | `manifest.source.nodes[].dir`, and the `nodes/<node-dir>/` path. This is only a filename |
 
 The directory component is derived from the raw ID by:
 
 1. lowercase the raw ID;
 2. replace every run of characters outside `[a-z0-9]` with a single `-`;
-3. trim leading and trailing `-`; if nothing is left, use `node`;
-4. truncate to 32 characters;
+3. truncate to 32 characters;
+4. trim leading and trailing `-`; if nothing is left, use `node`;
 5. append `-` followed by the first 8 hex characters of `SHA-256` over the **raw** UTF-8 bytes.
 
-**Reversal is by lookup in the manifest, not by decoding.** Step 2 and step 4 are lossy on purpose — the readable prefix exists so an operator can tell subtrees apart, and the manifest carries the exact ID for anything that needs it. Import resolves a subtree by matching `dir`, and uses the paired `id` wherever identity matters.
+**Reversal is by lookup in the manifest, not by decoding.** Steps 1 to 3 are lossy on purpose — the bounded readable prefix exists so an operator can tell subtrees apart, and the manifest carries the exact ID for anything that needs it. Import resolves a subtree by matching `dir`, and uses the paired `id` wherever identity matters.
 
-The hash suffix is what makes the mapping injective, and it covers the collision cases a plain sanitizer misses:
+The hash suffix keeps IDs apart that the readable prefix alone would merge:
 
-| Raw IDs | Sanitized prefix | Result |
-|---|---|---|
-| `10.0.0.5:17912`, `10.0.0.5:17913` | both `10-0-0-5-1791x` after truncation of a longer host | distinct, the suffixes differ |
-| `data-A`, `data-a` | both `data-a` | distinct — macOS and Windows fold case, the suffix does not |
-| `[::1]:17912` | `1-17912` | usable, where the raw ID is not |
+| Raw IDs | Directory component |
+|---|---|
+| `10.0.0.5:17912` | `10-0-0-5-17912-8a05db98` |
+| `[::1]:17912` | `1-17912-…`, usable where the raw ID is not |
+| `Data-1:17912`, `data-1:17912` | `data-1-17912-03d2b6d6`, `data-1-17912-98a53f33` — macOS and Windows fold case, the suffix does not |
+| `a.b:17912`, `a-b:17912` | `a-b-17912-613e0e89`, `a-b-17912-b5233c34` |
+| two ports on one host name longer than 32 characters | one prefix, distinct suffixes |
 
-Only `manifest.source.nodes[]` and the paths inside it spell a directory component out in full. Every other example in this document abbreviates it to `data-1`, `data-a` and so on, purely for readability.
-
-The client still refuses the export if two nodes in one `Plan` produce the same **full** directory component, which after the hash means a genuine duplicate node ID. That remains a prerequisite: `ConnManager` indexes connections by ID and silently drops same-ID nodes, so a duplicate is already broken at the cluster level, not just in the artifact.
+The client still refuses the export if two nodes in one `Plan` produce the same directory component, naming both IDs, so a 32-bit hash collision fails the export instead of mixing two nodes' files in one subtree.
 
 ### 4.2 Native export
+
+> **Not implemented yet.** `FORMAT_NATIVE` is reserved in the protocol, together with the native-only fields (`UnitStarted.total_files`/`estimated_total_bytes`, `FileFinished.entry_count`; CSV sends 0). `bydbctl data export --format native` exits `1` before connecting, and a data node answers an `Export` stream whose `init.format` is native with `UNIMPLEMENTED`. The data node dispatches each unit to a per-format producer, so native slots in beside CSV. The rest of this section is the design.
 
 Exporting in native format:
 
@@ -288,51 +301,61 @@ There are only three gRPC frame types:
 ```text
 file_started{ relative_path, shard_id, segment_level, shard_index, seq }
                                            → Client creates <path>.tmp
-chunk{ content } × N                       → Client appends data
-file_finished{ bytes, crc32, entry_count, row_counts }
+chunk{ content, rows } × N                 → Client appends data and updates the progress
+file_finished{ bytes, crc32, entry_count, row_counts, schema_mod_revisions }
                                            → Client validates → fsync → rename
 ```
 
 ### 4.3 CSV export
 
-Exporting in CSV format:
+Each data node produces CSV straight from the session snapshot, read-only (`banyand/transfer/export`): parts are opened through the dump readers `banyand/internal/dump/{stream,measure,trace}` over a read-only file system, and the segment series index and the property store through `pkg/index/native`'s `OpenReadOnlyGeneration`, which takes no lock and writes nothing into the snapshot. Directories are listed with `os.ReadDir`. Per unit:
 
-1. **Create snapshot** for the required data types.
-2. **Traverse segments** of every group.
-3. **Iterate shards** — use the dump readers to read rows shard by shard, encode as CSV, gzip on the fly, and emit one chunk frame per 1 MiB of **compressed** bytes. Both rate limits apply here — see below.
+1. **Locate** the unit in the snapshot: `<root>/<group>/seg-<suffix>/shard-<N>` (property: `<root>/<group>/shard-<N>`). A missing segment or requested shard directory is `INTERNAL`: the snapshot is frozen, so that is a node-side fault. A file that is missing when it is read is taken to mean the session was preempted or released, and the stream fails with `FAILED_PRECONDITION`; the session is checked once more before `unit_finished`, so a release or takeover during the unit is caught even when no read failed. This covers detected read failures and session loss only, not snapshot damage in general: a snapshot-listed part directory that vanished before the unit was listed is skipped like a merge source, and a shard whose snapshot file vanished lists no parts. As a lightweight consistency check, `unit_started.total_parts` is counted the same way as the session `Plan`, which inventoried the same snapshot, and the client fails the export (exit `3`) when the two differ. A shard's live parts are the ones its newest readable `<epoch>.snp` names, as when the engine opens the table: a closed segment is linked into the snapshot as a whole, so it can still hold the source parts of a merge the engine had not yet removed, and those are skipped. The Plan inventory counts parts the same way.
+2. **Build the column layout** of the group from the node's current schema ([Columns](#433-columns)). A group the layout cannot describe — a `TIMESTAMP` tag in a stream or measure, or two traces of one group with the same tag set — is refused with `FAILED_PRECONDITION`.
+3. **Encode rows** — one CSV stream per shard (index-mode measure: one per segment), gzipped on the fly unless `compress` is `NONE`, sent as chunks of at most 1 MiB of on-disk bytes. A stream rolls to the next file after a complete row once the file's on-disk bytes reach `max_file_size` (`0` never rolls), and every file repeats the header. A row whose encoded size reaches the limit gets a file of its own, and the unit reports the number of such rows in one warning.
+4. **Finish the unit** — `unit_finished` carries the unit's warnings. A unit without any row produces no file, and an empty file is never written. The warning `unit has no rows` is given only when the unit listed shards, whose parts then yielded no row; a unit without shards (a segment the engine created ahead of time) is silent.
 
-**Two models never reach part iteration, and missing either produces a header-only file with exit code 0 rather than an error.** Index-mode measure has zero parts and no shard directories — the segment-level series index *is* the payload — so its rows come from `readIndexModeDocs`, one CSV row per document, with the three fixed columns taken from the reserved stored fields `_id` / `_timestamp` / `_version` (`_id` holds `EntityValues`, whose first element is the resource name). Property has no parts either.
-4. **Complete export** — finish the gRPC stream.
+How each model is read:
 
-The existing dump readers `banyand/internal/dump/{stream,measure,trace}` cover the part-iteration shape, but **two of their entry points open the series index in write mode and cannot be used against a snapshot as they stand**: `dump.NewIndexResolver` and `dump.LoadSegmentSeriesMap` both call `inverted.NewStore`, which ends in the legacy engine's writer open and creates an index-local lock file inside the directory it opens. The snapshot machinery deliberately keeps that file out — `includeInClosedSnapshot` excludes it, and the open-segment path copies the index through `reader.Backup` — so opening a snapshot's `sidx/` this way writes the lock back in and streams it into the artifact. CSV export therefore needs one new read-only construction in the dump package, backed by `pkg/index/inverted`'s `ReadOnlyWalkDocuments` / `ReadOnlyDocCount`, neither of which takes the exclusive lock.
+| Model | Rows come from | `_name` |
+|---|---|---|
+| stream | the parts of every requested shard | the series subject decoded from the row's `EntityValues`; the entity tags are filled from the same series. The segment series index stands in for parts without `smeta.bin` |
+| measure | as stream; indexed tags, which the write path keeps only in the series index, are decoded from it | as stream |
+| index-mode measure | the documents of the segment-level series index (`seg-<suffix>/sidx`), one row per document of an index-mode measure; the series entries of the group's regular measures in the same index are skipped | the document's subject |
+| trace | the parts of every requested shard | matched by the row's tag-name set, without the trace-id and span-id tags and without tags no trace of the group declares, against the group's traces. A group with one trace takes it directly; a row whose set equals one trace's takes it; otherwise a row (from a part written before a tag was removed) goes to the only trace whose tags include all of its tags, and a row that no trace or several traces include is dropped and counted; two traces with the same tag set make the group fail (use native, once it exists). Matching by tag set cannot tell an old row from a row of another trace with the same tags |
+| property | the live documents of every shard's store, decoded from `_source` and streamed one at a time; tombstones included | `Property.metadata.name` |
 
-**Trace is a real gap, not a call-site difference.** `dump/trace`'s `Row` has no `EntityValues` and its reader has no `SetIndexResolver` — only stream and measure do — so the `_name` column has no source in the part. Its `Row.SeriesID` does not help: it is a hash over the span's own tags, and the reader's own comment says it must not be used to look up on-disk series metadata. Trace's `_name` has to be recovered by matching the row's tag-name set against the embedded schemas, and when two `Trace` resources in one group have identical tag-name sets the signature is ambiguous — **reject CSV export for that group** rather than guess, and direct the operator to the native channel, which needs no `_name`.
+`_top_n_result` is exported like any other measure: its binary `value` field carries the engine-internal Top-N encoding, base64-encoded. A point stored in several versions is exported as **one row per point**, the versions merged the way a query or a part merge combines them (`MergeTopNResults` in `banyand/measure/export_topn.go`), with the highest version, so an importer can write the rows verbatim instead of recomputing them. The warnings report dropped rows and why, stored tag and field values the current schema no longer declares or declares with another type, and property timestamps outside the int64 nanosecond range (counted per resource and tag), tags only a multi-tag index rule stores, a single row larger than the file size limit, and a unit whose shards yielded no row. A column that is null on every row is not reported: the source schemas commonly declare tags they never fill. None of them fails the export; all of them land in `manifest.warnings`, and each of them is data the artifact does not carry.
 
-`property` has no dump reader, and `SeriesIterator` is **not** the answer: it lives on the writable store, so it reintroduces the same lock. Property rows come from `inverted.ReadOnlyWalkDocuments` over each `property/data/<group>/shard-N` directory, restoring each `Property` from the `_source` stored field. Do not copy `banyand/cmd/dump/property.go`: it opens the shard with `NewStore` twice and accumulates the whole shard into one in-memory slice before emitting a row.
+**The schema the rows were encoded with is checked.** Columns are bound by position and a group's layout is built from all of its resources, so every `file_finished` carries the `ModRevision` of every resource the node built the layout from, whether or not it wrote rows. The client compares that set with the revisions it saved in `schema/` (including `_top_n_result`); a missing or extra resource or any different revision fails the export (exit `3`, "schema … changed during export; export again"). With `--include-schema=false` there is nothing to compare against and the check is skipped.
 
-**Rate limiting has two knobs, and CSV honours both.** They throttle different resources, so neither subsumes the other and whichever binds first wins:
+**Rate limiting has three knobs; two are enforced by the data node, one by the liaison.** All three are set by the client and travel in `init`; neither server has a configuration of its own for them. They throttle different resources, so none subsumes another and whichever binds first wins:
 
-| Knob | Plan field | Protobuf field | Measured | native | CSV |
-|---|---|---|---|---|---|
-| Bytes | `export.nodeRateLimit` | `RateLimit.bytes_per_second` | On the wire, so **after** gzip for CSV | yes | yes |
-| Rows | `export.nodeRowRateLimit` | `RateLimit.rows_per_second` | At the dump reader, before encoding | no — native moves opaque bytes and has no row concept | yes |
+| Knob | Flag / plan field | Protobuf field | Measured |
+|---|---|---|---|
+| Node bytes | `--node-rate-limit` / `export.nodeRateLimit` | `RateLimit.bytes_per_second` | Each chunk before it is sent, so **after** gzip |
+| Node rows | `--node-row-rate-limit` / `export.nodeRowRateLimit` | `RateLimit.rows_per_second` | Each row the producer encodes. CSV only: native moves opaque bytes and has no row concept |
+| Liaison bytes | `--liaison-rate-limit` / `connection.rateLimit` | `Init.liaison_bytes_per_second` | Each chunk the liaison relays, waited for before it is forwarded to the client; below 1 MiB/s a chunk is forwarded in pieces of one second's worth, each waited for on its own. Nothing is prefetched, so the wait back-pressures the node |
 
-The byte knob protects the liaison and the network; the row knob protects the data node, whose cost for CSV is row iteration rather than transfer. A CSV export that sets only `nodeRateLimit` can still saturate a data node's CPU on a highly compressible group, which is why the row knob exists as well as, not instead of, the byte knob.
+The node knobs travel in `init.rate_limit` and apply to that one stream, that is, per data node. The liaison knob is **process-wide on each liaison**: every Export stream a liaison relays shares one bucket, and the value of the stream opened last wins — `0` included, which lifts the limit — until no Export stream is left, when the bucket goes back to unlimited. One export session at a time per cluster means every stream on a liaison normally carries the same value. With several liaisons in `--nodes` each enforces the value on its own share, so the total can reach `L ×` the limit. A node bucket's burst is one second's worth (at least one row), and a node byte rate below 1 MiB/s sends chunks of one second's worth, so a chunk always fits the burst; a node about to wait for its row bucket first sends the rows it holds, flushing gzip — right away when the wait is 100 ms or longer, so a low row rate delivers every row as it is written, otherwise once they are a second old — so a throttled stream still delivers a chunk at least about every second; the liaison bucket's burst is one second's worth too, at most one chunk (1 MiB), and a larger chunk is relayed in pieces of the burst's share of one relay (the burst divided by the relays in flight) carrying the chunk's `rows`, with its bytes in order, so every node stream still gets a frame about every second; `0` disables a knob entirely. The byte knobs protect the liaison and the network; the row knob protects the data node, whose cost for CSV is row iteration rather than transfer. A CSV export that sets only a byte limit can still saturate a data node's CPU on a highly compressible group, which is why the row knob exists as well as, not instead of, the byte knob.
+
+Rates take `<quantity>[/<period>]`: the period is `s` (the default), `min` or `h` (`m` is refused as ambiguous); a byte quantity is bare bytes or a size unit (`50MiB/s`, `3GiB/min`), a row quantity a plain integer (`50000/s`). A negative rate, a byte unit on a row rate, and a non-zero rate below one unit per second are usage errors (exit `1`).
 
 #### 4.3.1 Value encoding
 
 | Type | Encoding |
 |---|---|
-| STRING | Written via `encoding/csv`; a value containing `\r` is downgraded to `\B` + base64 ([the escape algorithm](#432-escape-algorithm)) |
-| INT | Decimal |
-| FLOAT (measure field) | `strconv.FormatFloat(v, 'f', -1, 64)`. Precision **must** be `-1`, or the round trip loses precision |
-| DATA_BINARY / span payload | `base64.StdEncoding`, standard alphabet, with padding |
-| STRING_ARRAY | JSON array string |
+| STRING (also `trace_id`, `span_id`, property `_id`) | Written via `encoding/csv`; a value containing `\r` is downgraded to `\B` + base64, and a value starting with a backslash gets one extra leading backslash ([the escape algorithm](#432-escape-algorithm)) |
+| INT (also `_version`, `_mod_revision`, `_create_revision`) | Decimal |
+| `_element_id` | The 16 lowercase hex digits of the stored uint64 element id's big-endian bytes, the form a stream query returns as `element_id` (`csvfmt.EncodeElementID`). An import parses it back with `csvfmt.DecodeElementID` and replays the row with that value as `raw_element_id`, so the target stores the same id |
+| FLOAT (measure field) | `strconv.FormatFloat(v, 'f', -1, 64)`. Precision **must** be `-1`, or the round trip loses precision. NaN and infinities are written `NaN`, `+Inf`, `-Inf` |
+| DATA_BINARY / `_span` payload | `base64.StdEncoding`, standard alphabet, with padding; an empty value is an empty cell, distinct from null |
+| STRING_ARRAY | JSON array string (HTML characters not escaped; invalid UTF-8 becomes U+FFFD) |
 | INT_ARRAY | Semicolon-separated decimal int64 values; an empty array is an empty string |
-| All timestamp columns | Decimal int64 UnixNano; trace-only for TIMESTAMP tags |
-| null | The `\N` sentinel. Literals are kept distinct by the leading-backslash rule in [the escape algorithm](#432-escape-algorithm) |
+| All time columns (`_timestamp`, `_updated_at`, `_delete_time`) and TIMESTAMP tags | Decimal int64 UnixNano. TIMESTAMP tags exist only for trace and property; a stream or measure group declaring one is refused |
+| null | The `\N` sentinel; a cell whose value the row does not carry is null. Literals are kept distinct by the leading-backslash rule in [the escape algorithm](#432-escape-algorithm) |
 
-> **NaN and ±Inf cannot currently be exported at all.** `FormatFloat` renders them as `NaN` / `+Inf` / `-Inf` and `ParseFloat` accepts those literals back, so the encoding is not the problem. The problem is upstream: `encodeFloat64Column` cannot encode NaN/±Inf losslessly and falls back to `encodeDefault`, which emits a dictionary block (type 10) beneath an outer plain marker (type 9). The engine's own `decodeFloat64Column` delegates that case to `decodeDefault` and reads it back; the dump reader strips the outer 9 and hands the inner bytes straight to the decoder, so it fails. This has to be settled before the CSV channel ships — either declare it unsupported, or extend the dump reader.
+> **NaN and ±Inf are exported.** `encodeFloat64Column` cannot encode them losslessly and falls back to `encodeDefault`, which writes a dictionary or plain block beneath an outer plain marker. The measure dump reader now decodes measure columns the way the engine does (`readColumnValues`, mirroring `column.decodeColumnValues`), so such blocks read back and the values reach the CSV as `NaN` / `+Inf` / `-Inf`, which `ParseFloat` accepts.
 
 `'f'` is chosen over `'g'` because `'g'` renders `1000000` as `1e+06`, and six of the nine non-test call sites in the repository already use `'f', -1, 64`. Both round-trip bit-exactly. The cost of `'f'` is length: `1e300` becomes a 301-character field, so the export side must not assume an upper bound on field width.
 
@@ -358,7 +381,7 @@ Reading, in this order — the four branches are mutually exclusive:
 3. the cell starts with `\B` → base64-decode the remainder;
 4. otherwise → the cell is the literal.
 
-The three written prefixes `\N` / `\B…` / `\\…` are pairwise disjoint and the writer's image covers every reader branch, so the mapping is closed and injective.
+The three written prefixes `\N` / `\B…` / `\\…` are pairwise disjoint and the reader accepts every cell the writer produces, so the mapping is injective.
 
 Round-trip cases that must be in the test suite, each asserted byte-for-byte:
 
@@ -366,9 +389,9 @@ Round-trip cases that must be in the test suite, each asserted byte-for-byte:
 |---|---|---|
 | null | `\N` | null |
 | `\N` | `\\N` | `\N` |
-| `\\N` | `\\\\N` | `\\N` |
+| `\\N` | `\\\N` | `\\N` |
 | `\Bx` | `\\Bx` | `\Bx` |
-| `\\Bx` | `\\\\Bx` | `\\Bx` |
+| `\\Bx` | `\\\Bx` | `\\Bx` |
 | `a\r\nb` | `\BYQ0KYg==` | `a\r\nb` |
 | `\BDQo=` (literal) | `\\BDQo=` | `\BDQo=` |
 
@@ -386,11 +409,15 @@ Round-trip cases that must be in the test suite, each asserted byte-for-byte:
 | trace | `_name`, `trace_id`, `span_id`, `_span` | all tags, without the family level |
 | property | `_name`, `_id`, `_mod_revision`, `_create_revision`, `_updated_at`, `_delete_time` | all tags |
 
+A group has **one** layout, shared by every file of every unit and by all of its resources: the fixed columns, then the union of the resources' tag columns (`family.tag` for stream and measure, the bare tag name for trace and property), then, for measures, the union of the `_field.<name>` columns. Resources are taken in name order (`_top_n_result` included) and tags in declaration order; the first occurrence fixes a column's position, and a row leaves the columns of other resources null (`\N`). When two resources declare the same tag or field with different types, or its header would repeat another column's (a fixed column, a `_field.<name>` column, or family `a` tag `b.c` against family `a.b` tag `c`), each resource declaring it gets its own column headed `<resource>::<family.tag>` (or `<resource>::_field.<name>`), so every header is unique. Every measure group holds the auto-created `_top_n_result`, whose binary field is named `value`, so a group whose measures declare a numeric `value` field gets split headers such as `cpm::_field.value` and `_top_n_result::_field.value`. The layout is a pure function of the schema (`pkg/transfer/format/csvfmt`), so an importer rebuilds it from `schema/`.
+
+With `--csv-annotations` (`init.csv_annotations`) every file starts with one extra line before the header: `#datatype`, then one token per column — `string`, `long`, `double`, `base64Binary`, `stringArray`, `longArray` or `timestamp`. That line has one field more than the header, so a reader must accept a variable number of fields per record.
+
 **stream**
 
 ```csv
 _name,_element_id,_timestamp,searchable.trace_id,searchable.service_id,searchable.state,data.data_binary
-sw_service_log,73281937461,1783419300123000000,af1c...beef,c2VydmljZS1h,1,ZGF0YQ==
+sw_service_log,000000110ff1a035,1783419300123000000,af1c...beef,c2VydmljZS1h,1,ZGF0YQ==
 ```
 
 **measure** — `_version` is preserved to maintain deduplication semantics.
@@ -439,18 +466,26 @@ Below that level:
 | Property | `shard-<N>-001.bnc` (no `seg-` layer) | `shard-<N>-00001.csv.gz` (no `seg-` layer) |
 | File splitting | `-001`, `-002`, …; each volume has a complete footer | `-00001`, `-00002`, …; each volume repeats the header |
 
+In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<catalog>` component is lowercase (`stream`, `measure`, `trace`, `property`), and the group name is escaped into a safe path component: every byte outside `[A-Za-z0-9._-]` becomes `%XX` (upper-case hex), and the names `.` and `..` are escaped in full. The client also rejects any `relative_path` from a node that is absolute, contains `..` or a backslash, or lies outside the unit's `<catalog>/<group>/` prefix, and refuses to overwrite an existing file. Directories are created `0700` and files `0600`.
+
+#### 4.4.1 Schema files
+
+`schema/` always holds eight JSON Lines files, one per kind, in this order: `group.jsonl`, `stream.jsonl`, `measure.jsonl`, `trace.jsonl`, `property.jsonl`, `indexRule.jsonl`, `indexRuleBinding.jsonl`, `topNAggregation.jsonl`. Each line is one resource as protojson with unpopulated fields emitted. Only the selected groups and their resources are listed, and only the kinds a group's catalog can hold (index rules and bindings for stream, measure and trace; Top-N aggregations for measure). A kind with nothing to list still gets an empty file, so the file set does not depend on the data. The files are listed with their size and CRC32 in `manifest.schemaFiles`.
+
+`--include-schema=false` (or `export.includeSchema: false`) leaves the schema out entirely: no registry listing beyond the groups, no `schema/` files (`schemaFiles: []`), no mod revision check, and `groups[].indexMode` is recorded as `false` with a manifest warning that it is unknown. Without the schema the CSV columns cannot be interpreted, so an importer needs the same schema from elsewhere. `--schema-only` together with `--include-schema=false` is a usage error. `--schema-only` writes `schema/` and a `manifest.json` with `"schemaOnly": true` and no units, without creating a session.
+
 ### 4.5 manifest.json
 
-`manifest.json` records the format, export time, source cluster, group information, and per-group results.
+`manifest.json` records the format, export time, source cluster, group information, and per-unit results. It is written last, atomically (temporary file, fsync, rename, fsync of the directory), mode `0600`; until it exists the directory is not an artifact. A CSV export writes:
 
 ```json
 {
   "artifactVersion": 1,
-  "format": "native",
+  "format": "csv",
+  "compress": "gzip",
   "exportedAt": "2026-09-07T12:00:00Z",
   "source": {
-    "banyandVersion": "0.11",
-    "nodes": [{"id": "10.0.0.5:17912", "dir": "10-0-0-5-17912-3f9a1c2d",
+    "nodes": [{"id": "10.0.0.5:17912", "dir": "10-0-0-5-17912-8a05db98",
                "timezone": "Asia/Shanghai"}]
   },
   "groups": [{
@@ -459,17 +494,10 @@ Below that level:
   }],
   "units": [{
     "catalog": "MEASURE", "group": "sw_metric", "stage": "hot", "segment": "20260907",
-    "minTimestamp": 1788739200000000000, "maxTimestamp": 1788825599999999999,
     "segmentVersion": "1.5.0",
+    "minTimestamp": 1788739200000000000, "maxTimestamp": 1788825599999999999,
     "sources": [{
       "node": "10.0.0.5:17912",
-      "segmentFiles": [
-        {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/metadata",
-         "bytes": 52, "crc32": "0x1f4a03bb"},
-        {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/sidx-001.bnc",
-         "bytes": 4194618, "crc32": "0x3a91c7e2", "entryCount": 3}
-      ],
-      "sidxCoversShards": [0, 1],
       "shards": [{
         "shard": 0,
         "minTimestamp": 1788739200000000000, "maxTimestamp": 1788825599999999999,
@@ -480,14 +508,14 @@ Below that level:
           {"id": 2, "minTimestamp": 1788760800000000000,
                     "maxTimestamp": 1788825599999999999, "totalCount": 69135}
         ],
-        "rowCounts": {},
+        "rowCounts": {"service_cpm_minute": 100000, "service_resp_time": 23456},
         "estimatedCompressedBytes": 10737418,
         "estimatedUncompressedBytes": 41943040,
         "files": [
-          {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/shard-0-001.bnc",
-           "bytes": 402653184, "crc32": "0x9f2a1b34", "entryCount": 47},
-          {"path": "nodes/10-0-0-5-17912-3f9a1c2d/measure/sw_metric/seg-20260907/shard-0-002.bnc",
-           "bytes": 118374400, "crc32": "0x77e0aa15", "entryCount": 12}
+          {"path": "nodes/10-0-0-5-17912-8a05db98/measure/sw_metric/seg-20260907/shard-0-00001.csv.gz",
+           "bytes": 536871012, "crc32": "0x9f2a1b34"},
+          {"path": "nodes/10-0-0-5-17912-8a05db98/measure/sw_metric/seg-20260907/shard-0-00002.csv.gz",
+           "bytes": 11834400, "crc32": "0x77e0aa15"}
         ]
       }]
     }]
@@ -497,9 +525,19 @@ Below that level:
 }
 ```
 
+- `stages` lists the group-level options first, named `hot` (the default tier), then every declared lifecycle stage. A stage records its own `shardNum`, `replicas` (`0` means no replicas) and `segmentInterval`; its `ttl` is the stage's own, not the cumulative effective TTL. `indexMode` is true when the group holds an index-mode measure.
+- A segment unit is keyed by `(catalog, group, stage, segment)` and holds one source per node that exported it. A property unit's key degrades to `(catalog, group)`: every node's shards of the group are sources of one unit, whose `stage` is the stage of its first source (in node-id order). Property units have no `segment` and no time range; their shards carry `docCount` (the Plan's document count) and an empty `parts`. An index-mode measure unit has its rows in `segmentFiles` only, no shards, and a zero time range: the series index records no time span.
+- `compress` is `gzip` or `none`; an unspecified compression is the CSV default `gzip`.
+- A shard's `totalCount` and `rowCounts` count the rows actually written to its files, per resource, as the data node reported each file in `file_finished.row_counts`; the Plan's statistics only feed `parts[]` and the `estimated*` sizes. Files carry no row counts of their own: `--verify` and the multiple-source judgement only use the totals, and a file's integrity is its `bytes` and `crc32`.
+- An index-mode measure's rows are segment-level: its files are listed in the source's `segmentFiles` rather than under a shard, and the source carries their `rowCounts` and `totalCount`.
+- `schemaOnly: true` marks a `--schema-only` artifact, which has no units.
+- `warnings` collects every unit warning, prefixed with the node and unit, plus the stage warnings of the dry run.
+
+A native export will also record the raw segment files (`metadata`, `sidx-NNN.bnc`) in `segmentFiles`, `entryCount` on each container, and `sidxCoversShards`; these fields are not written by the code yet.
+
 `shards[].parts[]` is written **unconditionally**, for every shard of every source. The export side does not decide which shards need it: that array is the input to the import-side multi-source judgement ([Detection basis](#62-detection-basis)), and a shard that looks single-sourced today becomes multi-sourced as soon as a second artifact is merged in.
 
-`sidxCoversShards` is the **union of the route-derived shard set and the shard directories actually present on disk**. It is used **only to work out which nodes must receive this segment's series index** ([Data transfer](#525-data-transfer)); it never selects *which sources* to push — that follows the core-part selection ([Multiple-source push behavior](#64-multiple-source-push-behavior)). Both halves of the union are required:
+`sidxCoversShards` (native only) is the **union of the route-derived shard set and the shard directories actually present on disk**. It is used **only to work out which nodes must receive this segment's series index** ([Data transfer](#525-data-transfer)); it never selects *which sources* to push — that follows the core-part selection ([Multiple-source push behavior](#64-multiple-source-push-behavior)). Both halves of the union are required:
 
 - Using only the disk fails for index-mode measure, which has no shard directories at all even though the segment-level sidx is its only payload.
 - Using only the routing table fails after topology drift: a node can route-own shard `[1]` while physically holding shard `[3]`, with an empty intersection.
@@ -521,8 +559,11 @@ service ExportService {
   // and streams one frame per node, stamped with node_id by the liaison.
   rpc Sessions(SessionsRequest) returns (stream SessionsResponse);
 
-  // The Export RPC (one bidirectional stream per data node, carrying the session's
-  // units) is added with the real transfer; see "Remaining work" below.
+  // Export streams the files of one data node's units out of an export session
+  // snapshot. The first request frame is init; every later frame carries exactly one
+  // unit, sent only after unit_finished of the previous one. The liaison forwards the
+  // stream to init.target_node unchanged. Export neither creates nor removes the snapshot.
+  rpc Export(stream ExportRequest) returns (stream ExportResponse);
 }
 
 message Selector {
@@ -594,6 +635,10 @@ message SidxStat {
 // counts the span payload only (tags are excluded), so it can be below
 // estimated_compressed_bytes; estimated_compressed_bytes is the bytes the part writer
 // recorded and is a lower bound of the on-disk size.
+//
+// A shard whose part list is too large for one frame arrives as several ShardStat pieces
+// with the same shard_id and disjoint parts. Only the first piece carries the aggregates
+// (fields 2-7); the others set only shard_id and parts.
 message ShardStat {
   uint32 shard_id = 1;
 
@@ -690,7 +735,7 @@ message CreateSession {
   // Remove every session the node holds, whatever its lease says, before creating this
   // one; the removed ids come back in preempted_session_ids. Without it any other session
   // on the node answers ALREADY_EXISTS naming the occupants. The client sets it for
-  // --preempt (a flag that arrives with the real export).
+  // --preempt.
   bool preempt = 2;
 }
 
@@ -734,10 +779,94 @@ message PlanSummary {
   repeated string answered_nodes = 3;
 }
 
-// The Export RPC and its message family (Format, Compress, RateLimit, ExportRequest,
-// ExportResponse, Ready, UnitStarted, FileStarted, DataChunk, FileFinished, UnitFinished)
-// were removed from export.proto on 2026-10-09 and return with the real transfer. Their
-// design is unchanged: the frame sequence is in 4.7.2.
+enum Format {
+  FORMAT_UNSPECIFIED = 0;
+  FORMAT_NATIVE = 1;  // reserved: data nodes answer UNIMPLEMENTED
+  FORMAT_CSV = 2;
+}
+
+enum Compress {
+  COMPRESS_UNSPECIFIED = 0;  // refused: the client always names one
+  COMPRESS_NONE = 1;
+  COMPRESS_GZIP = 2;
+}
+
+// Enforced by the data node per Export stream; 0 = unlimited.
+message RateLimit {
+  uint64 bytes_per_second = 1;
+  uint64 rows_per_second = 2;  // CSV only
+}
+
+// Property groups have no segments: the unit is the group's shards on one node.
+message PropertyUnit {
+  string group = 1;
+  repeated uint32 shard_ids = 2;
+}
+
+message ExportRequest {
+  message Init {
+    string session_id = 1;    // 32 lowercase hex
+    string target_node = 2;   // a node_id from the Plan frames; the liaison routes by it
+    Format format = 3;        // required
+    Compress compress = 4;    // required
+    uint64 max_file_size = 5; // soft limit in on-disk bytes; 0 = no split
+    RateLimit rate_limit = 6;
+    bool csv_annotations = 7; // CSV only: a #datatype line before every header
+    uint64 liaison_bytes_per_second = 8; // the relaying liaison's process-wide rate; last stream wins
+  }
+  oneof frame {               // required
+    Init init = 1;            // first frame only
+    SegmentUnit segment = 2;  // stream, measure, trace: SegmentInventory.unit, pieces of a split segment merged
+    PropertyUnit property = 3;
+  }
+}
+
+// Order: ready, then per unit: unit_started, (file_started, chunk*, file_finished)*, unit_finished.
+message ExportResponse {
+  oneof frame {
+    Ready ready = 1;
+    UnitStarted unit_started = 2;
+    FileStarted file_started = 3;
+    DataChunk chunk = 4;
+    FileFinished file_finished = 5;
+    UnitFinished unit_finished = 6;
+  }
+}
+
+// The node located the session and renewed its lease; units may follow.
+message Ready {}
+
+message UnitStarted {
+  uint32 total_shards = 1;           // 0 for segment-level-only units
+  uint32 total_files = 2;            // native only; CSV sends 0
+  uint64 estimated_total_bytes = 3;  // native only; CSV sends 0
+  uint32 total_parts = 4;            // live parts of the unit's shards; 0 without parts
+}
+
+message FileStarted {
+  string relative_path = 1;  // relative to nodes/<node-dir>/
+  uint32 shard_id = 2;
+  bool segment_level = 3;    // index-mode measure rows
+  uint32 shard_index = 4;    // index of shard_id in the unit's shard list
+  uint32 seq = 5;            // split sequence, from 1
+}
+
+message DataChunk {
+  bytes content = 1;  // at most 1 MiB
+  uint64 rows = 2;    // CSV only: rows written into the open file so far (progress only); native sends 0
+}
+
+message FileFinished {
+  uint64 bytes = 1;                               // on-disk size
+  uint32 crc32 = 2;                               // IEEE, over the on-disk bytes
+  uint32 entry_count = 3;                         // native only; CSV sends 0
+  map<string, uint64> row_counts = 4;             // rows per resource in this file
+  map<string, int64> schema_mod_revisions = 5;    // CSV: schema revision of every resource in the layout
+}
+
+message UnitFinished {
+  repeated string warnings = 1;
+}
 ```
 
 ### 4.7 Full workflow
@@ -749,44 +878,49 @@ message PlanSummary {
 | 1 | ctl → liaison | `Plan{selectors=[…], create{}}` | Generate one session id for the whole fan-out. A node already holding a different session rejects the create and returns the incumbent's ID ([why session uniqueness is per node](#481-there-is-no-coordinator-so-uniqueness-is-per-node)); any rejection or failure makes the liaison roll the new id back on the nodes that accepted it; nodes whose rollback failed are named in the error as leaked, and only those ids need a manual `bydbctl data release-session` |
 | 2 | liaison → data-1 / data-2 | One `Plan{…, create{id="xx…"}}` per node | — |
 | 3 | Each data node | Refuse if any other session directory exists (or remove them all when `preempt` is set), snapshot the selected groups of every selected catalog under `<export-snapshot-path>/<id>`, then commit the `.lease` in all of them; inventory from the snapshot | — |
-| 4 | data-* → liaison → ctl | Stream `PlanResponse{units{node_id, stage, units[…]}}` frames. A data node bounds each frame to 4 MiB, so a large group spans several consecutive frames, and a segment too large for one frame is split into pieces with the same key and disjoint `shard_ids` (only the first piece carries `segment_level`); ctl merges the pieces back into one unit per (node, segment) as it collects the frames | Forward each frame as it arrives, stamping `node_id`, through one bounded queue drained by a single sender, so a client that stops reading cannot hold back a failed create's rollback; fold a node's `summary` (preempted ids) into the final one |
-| 5 | ctl | Write the `session_id` (from the `created` frame) and complete unit inventory into `.export-progress.json` | — |
-| 6 | ctl | Group entries by `node_id` to build the assignment table | — |
+| 4 | data-* → liaison → ctl | Stream `PlanResponse{units{node_id, stage, units[…]}}` frames. A data node bounds each frame to 4 MiB, so a large group spans several consecutive frames, and a segment too large for one frame is split into pieces with the same key and disjoint `shard_ids` (only the first piece carries `segment_level`). A single shard too large for one frame is split further into `ShardStat` pieces with the same `shard_id` and disjoint `parts`, in different segment pieces; only the first carries the aggregates. ctl merges the pieces back into one unit per (node, segment) as it collects the frames, concatenating each shard's parts and adding up its aggregates | Forward each frame as it arrives, stamping `node_id`, through one bounded queue drained by a single sender, so a client that stops reading cannot hold back a failed create's rollback; the sender also stops when the call ends, so a create rejected before any unit leaves nothing running; fold a node's `summary` (preempted ids) into the final one |
+| 5 | ctl | Print the `session_id` (from the `created` frame) as soon as it arrives; keep the unit inventory in memory (there is no progress file until resume lands) | — |
+| 6 | ctl | Group entries by `node_id` into one job per node, each with its own `nodes/<node-dir>/` subtree | — |
 
 Only this phase creates snapshots; they are created once and reused for the whole export. The liaison stamps `node_id` on every frame from the upstream connection and does not trust a node's self-report.
 
 #### 4.7.2 Phase 2 — Export: transfer unit by unit
 
-Each data node uses one stream. The example shows `data-1`; `data-2` runs in parallel with the same structure.
+Each data node uses one stream. The example shows `data-1`; the other nodes run in parallel with the same structure, up to `--parallelism` at a time.
 
 | # | Direction | Frame | Liaison behavior |
 |---|---|---|---|
-| 1 | ctl → liaison | `Init{session_id="9f2a…", target_node="data-1", format=NATIVE, max_file_size=512MiB, rate_limit{…}}` | Read `target_node`, take the pooled connection, open an upstream bidirectional `Export` stream |
-| 2 | liaison → data-1 | `Init` | Forward unchanged, without modifying any field |
-| 3 | data-1 | Locate `<export-snapshot-path>/9f2a…` by `session_id` and renew the lease | Forward errors unchanged |
+| 1 | ctl → liaison | `Init{session_id="9f2a…", target_node="data-1", format=CSV, compress=GZIP, max_file_size=512MiB, rate_limit{…}, csv_annotations, liaison_bytes_per_second}` | Read `target_node`; a node that is not registered answers `NOT_FOUND`. Apply `liaison_bytes_per_second` to the process-wide bucket (last stream wins). Take the pooled connection and open an upstream bidirectional `Export` stream |
+| 2 | liaison → data-1 | `Init` | Forward unchanged, without modifying any field. Both directions are pumped without prefetching, so back-pressure reaches the node |
+| 3 | data-1 | Validate `Init` (`INVALID_ARGUMENT` if the first frame is not one); answer `UNIMPLEMENTED` for native; locate `<export-snapshot-path>/9f2a…` by `session_id` and renew the lease (`FAILED_PRECONDITION` when it is gone or expired; `NOT_FOUND` is kept for a liaison that cannot see the node, which the client retries through another liaison) | Forward errors unchanged |
 | 4 | data-1 → liaison → ctl | `ready{}` | Forward |
-| 5 | ctl → … → data-1 | `unit{catalog=STREAM, group="sw_record", segment_suffix="20260907", shard_ids=[0,1]}` | Forward. Only one unit at a time |
-| 6 | data-1 | Build paths, stat the two shards and the segment directory, `ReadDir` the file list | — |
-| 7 | data-1 → liaison → ctl | `unit_started{total_shards=2}` | Forward |
-| 8 | data-1 → liaison → ctl | `file_started{path=".../seg-20260907/metadata"}` | Forward |
-| 9 | data-1 → liaison → ctl | `chunk` → `file_finished{bytes=52, crc32=0x1f4a…}` | Forward |
-| 10 | data-1 → liaison → ctl | `file_started{path=".../sidx-001.bnc"}` → `chunk × N` → `file_finished{}` | Forward |
-| 11 | data-1 → liaison → ctl | `file_started{path=".../shard-0-001.bnc"}` → `chunk × N` → `file_finished{}` | Forward. First of 2 shards |
-| 12 | data-1 → liaison → ctl | `file_started{path=".../shard-1-001.bnc"}` → `chunk × N` → `file_finished{}` | Forward. Second of 2 shards |
-| 13 | data-1 → liaison → ctl | `unit_finished{warnings=[]}` | Forward |
-| 14 | ctl | Record the completed unit in `done` of `.export-progress.json` | — |
-| 15 | ctl → … → data-1 | `unit{…, segment_suffix="20260908", shard_ids=[0,1]}` | Forward and repeat steps 7–13 |
-| 16 | ctl → liaison | `CloseSend` | — |
-| 17 | data-1 → … → ctl | Response stream ends normally | — |
+| 5 | ctl → … → data-1 | `segment{catalog=STREAM, group="sw_record", segment_suffix="20260907", shard_ids=[0,1]}` | Forward. Only one unit at a time |
+| 6 | data-1 | Renew the lease again, then check that the segment and both shard directories exist in the snapshot | — |
+| 7 | data-1 → liaison → ctl | `unit_started{total_shards=2, total_parts=5}` | Forward |
+| 8 | data-1 → liaison → ctl | `file_started{relative_path="stream/sw_record/seg-20260907/shard-0-00001.csv.gz", shard_id=0, seq=1}` → `chunk × N` → `file_finished{bytes, crc32, row_counts, schema_mod_revisions}` | Forward; each `chunk` waits on the liaison bucket first, and one larger than its share of the bucket's burst goes out in pieces of that share. First of 2 shards; a shard larger than `max_file_size` continues in `shard-0-00002.csv.gz` |
+| 9 | data-1 → liaison → ctl | `file_started{…/shard-1-00001.csv.gz}` → `chunk × N` → `file_finished{…}` | Forward. Second of 2 shards |
+| 10 | data-1 → liaison → ctl | `unit_finished{warnings=[…]}` | Forward |
+| 11 | ctl | Keep the unit's files and warnings in memory for the manifest. Throughout steps 7–10 ctl prints the progress from the frames: the unit and its part count from `unit_started`, the file and its shard from `file_started`, the bytes and the `rows` of every `chunk`, and a line with the time of every finished file and unit; on a terminal one live line per node is redrawn in place | — |
+| 12 | ctl → … → data-1 | `segment{…, segment_suffix="20260908", shard_ids=[0,1]}` or `property{group="sw_prop", shard_ids=[0]}` | Forward and repeat steps 6–10 |
+| 13 | ctl → liaison | `CloseSend` | Half-close upstream |
+| 14 | data-1 → … → ctl | Response stream ends normally | — |
+
+An index-mode measure unit sends one `file_started{relative_path=".../seg-20260907/segment-00001.csv.gz", segment_level=true}` instead of per-shard files; a property unit sends `property/<group>/shard-<N>-00001.csv.gz` files.
+
+On the client every frame is checked against that order; anything else fails the node. Two timers guard a stream:
+
+- **`--node-idle-timeout`** (default `10m`) fails a node that delivers nothing for that long; it bounds the gap between two frames, not the length of the export. Time between open retries does not count. Throttling does not trip it: a throttled node sends a chunk about every second, and a throttled liaison relays a chunk in pieces of one second's worth. `0` disables it.
+- **`--send-retry-timeout`** (default `15m`) bounds how long the client keeps reopening a stream that the liaison or node refused with `RESOURCE_EXHAUSTED` or `UNAVAILABLE`, or that a liaison answered `NOT_FOUND` because it does not see the target node; every retry moves to the next liaison in `--nodes`, backing off from 1 s, doubling up to 30 s. Any other refusal fails at once, and so does a stream that breaks after it started transferring.
 
 #### 4.7.3 Phase 3 — Finalization
 
 | # | Direction | Frame | Liaison behavior |
 |---|---|---|---|
-| 1 | ctl → liaison | `Sessions{action=ACTION_RELEASE, session_id="9f2a…"}` | Fan out to all data nodes |
-| 2 | Each data node | Delete `<export-snapshot-path>/xx…`; if already absent, still return success for idempotency | One frame per node; a node that failed carries `error` |
+| 1 | ctl | Write `manifest.json` atomically, once every node has finished | — |
+| 2 | ctl → liaison | `Sessions{action=ACTION_RELEASE, session_id="9f2a…"}` | Fan out to all data nodes |
+| 3 | Each data node | Delete `<export-snapshot-path>/xx…`; if already absent, still return success for idempotency | One frame per node; a node that failed carries `error` |
 
-A frame with a non-empty `error` is a **WARN, not a failure**: the artifact is already sealed and valid, so the run still exits 0. The liaison only names the failed nodes; the CLI prints each of them together with the `bydbctl data release-session --id <id>` retry command, because until those snapshots go the nodes carry them for the rest of the lease — and on a hot node a snapshot costs roughly a second copy of the live data, not the free hard links the cold case suggests.
+A frame with a non-empty `error`, or a failed release call, is a **WARN, not a failure**: the artifact is already sealed and valid, so the run still exits 0. The CLI prints one `WARN release of export session <id> failed on <node>: <reason>` line per failed node; run `bydbctl data release-session --id <id>` to retry, because until those snapshots go the nodes carry them for the rest of the lease — and on a hot node a snapshot costs roughly a second copy of the live data, not the free hard links the cold case suggests.
 
 ### 4.8 Session management
 
@@ -816,7 +950,7 @@ Beyond the race, a partial session left behind by a client that died mid-abort i
 
 Starting a new export never silently removes another session, and no component classifies a session as alive or dead. A session is held until it is released, preempted, or expires (5 days after its last heartbeat) and gets swept:
 
-- **Any holder**: the node answers `ALREADY_EXISTS`; the client then lists the sessions once and prints who holds it, where, and when its last heartbeat was, with the hint that `--preempt` takes it over. (The client side of this — create, refusal rendering, heartbeat loop — lands with the real transfer; the tree today drives the session RPCs only from the integration tests and `bydbctl data release-session`.) The last-heartbeat time is what tells the operator whether the holder is still running (heartbeats arrive every 5 minutes) or died hours ago. `--preempt` is a confirmation action, not a tuning knob.
+- **Any holder**: the node answers `ALREADY_EXISTS`; the client then lists the sessions once and prints who holds it, where, and when its last heartbeat was, with the hint that `--preempt` takes it over. The last-heartbeat time is what tells the operator whether the holder is still running (heartbeats arrive every 5 minutes) or died hours ago. `--preempt` is a confirmation action, not a tuning knob. An operator at a terminal (stdin and stdout both terminals) is asked instead, `[y/N]`, and a yes is the same confirmation; a script or a pipe is never asked and gets the refusal.
 - **`--preempt`**: the node removes every session it holds before creating the new one and reports the removed ids in `preempted_session_ids`, which the client prints as a WARN. Nothing else ever sets that field.
 
 Earlier revisions (2026-10-07 to 2026-10-09) had the data node reclaim a holder whose last heartbeat was older than 15 minutes without `--preempt`. That classification was dropped on 2026-10-09: a heartbeat lost to a network partition must not cost a running export its snapshot, and the heartbeat time shown to the refused operator carries the same information without the node guessing.
@@ -826,7 +960,7 @@ Lifecycle:
 1. **Create** — the liaison sends `Plan{create{id}}` to all data nodes.
 2. **Export** — export requests carry the `session_id` to read the matching snapshot.
 3. **Heartbeat** — `bydbctl` sends `Sessions{action=ACTION_HEARTBEAT, session_id}` on a fixed interval.
-4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `Sessions{action=ACTION_RELEASE, session_id}`. **On Ctrl-C or a fail-fast abort it deliberately does not**: the session is kept so the run can resume against the same frozen snapshot, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command. There is deliberately no flag for "release on abort": it would make a graceful stop strictly worse than `kill -9`, because a released (or swept) session answers `NOT_FOUND` on every node, so the resumed run would see every node unreachable and have to restart against a new point in time — and `release-session` already covers the case where you really are done.
+4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `Sessions{action=ACTION_RELEASE, session_id}`. **On a fail-fast abort it deliberately does not**: the session is kept, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command; Ctrl-C and `SIGTERM` stop the export the same way and print the same command. Keeping the session is what will let a resumed run continue against the same frozen snapshot; resume itself is not implemented yet ([Remaining work](#49-remaining-work)), so today an interrupted export is re-run into a new, empty directory. There is deliberately no flag for "release on abort": it would make a graceful stop strictly worse than `kill -9`, because a released (or swept) session answers `NOT_FOUND` on every node, so the resumed run would see every node unreachable and have to restart against a new point in time — and `release-session` already covers the case where you really are done.
 5. **Cleanup** — each data node sweeps export snapshots on a one-minute timer and removes any whose lease has expired. A session directory left without a readable lease (a crash mid-create or a failed rollback) is reclaimed once its newest directory is older than a 10-minute orphan grace; until then it still counts as an occupant, so a create without `preempt` answers `ALREADY_EXISTS`. The first sweep runs as soon as the export service starts serving, so after a data-node restart an expired session is reclaimed at once and a live one survives.
 
 | Constant | Value | Why it is not configurable |
@@ -840,13 +974,15 @@ The data-node gRPC port has no authentication of its own; the export RPCs are ga
 
 ### 4.9 Remaining work
 
-What the tree holds after the dry-run step (2026-10-09) and what is still to come, each with where it will live. The design text for all of it stays in this document.
+The CSV export step (2026-10-10) completes the export path for CSV: the `Export` RPC on the liaison (a directed relay, also in-process for a standalone server) and on the data node, the four CSV producers, the client session library (create with retries, refusal rendering, heartbeat, release), the receive loop, the schema files, the manifest and the `bydbctl data export` flags. What is still to come, each with where its design lives in this document:
 
-- **`Export` RPC and its message family** (`Format`, `Compress`, `RateLimit`, `ExportRequest`/`ExportResponse`, `Ready`, `UnitStarted`, `FileStarted`, `DataChunk`, `FileFinished`, `UnitFinished`) — removed from `export.proto` on 2026-10-09; re-added with the real transfer. Design: 4.6 and 4.7.2.
-- **Client session library** (`CreateSession` with retries, the heartbeat loop, `ListSessions`-based refusal rendering) — removed from `pkg/transfer/exporter` on 2026-10-09; it returns with step 3. The server side (`Plan` create/read, `Sessions` LIST/HEARTBEAT/RELEASE on liaison and data node) is complete and tested through `test/integration/{standalone,distributed}/data_export`. Design: 4.8.
-- **bydbctl flags `--format`, `--include-schema`, `--output`, `--preempt`** and the `plan.yaml` `export.*` fields other than `parallelism`/`selectors` (plus `connection.rateLimit` and the whole `import:` section) — removed; `bydbctl data export` without `--dry-run` keeps answering "not implemented yet". Design: 2 and 2.1.
-- **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot — none is required by the dry run, and each is revisited with the real transfer.
-- **Step-3 e2e** — the real export session lifecycle (create, heartbeat, release) end to end once `Export` exists; today `test/e2e-v2/cases/transfer/dry-run/` covers the dry run only.
+- **Export resume** — `.export-progress.json` ([Export progress file](#71-export-progress-file)), continuing against the same session with `Plan(read{id})`, `pointInTime: mixed`, plan comparison, `export.checkpoint` / `--checkpoint`, `--seal-partial`, and a `bydbctl data progress` command. Today the output directory must be new or empty and an interrupted export starts over.
+- **`--archive tar|tar.gz`** — packing the artifact into one file.
+- **Native format** — `.bnc` containers, `data extract`; `FORMAT_NATIVE`, its proto fields and the per-format producer interface are already reserved ([Native export](#42-native-export)).
+- **Import** — CSV import, property import and the cross-cluster e2e ([Import](#5-import)).
+- **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot.
+
+The end-to-end case `test/e2e-v2/cases/transfer/export/` runs the dry run, `release-session` and the CSV export against one hot and one warm data node behind a liaison.
 
 ### 4.10 Node gRPC extension
 
@@ -1280,7 +1416,7 @@ message ImportRowsRequest {
 
   message StreamRow {
     stream.v1.ElementValue element = 1;
-    uint64 raw_element_id = 2;
+    uint64 raw_element_id = 2; // the _element_id cell, decoded by csvfmt.DecodeElementID
   }
 
   message MeasureRow {
@@ -1288,7 +1424,9 @@ message ImportRowsRequest {
   }
 
   message TraceRow {
-    trace.v1.SpanValue span = 1;
+    // Tags and span of the row. The engine does not store a span's write version, which
+    // must be positive, so the importer sends 1.
+    trace.v1.WriteRequest span = 1;
   }
 
   message PropertyRow {
@@ -1451,6 +1589,8 @@ An import tool's job is to get the data in, so the defaults err toward completen
 There is deliberately no `overwrite` value anywhere. A part has no overwrite semantics and there is no API to delete a single part, so "replace the existing copy" cannot be built; the choice really is only reject, re-push, or skip. Row-level deduplication on the CSV channel was designed and rejected: a content key cannot tell a duplicate the source cluster already held from one this import created, so deduplicating it would stop the target reproducing the source.
 
 ## 7. Resume
+
+> **Not implemented yet.** The CSV export step writes no progress file and cannot resume: the output directory must be new or empty, and an interrupted export is run again from scratch ([Remaining work](#49-remaining-work)). This section is the design.
 
 Both directions must survive an interruption. Export is the simpler half: it checkpoints per **unit**, appending one to `done` only after every file of that unit has passed its CRC32 check and been renamed. Volume splitting does not change that granularity, because a part never spans volumes. Index-mode measure and the segment-level series index have no shard axis at all and resume at segment granularity.
 

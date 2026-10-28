@@ -21,9 +21,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"slices"
 	"sort"
-	"strings"
 
 	"google.golang.org/protobuf/proto"
 
@@ -776,104 +774,10 @@ func unionDistributedRowFrameSchemas(sources []decodedBatchSource) (*vectorized.
 	return vectorized.NewBatchSchema(cols), nil
 }
 
-// appendColumnRangeCoerced copies n rows starting at srcPos from src into dst.
-// When dst and src share the same underlying type it delegates to
-// measure.AppendColumnRange for the fast path. When dst is
-// ColumnTypeTagValue and src is a native column type, each source cell is
-// promoted to a *modelv1.TagValue wrapper so the merged schema remains
-// type-consistent even across groups whose schemas diverged on this column.
-// The symmetric ColumnTypeFieldValue coercion is handled similarly. Any other
-// type mismatch delegates to measure.AppendColumnRange so the existing error
-// path is preserved.
-//
-// Directional invariant: BuildMultiGroupBatchSchema only ever promotes
-// (native → TagValue/FieldValue) on type divergence; it never demotes the
-// other direction. So this helper handles "src is native, dst is passthrough"
-// — never the inverse. If a future phase introduces a passthrough-to-native
-// reshape it will surface here via the delegate's "dst <type> vs src
-// tagvalue" error, which is the correct loud-failure outcome.
+// appendColumnRangeCoerced is measure.AppendColumnRangeCoerced, which the
+// liaison's agg reduce shares with the row merges here.
 func appendColumnRangeCoerced(dst, src vectorized.Column, srcPos, n int) error {
-	// The coercions below read the source cell by cell; a constant column is
-	// expanded once, which only a batch that did not come off the wire can carry.
-	src = vectorized.Materialize(src)
-	dTagCol, dIsTag := dst.(*vectorized.TypedColumn[*modelv1.TagValue])
-	if dIsTag {
-		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.TagValue]); sameType {
-			return measure.AppendColumnRange(dst, src, srcPos, n)
-		}
-		for k := range n {
-			rowIdx := srcPos + k
-			if src.IsNull(rowIdx) {
-				dTagCol.Append(nil)
-				dTagCol.MarkNullAt(dTagCol.Len() - 1)
-				continue
-			}
-			var tv *modelv1.TagValue
-			switch sc := src.(type) {
-			case *vectorized.TypedColumn[int64]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[string]:
-				// The cell may borrow a received frame, and the passthrough value travels on to the response.
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]byte]:
-				raw := sc.Data()[rowIdx]
-				buf := make([]byte, len(raw))
-				copy(buf, raw)
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_BinaryData{BinaryData: buf}}
-			case *vectorized.TypedColumn[[]int64]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: slices.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]string]:
-				tv = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: cloneStrings(sc.Data()[rowIdx])}}}
-			default:
-				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to tagvalue", src.Type())
-			}
-			dTagCol.Append(tv)
-		}
-		return nil
-	}
-	dFieldCol, dIsField := dst.(*vectorized.TypedColumn[*modelv1.FieldValue])
-	if dIsField {
-		if _, sameType := src.(*vectorized.TypedColumn[*modelv1.FieldValue]); sameType {
-			return measure.AppendColumnRange(dst, src, srcPos, n)
-		}
-		for k := range n {
-			rowIdx := srcPos + k
-			if src.IsNull(rowIdx) {
-				dFieldCol.Append(nil)
-				dFieldCol.MarkNullAt(dFieldCol.Len() - 1)
-				continue
-			}
-			var fv *modelv1.FieldValue
-			switch sc := src.(type) {
-			case *vectorized.TypedColumn[int64]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[float64]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Float{Float: &modelv1.Float{Value: sc.Data()[rowIdx]}}}
-			case *vectorized.TypedColumn[string]:
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_Str{Str: &modelv1.Str{Value: strings.Clone(sc.Data()[rowIdx])}}}
-			case *vectorized.TypedColumn[[]byte]:
-				raw := sc.Data()[rowIdx]
-				buf := make([]byte, len(raw))
-				copy(buf, raw)
-				fv = &modelv1.FieldValue{Value: &modelv1.FieldValue_BinaryData{BinaryData: buf}}
-			default:
-				return fmt.Errorf("appendColumnRangeCoerced: cannot coerce %s to fieldvalue", src.Type())
-			}
-			dFieldCol.Append(fv)
-		}
-		return nil
-	}
-	return measure.AppendColumnRange(dst, src, srcPos, n)
-}
-
-// cloneStrings copies the slice and every element's bytes: a cell may borrow a received frame
-// or a storage block, and the passthrough value travels on to the response.
-func cloneStrings(values []string) []string {
-	out := make([]string, len(values))
-	for i, v := range values {
-		out[i] = strings.Clone(v)
-	}
-	return out
+	return measure.AppendColumnRangeCoerced(dst, src, srcPos, n)
 }
 
 // decodeMultiGroupSources decodes each groupFrame body and reshapes the

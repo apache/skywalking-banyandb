@@ -109,6 +109,17 @@ if [[ "${SOAK}" == "1" ]]; then
   exit 0
 fi
 
+# DQB_WRITE_SOAK=1: run the long-lived trace write soak instead of the matrix
+# benchmark. It writes write-soak-<label>.json under the report dir.
+if [[ "${DQB_WRITE_SOAK:-0}" == "1" ]]; then
+  echo "[orchestrate] === write soak mode: running TestTraceWriteSoak ==="
+  DQB_ENGINE=trace \
+    DQB_REPORT_DIR="${REPORT_DIR}" \
+    "${BINARY}" -test.run TestTraceWriteSoak -test.v -test.timeout "${DQB_SOAK_TEST_TIMEOUT:-60m}"
+  echo "[orchestrate] write soak done"
+  exit 0
+fi
+
 IFS=',' read -ra CARD_ARR <<< "${CARDINALITIES}"
 IFS=',' read -ra SCEN_ARR <<< "${SCENARIOS}"
 IFS=',' read -ra MODE_ARR <<< "${MODES}"
