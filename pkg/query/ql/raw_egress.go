@@ -42,11 +42,15 @@ func RawIterator(ctx context.Context, source vectorized.PullOperator) (executor.
 		return nil, err
 	}
 	tracker := vectorized.QueryMemoryTracker(ctx, 256<<20)
-	if raw, ok := source.(*rawOperator); ok {
-		tracker = raw.tracker
+	var timestampAliases []int
+	switch operator := source.(type) {
+	case *rawOperator:
+		tracker, timestampAliases = operator.tracker, operator.timestampAliases
+	case *sortOperator:
+		tracker, timestampAliases = operator.tracker, operator.timestampAliases
 	}
-	if raw, ok := source.(*rawOperator); ok && len(raw.timestampAliases) > 0 {
-		bytes, boundErr := rawDescriptorBound(len(source.OutputSchema().Columns), 0, len(raw.timestampAliases))
+	if len(timestampAliases) > 0 {
+		bytes, boundErr := rawDescriptorBound(len(source.OutputSchema().Columns), 0, len(timestampAliases))
 		if boundErr != nil {
 			_ = source.Close()
 			return nil, boundErr
@@ -56,11 +60,11 @@ func RawIterator(ctx context.Context, source vectorized.PullOperator) (executor.
 			return nil, reserveErr
 		}
 		defs := slices.Clone(source.OutputSchema().Columns)
-		for _, index := range raw.timestampAliases {
+		for _, index := range timestampAliases {
 			defs[index].Type = vectorized.ColumnTypeTagValue
 		}
 		source = &timestampEgress{
-			source: source, schema: vectorized.NewBatchSchema(defs), indices: slices.Clone(raw.timestampAliases), tracker: tracker,
+			source: source, schema: vectorized.NewBatchSchema(defs), indices: slices.Clone(timestampAliases), tracker: tracker,
 			metadataBytes: bytes, view: vectorized.RecordBatch{Columns: make([]vectorized.Column, 0, len(defs)), Lent: true},
 		}
 	}

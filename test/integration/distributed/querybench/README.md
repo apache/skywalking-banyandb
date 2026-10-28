@@ -639,3 +639,252 @@ The hidden variant returns only the grouping tag, whereas its baseline also
 returns two AVG fields; their latency difference includes this output-width change.
 The existing indexed-array native projection limitation is documented in
 [T14 verification](../../../../docs/design/0.12.0/measure-ql-core-sql/t14-verification.md).
+
+
+### T15 visible-tuple DISTINCT
+
+`qlb_t15` is a real distributed QL RPC benchmark. It compares `SELECT DISTINCT a, b`
+with an explicit `SELECT a, b ... GROUP BY a, b` reference over the same written
+rows. Both use the T07 group table with zero aggregate state lanes; this measures
+DISTINCT overhead/equivalence, not a claimed independent hash-table algorithm.
+Correctness comes from independently enumerated fixture tuples rather than either
+query result. Entity and raw row identity are hidden and cannot affect equality.
+
+The frozen ordinary matrix is 1,024 and 8,192 input rows per dataset, one query
+worker, 256 MiB per tracker, and profiles enabled. It has exactly fourteen variants:
+`distinct_p001_narrow`, `group_by_p001_narrow`, `distinct_p001_wide`,
+`group_by_p001_wide`, the corresponding `p050` and `p100` names, plus
+`distinct_empty` and `group_by_empty`. Unique counts are
+`max(1, floor(input_rows * percent / 100))`; 1% therefore means ten or 81 unique
+tuples. Narrow tuples contain twelve UTF-8 bytes; wide tuples add 256 ASCII
+bytes to the second component. Adjacent tuples deliberately collide under plain
+string concatenation. Empty variants select an absent entity from the same schema.
+There is no cache mode matrix. A LIMIT above input cardinality prevents an implicit
+response cap from silently truncating high-cardinality output.
+
+Every original row in all six datasets is verified through QL in entity-pruned
+windows of at most 1,024 rows before any workload query. Warmups and full fixture
+checks are outside timing. Six sampled timed responses are checked afterward, and
+their complete BydbQL protobuf envelope sizes are measured afterward as well.
+Reports retain raw latency samples, p50/p95/p99, throughput, process-wide inclusive
+CPU/heap profiles (heap profiles support alloc_space/alloc_objects), allocation
+deltas, group/key capacities and bytes, zero state lanes, native leaf calls, lease
+charges and verified post-close cleanup. Unobservable metrics are explicitly
+unavailable. Neither prerequisite errors nor failed queries count as throughput.
+
+Run five isolated repetitions with separate report directories:
+
+```sh
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t15 \
+DQB_CARDINALITIES=1024,8192 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t15-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+```
+
+The orchestrator freezes 100 timed calls/5 warmups for 1,024 rows and 20/3 for
+8,192 rows. Larger inputs are separate bounded probes: build with
+`-tags=querymetrics`, then invoke `TestQLBT15Resources` in a fresh container/process
+for each `DQB_T15_RESOURCE_ROWS=100000|1000000` and
+`DQB_T15_RESOURCE_BUDGET_MIB=16|256`. Also set `RUN_DISTRIBUTED_QUERY_BENCH=1`,
+`DQB_IN_CONTAINER=1`, `DQB_ENGINE=measure`, and `DQB_REPORT_DIR` to an artifact
+directory. The resource probe writes only the 100% unique narrow dataset, verifies
+all input through bounded QL reads, then attempts DISTINCT and GROUP BY five times
+each and checks recovery/cleanup. It records readiness blockers distinctly from
+owning-query outcomes. Shared tracker errors do not establish whether a native
+decoder or the group table rejected the allocation; that attribution is explicitly
+unavailable alongside the measured native/group counters and original error.
+
+The initially attempted 16,384-row matrix failed its first wide DISTINCT warmup
+with the native `query memory pool exhausted` error. An untimed fresh single-dataset
+replay reproduced that error after full bounded input verification and cleanup,
+before any DISTINCT execution or retained key state. The same replay at 8,192 rows
+returned the independently expected wide tuples. The ordinary matrix therefore uses
+8,192 uniformly across all fourteen variants; 16,384 is not reported as successful
+throughput. The configured 256 MiB tracker does not override the separate finite
+protector admission policy, and aggregate process counters do not identify the
+specific allowance that rejected a charge.
+
+### T16 computed and ordinal grouping
+
+`qlb_t16` has six real distributed QL RPC controls: `simple_low`,
+`computed_explicit_low`, `computed_ordinal_low`, and the corresponding `_high`
+variants. Low cardinality has eight groups; high cardinality has half as many
+groups as input rows. The fixed inputs are 1,024 and 32,768 rows per dataset,
+one worker, 256 MiB per query tracker, and profiles enabled. The schedule is
+100 timed calls/5 warmups and 20/3 respectively. Each low/high dataset is written
+once, including repeated series/timestamps for version deduplication, and reused
+by its three query forms.
+
+The performance comparison covers current T16 simple/computed paths. Historical
+G1/T02 conclusions are outside this benchmark's claims. Full public QL/native
+E2E suites provide current correctness compatibility evidence.
+
+The simple control groups a stored INT field. Computed controls use
+`CASE WHEN raw::FIELD >= 0 THEN raw::FIELD + 1 ELSE 0 END`; the ordinal control
+spells the same grouping as `GROUP BY 1`. Each query reads two INT fields and
+returns the same `key`, `key_again`, and nullable `SUM(v)` fields. Duplicate key
+projections check that SELECT and GROUP BY share one evaluation. Results come
+from independent fixture arithmetic, with the same complete response schema and
+hash across equivalent forms. All input rows are verified through bounded,
+entity-pruned QL requests before warmup; sampled timed responses are checked
+fully after the measurement window.
+
+Reports require one distributed raw scan, one local aggregate, and one actual
+computed-key root invocation per active batch. Eligible row applications are
+counted at those real invocations; cached scalar kernel evaluations are separate.
+The fixed CASE fixture independently predicts exactly `3 * rows - zero_keys`
+vector-kernel rows, zero scalar evaluations, `rows` selected arm values and
+`zero_keys` ELSE values. Simple controls have zero expression work. Explicit and
+ordinal forms must have identical physical work counts.
+Key bytes, aggregate state lanes/bytes, native source/frame rows, reservations,
+lease charges, raw latencies, allocation deltas and post-close cleanup are
+retained. Native source/frame counters include both data-node replicas; logical
+aggregate input rows count the deduplicated rows. Storage physical scans, native
+retained frame bytes and per-tracker peaks remain explicitly unavailable.
+
+Freeze the source after E2E verification and build the querymetrics test binary
+once with the same Go version used by the container. Set `DQB_TEST_BINARY` to its
+mounted path to reuse it across five isolated repetitions:
+
+```sh
+go test -tags=querymetrics -c -o .omx/t16-bench-final.test \
+  ./test/integration/distributed/querybench
+
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t16 \
+DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_TEST_BINARY=/work/.omx/t16-bench-final.test \
+DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t16-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g
+```
+
+Use separate `r1` through `r5` directories. The Docker memory-swap limit defaults
+to its memory limit, providing no extra swap. `TestQLBT16Admission`, with
+`DQB_T16_ADMISSION_ROWS=1024|32768`, checks the full control matrix without timing
+before freezing the successful schedule. The 32,768-row admission check passed
+all six controls at 256 MiB.
+
+Larger inputs use `TestQLBT16Resources` in a fresh container/process for each
+`DQB_T16_RESOURCE_ROWS=100000|1000000` and
+`DQB_T16_RESOURCE_BUDGET_MIB=16|256`, with the usual container/run/engine/report
+settings. It writes the high-cardinality dataset, verifies bounded raw input,
+then attempts the owning computed-key request five times and verifies cleanup
+and recovery. A correct full result or ResourceExhausted without a partial result
+is accepted as a resource observation. Readiness blockers are recorded separately;
+a prerequisite rejection supplies no throughput evidence. If the unchanged native
+prerequisite blocks 100,000 rows at 16 MiB, retain that blocker rather than repeat
+the same impossible prerequisite at one million rows.
+
+`BenchmarkGroupExpressions` in `pkg/query/ql` measures key evaluation plus grouping
+for the same low/high shapes and a small 2-second TIME_BUCKET control. It uses the
+public aggregate/expression plans, checks independent values before and after
+timing, and reports allocations and observed key/state work. Use a querymetrics
+build to observe unique key evaluation counts.
+
+## QLB-T17 ordering and finite-page controls
+
+`qlb_t17` asks whether compact top-k reduces sort CPU and retained state for the
+same complete query and returned page. Under acceptance contract `2026-10-18-v1`,
+its four timed RPC variants are `fullsort_slice`, `topk`, and one
+aggregate/filter/HAVING/order query with workers 1 and 8. A separate untimed
+32-worker test verifies overload and same-cluster recovery for both sort modes.
+The pair sends byte-identical SQL and parameters through `BydbQLService.Query`;
+a scoped, instrumented server context hook forces full sort for the reference.
+Both return `LIMIT 10 OFFSET 5`, with three keys and hidden sort inputs. The
+composed query changes string-to-double thresholds and the time range on the same
+cached SQL text, then sorts completed groups before `LIMIT 1 OFFSET 1`.
+
+The requested schedule is 1,024 and 32,768 raw rows, 256 MiB query trackers,
+100/20 sort-pair samples and 5/3 warmups respectively. Every composed variant has
+96 samples, evenly covering three bindings. Sort-pair workers stay at one.
+`TestQLBT17Overload`, selected with `DQB_T17_OVERLOAD=1`, records the separate
+1,024-row overload/recovery artifact. Each sort mode runs 96 calls in three waves
+of 32, validates every result or exact native admission rejection, drains all
+resources, and checks all three bindings through the same cluster RPC. A real
+admission/transport probe holds reservations until capacity rejects a request,
+then verifies release and recovery. Actual cgroup limits must be four CPUs,
+8 GiB memory and zero additional swap. Readiness first
+checks every fixture tuple using entity/time windows of at most 1,024 rows. A
+large native-frame admission failure remains a blocker, not a successful sort
+sample; the successful algorithm controls at 100,000 rows belong to K(T17).
+
+Build the querymetrics test binary before freezing the source. Reuse that exact
+binary in five fresh 4-CPU/8-GiB Docker containers with `--memory-swap 8g`, retaining
+each report directory. The existing orchestrator accepts `DQB_TEST_BINARY` and
+performs no compilation when it is set. For example, with a prebuilt binary:
+
+```sh
+DQB_ENGINE=measure DQB_MODES=vec DQB_SCENARIOS=qlb_t17 \
+DQB_CARDINALITIES=1024,32768 DQB_QUERY_WORKERS=1 DQB_QUERY_MEMORY_MIB=256 \
+DQB_PROFILE=1 DQB_TEST_BINARY=/work/.omx/t17-final-querybench.test \
+DQB_T17_OVERLOAD_REPORT=/work/.omx/t17-overload/t17-overload-1024.json \
+DQB_REPORT_DIR=/work/.omx/bench-reports/qlb-t17-r1 \
+test/integration/distributed/querybench/run-docker.sh --cpus 4 --memory 8g --memory-swap 8g
+```
+
+The orchestrator fixes the per-cardinality sample schedule. Use unique `r1` through
+`r5` directories and stop other builds/tests during measured phases. Each variant
+retains raw latencies, p50/p95/p99, throughput, process CPU/heap profiles,
+allocations, full response-envelope bytes, ordered expected checksums, actual
+operator row/root/kernel/comparator counters, candidate capacities and reservation
+release. Sampled complete responses are checked after profiling; every timed
+response checks its row count. Process-wide peak reservations sum the liaison and
+two data-node trackers. Sort peak/capacity fields sum per-query completion
+snapshots; divide by sort executions. Native frame residency, physical storage
+reads, total parent charges, separate aggregate peaks and compile-time savings
+remain explicitly unavailable. Warm measured requests must hit the compiled
+plan with zero additional compiles; changed-bind exact results check fresh binding.
+
+`BenchmarkSortT17` in `pkg/query/ql` compares a standard-library tuple baseline,
+full sort plus identical slicing, and top-k through the public operator lifecycle.
+The nine orthogonal shapes cover 1/3/8 keys, ordered/reverse/tied/random input,
+16/1,024-byte payloads, k=10/100/1,000 and an offset of 90,000. The 100,000-row
+random k=10 and k=100 controls own the median top-k/full-sort ratio gate of 0.80.
+Run five independent samples from one prebuilt kernel binary under the same
+container limits. Correctness and measured work checks run outside its timer;
+per-operation timing includes construction, key binding, sorting, output and Close.
+An additional fixture poisons 32 one-MiB source batches after copying exactly one
+16-byte surviving candidate per batch, checking payload capacity, released source
+owners, tracker reservations and native flatten-pool baseline. This is separate
+from native frame residency.
+
+Create the overload artifact with the prebuilt querymetrics binary before timing:
+
+```sh
+docker run --rm --user "$(id -u):$(id -g)" --cpus 4 --memory 8g --memory-swap 8g \
+  --pids-limit 4096 -v "$PWD:/work" -w /work -e GOMAXPROCS=4 \
+  -e RUN_DISTRIBUTED_QUERY_BENCH=1 -e DQB_IN_CONTAINER=1 -e DQB_ENGINE=measure \
+  -e DQB_T17_OVERLOAD=1 -e DQB_REPORT_DIR=/work/.omx/t17-overload \
+  banyandb-distributed-querybench:go1.26 /work/.omx/t17-final-querybench.test \
+  -test.run '^TestQLBT17Overload$' -test.timeout=25m
+```
+
+`DQB_T17_OVERLOAD_REPORT` is mandatory for revised timed runs. The report stores
+its path and SHA-256, revalidates all required evidence, and reports separate
+`performance`, `overload` and `recovery` verdicts with the contract revision.
+The 1,024-row overload artifact is an explicit admission reference for both timed
+cardinalities; it is not a claim of a 32,768-row overload run. No overloaded calls
+supply latency, throughput or allocation samples. Any failed timed call rejects
+the entire timed cohort; every retained response is checked after timing and
+profiling stop. This retains more client responses than the old six-sample check,
+so do not treat old/new protocol allocation or latency as an unchanged baseline.
+
+Historical five-variant and `partial_known_32_blocked` reports keep their original
+validation rules. `DQB_T17_BLOCKED_32_REPORT` cannot replace revised overload and
+RPC recovery evidence and is rejected by the new runner. The old
+`TestQLBT17Admission` and `TestQLBT17ConcurrencyControl` remain diagnostics of the
+original protocol; they do not emit revised acceptance verdicts.
+
+`run-t17-frozen.sh` supplies separate `rpc` and `kernel` modes. Each runs five
+fresh Docker containers at the fixed limits, reuses one prebuilt executable,
+refuses to replace report directories, and checks source/binary/evidence hashes
+before and after each repetition. It does not compile or pull/build an image.
+Capture its source fingerprint immediately before building each binary, verify
+that fingerprint again after compilation, and save it as
+`<binary>.source.sha256`. `DQB_T17_BINARY` selects that binary and
+`DQB_T17_REPORT_ROOT` selects a new report root. The `fingerprint` mode prints the
+source hash without starting measurements. Do not start either measured mode
+until the coordinated source freeze. Kernel CPU/heap profiles cover the complete
+benchmark invocation, including untimed fixture setup and validation; the Go
+benchmark ns/op and allocation counters exclude that setup. Its summarizer
+requires all 27 controls in all five repetitions and preserves failed ratio
+gates in `kernel-summary.json` before returning failure.

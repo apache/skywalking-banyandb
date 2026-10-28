@@ -55,6 +55,9 @@ type MeasureTemplate struct {
 	nativeEntities []vectorized.ColumnDef
 	slots          []ql.Slot
 	expressions    []measureExpressionOutput
+	groups         []measureExpressionOutput
+	ordering       []measureSortKey
+	sortVisible    int
 	extended       bool
 }
 
@@ -143,6 +146,9 @@ func (t *Transformer) compileMeasure(
 	if !extended && selectStmt.Where != nil {
 		extended = legacyWhereNeedsSchemaFilter(selectStmt.Where.Expr, snapshots)
 	}
+	if !extended {
+		extended = measureOrderNeedsTyped(selectStmt, snapshots)
+	}
 
 	template := &MeasureTemplate{statement: statement, extended: extended}
 	if template.extended {
@@ -166,8 +172,11 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	if err != nil {
 		return err
 	}
+	for _, group := range stmt.From.In.Groups {
+		columns.intervals = append(columns.intervals, schemas[group].GetInterval())
+	}
 	switch {
-	case stmt.Having != nil:
+	case stmt.Having != nil || stmt.GroupBy != nil:
 		err = m.compileAggregate(columns)
 	case hasMeasureExpressions(stmt.Projection):
 		err = m.compileExpressions(columns)
@@ -179,7 +188,15 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	if err != nil {
 		return err
 	}
-	if m.aggregate != nil || m.expressions != nil || m.filter != nil {
+	if err = m.compileSort(columns); err != nil {
+		return err
+	}
+	if stmt.Distinct {
+		if err = m.validateDistinct(); err != nil {
+			return err
+		}
+	}
+	if m.aggregate != nil || m.expressions != nil || m.filter != nil || len(m.ordering) > 0 {
 		m.compileNativeEntities(schemas, columns)
 	}
 	return nil
@@ -266,18 +283,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 		}
 		return &MeasureExecution{Request: request}, nil
 	}
-	plan := &ql.RawPlan{Slots: slices.Clone(m.slots)}
-
-	plan.Expressions, err = m.bindExpressions(bound)
-	if err != nil {
-		return nil, invalidMeasure(err)
-	}
-	if m.aggregate != nil {
-		plan.Aggregate = &ql.AggregatePlan{
-			GroupBy: slices.Clone(m.aggregate.GroupBy), Calls: slices.Clone(m.aggregate.Calls), Outputs: slices.Clone(m.aggregate.Outputs),
-		}
-	}
-	plan.Having, err = m.bindHaving(bound)
+	plan, err := m.bindLocalOperators(bound)
 	if err != nil {
 		return nil, invalidMeasure(err)
 	}
@@ -321,13 +327,17 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
-	if stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
+	if hasComputedMeasureGroups(stmt.GroupBy) || stmt.OrderBy != nil && len(stmt.OrderBy.Keys) > 0 {
+		return true
+	}
+	if stmt.Distinct || stmt.Having != nil || stmt.From.Shorthand != nil || measureAggregateCount(stmt) > 1 || hasMeasureExpressions(stmt.Projection) ||
 		stmt.Where != nil && stmt.Where.Expression != nil {
 		return true
 	}
 	if stmt.Projection != nil {
 		for _, column := range stmt.Projection.Columns {
-			if column.Alias != nil || (column.TypeSpec == nil && isBuiltinTime(column.Identifier)) {
+			if column.Alias != nil || column.Aggregate != nil && column.Aggregate.TypeSpec != nil ||
+				(column.TypeSpec == nil && isBuiltinTime(column.Identifier)) {
 				return true
 			}
 		}
@@ -340,6 +350,18 @@ func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
 		}
 	}
 	return whereHasTime(stmt.Where)
+}
+
+func hasComputedMeasureGroups(groupBy *GrammarGroupByClause) bool {
+	if groupBy == nil {
+		return false
+	}
+	for _, group := range groupBy.Columns {
+		if group.Expression != nil || group.Ordinal != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func measureAggregateCount(stmt *GrammarSelectStatement) int {
@@ -426,4 +448,36 @@ func bindLegacyScalarCountPage(stmt *GrammarSelectStatement, request *measurev1.
 	// consume them all, including when QL omits LIMIT and native defaults apply.
 	request.Limit = math.MaxUint32
 	return false
+}
+
+func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, error) {
+	var err error
+	plan := &ql.RawPlan{
+		Slots: slices.Clone(m.slots), Distinct: m.statement.template.Select.Distinct, Ordered: m.statement.template.Select.OrderBy != nil,
+	}
+
+	plan.Expressions, err = m.bindExpressions(bound)
+	if err != nil {
+		return nil, err
+	}
+	if m.aggregate != nil {
+		plan.Aggregate, err = m.bindAggregate(bound)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if plan.Distinct {
+		if err = ql.ValidateDistinct(plan); err != nil {
+			return nil, err
+		}
+	}
+	plan.Having, err = m.bindHaving(bound, plan.Aggregate)
+	if err != nil {
+		return nil, err
+	}
+	plan.Sort, err = m.bindSort(bound, plan)
+	if err != nil {
+		return nil, err
+	}
+	return plan, nil
 }

@@ -25,6 +25,7 @@ const (
 	projectionStage expressionStage = iota
 	whereStage
 	havingStage
+	groupStage
 )
 
 // operatorMetrics selects process-wide attribution once when constructing an
@@ -51,19 +52,25 @@ var (
 		stage: havingStage, filterWork: recordHavingWork,
 		reserve: recordHavingReserve, release: recordHavingRelease,
 	}
+	groupExpressionMetrics = operatorMetrics{
+		stage: groupStage, expressionWork: recordGroupExpressionWork,
+		reserve: recordGroupExpressionReserve, release: recordGroupExpressionRelease,
+	}
 )
 
 // ExpressionStats counts typed expression work and allocations. InputRows and
 // OutputRows count active physical rows; VectorRows counts eligible rows per
 // nonconstant kernel. ArmRows counts selected CASE values and eligible COALESCE
 // arguments; LaterArmRows excludes each conditional's first value/argument.
-// ScalarEvaluations counts constant kernels evaluated once per operator. BufferBytes
+// ScalarEvaluations counts non-leaf constant kernels evaluated once per operator. BufferBytes
 // and FullColumnAllocations count allocated vector capacity, not variable payloads.
 // Production process-wide counters are disabled; per-operator statistics remain available.
 type ExpressionStats struct {
 	Executions            uint64
 	Batches               uint64
 	InputRows             uint64
+	KeyEvaluations        uint64 // Active rows requested by actual computed-key root invocations.
+	KeyRootCalls          uint64 // Actual key-root calls, including cached scalar applications.
 	OutputRows            uint64
 	VectorRows            uint64
 	ScalarEvaluations     uint64

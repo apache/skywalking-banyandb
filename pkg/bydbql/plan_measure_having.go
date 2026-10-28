@@ -25,11 +25,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
-func (m *MeasureTemplate) bindHaving(bound *BoundQuery) (*ql.HavingPlan, error) {
+func (m *MeasureTemplate) bindHaving(bound *BoundQuery, aggregate *ql.AggregatePlan) (*ql.HavingPlan, error) {
 	if m.having == nil {
 		return nil, nil
 	}
-	predicate, err := m.having.bind(bound)
+	predicate, err := m.having.bindCompleted(bound, aggregate)
 	if err != nil {
 		return nil, err
 	}
@@ -37,11 +37,16 @@ func (m *MeasureTemplate) bindHaving(bound *BoundQuery) (*ql.HavingPlan, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &ql.HavingPlan{Predicate: predicate, Outputs: slices.Clone(m.havingOutputs)}, nil
+	outputs := slices.Clone(m.havingOutputs)
+	for index := range outputs {
+		output := aggregate.Outputs[index]
+		outputs[index].Source, outputs[index].Output, outputs[index].Timestamp = output.Column, output.Column, output.Timestamp
+	}
+	return &ql.HavingPlan{Predicate: predicate, Outputs: outputs}, nil
 }
 
 func (m *MeasureTemplate) compileHaving(
-	columns *measureColumns, plan *ql.AggregatePlan, groups map[measureColumnKey]int, addInput func(vectorized.ColumnDef),
+	columns *measureColumns, plan *ql.AggregatePlan, addInput func(vectorized.ColumnDef),
 ) error {
 	statement := m.statement.template.Select
 	if statement.GroupBy == nil && len(plan.Calls) == 0 && !havingHasAggregate(statement.Having.Expression) {
@@ -52,7 +57,7 @@ func (m *MeasureTemplate) compileHaving(
 		m.havingOutputs[index] = ql.Slot{ID: ql.SlotID(index), Source: output.Column, Output: output.Column, Nullable: true}
 	}
 	var err error
-	m.having, err = compileHavingExpression(statement.Having.Expression, columns, plan, groups, addInput)
+	m.having, err = m.compileHavingExpression(statement.Having.Expression, columns, plan, addInput)
 	return err
 }
 
@@ -68,50 +73,60 @@ func havingHasAggregate(expression *GrammarExpression) bool {
 	return false
 }
 
-func compileHavingExpression(
-	expression *GrammarExpression, columns *measureColumns, plan *ql.AggregatePlan,
-	groups map[measureColumnKey]int, addInput func(vectorized.ColumnDef),
+func (m *MeasureTemplate) compileHavingExpression(
+	expression *GrammarExpression, columns *measureColumns, plan *ql.AggregatePlan, addInput func(vectorized.ColumnDef),
 ) (*measureExpression, error) {
 	return compileMeasureExpressionRecipe(expression, columns, func(leaf *GrammarExpression) (ql.Expression, error) {
-		if leaf.Aggregate != nil {
-			call, output, err := resolveMeasureAggregate(leaf.Aggregate, leaf.TypeSpec, columns)
-			if err != nil {
-				return ql.Expression{}, err
-			}
-			index := addMeasureAggregateCall(plan, call)
-			addInput(call.Source)
-			return ql.Expression{Op: "column", Source: havingCompletedOutput(plan, output, index, false)}, nil
-		}
 		name, err := leaf.Identifier.ToString(leaf.TypeSpec != nil)
 		if err != nil {
 			return ql.Expression{}, err
 		}
-		source, err := columns.resolve(name, leaf.TypeSpec)
+		return ql.Expression{}, fmt.Errorf("HAVING column %q must appear in GROUP BY; SELECT aliases are outside HAVING scope", name)
+	}, func(subtree *GrammarExpression) (*measureExpression, bool, error) {
+		if subtree.Aggregate != nil {
+			call, output, err := resolveMeasureAggregate(subtree.Aggregate, subtree.TypeSpec, columns)
+			if err != nil {
+				return nil, true, err
+			}
+			index := addMeasureAggregateCall(plan, call)
+			addInput(call.Source)
+			return havingCompletedOutput(plan, output, index, false), true, nil
+		}
+		if havingHasAggregate(subtree) {
+			return nil, false, nil
+		}
+		recipe, err := compileMeasureExpression(subtree, columns, newMeasureExpressionInputs(nil))
 		if err != nil {
-			return ql.Expression{}, err
+			if subtree.Op == "time_bucket" {
+				return nil, true, err
+			}
+			return nil, false, nil
 		}
-		index, grouped := groups[columnIdentity(source)]
-		if !grouped {
-			return ql.Expression{}, fmt.Errorf("HAVING column %q must appear in GROUP BY; SELECT aliases are outside HAVING scope", name)
+		index := m.findGroup(recipe)
+		if index < 0 {
+			return nil, false, nil
 		}
-		return ql.Expression{Op: "column", Source: havingCompletedOutput(plan, source, index, true)}, nil
+		return havingCompletedOutput(plan, m.groups[index].column, index, true), true, nil
 	})
 }
 
 // havingCompletedOutput reuses a visible completed column when possible. A
 // hidden output is referenced only inside the group filter and removed by its
 // final projection; repeated calls share both state and their completed column.
-func havingCompletedOutput(plan *ql.AggregatePlan, definition vectorized.ColumnDef, index int, group bool) vectorized.ColumnDef {
-	for _, output := range plan.Outputs {
+func havingCompletedOutput(plan *ql.AggregatePlan, definition vectorized.ColumnDef, index int, group bool) *measureExpression {
+	for outputIndex, output := range plan.Outputs {
 		if output.IsGroup == group && output.Index == index {
-			return output.Column
+			return &measureExpression{completedOutput: &outputIndex}
 		}
+	}
+	if definition.Role == vectorized.RoleTimestamp {
+		definition.Role, definition.TagFamily = vectorized.RoleTag, "__ql"
 	}
 	for suffix := len(plan.Outputs); ; suffix++ {
 		definition.Name = fmt.Sprintf("__ql_having_%d", suffix)
 		occupied := false
 		for _, output := range plan.Outputs {
-			if columnIdentity(output.Column) == columnIdentity(definition) {
+			if output.Column.Name == definition.Name {
 				occupied = true
 				break
 			}
@@ -121,5 +136,6 @@ func havingCompletedOutput(plan *ql.AggregatePlan, definition vectorized.ColumnD
 		}
 	}
 	plan.Outputs = append(plan.Outputs, ql.AggregateOutput{Column: definition, Index: index, IsGroup: group})
-	return definition
+	outputIndex := len(plan.Outputs) - 1
+	return &measureExpression{completedOutput: &outputIndex}
 }

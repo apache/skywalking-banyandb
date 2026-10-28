@@ -91,15 +91,18 @@ func ParseQuery(query string) (*Grammar, error) {
 	if err := checkParenDepth(query); err != nil {
 		return nil, err
 	}
-	grammar, err := parseSelectSyntax(query)
+	grammar, err := parseQuerySyntax(query)
 	if err != nil {
-		havingGrammar, havingErr := parseExpressionHaving(query)
-		if !errors.Is(havingErr, errNoExpressionHaving) {
-			grammar, err = havingGrammar, havingErr
+		ordered, orderErr := parseExpressionOrder(query)
+		if !errors.Is(orderErr, errNoExpressionOrder) {
+			grammar, err = ordered, orderErr
 		}
 	}
 	if err != nil {
 		return nil, fmt.Errorf("syntax error: %w", err)
+	}
+	if grammar.Select != nil && grammar.Select.Distinct && grammar.Select.From.Shorthand == nil && !strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil, fmt.Errorf("SELECT DISTINCT is supported only for measures")
 	}
 	markExpressionLiterals(grammar, query)
 	if grammar.Select != nil && grammar.Select.From.Shorthand != nil {
@@ -110,6 +113,10 @@ func ParseQuery(query string) (*Grammar, error) {
 	}
 	if grammar.TopN != nil && grammar.TopN.From.Shorthand != nil {
 		return nil, fmt.Errorf("syntax error: source shorthand is valid only for measure SELECT")
+	}
+	if grammar.Select != nil && grammar.Select.OrderBy != nil && len(grammar.Select.OrderBy.Keys) > 0 &&
+		!strings.EqualFold(grammar.Select.From.ResourceType, "MEASURE") {
+		return nil, fmt.Errorf("syntax error: typed ORDER BY is supported only for measures")
 	}
 	if err := checkExpressionSource(grammar); err != nil {
 		return nil, err
@@ -124,7 +131,29 @@ func ParseQuery(query string) (*Grammar, error) {
 	return grammar, nil
 }
 
+func parseQuerySyntax(query string) (*Grammar, error) {
+	grammar, err := parseSelectSyntax(query)
+	if err != nil {
+		havingGrammar, havingErr := parseExpressionHaving(query)
+		if !errors.Is(havingErr, errNoExpressionHaving) {
+			return havingGrammar, havingErr
+		}
+	}
+	return grammar, err
+}
+
 func parseSelectSyntax(query string) (*Grammar, error) {
+	grammar, err := parseSelectWithoutComputedGroups(query)
+	if err != nil {
+		groupGrammar, groupErr := parseExpressionGroupBy(query)
+		if !errors.Is(groupErr, errNoExpressionGroupBy) {
+			return groupGrammar, groupErr
+		}
+	}
+	return grammar, err
+}
+
+func parseSelectWithoutComputedGroups(query string) (*Grammar, error) {
 	grammar, err := particpleParser.ParseString("", query)
 	if err != nil {
 		grammar, err = parseExpressionProjection(query)
@@ -151,6 +180,9 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 	if g.Select == nil {
 		return nil
 	}
+	if g.Select.Where != nil && grammarExpressionHasBucket(g.Select.Where.Expression) {
+		return fmt.Errorf("syntax error: TIME_BUCKET is supported only in grouped SELECT and HAVING expressions")
+	}
 	if proj := g.Select.Projection; proj != nil {
 		var columns []*GrammarColumn
 		columns = append(columns, proj.Columns...)
@@ -158,8 +190,19 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 			columns = append(columns, proj.TopN.OtherColumns...)
 		}
 		for _, col := range columns {
+			if g.Select.GroupBy == nil && grammarExpressionHasBucket(col.Expression) {
+				return fmt.Errorf("syntax error: TIME_BUCKET projection requires GROUP BY")
+			}
 			if col.Aggregate == nil {
 				continue
+			}
+			if col.Aggregate.TypeSpec != nil {
+				if col.TypeSpec != nil {
+					return fmt.Errorf("syntax error: aggregate qualifier appears inside and outside the argument")
+				}
+				if !strings.EqualFold(g.Select.From.ResourceType, "MEASURE") {
+					return fmt.Errorf("syntax error: qualified aggregate arguments are supported only for measures")
+				}
 			}
 			if err := checkAggregateShape(col.Aggregate); err != nil {
 				return err
@@ -174,7 +217,7 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 	if gb := g.Select.GroupBy; gb != nil {
 		bucketCount := 0
 		for _, col := range gb.Columns {
-			if col.TimeBucket != nil {
+			if col.TimeBucket != nil || grammarExpressionHasBucket(col.Expression) {
 				bucketCount++
 			}
 		}
@@ -183,6 +226,21 @@ func checkAggregateAndGroupByShape(g *Grammar) error {
 		}
 	}
 	return nil
+}
+
+func grammarExpressionHasBucket(expression *GrammarExpression) bool {
+	if expression == nil {
+		return false
+	}
+	if expression.Op == "time_bucket" {
+		return true
+	}
+	for _, child := range expression.Args {
+		if grammarExpressionHasBucket(child) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkAggregateShape(aggregate *GrammarAggregateFunction) error {

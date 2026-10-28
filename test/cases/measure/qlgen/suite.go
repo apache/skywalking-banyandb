@@ -39,6 +39,18 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	ParentChildReadiness         []AggregateFixture            `json:"parent_child_readiness"`
+	ParentChildScenarios         []AggregateScenario           `json:"parent_child_scenarios"`
+	SortingResources             []SortingResource             `json:"sorting_resources"`
+	SortingReadiness             []AggregateFixture            `json:"sorting_readiness"`
+	SortingScenarios             []SortingScenario             `json:"sorting_scenarios"`
+	SortingRejections            []Case                        `json:"sorting_rejections"`
+	GroupingReadiness            []AggregateFixture            `json:"grouping_readiness"`
+	GroupingScenarios            []GroupingScenario            `json:"grouping_scenarios"`
+	GroupingRejections           []Case                        `json:"grouping_rejections"`
+	DistinctScenarios            []DistinctScenario            `json:"distinct_scenarios"`
+	DistinctReadiness            []Case                        `json:"distinct_readiness"`
+	DistinctRejections           []Case                        `json:"distinct_rejections"`
 	HavingReviewScenarios        []HavingScenario              `json:"having_review_scenarios"`
 	HavingLegacyScenarios        []HavingScenario              `json:"having_legacy_scenarios"`
 	HavingReadiness              []AggregateFixture            `json:"having_readiness"`
@@ -85,6 +97,12 @@ func Load(content []byte) (Suite, error) {
 
 // Validate rejects stale fixtures, duplicate cases and incomplete declared coverage.
 func (s Suite) Validate() error {
+	if err := validateGroupingScenarios(s); err != nil {
+		return err
+	}
+	if err := validateDistinctScenarios(s); err != nil {
+		return err
+	}
 	if err := ValidateCoverageContract(s.Features); err != nil {
 		return err
 	}
@@ -143,6 +161,12 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateParentChild(s); err != nil {
+		return err
+	}
+	if err := validateSortingScenarios(s); err != nil {
+		return err
+	}
 	if err := validateT14ReviewScenarios(s.HavingReviewScenarios); err != nil {
 		return err
 	}
@@ -180,6 +204,37 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, fixture := range s.ParentChildReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	for _, scenario := range s.ParentChildScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.SortingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.SortingRejections...)
+	for _, resource := range s.SortingResources {
+		cases = append(cases, resource.Case)
+		if resource.Control != nil {
+			cases = append(cases, *resource.Control)
+		}
+	}
+	for _, scenario := range s.SortingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.GroupingReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	cases = append(cases, s.GroupingRejections...)
+	for _, scenario := range s.GroupingScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	cases = append(cases, s.DistinctReadiness...)
+	cases = append(cases, s.DistinctRejections...)
+	for _, scenario := range s.DistinctScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, scenario := range s.HavingReviewScenarios {
 		cases = append(cases, scenario.Cases...)
 	}

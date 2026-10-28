@@ -323,7 +323,7 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 ```
 
 Expression WHERE is covered by T12 below, grouped HAVING by T14, and computed
-grouping remains in T16.
+grouping by T16.
 
 ## T12 typed field filters
 
@@ -549,9 +549,6 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 
 | Capability | Missing implementation or fixture |
 | --- | --- |
-| Catalog B5 | Multiple sort keys and null placement require T17. |
-| Catalog B6 | `SELECT DISTINCT` requires T15. |
-| Catalog B9 | Computed and ordinal grouping require T16. |
 | Low-valued float means | Legacy native mean clamps values below one; the oracle keeps arithmetic mean semantics. |
 | Stage selection | Needs a generated staged-group fixture. |
 | Index ordering | Needs generated index rules and bindings. |
@@ -588,3 +585,266 @@ engine's behavior into expected results.
 5. Regenerate, run the deterministic check and unit tests, then run the generated
    QL label in both integration topologies. Implementing a new QL capability does
    not require a native query counterpart or a protobuf change.
+
+## T15 complete visible tuple DISTINCT
+
+The typed `t15Query` model generates 18 scenarios with three changed bindings
+and three bind rejections, producing 21 T15 specs. `t15_oracle.go` evaluates the existing independent
+scalar/aggregate model, applies WHERE and HAVING, encodes complete visible tuples
+with JSON structure and explicit numeric equality normalization, and then applies
+final pagination. It does not parse or execute production QL. The audited
+`t15.*` inventory and required scenario names prevent silently dropping a bounded
+capability witness. Timestamp ordering compares typed values, not JSON text.
+
+The isolated `ql_t15` fixture writes 2,201 rows through the normal writer and
+checks every row through 35 QL-only visibility windows. There are 135 unique
+host/zone tuples; seventeen occurrences of each large-fixture tuple cross
+series identities and native batches. The deliberately colliding tuples
+`("ab", "c")` and `("a", "bc")` must remain separate. Additional witnesses cover
+NULL versus empty string, NULL versus zero, independently specified positive and
+negative zero writes, and two independently specified NaN payload bit patterns.
+The fixture model retains NaN bits as a serializable marker; only writer/oracle
+conversion materializes a floating NaN. Expected protobuf JSON uses `"NaN"`.
+The public result comparator equates NaN payloads while keeping NaN distinct
+from ordinary numbers. Successful storage/transport behavior is established by
+the real endpoint tests, not by generator success.
+
+Scenarios cover scalar int/float/string/timestamp outputs, aliases, casts, CASE,
+field WHERE with changed parameters, hidden COUNT in HAVING, hidden GROUP BY
+inputs excluded from equality, empty input, LIMIT
+0, and cached/bypassed equivalence. Arrays and hidden ORDER BY inputs reject
+before scans. The original T15 tuple pagination uses
+LIMIT 200 and expects all 135 tuples from 2,201 inputs; a separate visible TIME
+ordering scenario checks LIMIT/OFFSET with deterministic rows.
+
+Three scenarios additionally verify unordered finite-LIMIT stopping with constant
+and field-filtered values, and complete consumption when OFFSET exceeds the
+number of unique tuples. Their expected examined-row counts come from the
+independent fixture model. These witnesses have at most one unique value, so
+their expected rows do not depend on unspecified input order. Ordered pagination
+and the public operator tests cover complete consumption and multiple keys.
+
+Every successful RPC checks actual retained distinct cardinality before pagination,
+zero DISTINCT aggregate states, no intermediate DataPoints/native Query RPCs,
+and restored tracked memory/native result ownership. Instrumentation is required;
+uninstrumented zero counters are never interpreted as observed work.
+For unordered finite LIMIT, retained cardinality is capped at OFFSET + LIMIT;
+it is not the cardinality of unseen input. The three stopping scenarios also
+check exact examined-row counts across changed bindings and cache bypass.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T15 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T15 -ginkgo.fail-on-empty
+```
+
+Run the two topologies sequentially. Existing generated cases and scenarios retain
+their query texts and expected values.
+
+## T16 computed grouping, ordinals and buckets
+
+`t16_generate.go` enumerates 42 scenarios with three bindings each and 23
+no-scan rejection cases, producing 65 T16 specs. The finite model and independent
+oracle are in `t16_model.go` and `t16_oracle.go`; generation never asks the query
+planner or running engine for expected results. `t16_fixture.go` defines the
+six-row F fixture, a six-row two-column star fixture, and a 1,153-row fixture
+spanning native batches. Twelve QL-only readiness queries establish complete
+fixture visibility.
+
+Scenarios cover multiple arithmetic/CASE/cast keys, repeated keys, structural
+matching, ordinal equivalence, star expansion, group-only execution, nullable
+keys, hidden keys, changed expression parameters, WHERE/HAVING/DISTINCT, and
+explicit/default/aligned time buckets. The F CASE witness returns high=10 and
+low=2; two-second bucket sums are 2,4,6. A native bucket cohort checks five actual
+reduction leaves, then forces local execution against the same independent
+expected results. Parameterized ordinal cases change values while retaining the
+same six input rows, so rebinding cannot be hidden by changing only scan bounds.
+
+The runner executes 252 successful cold/warm and bypassed calls, three extra
+forced-local parity calls, 23 rejected calls and 23 successful recovery calls:
+301 verification RPCs per topology, besides readiness. Actual key-root entries
+must equal independently identified unique roots times observed active batches.
+Logical key row applications must equal unique roots times active WHERE rows;
+constant scalar computation is counted separately. Repeated projections and
+ordinal references must not add work. The bulk case checks 2,302 key cells
+over 1,151 selected rows. Local cases require one complete QL raw scan, while
+native cases require their declared branch count. Every call verifies restored
+tracked memory and native ownership, with no intermediate DataPoints or native
+Query RPCs. `-tags=querymetrics` is mandatory for these work assertions.
+
+Mixed raw-time/bucket grouping separately verifies all six original timestamp
+values, the three bucket values and local execution; bucket reduction must not
+erase the original time key. T16 aligns its fixture base to six seconds so
+independent two- and three-second bucket expectations remain epoch aligned.
+Review regressions cover canonical duration widths, scoped HAVING over visible
+and hidden raw-time keys, timestamp/field alias collisions, and DISTINCT with
+visible versus hidden bucket keys. Structural work identity ignores rendering
+parentheses and equivalent source qualification, while retaining each parameter
+position even when two bindings have equal values.
+
+The old T07 rejection `t07_invalid_shape_6` now uses a zero-width bucket instead
+of a supported two-second bucket. Other prior queries and expected results are
+preserved. The grammar fingerprint covers the new grouping parser, and
+`make check-ql-test-cases` verifies deterministic generation.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T16 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T16 -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. General ORDER BY/full-sort/top-k is covered by T17 below.
+
+
+## T17 typed ordering and bounded pagination
+
+`t17_generate.go` declares 32 scenarios with three bindings each, 12 no-scan
+rejections, and four resource cases: 48 T17 specs. Twelve readiness pages reuse
+the existing six-row F and 1,153-row T16 fixtures and add eight wide rows. The
+wide fixture has exact int64 values above 2^53 and at both int64 limits, bytewise
+strings including empty/NUL/non-ASCII values, nulls, infinities, two NaNs, signed
+zero and string payloads over 16 KiB. Special floats are real protobuf doubles in
+write requests and valid protobuf JSON strings (`"NaN"`, `"Infinity"`,
+`"-Infinity"`) in expected responses. Generation never removes them to make JSON
+encoding succeed. `FixtureDigest` hashes their encoded typed values as well as
+the schema and the reused fixtures.
+
+`t17_model.go` renders a finite typed ORDER BY model; `t17_oracle.go` evaluates
+keys once, inserts complete tuples into an independently ordered list, and
+slices only after WHERE, grouping, HAVING and visible-tuple DISTINCT. It imports
+no production comparator, planner or execution operator. Exact integer order
+never converts through float64. Null placement is resolved separately from
+numeric direction, and ascending NaNs follow other non-null numbers. Every
+multirow golden has a unique complete ordering key; equal complete-key order is
+not asserted. The public `Generate` tests pin worked row orders and the composed
+parent query independently of the finite oracle.
+
+Families cover default and explicit null placement, both directions, one and
+multiple keys, ties with a unique tie key, alias precedence, hidden raw and
+aggregate sort keys, bare/qualified sources, bound expressions, grouped aliases,
+HAVING, visible DISTINCT ordering, TIME_BUCKET metadata, empty intersections and
+LIMIT 0. F ordered by `v DESC NULLS LAST, rid ASC` has rids 5,3,2,1,4,6; LIMIT 2
+OFFSET 1 has 3,2. Four hidden-WHERE regressions keep the f predicate input outside the visible,
+sort and grouping keys across raw, computed SELECT, grouped and DISTINCT stages.
+Raw threshold bindings select rids 3,5,6, then 6, then none. The computed timestamp
+alias uses `observed::TAG DESC NULLS LAST, rid ASC` and reverses the first order
+to 6,5,3 while retaining each source timestamp. Grouped and DISTINCT
+cases additionally verify top-k/full-sort parity. The full parent composition returns node b and total 4 at a
+threshold of 0, then an empty page at threshold 4. Further compositions combine
+CASE/COALESCE, ordinal grouping and AVG, and visible DISTINCT with multikey top-k.
+The valid maximum LIMIT/OFFSET pair computes k=8,589,934,590 in uint64 and yields
+an empty page; out-of-range individual values reject before scanning.
+
+The runner uses the real BydbQL RPC for cold, warm/changed-binding and bypassed
+execution. Each finite LIMIT family also forces full sort through the instrumented
+context hook and compares the same independent ordered response. Sort statistics
+assert exact input/output/key applications and independently modeled expression
+kernel rows. Actual key-root calls must equal the finite model's root count times
+observed active batches. Large full sorts obey the numerical comparison bound.
+Candidates stay within k, source pins stay zero after copying, and payload
+capacity stays within twice live payload plus separately reported descriptors.
+Every call checks balanced sort reservations, total live reservations and native
+result ownership. Readiness and verification issue no native Query RPCs.
+
+Resource cases project a bound 15,360-byte string over the existing 1,153 narrow
+rows. A 16 MiB shared budget exhausts full-sort candidates and a larger top-k;
+the same 16 MiB budget admits a compact k=5 control before each pressure call. Cancellation is injected after a real input batch
+has been copied, through the public instrumented hook, for both algorithms.
+Resource errors require positive actual candidate acceptance, restored ownership
+and successful subsequent RPC recovery. The low-level operator tests separately
+verify allocation admission before allocation; the RPC hook controls cancellation
+without replacing scanning or sorting. Initial 512 KiB and 2 MiB controls exposed
+native preflights of 1,311,232 bytes and a further 2,988,800 bytes before candidate
+ownership. The 16 MiB limit admits the narrow source; wider projected candidates
+still exceed it for full sort and large k. This changes only the generated stress
+fixture's limit and payload, not production admission limits.
+
+The only earlier generated query changes are the two obsolete T03 ORDER BY
+rejections: `t03_invalid_order_0` now names `absent_sort_key::FIELD` and
+`t03_invalid_order_1` names `absent_sort_key::TAG`. Their former alias/source
+orders are supported T17 cases. The ambiguous-alias rejection remains unchanged;
+the existing T15 hidden DISTINCT sort key remains a valid rejection. All older
+expected responses remain byte-identical. The longstanding legacy regressions
+and pending coverage gaps above retain their original expectations and status.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QLB-T17' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QLB-T17' -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. The runner reports completed/registered spec
+counts, verification RPC counts (259 per complete topology), readiness page counts, actual retry-inclusive
+readiness RPCs, and the fixture digest. `make check-ql-test-cases` verifies the
+exact generated artifact; the grammar fingerprint is updated only after the
+ORDER BY grammar source freezes and its coverage inventory is audited.
+
+### Composable count-distinct coverage
+
+The aggregate model also generates `COUNT(DISTINCT column)` alongside ordinary
+aggregates. Its independent oracle excludes null values, counts an empty string
+as a value, and deduplicates typed fixture values before counting. Scalar and
+grouped cases cover multiple distinct aggregates, aliases, changed time bindings,
+and empty input. Ordered cases compose distinct counts with `SUM`, `HAVING`,
+multiple grouping keys, and deterministic tie-breaking. A 1,153-group fixture
+checks a seven-row page at offset 1,100 after complete aggregation and ordering,
+projecting `rid`, `COUNT(DISTINCT rid)`, and `SUM(v)`. Multiple grouping keys are
+covered separately in the six-row fixture. This keeps the large-page correctness
+case within the native input budget: on a host without a cgroup memory limit,
+the default query allowance is 8 MiB. The wider three-tag version exceeds that
+allowance even with ordinary `COUNT`, independently of count-distinct state.
+Every scenario runs through the QL endpoint with cold, warm, and bypassed plan
+caches in both integration topologies.
+
+### Parent and child query shapes
+
+`parent_child_fixture.go` and `parent_child_generate.go` add nine neutral generated
+scenarios to the same artifact. One measure has parent-qualified child entities
+and two time buckets: parent a has three distinct children and sum 42, b has two
+and sum 17, and c has one and sum 4. Repeated a/child1 contributes to the sum in
+both buckets while contributing once to its distinct count. The independent
+oracle groups and sums all input before applying pagination. Literal unit checks
+pin those results, active-parent count 3, idle scalar zero, and exact boundaries.
+
+The cohort preserves the legacy scalar and TOP 500 statement shapes and adds
+extended count-plus-sum ordering and scalar parent counting. Legacy TIME BETWEEN
+explicitly includes a row exactly at its upper millisecond; extended >=/< windows
+exclude that boundary. Legacy TOP verifies order when ranks are unique. Extended
+ordering uses service_id as a deterministic tie break. A separate 137-parent
+fixture reuses the local /child suffix under distinct qualified entity IDs. Its
+global distinct child count is 137; tied middle and last pages contain parents
+100–106 and 133–136. Fixture projections remain narrow under the native budget.
+Every scenario changes bindings on the same statement and repeats with the plan
+cache bypassed. Setup writes through the measure API and establishes visibility
+through QL alone. No native query provides readiness or expected results.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QL-parent-child' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QL-parent-child' -ginkgo.fail-on-empty
+```
+
+`parent_child_legacy_scalar` and `parent_child_global_children` require one
+integer-zero row for idle scalar input. The QL response boundary supplies that
+row after successful empty native execution; grouped empty results remain empty.
+The extended scalar alias in `parent_child_parent_total` independently exercises
+the local aggregate's zero result. `parent_child_scalar_pages` verifies that
+LIMIT 1 retains the zero row, LIMIT 0 suppresses even a nonempty scalar count,
+and OFFSET 1 suppresses the idle scalar row. The native protobuf query API is unchanged.
+
+The 137-parent fixture uses indexed QL readiness pages of at most 32 identities.
+On a host without a cgroup memory limit, its full grouped count-plus-sum query
+exceeds the default 8 MiB native query allowance. Verification also runs in the
+standard four-CPU, 8 GiB container with no additional swap. Its unchanged default
+protector recognizes the cgroup limit and uses 75% of it; no protector flags or
+tracker budgets are overridden. The full 137-parent query succeeds there. The
+idle scalar cases retain their integer-zero expectations.
+
+After the empty-scalar correction, both container selections pass all nine specs,
+including cached and bypassed executions with changed bindings. The final reports
+are `/mnt/d/qlb-empty-scalar-standalone-report.json` and
+`/mnt/d/qlb-empty-scalar-distributed-report.json`.

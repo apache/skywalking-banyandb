@@ -66,7 +66,7 @@ func TestCoverageContractRequiresIndependentInventory(t *testing.T) {
 // production parser. A grammar change must update both the capability inventory
 // and this fingerprint after checking which generated witnesses/gaps it affects.
 func TestMeasureGrammarCoverageAudit(t *testing.T) {
-	const audited = "b6aab8e3bd74654f05f500af81638b68602dfc39caa6849ddda5c106b9b0901d"
+	const audited = "fecc2d93034c20e715b44f0cae5fa1c2d5a0003285befc6f593f36e3b18d7804"
 	var contract bytes.Buffer
 	writeGrammarShape(&contract, reflect.TypeFor[bydbql.Grammar](), make(map[reflect.Type]bool))
 	writeLexerAndSyntaxGuards(t, &contract)
@@ -85,6 +85,7 @@ func writeExpressionGrammar(t *testing.T, output *bytes.Buffer) {
 	for _, name := range []string{
 		"grammar_expression.go", "grammar_expression_lexer.go", "grammar_expression_conditional.go",
 		"grammar_expression_where.go", "grammar_expression_having.go",
+		"grammar_expression_group.go", "grammar_expression_order.go",
 	} {
 		file := filepath.Join(filepath.Dir(source), "../../../../pkg/bydbql", name)
 		files := token.NewFileSet()

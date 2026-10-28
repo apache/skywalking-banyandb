@@ -35,6 +35,7 @@ type measureColumns struct {
 	fields          map[string]vectorized.ColumnDef
 	tagSpecs        map[string]*tagSpecWithFamily
 	ordered         []vectorized.ColumnDef
+	intervals       []string
 }
 
 type measureColumnKey struct {
@@ -67,16 +68,13 @@ func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 	} else {
 		for _, column := range stmt.Projection.Columns {
 			if column.TypeSpec == nil && isBuiltinTime(column.Identifier) {
-				if column.Alias == nil {
-					continue
-				} // DataPoint.timestamp is always preserved.
-				alias, aliasErr := column.Alias.ToString(true)
-				if aliasErr != nil {
-					return aliasErr
+				slot, visible, slotErr := timestampOutputSlot(column, stmt.Distinct, ql.SlotID(len(slots)))
+				if slotErr != nil {
+					return slotErr
 				}
-				source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
-				output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
-				slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output})
+				if visible {
+					slots = append(slots, slot)
+				}
 				continue
 			}
 			name, nameErr := column.Identifier.ToString(column.TypeSpec != nil)
@@ -135,6 +133,9 @@ func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 // rawOrderBy resolves visible aliases before the legacy index-rule fallback.
 // General column sorting is owned by the complete ORDER BY capability.
 func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *measureColumns) (*modelv1.QueryOrder, error) {
+	if orderBy != nil && len(orderBy.Keys) > 0 {
+		return nil, nil
+	}
 	native := (&transformRun{}).convertSelectOrderBy(orderBy)
 	if orderBy == nil || orderBy.Tail.WithIdent == nil {
 		return native, nil
@@ -156,7 +157,7 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 	}
 	if resolved != nil {
 		if resolved.Source.Role != vectorized.RoleTimestamp {
-			return nil, fmt.Errorf("ORDER BY output %q requires column sorting", name)
+			return nil, nil
 		}
 		native.IndexRuleName = ""
 		return native, nil
@@ -166,10 +167,10 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 		return native, nil
 	}
 	if len(columns.tags[name]) > 0 {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	if _, exists := columns.fields[name]; exists {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	return native, nil
 }
@@ -356,4 +357,21 @@ func containsQuotedMeasureLiteral(projection *GrammarProjection, columns *measur
 		}
 	}
 	return false
+}
+
+func timestampOutputSlot(column *GrammarColumn, distinct bool, id ql.SlotID) (ql.Slot, bool, error) {
+	if column.Alias == nil && !distinct {
+		return ql.Slot{}, false, nil
+	}
+	alias := "time"
+	if column.Alias != nil {
+		var err error
+		alias, err = column.Alias.ToString(true)
+		if err != nil {
+			return ql.Slot{}, false, err
+		}
+	}
+	source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
+	output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
+	return ql.Slot{ID: id, Source: source, Output: output, Timestamp: true}, true, nil
 }

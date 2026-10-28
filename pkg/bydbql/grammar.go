@@ -44,6 +44,7 @@ type Grammar struct {
 type GrammarSelectStatement struct {
 	Pos            lexer.Position
 	Select         string                    `parser:"@'SELECT'"`
+	Distinct       bool                      `parser:"@'DISTINCT'?"`
 	Projection     *GrammarProjection        `parser:"@@"`
 	From           *GrammarFromClause        `parser:"@@"`
 	Time           *GrammarTimeClause        `parser:"@@?"`
@@ -99,6 +100,7 @@ type GrammarTopNProjection struct {
 type GrammarColumn struct {
 	Pos          lexer.Position
 	SingleQuoted bool
+	All          bool
 	Expression   *GrammarExpression
 	Aggregate    *GrammarAggregateFunction `parser:"( @@"`
 	Identifier   *GrammarIdentifierPath    `parser:"| @@ )"`
@@ -113,7 +115,8 @@ type GrammarColumn struct {
 type GrammarAggregateFunction struct {
 	Function string                 `parser:"@('SUM'|'MEAN'|'AVG'|'COUNT'|'MAX'|'MIN')"`
 	Distinct bool                   `parser:"'(' @'DISTINCT'?"`
-	Column   *GrammarIdentifierPath `parser:"@@ ')'"`
+	Column   *GrammarIdentifierPath `parser:"@@"`
+	TypeSpec *string                `parser:"( '::' @('TAG'|'FIELD') )? ')'"`
 }
 
 // GrammarTopNAggregateFunction represents aggregate functions without column (for TOP N).
@@ -340,13 +343,15 @@ type GrammarGroupByClause struct {
 // GrammarGroupByColumn represents a column in GROUP BY: a plain tag/field
 // identifier, or the TIME_BUCKET(...) pseudo-column.
 type GrammarGroupByColumn struct {
-	TimeBucket *GrammarTimeBucket     `parser:"(  @@"`
+	Expression *GrammarExpression
+	Ordinal    *int                   `parser:"( @Int"`
+	TimeBucket *GrammarTimeBucket     `parser:"| @@"`
 	Identifier *GrammarIdentifierPath `parser:" | @@ )"`
 	TypeSpec   *string                `parser:"( '::' @('TAG'|'FIELD') )?"`
 }
 
-// GrammarTimeBucket represents TIME_BUCKET(<duration>), valid only inside
-// GROUP BY. Width is optional; an empty width defers to the measure's own
+// GrammarTimeBucket represents TIME_BUCKET(<duration>). Width is optional;
+// an empty width defers to the measure's own
 // interval (design §5.3).
 type GrammarTimeBucket struct {
 	TimeBucket string  `parser:"@'TIME_BUCKET'"`
@@ -360,6 +365,14 @@ type GrammarSelectOrderByClause struct {
 	Order string             `parser:"@'ORDER'"`
 	By    string             `parser:"@'BY'"`
 	Tail  GrammarOrderByTail `parser:"@@"`
+	Keys  []*GrammarOrderKey
+}
+
+// GrammarOrderKey describes one typed measure ordering expression.
+type GrammarOrderKey struct {
+	Expression *GrammarExpression
+	Descending bool
+	NullsFirst bool
 }
 
 // GrammarTopNOrderByClause represents ORDER BY clause in TOP N statement.

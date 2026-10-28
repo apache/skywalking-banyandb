@@ -25,6 +25,7 @@ import (
 )
 
 type aggregateState struct {
+	distinct *aggregateGroups
 	count    []int64
 	sumInt   []int64
 	sumFloat []float64
@@ -45,7 +46,7 @@ const (
 
 func (s *aggregateState) require(function AggregateFunction) {
 	switch function {
-	case AggregateCount:
+	case AggregateCount, AggregateCountDistinct:
 	case AggregateSum:
 		if s.source.Type == vectorized.ColumnTypeInt64 {
 			s.needs |= aggregateNeedsIntSum
@@ -106,6 +107,16 @@ func (s *aggregateState) update(group int, value aggregateValue) error {
 	if value.null {
 		return nil
 	}
+	if s.distinct != nil {
+		values := [2]aggregateValue{{typ: vectorized.ColumnTypeInt64, i64: int64(group)}, value}
+		added, err := s.distinct.insert(values[:])
+		if err != nil {
+			return err
+		}
+		if !added {
+			return nil
+		}
+	}
 	if s.count[group] == math.MaxInt64 {
 		return fmt.Errorf("aggregate COUNT(%s) exceeds int64", s.source.Name)
 	}
@@ -153,7 +164,7 @@ func aggregateFloatLess(left, right float64) bool {
 func (s *aggregateState) result(group int, function AggregateFunction) aggregateValue {
 	value := aggregateValue{typ: s.source.Type, null: s.count[group] == 0}
 	switch function {
-	case AggregateCount:
+	case AggregateCount, AggregateCountDistinct:
 		value.typ, value.i64, value.null = vectorized.ColumnTypeInt64, s.count[group], false
 	case AggregateSum:
 		if s.source.Type == vectorized.ColumnTypeInt64 {

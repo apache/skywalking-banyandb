@@ -143,35 +143,53 @@ func FixtureWrites(base time.Time) []*measurev1.WriteRequest {
 // FixtureDigest identifies the exact schema and values used by generated expectations.
 func FixtureDigest() string {
 	data, err := json.Marshal(struct {
-		T14Binding        *databasev1.IndexRuleBinding
-		Schema            *databasev1.Measure
-		Binding           *databasev1.IndexRuleBinding
-		Rules             []*databasev1.IndexRule
-		Rows              []fixtureRow
-		T03Schema         *databasev1.Measure
-		T05Schema         *databasev1.Measure
-		T03Rows           []fixtureRow
-		T07Schema         *databasev1.Measure
-		T07Rows           []fixtureRow
-		T07GroupsSchema   *databasev1.Measure
-		T07GroupsRows     []fixtureRow
-		T08Schema         *databasev1.Measure
-		T08Rows           []t08Row
-		T08GroupsSchema   *databasev1.Measure
-		T08GroupsRows     []t08Row
-		T08Indexes        []*databasev1.IndexRule
-		T08Bindings       []*databasev1.IndexRuleBinding
-		T10Schema         *databasev1.Measure
-		T10Rows           []fixtureRow
-		T12Schema         *databasev1.Measure
-		T12Rows           []fixtureRow
-		T12LegacySchemas  []*databasev1.Measure
-		T12LegacyRows     []t12LegacyRow
-		T14Schemas        []*databasev1.Measure
-		T14Rows           [][]fixtureRow
-		T14Indexes        []*databasev1.IndexRule
-		T14ReviewBindings []*databasev1.IndexRuleBinding
+		ParentChildSchemas  []*databasev1.Measure
+		ParentChildRows     [][]parentChildRow
+		ParentChildRules    [][]*databasev1.IndexRule
+		ParentChildBindings []*databasev1.IndexRuleBinding
+		T17Schema           *databasev1.Measure
+		T17Rows             []any
+		T16Schemas          []*databasev1.Measure
+		T16Rows             [][]fixtureRow
+		T15Schema           *databasev1.Measure
+		T15Rows             []fixtureRow
+		T14Binding          *databasev1.IndexRuleBinding
+		Schema              *databasev1.Measure
+		Binding             *databasev1.IndexRuleBinding
+		Rules               []*databasev1.IndexRule
+		Rows                []fixtureRow
+		T03Schema           *databasev1.Measure
+		T05Schema           *databasev1.Measure
+		T03Rows             []fixtureRow
+		T07Schema           *databasev1.Measure
+		T07Rows             []fixtureRow
+		T07GroupsSchema     *databasev1.Measure
+		T07GroupsRows       []fixtureRow
+		T08Schema           *databasev1.Measure
+		T08Rows             []t08Row
+		T08GroupsSchema     *databasev1.Measure
+		T08GroupsRows       []t08Row
+		T08Indexes          []*databasev1.IndexRule
+		T08Bindings         []*databasev1.IndexRuleBinding
+		T10Schema           *databasev1.Measure
+		T10Rows             []fixtureRow
+		T12Schema           *databasev1.Measure
+		T12Rows             []fixtureRow
+		T12LegacySchemas    []*databasev1.Measure
+		T12LegacyRows       []t12LegacyRow
+		T14Schemas          []*databasev1.Measure
+		T14Rows             [][]fixtureRow
+		T14Indexes          []*databasev1.IndexRule
+		T14ReviewBindings   []*databasev1.IndexRuleBinding
 	}{
+		ParentChildSchemas:  []*databasev1.Measure{ParentChildFixtureSchema(ParentChildFixtureName), ParentChildFixtureSchema(ParentChildPageFixtureName)},
+		ParentChildRows:     [][]parentChildRow{parentChildRows(ParentChildFixtureName), parentChildRows(ParentChildPageFixtureName)},
+		ParentChildRules:    [][]*databasev1.IndexRule{ParentChildIndexRules(ParentChildFixtureName), ParentChildIndexRules(ParentChildPageFixtureName)},
+		ParentChildBindings: []*databasev1.IndexRuleBinding{ParentChildIndexBinding(ParentChildFixtureName), ParentChildIndexBinding(ParentChildPageFixtureName)},
+		T17Schema:           T17FixtureSchema(T17WideFixtureName), T17Rows: t17DigestRows(),
+		T16Schemas: []*databasev1.Measure{T16FixtureSchema(T16FixtureName), T16FixtureSchema(T16StarFixtureName), T16FixtureSchema(T16BulkFixtureName)},
+		T16Rows:    [][]fixtureRow{t16Rows(T16FixtureName), t16Rows(T16StarFixtureName), t16Rows(T16BulkFixtureName)},
+		T15Schema:  T15FixtureSchema(), T15Rows: t15Rows(),
 		T14Schemas: []*databasev1.Measure{
 			T14FixtureSchema(T14FixtureName), T14FixtureSchema(T14GroupsFixtureName), T14FixtureSchema(T14LegacyFixtureName),
 			T14FixtureSchema(T14ContainsFixtureName), T14FixtureSchema(T14IndexedFixtureName),

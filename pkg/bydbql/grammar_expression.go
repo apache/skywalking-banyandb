@@ -43,10 +43,11 @@ type GrammarExpression struct {
 }
 
 type expressionParser struct {
-	tokens     []expressionToken
-	pos, depth int
-	where      bool
-	having     bool
+	aggregateContext string
+	tokens           []expressionToken
+	pos, depth       int
+	where            bool
+	having           bool
 }
 
 // parseExpressionProjection retains the existing grammar for every ordinary
@@ -78,6 +79,10 @@ func parseExpressionProjection(query string) (*Grammar, error) {
 	}
 	var segments [][]expressionToken
 	begin := 1
+	distinct := len(tokens) > 1 && strings.EqualFold(tokens[1].text, "DISTINCT")
+	if distinct {
+		begin++
+	}
 	depth = 0
 	for i := begin; i < from; i++ {
 		switch tokens[i].text {
@@ -98,6 +103,11 @@ func parseExpressionProjection(query string) (*Grammar, error) {
 	for i, segment := range segments {
 		if len(segment) == 0 {
 			return nil, fmt.Errorf("empty SELECT expression")
+		}
+		if len(segment) == 1 && segment[0].text == "*" {
+			columns = append(columns, &GrammarColumn{All: true})
+			placeholders = append(placeholders, fmt.Sprintf("__ql_expression_%d", i))
+			continue
 		}
 		text := query[segment[0].begin:segment[len(segment)-1].end]
 		ordinary, ordinaryErr := particpleParser.ParseString("", "SELECT "+text+" FROM MEASURE m IN g")
@@ -134,6 +144,7 @@ func parseExpressionProjection(query string) (*Grammar, error) {
 	if err != nil {
 		return nil, err
 	}
+	grammar.Select.Distinct = distinct
 	grammar.Select.Projection.Columns = columns
 	return grammar, nil
 }
@@ -327,6 +338,21 @@ func (p *expressionParser) prefix() (*GrammarExpression, error) {
 }
 
 func (p *expressionParser) functionPrefix() (*GrammarExpression, bool, error) {
+	if p.take("TIME_BUCKET") {
+		if err := p.need("("); err != nil {
+			return nil, true, err
+		}
+		bucket := &GrammarExpression{Op: "time_bucket", Type: ql.ExpressionTimestamp}
+		if p.pos < len(p.tokens) && (p.tokens[p.pos].kind == "string" || p.tokens[p.pos].kind == "quoted") {
+			var err error
+			bucket.Literal.String, err = expressionUnquote(p.tokens[p.pos].text)
+			if err != nil {
+				return nil, true, err
+			}
+			p.pos++
+		}
+		return bucket, true, p.need(")")
+	}
 	if value, handled, err := p.clockPrefix(); handled {
 		return value, true, err
 	}
@@ -356,7 +382,11 @@ func (p *expressionParser) aggregate() (*GrammarExpression, error) {
 		return nil, err
 	}
 	if argument.Op != "column" {
-		return nil, fmt.Errorf("%s in HAVING requires a source column; nested aggregates and computed arguments are not supported", function)
+		clause := "HAVING"
+		if p.aggregateContext != "" {
+			clause = p.aggregateContext
+		}
+		return nil, fmt.Errorf("%s in %s requires a source column; nested aggregates and computed arguments are not supported", function, clause)
 	}
 	expression := &GrammarExpression{
 		Op: "aggregate", Aggregate: &GrammarAggregateFunction{Function: function, Column: argument.Identifier, Distinct: distinct},

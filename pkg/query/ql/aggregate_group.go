@@ -28,8 +28,10 @@ import (
 )
 
 type aggregateGroups struct {
+	metrics      *groupMetrics
 	tracker      *vectorized.MemoryTracker
-	keys         []string
+	keys         []groupKey
+	chunks       []*groupKeyChunk
 	scratch      []byte
 	index        []uint32
 	capacity     int
@@ -43,7 +45,11 @@ type aggregateGroups struct {
 // type and null marker; variable-width payloads include their length. A null has
 // no payload, signed zeros share +0, and all NaN representations share one key.
 func appendGroupValue(dst []byte, value aggregateValue) []byte {
-	dst = append(dst, byte(value.typ))
+	marker := byte(value.typ)
+	if value.timestamp {
+		marker |= 0x80
+	}
+	dst = append(dst, marker)
 	if value.null {
 		return append(dst, 0)
 	}
@@ -105,10 +111,10 @@ func (g *aggregateGroups) encode(values []aggregateValue) error {
 		if err := g.tracker.Reserve(capacity); err != nil {
 			return err
 		}
-		recordAggregateReserve(capacity)
+		g.metrics.reserve(capacity)
 		g.scratch = make([]byte, 0, int(capacity))
 		g.tracker.Release(g.scratchBytes)
-		recordAggregateRelease(g.scratchBytes)
+		g.metrics.release(g.scratchBytes)
 		g.scratchBytes = capacity
 	}
 	g.scratch = g.scratch[:0]
@@ -134,21 +140,42 @@ func (o *aggregateOperator) groupID(values []aggregateValue) (int, error) {
 		}
 		_, slot, _ = g.lookup(g.scratch, hash)
 	}
-	keyBytes := int64(len(g.scratch))
-	reserved, allocationErr := groupAllocationBytes(keyBytes)
-	if allocationErr != nil {
-		return 0, allocationErr
+	key, keyErr := g.storeKey(g.scratch)
+	if keyErr != nil {
+		return 0, keyErr
 	}
-	if err := o.reserve(reserved); err != nil {
-		return 0, err
-	}
-	key := string(g.scratch)
 	id = len(g.keys)
 	g.keys = append(g.keys, key)
 	g.index[slot] = uint32(id) + 1
-	g.keyBytes += keyBytes
-	g.keyReserved += reserved
+	g.keyBytes += int64(len(g.scratch))
 	return id, nil
+}
+
+// insert retains a complete key only when it is new. Count-distinct prefixes
+// the scalar with its group ID, so identical values in different groups remain independent.
+func (g *aggregateGroups) insert(values []aggregateValue) (bool, error) {
+	if err := g.encode(values); err != nil {
+		return false, err
+	}
+	hash := xxhash.Sum64(g.scratch)
+	_, slot, found := g.lookup(g.scratch, hash)
+	if found {
+		return false, nil
+	}
+	if len(g.keys) == g.capacity {
+		if err := g.grow(nil); err != nil {
+			return false, err
+		}
+		_, slot, _ = g.lookup(g.scratch, hash)
+	}
+	key, err := g.storeKey(g.scratch)
+	if err != nil {
+		return false, err
+	}
+	g.keys = append(g.keys, key)
+	g.index[slot] = uint32(len(g.keys))
+	g.keyBytes += int64(len(g.scratch))
+	return true, nil
 }
 
 func (g *aggregateGroups) lookup(key []byte, hash uint64) (id, slot int, found bool) {
@@ -163,7 +190,7 @@ func (g *aggregateGroups) lookup(key []byte, hash uint64) (id, slot int, found b
 			return 0, int(position), false
 		}
 		id = int(entry - 1)
-		if g.keys[id] == string(key) {
+		if g.key(id) == string(key) {
 			return id, int(position), true
 		}
 		position = (position + 1) & mask
@@ -187,51 +214,65 @@ func groupAllocationBytes(bytes int64) (int64, error) {
 }
 
 func (o *aggregateOperator) growGroups() error {
-	g := &o.groups
+	return o.groups.grow(o.states)
+}
+
+func (g *aggregateGroups) grow(states []aggregateState) error {
 	if g.capacity > math.MaxUint32/2 || g.capacity > math.MaxInt/4 {
 		return fmt.Errorf("%w: aggregate group count exceeds supported index size", vectorized.ErrMemoryBudgetExceeded)
 	}
 	capacity := max(1, g.capacity*2)
 	var lanes int64
-	for index := range o.states {
-		lanes += int64(o.states[index].lanes())
+	for index := range states {
+		lanes += int64(states[index].lanes())
 	}
-	// A 16-byte key header and two 4-byte index slots per possible group keep
+	// A 12-byte arena reference and two 4-byte index slots per possible group keep
 	// the open-addressed index at most half full. The old table and states stay
-	// charged until the replacement has been allocated and copied.
-	const tableSlotBytes int64 = 24
+	// charged until the replacement has been allocated and copied. Eight extra
+	// bytes cover allocator rounding for the smallest reference slice.
+	const tableSlotBytes int64 = 20
 	if int64(capacity) > math.MaxInt64/(tableSlotBytes+lanes*8) {
 		return fmt.Errorf("%w: aggregate group capacity overflows", vectorized.ErrMemoryBudgetExceeded)
 	}
-	newTableBytes := int64(capacity) * tableSlotBytes
+	newTableBytes := int64(capacity)*tableSlotBytes + 8
 	newStateBytes := int64(capacity) * lanes * 8
-	if err := o.reserve(newTableBytes + newStateBytes); err != nil {
+	if err := g.tracker.Reserve(newTableBytes + newStateBytes); err != nil {
 		return err
 	}
-	keys := make([]string, len(g.keys), capacity)
+	g.metrics.reserve(newTableBytes + newStateBytes)
+	keys := make([]groupKey, len(g.keys), capacity)
 	copy(keys, g.keys)
 	index := make([]uint32, capacity*2)
 	mask := uint64(len(index) - 1)
-	for id, key := range keys {
-		position := xxhash.Sum64String(key) & mask
+	for id := range keys {
+		position := xxhash.Sum64String(g.key(id)) & mask
 		for index[position] != 0 {
 			position = (position + 1) & mask
 		}
 		index[position] = uint32(id) + 1
 	}
-	for index := range o.states {
-		o.states[index].grow(capacity)
+	for index := range states {
+		states[index].grow(capacity)
 	}
-	o.release(g.tableBytes + int64(g.capacity)*lanes*8)
+	oldBytes := g.tableBytes + int64(g.capacity)*lanes*8
+	g.tracker.Release(oldBytes)
+	g.metrics.release(oldBytes)
 	g.index, g.keys, g.capacity, g.tableBytes = index, keys, capacity, newTableBytes
 	return nil
 }
 
 func (g *aggregateGroups) close() {
+	for _, chunk := range g.chunks {
+		if cap(chunk.data) == groupKeyChunkBytes {
+			chunk.data = chunk.data[:0]
+			groupKeyChunkPool.Put(chunk)
+		}
+	}
+	g.chunks = nil
 	bytes := g.tableBytes + g.keyReserved + g.scratchBytes
 	if bytes != 0 {
 		g.tracker.Release(bytes)
-		recordAggregateRelease(bytes)
+		g.metrics.release(bytes)
 	}
 	g.index, g.keys, g.scratch = nil, nil, nil
 	g.capacity, g.tableBytes, g.keyBytes, g.keyReserved, g.scratchBytes = 0, 0, 0, 0, 0
@@ -240,7 +281,7 @@ func (g *aggregateGroups) close() {
 func decodeGroupValues(key string, values []aggregateValue) {
 	position := 0
 	for index := range values {
-		value := aggregateValue{typ: vectorized.ColumnType(key[position]), null: key[position+1] == 0}
+		value := aggregateValue{typ: vectorized.ColumnType(key[position] & 0x7f), timestamp: key[position]&0x80 != 0, null: key[position+1] == 0}
 		position += 2
 		if !value.null {
 			number := groupUint64(key[position : position+8])

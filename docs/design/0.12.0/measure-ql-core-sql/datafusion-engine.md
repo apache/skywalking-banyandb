@@ -1,11 +1,12 @@
 # DataFusion-inspired measure QL engine
 
-Status: **implemented through T14 in PR 3.** Shared batches, typed raw queries,
-compiled-plan reuse and SQL aggregation are merged through PRs #1417 and #1424.
-This branch adds typed expressions, field WHERE and HAVING/membership. DISTINCT,
-computed grouping, selectable time buckets, general sorting and extended exact
-count-distinct composition remain in PR 4. Current scope and validation status
-are in the [PR 3 verification record](pr3-verification.md).
+Status: **implemented through T17 and exact count-distinct composition in PR 4.**
+The merged foundation and aggregation come from PRs #1417 and #1424. This branch
+adds DISTINCT, computed/ordinal grouping, selectable time buckets and general
+sorting above open [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432),
+with main at `86659118` as the integration baseline. Current scope and validation
+are recorded in the [PR 4 verification record](pr4-verification.md). Relational
+joins and CTEs are outside this delivery.
 
 This refines the [Catalog B implementation plan](README.md), originally reviewed
 against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
@@ -305,6 +306,17 @@ DataFusion's grouped-accumulator approach is the reference; its full partial-sta
 wire/distributed machinery is not needed here. See the pinned sources in the
 [research note](datafusion-research.md).
 
+T16 adds a typed key-expression stage between WHERE and local aggregation.
+Compiled structural identities resolve repeated keys once; SELECT ordinals bind
+after star expansion and share their selected expression's parameter identity.
+Synthetic fields preserve source-column identities, including distinct original
+timestamps and bucket timestamps. TIME_BUCKET uses native fixed-duration epoch
+flooring. Local and native output preserve the bucket as metadata and any selected
+timestamp alias; native merge identity includes the bucket. Eligible native
+reductions remain unchanged, while other computed keys use the raw path.
+Expression buffers and immutable cached recipes use the existing bounded memory
+and plan-cache accounting. See [T16 verification](t16-verification.md).
+
 Use one QL key codec for aggregate merging, DISTINCT and computed grouping. Encode
 logical types, explicit null markers and variable-length boundaries; define array
 structure if admitted. Null, zero and empty string must differ. Normalize signed
@@ -317,6 +329,22 @@ DISTINCT is HashAggregate with visible projected slots as keys and zero aggregat
 states. Group-only B9 uses the same path. This shares memory accounting and key
 semantics without copying the legacy first-row-per-group behavior. The legacy
 key codec cannot implement this correctly as-is; keep the SQL codec liaison-local.
+
+T15 implements this path after visible projection, including removal of hidden
+HAVING inputs, and before final pagination. The same tracker accounts for input,
+key-table growth and output. Unordered finite LIMIT stops the table at
+OFFSET + LIMIT unique keys; explicit ordering and absent LIMIT consume complete
+input. Upstream grouping and native result materialization retain their own
+input requirements. Full keys use chunk arenas and compact references;
+64-KiB chunks use the native tracked pool with an 8-MiB global idle bound.
+Checked-out capacity and growth overlap are charged before allocation. Separate DISTINCT
+counters avoid attributing its zero-state table to an upstream aggregate. Selected
+timestamps carry a logical key marker, while incidental source timestamps and
+series identities are excluded. Scalar and binary keys are admitted; array keys
+reject during binding. See [T15 verification](t15-verification.md) for the generated
+RPC cases and equivalent GROUP BY benchmark, and
+[T15 memory verification](t15-memory-verification.md) for the arena, early stopping
+and native buffering follow-up.
 
 Do not silently inherit native numeric or empty-input quirks. The extended QL
 contract is COUNT -> int64, AVG -> float64, empty scalar count -> 0 and other
@@ -355,12 +383,15 @@ compare identical semantics with pushdown enabled or disabled.
 | DISTINCT / GROUP BY | One null-aware group table; emit key columns only when no aggregates | Reuse batch allocation patterns, not the legacy key codec |
 | OFFSET / LIMIT | Selection slicing, uint64 counters, absent versus zero | Adapt helper locally; no native contract change |
 
-For sorting, evaluate keys once per batch. Use compact row references into retained
-column buffers and emit gathered batches; retained source bytes must be charged.
-For top-k, clone accepted candidates into a compact retained batch/arena so keeping
-one row does not pin an unbounded number of entire input blocks. Eviction releases
-or reuses that candidate's storage. Bound by retained bytes as well as k. No
-unbounded full sort fallback after exhausting memory.
+T17 evaluates sort keys once per batch and copies retained row values into owned
+candidate storage, including reachable variable-width values. Neither full sort
+nor top-k retains source-batch owners. Unlimited output uses cancellable heapsort;
+finite LIMIT keeps at most `uint64(OFFSET) + uint64(LIMIT)` candidates in a max-heap
+and then sorts that retained page prefix. Eviction reuses candidate cell storage.
+Key buffers, candidate capacity/payload and output charge the shared query tracker
+before allocation. Exhaustion fails the query; there is no unbounded fallback or
+disk spilling. See [T17 verification](t17-verification.md) for accounting and
+cleanup evidence.
 
 ORDER BY defaults, hidden keys, output aliases, field-filter-before-aggregation,
 HAVING membership compatibility, cast syntax and existing response limitations

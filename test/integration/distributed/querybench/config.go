@@ -124,6 +124,12 @@ const (
 	ScenarioQLBT12 Scenario = "qlb_t12"
 	// ScenarioQLBT14 benchmarks completed-group HAVING and collection membership.
 	ScenarioQLBT14 Scenario = "qlb_t14"
+	// ScenarioQLBT15 benchmarks complete visible-tuple DISTINCT.
+	ScenarioQLBT15 Scenario = "qlb_t15"
+	// ScenarioQLBT16 benchmarks computed and ordinal group keys.
+	ScenarioQLBT16 Scenario = "qlb_t16"
+	// ScenarioQLBT17 benchmarks identical full-sort/top-k pages and one composed cached query.
+	ScenarioQLBT17 Scenario = "qlb_t17"
 	// ScenarioTraceByID benchmarks distributed trace-id lookup.
 	ScenarioTraceByID Scenario = "trace_by_id"
 	// ScenarioTraceTagFilter benchmarks distributed ordered trace tag filters.
@@ -257,7 +263,7 @@ func (c Config) Validate() error {
 	case engineMeasure:
 		switch c.Scenario {
 		case ScenarioScanAll, ScenarioTopWithFilter, ScenarioQLBT01, ScenarioQLBT02, ScenarioQLBT03, ScenarioQLBT05,
-			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14:
+			ScenarioQLBT07, ScenarioQLBT08, ScenarioQLBT10, ScenarioQLBT12, ScenarioQLBT14, ScenarioQLBT15, ScenarioQLBT16, ScenarioQLBT17:
 		default:
 			return fmt.Errorf("%s unsupported for %s=%s: %q", envScenario, envEngine, c.Engine, c.Scenario)
 		}
@@ -479,6 +485,15 @@ func queryTimeout(cardinality int) time.Duration {
 }
 
 func (c Config) validateCatalogB() error {
+	if c.Scenario == ScenarioQLBT17 {
+		return c.validateQLBT17()
+	}
+	if c.Scenario == ScenarioQLBT16 {
+		return c.validateQLBT16()
+	}
+	if c.Scenario == ScenarioQLBT15 {
+		return c.validateQLBT15()
+	}
 	if c.Scenario == ScenarioQLBT14 {
 		return c.validateQLBT14()
 	}
@@ -604,6 +619,72 @@ func (c Config) validateQLBT14() error {
 	}
 	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 {
 		return fmt.Errorf("qlb_t14 at %d rows requires one worker, %d timed calls, %d warmups and 256 MiB", c.Cardinality, iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT15Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 8192:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t15 successful queries require cardinality 1024 or 8192; larger inputs belong to bounded resource probes")
+	}
+}
+
+func (c Config) validateQLBT15() error {
+	iterations, warmup, err := qlbT15Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 || !c.Profile {
+		return fmt.Errorf("qlb_t15 requires one worker, %d calls, %d warmups, 256 MiB and profiles", iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT16Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t16 successful queries require cardinality 1024 or 32768; larger inputs belong to bounded resource probes")
+	}
+}
+
+func (c Config) validateQLBT16() error {
+	iterations, warmup, err := qlbT16Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != iterations || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 || !c.Profile {
+		return fmt.Errorf("qlb_t16 requires one worker, %d calls, %d warmups, 256 MiB and profiles", iterations, warmup)
+	}
+	return nil
+}
+
+func qlbT17Schedule(cardinality int) (iterations, warmup int, err error) {
+	switch cardinality {
+	case 1024:
+		return 100, 5, nil
+	case 32768:
+		return 20, 3, nil
+	default:
+		return 0, 0, fmt.Errorf("qlb_t17 successful queries require cardinality 1024 or 32768; larger algorithm controls run in the sort kernel")
+	}
+}
+
+func (c Config) validateQLBT17() error {
+	calls, warmup, err := qlbT17Schedule(c.Cardinality)
+	if err != nil {
+		return err
+	}
+	if c.QueryWorkers != 1 || c.QueryIterations != calls || c.WarmupIterations != warmup || c.QueryMemoryMiB != 256 || !c.Profile {
+		return fmt.Errorf("qlb_t17 requires one sort-pair worker, %d calls, %d warmups, 256 MiB and profiles; composed workers are fixed at 1/8/32", calls, warmup)
 	}
 	return nil
 }

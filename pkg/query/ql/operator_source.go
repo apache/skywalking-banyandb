@@ -19,7 +19,7 @@ package ql
 
 import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 
-// operatorSource unwraps projections and filters while preserving their source
+// operatorSource unwraps QL operators while preserving their source
 // after Close, so statistics accessors share the same traversal boundary.
 func operatorSource(operator vectorized.PullOperator) vectorized.PullOperator {
 	switch current := operator.(type) {
@@ -27,9 +27,11 @@ func operatorSource(operator vectorized.PullOperator) vectorized.PullOperator {
 		return current.source
 	case *aggregateOperator:
 		return current.source
+	case *filterOperator:
+		return current.source
 	case *expressionOperator:
 		return current.source
-	case *filterOperator:
+	case *sortOperator:
 		return current.source
 	default:
 		return nil

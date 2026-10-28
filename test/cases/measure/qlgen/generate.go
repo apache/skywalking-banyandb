@@ -83,6 +83,18 @@ func Generate() (Suite, error) {
 	if havingReviewErr != nil {
 		return Suite{}, havingReviewErr
 	}
+	distinctReadiness, distinctScenarios, distinctRejections, distinctErr := generateT15(b)
+	if distinctErr != nil {
+		return Suite{}, distinctErr
+	}
+	groupingReadiness, groupingScenarios, groupingRejections, groupingErr := generateT16(b)
+	if groupingErr != nil {
+		return Suite{}, groupingErr
+	}
+	sortingReadiness, sortingScenarios, sortingRejections, sortingResources, sortingErr := generateT17(b)
+	if sortingErr != nil {
+		return Suite{}, sortingErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
 	}
@@ -103,7 +115,15 @@ func Generate() (Suite, error) {
 	if reuseReadinessErr != nil {
 		return Suite{}, reuseReadinessErr
 	}
+	parentChildReadiness, parentChildScenarios, parentChildErr := generateParentChild()
+	if parentChildErr != nil {
+		return Suite{}, parentChildErr
+	}
 	suite := Suite{
+		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
+		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
+		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,
+		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,
 		HavingReviewScenarios: havingReview,
 		HavingLegacyScenarios: havingLegacy, HavingReadiness: havingReadiness, HavingScenarios: havingScenarios, HavingRejections: havingRejections,
 		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,
