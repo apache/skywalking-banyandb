@@ -22,7 +22,7 @@ on:
 jobs:
   prepare:
     name: Prepare (Generate)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v4

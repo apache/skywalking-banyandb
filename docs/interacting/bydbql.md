@@ -42,7 +42,7 @@ Abstract Syntax Tree (AST)
 - **Lexer**: Breaks the query string into a sequence of tokens.
 - **Parser**: Builds an Abstract Syntax Tree (AST) from the tokens, validating the query's syntax.
 - **Parameter Binding**: Binds `?` placeholders to the request's `params` (see section 2.6) without changing the query text; a query holding unbound placeholders is rejected.
-- **Transformer**: Resolves columns against the schema and produces the appropriate native request. Extended raw measure queries also use a QL plan for projection, time filtering, and pagination before encoding the existing measure response.
+- **Transformer**: Resolves columns against the schema and produces the appropriate native request. Extended measure queries also use a QL plan for projection, time filtering, local aggregation, and pagination before encoding the existing measure response.
 
 ### 2.2. Distinguishing Query Types
 
@@ -581,7 +581,7 @@ The `SELECT` clause for measures is highly flexible, allowing for the selection 
 - `SELECT <identifier>::field, <identifier>::tag`: If a field and a tag share the same name, the `::field` or `::tag` syntax **must** be used to disambiguate the identifier's type.
 - `SELECT <column> AS <name>`: Renames a raw output column. Family-qualified tags such as `default.host` select a particular tag family; aliases retain the original tag family or field container.
 - `SELECT time, time AS observed_at`: Selects the built-in timestamp. Its response mapping is described in section 5.5.
-- The clause also supports one native aggregation function (`SUM`, `MEAN`/`AVG`, `COUNT`, `MAX`, `MIN`) per query and a `TOP N` clause for ranked results. Raw aliases and the other new raw extensions cannot currently be combined with aggregation or grouping.
+- Legacy queries support one native aggregation function (`SUM`, `MEAN`/`AVG`, `COUNT`, `MAX`, `MIN`) per query and a `TOP N` clause for ranked results. Extended measure queries support multiple aggregate outputs and aliases, as described in section 5.8.
 - An aggregate function's column resolves against both tags and fields, not just fields — `SUM(latency)` aggregates a field, `COUNT(DISTINCT user_id)` aggregates a tag. `DISTINCT` is only accepted inside `COUNT`; `SUM(DISTINCT x)` and similar are rejected as a parse error.
 
 ### 5.3. Mapping to `measure.v1.QueryRequest`
@@ -811,7 +811,7 @@ A raw query uses the extended behavior when it uses source shorthand, an `AS` al
 - `OFFSET` and `LIMIT` apply after the complete time filter, including disjoint ranges. Legacy queries without these raw extensions keep their existing pagination defaults.
 - Timestamp ordering, including an unambiguous timestamp alias such as `ORDER BY observed_at DESC`, is supported. Native index-rule ordering remains available. General sorting by tag/field output columns, multiple sort keys, and explicit NULL ordering are not implemented yet.
 
-The current raw extensions cannot be combined with aggregate projections, `GROUP BY`, or `SELECT TOP`. Legacy native aggregation and grouping retain their existing syntax and behavior. Multiple aggregate outputs, post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
+The current raw extensions cannot be combined with `SELECT TOP`. Aggregate projections and named scalar grouping use the extended aggregation behavior in section 5.8. Legacy native aggregation and grouping retain their existing syntax and behavior. Post-aggregation HAVING, field-value WHERE filters, arithmetic/casts, CASE/COALESCE, SELECT DISTINCT, and computed grouping are planned capabilities. An `OR` that mixes time and tag/field predicates is also rejected; combining a pure-time subtree with a tag predicate using `AND`, as above, is supported.
 
 Aliases, built-in time projections, `now()`, timestamp `INTERVAL` arithmetic, and source shorthand in this section apply to measure SELECT. They do not extend stream, trace, property, or SHOW TOP syntax.
 
@@ -855,6 +855,47 @@ logs. These metrics distinguish plan reuse from prepared-cache activity.
 Plan reuse reduces repeated planning work; end-to-end latency/CPU effects depend
 on execution costs. The [current PR 1 measurements](../design/0.12.0/measure-ql-core-sql/pr1-verification.md)
 show lower planning time and allocations but no established RPC latency gain.
+
+### 5.8. Extended measure aggregation
+
+Measure queries support multiple `COUNT`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over named columns. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a `WHERE time` predicate. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
+
+```sql
+SELECT host AS node, COUNT(value) AS samples, SUM(value) AS total,
+       MIN(value) AS minimum, MAX(value) AS maximum, AVG(value) AS average
+FROM metrics.service_cpm
+WHERE time >= ? AND time < ?
+GROUP BY host
+```
+
+All aggregate calls use the complete, deduplicated input after the time and tag filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, their names are `COUNT(value)`, `SUM(value)`, and so on. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
+
+The extended aggregate rules are:
+
+- `COUNT(column)` counts non-null values and returns an exact int64, including for floating-point inputs. It accepts scalar tags and fields.
+- `SUM`, `MIN`, and `MAX` accept numeric columns and preserve int64 or float64 values. Integer SUM overflow fails the query.
+- `AVG` and `MEAN` return float64 sum divided by non-null count. Fractional and sub-one averages are preserved; shard populations contribute their values and counts before finalization.
+- Scalar empty input returns one row: COUNT is zero, and the other aggregates are null. Grouped empty input returns no rows. All-null groups also have COUNT zero and null SUM/MIN/MAX/AVG.
+- `GROUP BY` accepts named scalar tag and field columns, including keys omitted from SELECT. Every selected non-aggregate column must be a grouping key. Aliases apply to output and cannot replace source names in GROUP BY. Null, zero, and empty-string keys remain distinct.
+- Omitted LIMIT returns all groups, with no implicit 100-group cap. OFFSET and LIMIT apply after complete aggregation. LIMIT 0 returns no rows without scanning; contradictory time bounds still produce the scalar empty-input row unless pagination removes it.
+
+```sql
+SELECT COUNT(value) AS samples, AVG(value) AS average
+FROM MEASURE service_cpm IN metrics
+WHERE time >= ? AND time < ?
+```
+
+Extended aggregate queries currently reject COUNT(DISTINCT), TOP, TIME_BUCKET, array grouping, and ORDER BY. The existing legacy native forms of these supported operations remain available. Group-only queries without an aggregate, expressions as aggregate arguments or grouping keys, and HAVING are not implemented yet.
+
+#### Native aggregate execution
+
+The planner can execute eligible calls through the existing native aggregate operators and combine their batch results by the complete grouping tuple. For example, `SUM(f)`, `COUNT(f)`, and repeated `AVG(f)` outputs over a floating-point field share two native requests: SUM and COUNT. QL computes AVG from their sum and non-null count; it does not use the legacy native MEAN result. Integer MIN, MAX, and COUNT use their matching native requests, sharing the auxiliary COUNT needed to distinguish all-null groups.
+
+This optimization currently requires one measure group in normal storage mode, one exact time interval, and a single provable lifecycle stage. Grouping keys must be entity tags from one tag family, constrained to non-null values by equality or IN predicates. Each remaining entity tag must be bound to one value, so every SQL group identifies one full entity. A scalar aggregate requires one bound full entity too. This also bounds COUNT by the number of possible stored millisecond timestamps, preserving its exact int64 result even when a native floating-point COUNT is returned.
+
+Other supported queries use one complete raw scan and local SQL aggregation. These include nullable or non-entity keys, disjoint time ranges, multiple measure groups or stages, tag aggregates, floating-point MIN/MAX, and integer SUM/AVG spanning more than one possible timestamp. The fallback preserves checked integer overflow and SQL null/average semantics. Predicate conjunctions over entity IN lists are normalized before either execution path; expansion is limited to 512 entity tuples.
+
+Native branches run sequentially under the parent query's deadline and memory allowance. Final LIMIT/OFFSET applies after all branches merge. A branch failure or exhausted allowance fails the query without partial results. Separate native requests do not provide a shared snapshot during concurrent writes. Memory limits remain enforced; disk spilling is not implemented.
 
 ## 6. BydbQL for Top-N
 

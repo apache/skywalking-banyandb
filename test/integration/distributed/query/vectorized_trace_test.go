@@ -53,84 +53,113 @@ import (
 // This is the distributed twin of test/integration/standalone/query/
 // vectorized_trace_test.go. Together they satisfy the directive that
 // integration standalone and distributed verify row and vec independently.
-var _ = ginkgo.Describe("vec trace independent verification (distributed)", ginkgo.Ordered, func() {
-	var (
-		vectorizedConn  *grpc.ClientConn
-		stopFn          func()
-		startQueryCount int64
-		startFrameEnc   int64
-		startFrameDec   int64
-		savedTraceCtx   helpers.SharedContext
-	)
-	ginkgo.BeforeAll(func() {
-		savedTraceCtx = casestrace.SharedContext
-		startQueryCount = vtrace.QueryCount()
-		startFrameEnc = data.TraceFrameEncodedCount()
-		startFrameDec = data.TraceFrameDecodedCount()
+func init() {
+	registerDistributedTraceSuite("vec trace independent verification (distributed)", "Vec (distributed): Scanning Traces", nil)
+	// The same table on a cluster whose liaison asks the data nodes for chunks of one
+	// trace or about 1 KiB, so every fixture is carried by many chunks per node.
+	registerDistributedTraceSuite("vec trace independent verification (distributed, tiny scan chunks)",
+		"Vec (distributed, tiny chunks): Scanning Traces",
+		[]string{"--stream-query-max-chunk-rows-trace=1", "--stream-query-max-chunk-bytes=1KiB"})
+}
 
-		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
-		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
-		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
-		config := setup.PropertyClusterConfig(dfWriter)
-		closeDataNode0 := setup.DataNode(config)
-		closeDataNode1 := setup.DataNode(config)
-		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
-		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
-		stopFn = func() {
-			closerLiaisonNode()
-			closeDataNode0()
-			closeDataNode1()
-			tmpDirCleanup()
-		}
-		var connErr error
-		vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
-		gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
-		ns := timestamp.NowMilli().UnixNano()
-		now := time.Unix(0, ns-ns%int64(time.Minute))
-		test_cases.Initialize(liaisonAddr, now)
-		casestrace.SharedContext = helpers.SharedContext{
-			Connection: vectorizedConn,
-			BaseTime:   now,
-		}
-	})
-	ginkgo.AfterAll(func() {
-		// Restore the saved SharedContext before tearing down so any sibling
-		// Describe that runs after this one sees the original live connection.
-		casestrace.SharedContext = savedTraceCtx
-		queryCountDelta := vtrace.QueryCount() - startQueryCount
-		ginkgo.GinkgoWriter.Printf(
-			"vec trace dispatch (distributed): query_count=%d (delta across vec-trace-distributed table)\n",
-			queryCountDelta,
+func registerDistributedTraceSuite(describe, table string, liaisonFlags []string) {
+	ginkgo.Describe(describe, ginkgo.Ordered, func() {
+		var (
+			vectorizedConn  *grpc.ClientConn
+			stopFn          func()
+			startQueryCount int64
+			startFrameEnc   int64
+			startFrameDec   int64
+			startScans      int64
+			startChunks     int64
+			savedTraceCtx   helpers.SharedContext
 		)
-		gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec trace dispatch did not fire for any case on the distributed cluster; "+
-				"vtrace.QueryCount() never moved, so no query reached the vectorized trace scan")
-		// QueryCount above only proves the vec COMPUTE path dispatched — a vec query
-		// still emits protobuf unless the data node is distributed and in raw wire
-		// mode. Assert the columnar frame itself carried traffic, so this suite fails
-		// loudly if the wire format silently regresses to proto (a 48h standalone soak
-		// passed while never encoding a single frame, because nothing checked).
-		frameEncDelta := data.TraceFrameEncodedCount() - startFrameEnc
-		frameDecDelta := data.TraceFrameDecodedCount() - startFrameDec
-		ginkgo.GinkgoWriter.Printf(
-			"vec trace wire (distributed): frames_encoded=%d frames_decoded=%d\n",
-			frameEncDelta, frameDecDelta,
-		)
-		gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was encoded on the distributed cluster; "+
-				"the data node fell back to protobuf")
-		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was decoded on the distributed cluster; "+
-				"the liaison never saw a frame body")
-		if vectorizedConn != nil {
-			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
-		}
-		if stopFn != nil {
-			stopFn()
-		}
-	})
+		ginkgo.BeforeAll(func() {
+			savedTraceCtx = casestrace.SharedContext
+			startQueryCount = vtrace.QueryCount()
+			startFrameEnc = data.TraceFrameEncodedCount()
+			startFrameDec = data.TraceFrameDecodedCount()
+			startScans = data.ScanStartedCount()
+			startChunks = data.ScanChunkCount()
 
-	casestrace.RegisterTable("Vec (distributed): Scanning Traces")
-})
+			tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+			gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+			dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+			config := setup.PropertyClusterConfig(dfWriter)
+			closeDataNode0 := setup.DataNode(config)
+			closeDataNode1 := setup.DataNode(config)
+			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
+			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
+			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, liaisonFlags...)
+			stopFn = func() {
+				closerLiaisonNode()
+				closeDataNode0()
+				closeDataNode1()
+				tmpDirCleanup()
+			}
+			var connErr error
+			vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+			ns := timestamp.NowMilli().UnixNano()
+			now := time.Unix(0, ns-ns%int64(time.Minute))
+			test_cases.Initialize(liaisonAddr, now)
+			casestrace.SharedContext = helpers.SharedContext{
+				Connection: vectorizedConn,
+				BaseTime:   now,
+			}
+		})
+		ginkgo.AfterAll(func() {
+			// Restore the saved SharedContext before tearing down so any sibling
+			// Describe that runs after this one sees the original live connection.
+			casestrace.SharedContext = savedTraceCtx
+			queryCountDelta := vtrace.QueryCount() - startQueryCount
+			ginkgo.GinkgoWriter.Printf(
+				"vec trace dispatch (distributed): query_count=%d (delta across vec-trace-distributed table)\n",
+				queryCountDelta,
+			)
+			gomega.Expect(queryCountDelta).To(gomega.BeNumerically(">", int64(0)),
+				"vec trace dispatch did not fire for any case on the distributed cluster; "+
+					"vtrace.QueryCount() never moved, so no query reached the vectorized trace scan")
+			// QueryCount above only proves the vec COMPUTE path dispatched — a vec query
+			// still emits protobuf unless the data node is distributed and in raw wire
+			// mode. Assert the columnar frame itself carried traffic, so this suite fails
+			// loudly if the wire format silently regresses to proto (a 48h standalone soak
+			// passed while never encoding a single frame, because nothing checked).
+			frameEncDelta := data.TraceFrameEncodedCount() - startFrameEnc
+			frameDecDelta := data.TraceFrameDecodedCount() - startFrameDec
+			ginkgo.GinkgoWriter.Printf(
+				"vec trace wire (distributed): frames_encoded=%d frames_decoded=%d\n",
+				frameEncDelta, frameDecDelta,
+			)
+			gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was encoded on the distributed cluster; "+
+					"the data node fell back to protobuf")
+			gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was decoded on the distributed cluster; "+
+					"the liaison never saw a frame body")
+			// The liaison reads trace results from the data nodes over Scan streams.
+			scanDelta := data.ScanStartedCount() - startScans
+			chunkDelta := data.ScanChunkCount() - startChunks
+			ginkgo.GinkgoWriter.Printf("trace scan (distributed): streams=%d chunks=%d\n", scanDelta, chunkDelta)
+			gomega.Expect(scanDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no Scan stream reached a data node; the distributed trace query did not use the streaming transport")
+			// A node with no matching trace sends no chunk, so chunks can be fewer than streams.
+			gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", int64(0)),
+				"the data nodes sent no chunk on their Scan streams")
+			if len(liaisonFlags) > 0 {
+				// With one-trace chunks the fixtures that return several traces must be split.
+				gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", scanDelta),
+					"tiny chunk caps did not split any node result into several chunks")
+			}
+			if vectorizedConn != nil {
+				gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
+			}
+			if stopFn != nil {
+				stopFn()
+			}
+		})
+
+		casestrace.RegisterTable(table)
+	})
+}

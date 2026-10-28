@@ -151,6 +151,8 @@
     - [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse)
     - [PartInfo](#banyandb-cluster-v1-PartInfo)
     - [PartResult](#banyandb-cluster-v1-PartResult)
+    - [ScanRequest](#banyandb-cluster-v1-ScanRequest)
+    - [ScanResponse](#banyandb-cluster-v1-ScanResponse)
     - [SendRequest](#banyandb-cluster-v1-SendRequest)
     - [SendResponse](#banyandb-cluster-v1-SendResponse)
     - [SyncCompletion](#banyandb-cluster-v1-SyncCompletion)
@@ -498,13 +500,24 @@
 - [banyandb/transfer/v1/export.proto](#banyandb_transfer_v1_export-proto)
     - [Ack](#banyandb-transfer-v1-Ack)
     - [CreateSession](#banyandb-transfer-v1-CreateSession)
+    - [DataChunk](#banyandb-transfer-v1-DataChunk)
+    - [ExportRequest](#banyandb-transfer-v1-ExportRequest)
+    - [ExportRequest.Init](#banyandb-transfer-v1-ExportRequest-Init)
+    - [ExportResponse](#banyandb-transfer-v1-ExportResponse)
+    - [FileFinished](#banyandb-transfer-v1-FileFinished)
+    - [FileFinished.RowCountsEntry](#banyandb-transfer-v1-FileFinished-RowCountsEntry)
+    - [FileFinished.SchemaModRevisionsEntry](#banyandb-transfer-v1-FileFinished-SchemaModRevisionsEntry)
+    - [FileStarted](#banyandb-transfer-v1-FileStarted)
     - [PartStat](#banyandb-transfer-v1-PartStat)
     - [PlanRequest](#banyandb-transfer-v1-PlanRequest)
     - [PlanResponse](#banyandb-transfer-v1-PlanResponse)
     - [PlanSummary](#banyandb-transfer-v1-PlanSummary)
     - [PropertyInventory](#banyandb-transfer-v1-PropertyInventory)
     - [PropertyShardStat](#banyandb-transfer-v1-PropertyShardStat)
+    - [PropertyUnit](#banyandb-transfer-v1-PropertyUnit)
+    - [RateLimit](#banyandb-transfer-v1-RateLimit)
     - [ReadSession](#banyandb-transfer-v1-ReadSession)
+    - [Ready](#banyandb-transfer-v1-Ready)
     - [SegmentInventory](#banyandb-transfer-v1-SegmentInventory)
     - [SegmentUnit](#banyandb-transfer-v1-SegmentUnit)
     - [Selector](#banyandb-transfer-v1-Selector)
@@ -514,9 +527,13 @@
     - [SessionsResponse](#banyandb-transfer-v1-SessionsResponse)
     - [ShardStat](#banyandb-transfer-v1-ShardStat)
     - [SidxStat](#banyandb-transfer-v1-SidxStat)
+    - [UnitFinished](#banyandb-transfer-v1-UnitFinished)
     - [UnitFrame](#banyandb-transfer-v1-UnitFrame)
     - [UnitInventory](#banyandb-transfer-v1-UnitInventory)
+    - [UnitStarted](#banyandb-transfer-v1-UnitStarted)
   
+    - [Compress](#banyandb-transfer-v1-Compress)
+    - [Format](#banyandb-transfer-v1-Format)
     - [SessionsRequest.Action](#banyandb-transfer-v1-SessionsRequest-Action)
   
     - [ExportService](#banyandb-transfer-v1-ExportService)
@@ -1037,6 +1054,7 @@ Status is the response status for write
 | STATUS_VERSION_DEPRECATED | 8 | Client version deprecated but still supported |
 | STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
 | STATUS_SCHEMA_NOT_APPLIED | 10 | Client&#39;s ModRevision is ahead of the server cache; the server waited and timed out. |
+| STATUS_SERVER_BUSY | 11 | The data node is under memory pressure; the batch was not written. |
 
 
  
@@ -2656,6 +2674,54 @@ PartResult contains the result for individual parts.
 
 
 
+<a name="banyandb-cluster-v1-ScanRequest"></a>
+
+### ScanRequest
+ScanRequest opens a server-streaming scan on a data node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| topic | [string](#string) |  |  |
+| message_id | [uint64](#uint64) |  |  |
+| body | [bytes](#bytes) |  |  |
+| version_info | [VersionInfo](#banyandb-cluster-v1-VersionInfo) |  |  |
+| group | [string](#string) |  |  |
+| sender_node | [string](#string) |  |  |
+| sender_role | [string](#string) |  |  |
+| sender_tier | [string](#string) |  |  |
+| max_chunk_bytes | [uint64](#uint64) |  | max_chunk_bytes is the liaison&#39;s cap for one chunk body. |
+| max_chunk_rows | [uint32](#uint32) |  | max_chunk_rows is the liaison&#39;s cap for one chunk&#39;s rows. |
+
+
+
+
+
+
+<a name="banyandb-cluster-v1-ScanResponse"></a>
+
+### ScanResponse
+ScanResponse is one chunk. The last chunk has last = true and may carry an
+empty body; an error chunk ends the stream. A response with an empty body and
+last = false is a heartbeat: the node is still scanning and has nothing to send.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| message_id | [uint64](#uint64) |  |  |
+| seq | [uint32](#uint32) |  |  |
+| body | [bytes](#bytes) |  |  |
+| last | [bool](#bool) |  |  |
+| error | [string](#string) |  |  |
+| status | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  |  |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace carries the data node&#39;s query trace on the last chunk when tracing is on. |
+| version_compatibility | [VersionCompatibility](#banyandb-cluster-v1-VersionCompatibility) |  |  |
+
+
+
+
+
+
 <a name="banyandb-cluster-v1-SendRequest"></a>
 
 ### SendRequest
@@ -2880,6 +2946,7 @@ ChunkedSyncService provides streaming sync capabilities for chunked data transfe
 | ----------- | ------------ | ------------- | ------------|
 | Send | [SendRequest](#banyandb-cluster-v1-SendRequest) stream | [SendResponse](#banyandb-cluster-v1-SendResponse) stream |  |
 | HealthCheck | [HealthCheckRequest](#banyandb-cluster-v1-HealthCheckRequest) | [HealthCheckResponse](#banyandb-cluster-v1-HealthCheckResponse) |  |
+| Scan | [ScanRequest](#banyandb-cluster-v1-ScanRequest) | [ScanResponse](#banyandb-cluster-v1-ScanResponse) stream | Scan streams the chunks of one query result from a data node. |
 
  
 
@@ -7551,6 +7618,8 @@ TagFamilySpec defines the specification of a tag family.
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  |  |
 | version | [uint64](#uint64) |  |  |
 | status | [string](#string) |  |  |
+| status_code | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status_code is the typed form of status. New clients should read it. |
+| retry_after_ms | [uint32](#uint32) |  | retry_after_ms, when non-zero, asks the client to pause sending for that long. It rides on an acknowledgement and does not change that acknowledgement&#39;s status. |
 
 
 
@@ -7656,6 +7725,152 @@ always set.
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
 | preempt | [bool](#bool) |  | Remove every session the node holds, whatever its lease says, before creating this one; the removed ids come back in preempted_session_ids. Without it any other session on the node answers ALREADY_EXISTS naming the occupants. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-DataChunk"></a>
+
+### DataChunk
+DataChunk carries the next bytes of the open file.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| content | [bytes](#bytes) |  |  |
+| rows | [uint64](#uint64) |  | CSV only: rows the node has written into the open file so far, including rows still buffered by the compressor; file_finished.row_counts holds the final count. Native sends 0. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ExportRequest"></a>
+
+### ExportRequest
+ExportRequest is one client frame of an Export stream.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| init | [ExportRequest.Init](#banyandb-transfer-v1-ExportRequest-Init) |  |  |
+| segment | [SegmentUnit](#banyandb-transfer-v1-SegmentUnit) |  | A stream, measure or trace unit: the SegmentInventory.unit of a segment, with the shard_ids of all its pieces when the inventory split it. |
+| property | [PropertyUnit](#banyandb-transfer-v1-PropertyUnit) |  | A property unit, built from PropertyInventory. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ExportRequest-Init"></a>
+
+### ExportRequest.Init
+Init is the first frame of a stream.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| session_id | [string](#string) |  | Session created by Plan; every unit is read from its snapshot. |
+| target_node | [string](#string) |  | Data node the liaison forwards the stream to: a node_id from the Plan frames. |
+| format | [Format](#banyandb-transfer-v1-Format) |  |  |
+| compress | [Compress](#banyandb-transfer-v1-Compress) |  |  |
+| max_file_size | [uint64](#uint64) |  | Soft upper bound of one produced file in on-disk bytes; 0 means no split. |
+| rate_limit | [RateLimit](#banyandb-transfer-v1-RateLimit) |  |  |
+| csv_annotations | [bool](#bool) |  | CSV only: write a #datatype line before the header of every file. |
+| liaison_bytes_per_second | [uint64](#uint64) |  | Byte rate of the relaying liaison, shared by every Export stream that liaison relays: the liaison applies the value of the stream opened last, 0 meaning unlimited, and waits on it before it forwards each chunk. Data nodes ignore it. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ExportResponse"></a>
+
+### ExportResponse
+ExportResponse is one server frame of an Export stream. Order:
+ready, then per unit: unit_started, (file_started, chunk*, file_finished)*, unit_finished.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| ready | [Ready](#banyandb-transfer-v1-Ready) |  |  |
+| unit_started | [UnitStarted](#banyandb-transfer-v1-UnitStarted) |  |  |
+| file_started | [FileStarted](#banyandb-transfer-v1-FileStarted) |  |  |
+| chunk | [DataChunk](#banyandb-transfer-v1-DataChunk) |  |  |
+| file_finished | [FileFinished](#banyandb-transfer-v1-FileFinished) |  |  |
+| unit_finished | [UnitFinished](#banyandb-transfer-v1-UnitFinished) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-FileFinished"></a>
+
+### FileFinished
+FileFinished closes the open file.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| bytes | [uint64](#uint64) |  | Size and crc32 (IEEE) of the file as written to disk. |
+| crc32 | [uint32](#uint32) |  |  |
+| entry_count | [uint32](#uint32) |  | Native only: entries in the container footer. CSV sends 0. |
+| row_counts | [FileFinished.RowCountsEntry](#banyandb-transfer-v1-FileFinished-RowCountsEntry) | repeated | Rows per resource name in this file. |
+| schema_mod_revisions | [FileFinished.SchemaModRevisionsEntry](#banyandb-transfer-v1-FileFinished-SchemaModRevisionsEntry) | repeated | CSV only: schema mod revision of every resource the node built the group&#39;s column layout from, whether or not it wrote rows. The client checks that the set and the revisions match the schema it saved, because columns are bound by position. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-FileFinished-RowCountsEntry"></a>
+
+### FileFinished.RowCountsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [uint64](#uint64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-FileFinished-SchemaModRevisionsEntry"></a>
+
+### FileFinished.SchemaModRevisionsEntry
+
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| key | [string](#string) |  |  |
+| value | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-FileStarted"></a>
+
+### FileStarted
+FileStarted opens one produced file.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| relative_path | [string](#string) |  | Path relative to the node subtree, e.g. &#34;stream/sw_record/seg-20260907/shard-0-00001.csv.gz&#34;. |
+| shard_id | [uint32](#uint32) |  | Shard the file belongs to; meaningless when segment_level is set. |
+| segment_level | [bool](#bool) |  | The file belongs to the segment rather than to one shard (index-mode measure rows). |
+| shard_index | [uint32](#uint32) |  | Index of shard_id in the unit&#39;s shard list; segment-level files use total_shards. |
+| seq | [uint32](#uint32) |  | Split sequence within the shard, starting at 1. |
 
 
 
@@ -7777,6 +7992,40 @@ PropertyShardStat describes one shard of a property group.
 
 
 
+<a name="banyandb-transfer-v1-PropertyUnit"></a>
+
+### PropertyUnit
+PropertyUnit keys the property shards one node holds for one group. Property groups have
+no segments, so the unit is the group itself.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| group | [string](#string) |  |  |
+| shard_ids | [uint32](#uint32) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-RateLimit"></a>
+
+### RateLimit
+RateLimit caps what one data node produces for one Export stream; 0 means unlimited.
+The node enforces it: only the producer knows how many rows it has written.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| bytes_per_second | [uint64](#uint64) |  | Bytes written to the stream per second, for both formats. |
+| rows_per_second | [uint64](#uint64) |  | Rows encoded per second; CSV only, native ignores it. |
+
+
+
+
+
+
 <a name="banyandb-transfer-v1-ReadSession"></a>
 
 ### ReadSession
@@ -7788,6 +8037,17 @@ so the result is the same frozen view CreateSession returned.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-Ready"></a>
+
+### Ready
+Ready answers init once per stream: the node located the session and renewed its lease,
+so the client may send units.
 
 
 
@@ -7828,7 +8088,7 @@ property of the node, reported read-only on the frame that carries the unit.
 | catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
 | group | [string](#string) |  |  |
 | segment_suffix | [string](#string) |  | Segment directory suffix without the &#34;seg-&#34; prefix: 8 digits for day segments, 10 for hour segments. |
-| shard_ids | [uint32](#uint32) | repeated | Shards that hold at least one part. Empty means the unit only carries segment-level artifacts (index-mode measure, or a segment whose shards have not flushed yet). |
+| shard_ids | [uint32](#uint32) | repeated | Shards that hold at least one part. Empty means the unit only carries segment-level artifacts (index-mode measure, or a segment whose shards have not flushed yet). No shard is listed twice. |
 
 
 
@@ -7973,6 +8233,21 @@ SidxStat describes the segment-level series index.
 
 
 
+<a name="banyandb-transfer-v1-UnitFinished"></a>
+
+### UnitFinished
+UnitFinished closes one unit; the client sends the next unit after it.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| warnings | [string](#string) | repeated | Non-fatal findings, such as dropped rows or columns that are empty for a resource. |
+
+
+
+
+
+
 <a name="banyandb-transfer-v1-UnitFrame"></a>
 
 ### UnitFrame
@@ -8007,7 +8282,51 @@ no segments, so they are inventoried per group instead of per segment.
 
 
 
+
+<a name="banyandb-transfer-v1-UnitStarted"></a>
+
+### UnitStarted
+UnitStarted opens one unit and carries its progress denominators.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_shards | [uint32](#uint32) |  | Number of shards in the unit; 0 for units that only have segment-level data. |
+| total_files | [uint32](#uint32) |  | Native only: files the unit will produce. CSV cannot know it in advance and sends 0. |
+| estimated_total_bytes | [uint64](#uint64) |  | Native only: bytes the unit will produce. CSV sends 0. |
+| total_parts | [uint32](#uint32) |  | Live parts of the unit&#39;s shards in the snapshot; 0 for units without parts (property, segment-level data only). |
+
+
+
+
+
  
+
+
+<a name="banyandb-transfer-v1-Compress"></a>
+
+### Compress
+Compress is the on-disk compression of exported files. The client always names one.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| COMPRESS_UNSPECIFIED | 0 |  |
+| COMPRESS_NONE | 1 |  |
+| COMPRESS_GZIP | 2 |  |
+
+
+
+<a name="banyandb-transfer-v1-Format"></a>
+
+### Format
+Format is the artifact format of one export.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FORMAT_UNSPECIFIED | 0 |  |
+| FORMAT_NATIVE | 1 | FORMAT_NATIVE packs the engine files byte for byte into .bnc containers. Not implemented yet: data nodes answer UNIMPLEMENTED. |
+| FORMAT_CSV | 2 | FORMAT_CSV writes logical rows, one CSV stream per unit and shard. |
+
 
 
 <a name="banyandb-transfer-v1-SessionsRequest-Action"></a>
@@ -8040,6 +8359,7 @@ registered in GlobalMethodPolicies(), otherwise the liaison refuses to start.
 | ----------- | ------------ | ------------- | ------------|
 | Plan | [PlanRequest](#banyandb-transfer-v1-PlanRequest) | [PlanResponse](#banyandb-transfer-v1-PlanResponse) stream | Plan enumerates the per-segment units (per-group for property) a selector hits. Each segment unit lists the shards the node holds for that segment. Without a session it reads the live directories. CreateSession snapshots first and announces the new session id in the first frame; ReadSession reads that snapshot and renews its lease. |
 | Sessions | [SessionsRequest](#banyandb-transfer-v1-SessionsRequest) | [SessionsResponse](#banyandb-transfer-v1-SessionsResponse) stream | Sessions runs one lifecycle action (list, heartbeat, release) on every data node and streams one frame per node, stamped with node_id by the liaison. |
+| Export | [ExportRequest](#banyandb-transfer-v1-ExportRequest) stream | [ExportResponse](#banyandb-transfer-v1-ExportResponse) stream | Export streams the files of one data node&#39;s units out of an export session snapshot. The first request frame is init (session, target node, format, limits); every later frame carries exactly one unit, and the client sends the next unit only after it has received unit_finished for the previous one. The liaison forwards the stream to init.target_node; it may split a chunk into smaller ones with the same rows to apply its byte rate. Export neither creates nor removes the snapshot. |
 
  
 

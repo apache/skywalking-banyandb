@@ -870,6 +870,14 @@ func pipelineEnabledWithSampler(cfg *commonv1.TracePipelineConfig) bool {
 			return true
 		}
 	}
+	for _, stage := range cfg.GetStages() {
+		for _, plugin := range stage.GetPlugins() {
+			if plugin.GetSampler() != nil {
+				return true
+			}
+		}
+	}
+
 	return false
 }
 

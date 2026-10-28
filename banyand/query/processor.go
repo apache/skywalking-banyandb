@@ -212,9 +212,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	now := time.Now().UnixNano()
 
 	// Multi-group query (*limit → *mergePlan): run the vec scan+pipeline per group,
-	// then cross-group merge via the SAME primitives the row mergePlan.Execute uses
-	// (MergeGroupElements) and apply the outer offset:offset+limit slice. The
-	// cross-group merge is element-level (proto Elements), so this always takes the
+	// then merge the groups' batches through one SortedMerge → Distinct → Limit
+	// pipeline. The result is materialized as proto Elements, so this always takes the
 	// proto egress — the liaison merges proto/frame bodies interchangeably.
 	if merge, ok := logical_stream.VecMergeExecutable(plan); ok {
 		return p.tryVecMergeDispatch(ctx, merge, queryCriteria, now)
@@ -315,28 +314,38 @@ func (p *streamQueryProcessor) stageStreamBatches(ctx context.Context, vecExec e
 // tryVecMergeDispatch runs the vec path for a multi-group query (*limit →
 // *mergePlan). For EACH group it runs the vec scan, then the SAME columnar stage the
 // single-group path runs (stageStreamBatches: criteria filter behind the cap, then the
-// hidden-tag column projection), and materializes only the surviving rows and
-// client-projected tags. It then cross-group merges via the shared MergeGroupElements
-// (the exact comparableElement/sortableElements + sort.NewItemIter path the row
-// mergePlan.Execute uses) and applies the outer offset:offset+limit slice.
+// hidden-tag column projection). The staged batches of every group are rebuilt onto one
+// merged schema (a tag a group lacks is null-filled) and run through ONE SortedMerge,
+// Distinct and Limit(offset, limit) pipeline. Elements are built once, from that
+// pipeline's output, and a tag a group did not define is dropped from its elements again.
 //
-// The cross-group merge is element-level, so this always emits proto Elements; the
-// liaison merges proto/frame bodies interchangeably.
+// The cross-group merge emits proto Elements; the liaison merges proto/frame bodies
+// interchangeably.
 //
-// The merge reads SortTagSpec off each Element, so that tag must survive the column
-// projection. It does whenever the request names at least one tag family: the
-// multi-group analyzer then narrows its merged schema to the client projection before
-// it resolves the sort tag (stream_plan_merge.go:47 then :91), so an unprojected sort
-// tag fails to analyze. A projection that names NO family skips that narrowing, and
-// MergeGroupElements already panics on such a query, both before and after this
-// change, because newComparableElement indexes TagFamilies positionally. That hole
-// belongs to the empty projection, not to this stage.
+// The merge orders on the OrderKey column each group's scan carries (or on the
+// timestamp), so the sort tag need not survive the projection. The analyzer still
+// requires a multi-group index-order query to project its sort tag.
+//
+// If a group fails, the batches of the groups already executed are released.
 func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *logical_stream.VecMerge,
 	queryCriteria *streamv1.QueryRequest, now int64,
 ) (bool, bus.Message) {
-	perGroup := make([][]*streamv1.Element, 0, len(merge.Groups))
+	executed := make([]*vectorized.RecordBatch, 0, len(merge.Groups))
+	staged := make([]*vectorized.RecordBatch, 0, len(merge.Groups))
+	succeeded := false
+	defer func() {
+		if succeeded {
+			return
+		}
+		for _, batch := range executed {
+			if batch != nil {
+				batch.ReleaseOwners()
+			}
+		}
+	}()
 	for _, group := range merge.Groups {
 		batches, schema, execErr := group.Scan.ExecuteVectorized(ctx)
+		executed = append(executed, batches...)
 		if execErr != nil {
 			p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized stream group")
 			return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
@@ -346,16 +355,28 @@ func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *l
 		if stageErr {
 			return true, stageMsg
 		}
-		elements, buildErr := vstream.BuildElementsFromBatch(mergedBatch, vstream.ProjectionFromBatchSchema(mergedBatch))
-		if buildErr != nil {
-			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream group elements")
-			return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
-		}
-		perGroup = append(perGroup, elements)
+		staged = append(staged, mergedBatch)
 	}
-	merged := logical_stream.MergeGroupElements(perGroup, merge.SortByTime, merge.SortTagSpec, merge.Desc)
-	merged = sliceStreamElements(merged, merge.Offset, merge.Limit)
-	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: merged})
+	groups, alignErr := alignStreamGroupBatches(ctx, staged, merge.SortByTime)
+	if alignErr != nil {
+		p.log.Error().Err(alignErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to align the vectorized stream group batches")
+		return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), alignErr))
+	}
+	mergedBatches, mergeErr := mergeAlignedStreamGroups(ctx, groups, merge.Desc, merge.Offset, merge.Limit)
+	if mergeErr != nil {
+		p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream group batches")
+		return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
+	}
+	elements, buildErr := buildAlignedStreamElements(groups, mergedBatches)
+	if buildErr != nil {
+		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream group elements")
+		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+	}
+	succeeded = true
+	if elements == nil {
+		elements = []*streamv1.Element{}
+	}
+	return true, bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{Elements: elements})
 }
 
 // streamVecEmitAsFrame is the data-node emit gate: emit a native columnar frame
@@ -591,14 +612,9 @@ func executeMeasurePlan(
 	return mit, planStr, nil
 }
 
-// dispatchMeasure is the thin adapter from measureExecutionContext into
-// the vec dispatch inputs. Multi-measure queries (len(ecc) > 1) are
-// handled per-group: each group is dispatched individually and the
-// per-group iterators are merged through the shared cross-group ordering
-// stack in logical_measure.MergeGroupMIterators (G9f.1, reusing
-// sortableDataPoints + sortedMIterator so the cross-group order and
-// version dedup are reproduced by construction, not by parallel
-// reimplementation).
+// dispatchMeasure adapts the native BatchResult boundary to final row serialization.
+// Multi-group queries use DispatchBatches and MultiGroupMerge to align schemas,
+// merge sort keys, deduplicate versions and apply pagination before serialization.
 //
 // Distributed Map-mode GroupBy+Agg (emitPartial=true) routes to vec via
 // AggModeMap (G9f.2): vecplan.Dispatch receives emitPartial and the
@@ -655,39 +671,35 @@ func dispatchMeasureBatches(
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
 		return nil, "", projErr
 	}
-	iters := make([]*vecplan.BatchResult, 0, len(mctx.ecc))
-	planStrs := make([]string, 0, len(mctx.ecc))
-	closeOpened := func() {
-		for _, opened := range iters {
-			_ = opened.Close()
-		}
-	}
-	for groupIdx, vec := range vecs {
-		mit, planStr, dispatchErr := vecplan.DispatchBatches(ctx, queryCriteria,
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
-		if dispatchErr != nil {
-			closeOpened()
-			return nil, "", dispatchErr
-		}
-		iters = append(iters, mit)
-		planStrs = append(planStrs, planStr)
-	}
-	order, orderErr := logical_measure.ResolveCrossGroupMergeOrder(queryCriteria, mctx.schemas)
-	if orderErr != nil {
-		closeOpened()
-		return nil, "", orderErr
-	}
-	_ = order
-	schema, schemaErr := vecplan.BuildMultiGroupBatchSchema(measureSchemas, queryCriteria)
-	if schemaErr != nil {
-		closeOpened()
-		return nil, "", schemaErr
-	}
-	merged, mergeErr := vecplan.MergeStandaloneBatches(ctx, iters, schema, queryCriteria, mctx.schemas, vecs[0].VectorizedConfig())
+	merge, mergeErr := vecplan.NewMultiGroupMerge(ctx, queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
 	if mergeErr != nil {
 		return nil, "", mergeErr
 	}
-	return merged, fmt.Sprintf("vec-multi-measure%v", planStrs), nil
+	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
+	planStrs := make([]string, 0, len(mctx.ecc))
+	for groupIdx, vec := range vecs {
+		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true)
+		if dispatchErr == nil {
+			var group *vecplan.GroupBatches
+			group, dispatchErr = merge.Collect(ctx, result, planStr)
+			if dispatchErr == nil {
+				groups = append(groups, group)
+				planStrs = append(planStrs, planStr)
+			}
+		}
+		if dispatchErr != nil {
+			for _, obtained := range groups {
+				obtained.Release()
+			}
+			return nil, "", dispatchErr
+		}
+	}
+	merged, mergeErr := merge.MergeBatches(ctx, groups)
+	if mergeErr != nil {
+		return nil, "", mergeErr
+	}
+	return merged, fmt.Sprintf("vec-multi-measure-batch%v", planStrs), nil
 }
 
 // collectInternalDataPoints collects InternalDataPoints from the iterator.
@@ -1305,19 +1317,7 @@ func (p *traceQueryProcessor) buildTraceTags(result *model.TraceResult, queryCri
 func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterator[model.TraceResult],
 	queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan,
 ) ([]model.TraceResult, error) {
-	traceIDInclusionMap := make(map[int]bool)
-	spanIDInclusionMap := make(map[int]bool)
-	for i, tagName := range execPlan.traceIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			traceIDInclusionMap[i] = true
-		}
-	}
-	for i, tagName := range execPlan.spanIDTagNames {
-		if slices.Contains(queryCriteria.TagProjection, tagName) {
-			spanIDInclusionMap[i] = true
-		}
-	}
-
+	builder := newTraceFrameBuilder(queryCriteria, execPlan)
 	var results []model.TraceResult
 	for {
 		result, hasNext := resultIterator.Next()
@@ -1330,45 +1330,77 @@ func (p *traceQueryProcessor) buildFrameTraceResults(resultIterator iter.Iterato
 		if result.TID == "" {
 			continue
 		}
-
-		spanCount := len(result.Spans)
-		frameResult := model.TraceResult{
-			TID:     result.TID,
-			Key:     result.Key,
-			Spans:   result.Spans,
-			SpanIDs: result.SpanIDs,
-		}
-		if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
-			for _, tag := range result.Tags {
-				if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
-					continue
-				}
-				frameResult.Tags = append(frameResult.Tags, tag)
-			}
-		}
-		if traceIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
-			for spanIdx := range values {
-				values[spanIdx] = tidValue
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
-		}
-		if spanIDInclusionMap[result.GroupIndex] {
-			values := make([]*modelv1.TagValue, spanCount)
-			for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
-				if spanIdx < len(result.SpanIDs) {
-					values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
-				} else {
-					values[spanIdx] = pbv1.NullTagValue
-				}
-			}
-			frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
-		}
-		results = append(results, frameResult)
+		results = append(results, builder.build(&result))
 	}
 
 	return results, nil
+}
+
+// traceFrameBuilder converts one iterator result into the frame-shaped result.
+type traceFrameBuilder struct {
+	queryCriteria       *tracev1.QueryRequest
+	execPlan            *traceExecutionPlan
+	traceIDInclusionMap map[int]bool
+	spanIDInclusionMap  map[int]bool
+}
+
+func newTraceFrameBuilder(queryCriteria *tracev1.QueryRequest, execPlan *traceExecutionPlan) *traceFrameBuilder {
+	b := &traceFrameBuilder{
+		queryCriteria:       queryCriteria,
+		execPlan:            execPlan,
+		traceIDInclusionMap: make(map[int]bool),
+		spanIDInclusionMap:  make(map[int]bool),
+	}
+	for i, tagName := range execPlan.traceIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.traceIDInclusionMap[i] = true
+		}
+	}
+	for i, tagName := range execPlan.spanIDTagNames {
+		if slices.Contains(queryCriteria.TagProjection, tagName) {
+			b.spanIDInclusionMap[i] = true
+		}
+	}
+	return b
+}
+
+func (b *traceFrameBuilder) build(result *model.TraceResult) model.TraceResult {
+	queryCriteria, execPlan := b.queryCriteria, b.execPlan
+	spanCount := len(result.Spans)
+	frameResult := model.TraceResult{
+		TID:     result.TID,
+		Key:     result.Key,
+		Spans:   result.Spans,
+		SpanIDs: result.SpanIDs,
+	}
+	if result.Tags != nil && len(queryCriteria.TagProjection) > 0 {
+		for _, tag := range result.Tags {
+			if !slices.Contains(queryCriteria.TagProjection, tag.Name) {
+				continue
+			}
+			frameResult.Tags = append(frameResult.Tags, tag)
+		}
+	}
+	if b.traceIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		tidValue := &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.TID}}}
+		for spanIdx := range values {
+			values[spanIdx] = tidValue
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.traceIDTagNames[result.GroupIndex], Values: values})
+	}
+	if b.spanIDInclusionMap[result.GroupIndex] {
+		values := make([]*modelv1.TagValue, spanCount)
+		for spanIdx := 0; spanIdx < spanCount; spanIdx++ {
+			if spanIdx < len(result.SpanIDs) {
+				values[spanIdx] = &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: result.SpanIDs[spanIdx]}}}
+			} else {
+				values[spanIdx] = pbv1.NullTagValue
+			}
+		}
+		frameResult.Tags = append(frameResult.Tags, model.Tag{Name: execPlan.spanIDTagNames[result.GroupIndex], Values: values})
+	}
+	return frameResult
 }
 
 func (p *traceQueryProcessor) logSlowQuery(queryCriteria *tracev1.QueryRequest, traces []*tracev1.InternalTrace, startTime time.Time) {

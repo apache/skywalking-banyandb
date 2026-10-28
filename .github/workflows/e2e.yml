@@ -35,7 +35,7 @@ concurrency:
 jobs:
   DockerImage:
     name: Build Docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -56,7 +56,7 @@ jobs:
 
   StoragePlugins:
     name: ${{ matrix.test.name }}
-    runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.test.runs-on || 'ubuntu-24.04' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
@@ -86,8 +86,8 @@ jobs:
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
             config: test/e2e-v2/cases/lifecycle/dns-discovery/e2e.yaml
-          - name: Transfer Dry Run
-            config: test/e2e-v2/cases/transfer/dry-run/e2e.yaml
+          - name: Transfer Export
+            config: test/e2e-v2/cases/transfer/export/e2e.yaml
             # Its setup builds bydbctl on the host, which needs the generated protobuf code
             # (gitignored) from the prepare job's build artifacts.
             download-artifacts: 'true'
@@ -136,7 +136,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -162,7 +162,7 @@ jobs:
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [StoragePlugins]
     steps:
@@ -172,7 +172,7 @@ jobs:
   RBACStress:
     name: RBAC Cluster Stress
     if: ${{ inputs.run-rbac-stress }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     continue-on-error: true
     needs: [DockerImage]
@@ -197,7 +197,7 @@ jobs:
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
       - if: ${{ failure() }}

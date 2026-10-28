@@ -76,7 +76,7 @@ generation branch cannot silently remove its coverage obligation.
 | State | Required evidence |
 | --- | --- |
 | `supported` | Generated QL cases with independently calculated success expectations. |
-| `rejection` | Generated invalid QL cases with an expected error status. |
+| `rejection` | Generated QL cases with an expected error status. |
 | `pending` | An explicit reason naming the missing implementation or fixture. |
 
 These are generation obligations. Actual engine support requires passing the
@@ -189,6 +189,95 @@ go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/
 Run the two topologies sequentially. These are correctness and ownership cases;
 cache-on/cache-off timing uses the separate, bounded T05 benchmark.
 
+## T07 complete SQL aggregation
+
+The artifact declares `aggregate_scenarios`, independent `aggregate_readiness`
+queries, and `aggregate_rejections`. Its 41 scenarios each bind the exact same
+statement three times: the full input, null-only or smaller input, and empty
+input. The runner executes these calls cold and warm, then repeats all three
+with the compiled cache bypassed. Seven additional statements reject unsupported
+aggregation shapes before scanning. The existing 293 legacy and T03 cases and
+18 T05 processes keep their original query texts and expected values.
+
+`ql_t07` contains exactly fixture F's six rows. `ql_t07_groups` separately adds
+513 non-entity zone groups with one, two or three rows each across two host
+entities, for 1,026 logical rows.
+Both measures receive stale versions followed by the final rows with matching
+series/timestamps, in the existing replicated group. QL-only raw readiness checks
+every final value before aggregate cases run. No native query supplies expected
+results or readiness.
+
+`t07_model.go`, `t07_generate.go` and `t07_oracle.go` cover scalar and grouped
+COUNT/SUM/MIN/MAX/AVG/MEAN over integer and floating fields, multiple and repeated
+calls, tag counts, qualified names, hidden grouping keys, nullable string/integer/
+float keys, residual time OR, final LIMIT/OFFSET, and native source spelling that
+activates SQL aggregation. The scalar oracle evaluates typed rows directly and
+encodes grouping tuples with JSON, independently of the engine's group codec.
+NULL and empty strings remain separate. Counts retain integer type; AVG/MEAN
+divide the complete sum by the non-null count. Null-only and empty scalar COUNT
+is zero; other scalar aggregates are null, and grouped empty input has no rows.
+
+Every successful aggregate RPC checks exact consumed rows after deduplication,
+actual group cardinality, one local aggregate execution, absence of source
+identity/timestamps on synthesized rows, and restored group/native memory
+ownership. These structural assertions require the instrumented build:
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T07 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T07 -ginkgo.fail-on-empty
+```
+
+Run the topologies sequentially. T07 does not alter the existing legacy MEAN or
+COUNT(DISTINCT) fixtures. Native aggregate pushdown and keyed merging are T08;
+T07's new SQL semantics execute over one complete native raw scan.
+
+## T08 native aggregate pushdown and keyed merge
+
+The artifact adds `native_aggregate_scenarios`, `native_aggregate_readiness`,
+and `native_aggregate_rejections`. The 30 scenarios retain three identical query
+texts with independently evaluated changed bindings. Eligible native cohorts
+run cold, warm, with the compiled cache bypassed, and with native aggregation
+disabled so the identical SQL also exercises T07. Unsafe cohorts must use T07
+automatically. A checked integer-SUM overflow retains its existing RPC error and
+must open no native aggregate branch. Every expected result is generated from
+fixture rows; neither readiness nor verification issues a native Query RPC.
+
+`ql_t08` uses the complete entity tuple `(host, region)`, unequal per-entity
+populations, nullable fields and keys, an all-null entity, sub-one floating means,
+and integer extrema above 2^53. `ql_t08_groups` contains 129 distinct entity tuples
+and 258 logical rows. Stale and final versions share each logical row's identity.
+Bounded raw QL visibility windows verify every final value before aggregation.
+The indexed non-entity `key` is constant within each full entity, as required by
+the series index. Different entities retain NULL, empty and ordinary string keys.
+The setup installs the key index and binding, then retries writes until a separate
+indexed QL visibility witness succeeds; raw windows still verify every row.
+The oracle uses typed integer extrema and exact rational sums and averages,
+independently of native aggregate state and the production grouping codec.
+
+The runner proves SUM/COUNT/AVG leaf reuse, complete tuple-key merging beyond the
+default 100 rows, null-only and empty semantics, cold/warm binding isolation, and
+fallback for incomplete or unproven entity keys, nullable non-entity grouping,
+integer arithmetic, floating extrema, tag counts, and residual time predicates.
+It also injects a group cap, first and later branch errors and cancellation, and
+authorization denial after a cached plan succeeds, and child revision-gate failure.
+Failed RPCs return no partial
+rows, release all tracked state and native results, and allow a subsequent query
+to succeed. Bucket grouping remains in its later grammar ticket; T08 does not
+claim a new bucket syntax through these RPC cases.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter=QLB-T08 -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter=QLB-T08 -ginkgo.fail-on-empty
+```
+
+Run these sequentially. The existing 293 cases, 18 T05 scenarios, 41 T07
+scenarios and seven T07 rejections keep their query texts, expected values and
+pair-coverage report unchanged.
+
 ## Engine regressions exposed by this suite
 
 The initial standalone and distributed runs each execute all 151 cases, with
@@ -215,7 +304,6 @@ The authoritative inventory is `coverageContract` in `coverage_contract.go`.
 
 | Capability | Missing implementation or fixture |
 | --- | --- |
-| Catalog B3 | Multiple SQL aggregates and SQL-correct finalization require T07/T08. |
 | Catalog B4 | Post-aggregate `HAVING` and new membership syntax require T14. |
 | Catalog B5 | Multiple sort keys and null placement require T17. |
 | Catalog B6 | `SELECT DISTINCT` requires T15. |

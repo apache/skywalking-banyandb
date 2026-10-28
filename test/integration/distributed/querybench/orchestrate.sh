@@ -59,6 +59,10 @@ if [[ ",${SCENARIOS}," == *",qlb_t05,"* ]]; then
     exit 2
   fi
 fi
+if [[ ( ",${SCENARIOS}," == *",qlb_t07,"* || ",${SCENARIOS}," == *",qlb_t08,"* ) && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
+  echo "T07/T08 require measure and DQB_QUERY_WORKERS=1" >&2
+  exit 2
+fi
 
 echo "[orchestrate] report_dir=${REPORT_DIR}"
 echo "[orchestrate] engine=${ENGINE}"
@@ -101,6 +105,17 @@ if [[ "${SOAK}" == "1" ]]; then
   exit 0
 fi
 
+# DQB_WRITE_SOAK=1: run the long-lived trace write soak instead of the matrix
+# benchmark. It writes write-soak-<label>.json under the report dir.
+if [[ "${DQB_WRITE_SOAK:-0}" == "1" ]]; then
+  echo "[orchestrate] === write soak mode: running TestTraceWriteSoak ==="
+  DQB_ENGINE=trace \
+    DQB_REPORT_DIR="${REPORT_DIR}" \
+    "${BINARY}" -test.run TestTraceWriteSoak -test.v -test.timeout "${DQB_SOAK_TEST_TIMEOUT:-60m}"
+  echo "[orchestrate] write soak done"
+  exit 0
+fi
+
 IFS=',' read -ra CARD_ARR <<< "${CARDINALITIES}"
 IFS=',' read -ra SCEN_ARR <<< "${SCENARIOS}"
 IFS=',' read -ra MODE_ARR <<< "${MODES}"
@@ -116,6 +131,15 @@ run_variant() {
   local span_bytes=$8
   for mode in "${MODE_ARR[@]}"; do
     for scenario in "${SCEN_ARR[@]}"; do
+      local query_iterations="${DQB_QUERY_ITERATIONS:-50}"
+      local warmup_iterations="${DQB_WARMUP_ITERATIONS:-3}"
+      if [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          32768) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T07/T08 successful queries require cardinality 1024,32768" >&2; exit 2 ;;
+        esac
+      fi
       echo "[orchestrate] === engine=${ENGINE} cardinality=${card} mode=${mode} scenario=${scenario} s=${spans_per_trace} dist=${span_dist} sel=${selectivity} k=${trace_id_batch} shard=${shard_num} nodes=${data_nodes} bytes=${span_bytes} ==="
       DQB_ENGINE="${ENGINE}" \
         DQB_MATRIX="${MATRIX}" \
@@ -130,6 +154,8 @@ run_variant() {
         DQB_DATA_NODES="${data_nodes}" \
         DQB_SPAN_BYTES="${span_bytes}" \
         DQB_QUERY_MEMORY_MIB="${DQB_QUERY_MEMORY_MIB:-256}" \
+        DQB_QUERY_ITERATIONS="${query_iterations}" \
+        DQB_WARMUP_ITERATIONS="${warmup_iterations}" \
         "${BINARY}" -test.run TestDistributedQueryBench -test.v
     done
   done

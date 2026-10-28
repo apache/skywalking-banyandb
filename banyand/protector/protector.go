@@ -94,6 +94,7 @@ type memory struct {
 	limit            atomic.Uint64
 	usage            uint64
 	queryBudgetOnce  sync.Once
+	forcedHigh       atomic.Bool
 }
 
 // QueryBudget returns the process-local query reservation pool for this protector.
@@ -105,12 +106,14 @@ func (m *memory) QueryBudget() *QueryBudget {
 // NewMemory creates a new Memory protector.
 func NewMemory(omr observability.MetricsRegistry) Memory {
 	queueSize := cgroups.CPUs()
-	return &memory{
+	m := &memory{
 		omr:         omr,
 		blockedChan: make(chan struct{}, queueSize),
 		closed:      make(chan struct{}),
 		l:           logger.GetLogger("memory-protector"),
 	}
+	registerMemory(m)
+	return m
 }
 
 // AcquireResource attempts to acquire a `size` amount of memory using exponential back-off.
@@ -186,6 +189,9 @@ func (m *memory) AvailableBytes() int64 {
 // It uses 20% of the memory limit as the threshold for high pressure state.
 // Returns StateLow if no limit is set (fail open).
 func (m *memory) State() State {
+	if m.forcedHigh.Load() {
+		return StateHigh
+	}
 	limit := m.GetLimit()
 	if limit == 0 {
 		// No limit set, fail open

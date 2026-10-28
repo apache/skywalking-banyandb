@@ -31,8 +31,6 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
-	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
-	"github.com/apache/skywalking-banyandb/pkg/bytes"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
@@ -402,95 +400,85 @@ func readTimestamps(tm timestampsMetadata, count int, reader fs.Reader, scratch 
 	return timestamps, versions, nil
 }
 
-func readFieldValues(decoder *encoding.BytesBlockDecoder, fieldBlock dataBlock, _ string, count int,
+// readColumnValues reads one measure column (field or tag) and decodes it the
+// way the engine's column.decodeColumnValues does. Measure columns are written by
+// column.mustWriteTo, not by the shared tag encoder: when an INT/FLOAT column
+// cannot use the numeric encoding (a null value, or a NaN/±Inf float that has no
+// decimal-int form) the engine writes a plain marker followed by the whole
+// encodeDefault block, which itself starts with its own dictionary/plain marker.
+func readColumnValues(decoder *encoding.BytesBlockDecoder, block dataBlock, count int,
 	valueReader fs.Reader, valueType pbv1.ValueType, scratch *dump.ReadScratch,
 ) ([][]byte, error) {
-	// Read field values
-	bb := &bytes.Buffer{}
-	bb.Buf = dump.ReadBuf(scratch, (*dump.ReadScratch).ValueBuf, int(fieldBlock.size))
-	if err := dump.ReadData(valueReader, int64(fieldBlock.offset), bb.Buf); err != nil {
-		return nil, fmt.Errorf("cannot read field values: %w", err)
+	buf := dump.ReadBuf(scratch, (*dump.ReadScratch).ValueBuf, int(block.size))
+	if err := dump.ReadData(valueReader, int64(block.offset), buf); err != nil {
+		return nil, fmt.Errorf("cannot read column values: %w", err)
 	}
-
-	// Decode values based on value type
-	var values [][]byte
-	var err error
-
+	if len(buf) == 0 {
+		return nil, nil
+	}
 	switch valueType {
 	case pbv1.ValueTypeInt64:
-		// Decode int64 values - similar to column.decodeInt64Column
-		if len(bb.Buf) < 1 {
-			return nil, fmt.Errorf("buffer too short for int64 field")
+		if encoding.EncodeType(buf[0]) == encoding.EncodeTypePlain {
+			return decodeDefaultColumn(decoder, buf[1:], count)
 		}
-		encodeType := encoding.EncodeType(bb.Buf[0])
-		if encodeType == encoding.EncodeTypePlain {
-			// Use default decoder for plain encoding
-			bb.Buf = bb.Buf[1:]
-			values, err = decoder.Decode(values[:0], bb.Buf, uint64(count))
-			if err != nil {
-				return nil, fmt.Errorf("cannot decode int64 field values (plain): %w", err)
-			}
-		} else {
-			const expectedLen = 9
-			if len(bb.Buf) < expectedLen {
-				return nil, fmt.Errorf("buffer too short for int64 field: expected at least %d bytes", expectedLen)
-			}
-			firstValue := convert.BytesToInt64(bb.Buf[1:9])
-			bb.Buf = bb.Buf[9:]
-			intValues := make([]int64, count)
-			intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, count)
-			if err != nil {
-				return nil, fmt.Errorf("cannot decode int64 field values: %w", err)
-			}
-			values = make([][]byte, count)
-			for i, v := range intValues {
-				values[i] = convert.Int64ToBytes(v)
-			}
+		const headerLen = 9
+		if len(buf) < headerLen {
+			return nil, fmt.Errorf("buffer too short for int64 column: expected at least %d bytes, got %d", headerLen, len(buf))
 		}
-	case pbv1.ValueTypeFloat64:
-		// Decode float64 values - similar to column.decodeFloat64Column
-		if len(bb.Buf) < 1 {
-			return nil, fmt.Errorf("buffer too short for float64 field")
-		}
-		encodeType := encoding.EncodeType(bb.Buf[0])
-		if encodeType == encoding.EncodeTypePlain {
-			// Use default decoder for plain encoding
-			bb.Buf = bb.Buf[1:]
-			values, err = decoder.Decode(values[:0], bb.Buf, uint64(count))
-			if err != nil {
-				return nil, fmt.Errorf("cannot decode float64 field values (plain): %w", err)
-			}
-		} else {
-			const expectedLen = 11
-			if len(bb.Buf) < expectedLen {
-				return nil, fmt.Errorf("buffer too short for float64 field: expected at least %d bytes", expectedLen)
-			}
-			exp := convert.BytesToInt16(bb.Buf[1:3])
-			firstValue := convert.BytesToInt64(bb.Buf[3:11])
-			bb.Buf = bb.Buf[11:]
-			intValues := make([]int64, count)
-			intValues, err = encoding.BytesToInt64List(intValues[:0], bb.Buf, encodeType, firstValue, count)
-			if err != nil {
-				return nil, fmt.Errorf("cannot decode int values for float64: %w", err)
-			}
-			floatValues := make([]float64, count)
-			floatValues, err = encoding.DecimalIntListToFloat64List(floatValues[:0], intValues, exp, count)
-			if err != nil {
-				return nil, fmt.Errorf("cannot convert DecimalIntList to Float64List: %w", err)
-			}
-			values = make([][]byte, count)
-			for i, v := range floatValues {
-				values[i] = convert.Float64ToBytes(v)
-			}
-		}
-	default:
-		// Use default decoder for other types
-		values, err = internalencoding.DecodeTagValues(values, decoder, bb, valueType, count)
+		intValues, err := encoding.BytesToInt64List(make([]int64, 0, count), buf[headerLen:],
+			encoding.EncodeType(buf[0]), convert.BytesToInt64(buf[1:9]), count)
 		if err != nil {
-			return nil, fmt.Errorf("cannot decode field values: %w", err)
+			return nil, fmt.Errorf("cannot decode int64 column values: %w", err)
 		}
+		values := make([][]byte, len(intValues))
+		for i, v := range intValues {
+			values[i] = convert.Int64ToBytes(v)
+		}
+		return values, nil
+	case pbv1.ValueTypeFloat64:
+		if encoding.EncodeType(buf[0]) == encoding.EncodeTypePlain {
+			return decodeDefaultColumn(decoder, buf[1:], count)
+		}
+		const headerLen = 11
+		if len(buf) < headerLen {
+			return nil, fmt.Errorf("buffer too short for float64 column: expected at least %d bytes, got %d", headerLen, len(buf))
+		}
+		exp := convert.BytesToInt16(buf[1:3])
+		intValues, err := encoding.BytesToInt64List(make([]int64, 0, count), buf[headerLen:],
+			encoding.EncodeType(buf[0]), convert.BytesToInt64(buf[3:11]), count)
+		if err != nil {
+			return nil, fmt.Errorf("cannot decode int values for float64 column: %w", err)
+		}
+		floatValues, err := encoding.DecimalIntListToFloat64List(make([]float64, 0, count), intValues, exp, count)
+		if err != nil {
+			return nil, fmt.Errorf("cannot convert DecimalIntList to Float64List: %w", err)
+		}
+		values := make([][]byte, len(floatValues))
+		for i, v := range floatValues {
+			values[i] = convert.Float64ToBytes(v)
+		}
+		return values, nil
+	default:
+		return decodeDefaultColumn(decoder, buf, count)
 	}
+}
 
+// decodeDefaultColumn mirrors the engine's column.decodeDefault: a dictionary
+// block, otherwise a plain bytes block, each behind its one-byte type marker.
+func decodeDefaultColumn(decoder *encoding.BytesBlockDecoder, buf []byte, count int) ([][]byte, error) {
+	if len(buf) == 0 {
+		return nil, fmt.Errorf("missing encode type of default-encoded column")
+	}
+	var values [][]byte
+	var err error
+	if encoding.EncodeType(buf[0]) == encoding.EncodeTypeDictionary {
+		values, err = (&encoding.Dictionary{}).Decode(nil, buf[1:], uint64(count))
+	} else {
+		values, err = decoder.Decode(nil, buf[1:], uint64(count))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot decode default-encoded column values: %w", err)
+	}
 	return values, nil
 }
 

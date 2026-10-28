@@ -23,6 +23,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -30,11 +31,13 @@ import (
 	"time"
 
 	"go.uber.org/mock/gomock"
+	"golang.org/x/time/rate"
 	grpclib "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -444,6 +447,32 @@ func TestExportPlan_NodeErrorIsFatalNotUnreachable(t *testing.T) {
 	}
 }
 
+// A failed Plan leaves no goroutine behind: the sender of the downstream frames ends with
+// the call, also when it was idle on an empty queue.
+func TestExportPlan_FailedPlanLeavesNoGoroutine(t *testing.T) {
+	svc := newFanOut(t, map[string]*fakeDataNode{
+		testNodeA: {groups: []string{"g"}, occupant: testSessionAbcdID},
+		testNodeB: {expired: map[string]bool{testSessionAbcdID: true}},
+	})
+	plan := func() {
+		if err := svc.Plan(transfer.ReadRequest(testSessionAbcdID), &recordingStream{ctx: context.Background()}); err == nil {
+			t.Fatal("an expired session must fail the call")
+		}
+	}
+	plan() // warm up the connections
+	before := runtime.NumGoroutine()
+	for i := 0; i < 20; i++ {
+		plan()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("goroutines grew from %d to %d", before, after)
+	}
+}
+
 func TestExportPlan_StandaloneUsesLocalPlanner(t *testing.T) {
 	local := &fakeLocalPlanner{frames: 2, preempted: []string{"old"}}
 	svc := newLocalExportService(local, testLocalNodeAddr)
@@ -542,12 +571,14 @@ func newLocalExportService(planner transferv1.ExportServiceServer, self string) 
 	return newExportService(q, nil, func() string { return self }, logger.GetLogger("export-test"))
 }
 
-func TestExportPlan_NoDataNodesIsFailedPrecondition(t *testing.T) {
+// A liaison that has not discovered any data node yet is unavailable, not a sign that a
+// session is gone: a heartbeat must not take it for an expired session.
+func TestExportPlan_NoDataNodesIsUnavailable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := newExportService(queue.NewMockClient(ctrl), fakeRouteTable{}, nil, logger.GetLogger("export-test"))
 	err := svc.Plan(&transferv1.PlanRequest{}, &recordingStream{ctx: context.Background()})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("want FailedPrecondition, got %v", err)
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("want Unavailable, got %v", err)
 	}
 }
 
@@ -1384,11 +1415,11 @@ func TestExportSessions_ListCanceled(t *testing.T) {
 	}
 }
 
-func TestExportSessions_NoDataNodesIsFailedPrecondition(t *testing.T) {
+func TestExportSessions_NoDataNodesIsUnavailable(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	svc := newExportService(queue.NewMockClient(ctrl), fakeRouteTable{}, nil, logger.GetLogger("export-test"))
-	if err := svc.Sessions(listReq(), &recordingSessionsStream{ctx: context.Background()}); status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("want FailedPrecondition, got %v", err)
+	if err := svc.Sessions(listReq(), &recordingSessionsStream{ctx: context.Background()}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("want Unavailable, got %v", err)
 	}
 }
 
@@ -1465,6 +1496,7 @@ func TestMethodPolicies_CoverExportService(t *testing.T) {
 	}
 	sort.Strings(got)
 	want := []string{
+		"/banyandb.transfer.v1.ExportService/Export",
 		"/banyandb.transfer.v1.ExportService/Plan",
 		"/banyandb.transfer.v1.ExportService/Sessions",
 	}
@@ -1581,6 +1613,375 @@ func (r *stalledStream) Send(f *transferv1.PlanResponse) error {
 	if f.GetCreated() == nil {
 		r.enterOnce.Do(func() { close(r.entered) })
 		<-r.unblock
+	}
+	return nil
+}
+
+// fakeExportNode is a data node's Export handler: it answers init with ready and every unit
+// with unit_started, one chunk carrying the unit's group, and unit_finished.
+type fakeExportNode struct {
+	transferv1.UnimplementedExportServiceServer
+	failWith error // returned right after init, before ready
+	exited   chan struct{}
+	received []*transferv1.ExportRequest
+	mu       sync.Mutex
+	sawEOF   bool
+}
+
+func newFakeExportNode() *fakeExportNode { return &fakeExportNode{exited: make(chan struct{})} }
+
+func (f *fakeExportNode) Export(stream transferv1.ExportService_ExportServer) error {
+	defer close(f.exited)
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			f.mu.Lock()
+			f.sawEOF = true
+			f.mu.Unlock()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		f.mu.Lock()
+		f.received = append(f.received, req)
+		f.mu.Unlock()
+		if req.GetInit() != nil {
+			if f.failWith != nil {
+				return f.failWith
+			}
+			if err = stream.Send(readyFrame()); err != nil {
+				return err
+			}
+			continue
+		}
+		for _, frame := range unitAnswer(req.GetSegment().GetGroup()) {
+			if err = stream.Send(frame); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (f *fakeExportNode) snapshot() ([]*transferv1.ExportRequest, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.received), f.sawEOF
+}
+
+func readyFrame() *transferv1.ExportResponse {
+	return &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Ready{Ready: &transferv1.Ready{}}}
+}
+
+func unitAnswer(group string) []*transferv1.ExportResponse {
+	return []*transferv1.ExportResponse{
+		{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: &transferv1.UnitStarted{TotalShards: 2}}},
+		{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: []byte(group)}}},
+		{Frame: &transferv1.ExportResponse_UnitFinished{UnitFinished: &transferv1.UnitFinished{Warnings: []string{group}}}},
+	}
+}
+
+func exportInit(target string) *transferv1.ExportRequest {
+	return &transferv1.ExportRequest{Frame: &transferv1.ExportRequest_Init_{Init: &transferv1.ExportRequest_Init{
+		SessionId: testSessionFeedID, TargetNode: target, Format: transferv1.Format_FORMAT_CSV, MaxFileSize: 1 << 20,
+		Compress: transferv1.Compress_COMPRESS_GZIP,
+	}}}
+}
+
+func exportUnit(group string) *transferv1.ExportRequest {
+	return &transferv1.ExportRequest{Frame: &transferv1.ExportRequest_Segment{Segment: &transferv1.SegmentUnit{Group: group, SegmentSuffix: "20260907"}}}
+}
+
+// newExportRelay serves an exportService over the given data nodes and returns a client of
+// the liaison itself.
+func newExportRelay(t *testing.T, nodes map[string]transferv1.ExportServiceServer, extras fanOutExtras) transferv1.ExportServiceClient {
+	t.Helper()
+	_, client := newExportRelayService(t, nodes, extras)
+	return client
+}
+
+// newExportRelayService is newExportRelay that also returns the liaison's service.
+func newExportRelayService(t *testing.T, nodes map[string]transferv1.ExportServiceServer,
+	extras fanOutExtras,
+) (*exportService, transferv1.ExportServiceClient) {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	client := queue.NewMockClient(ctrl)
+	var names []string
+	for name, node := range nodes {
+		client.EXPECT().NewExportClient(name).Return(transferv1.NewExportServiceClient(serveFake(t, node)), nil).AnyTimes()
+		names = append(names, name)
+	}
+	for _, name := range extras.dead {
+		client.EXPECT().NewExportClient(name).Return(transferv1.NewExportServiceClient(deadConn(t)), nil).AnyTimes()
+		names = append(names, name)
+	}
+	for _, name := range extras.noClient {
+		client.EXPECT().NewExportClient(name).Return(nil, errors.New("node "+name+" is not in the pool")).AnyTimes()
+		names = append(names, name)
+	}
+	for _, name := range extras.old {
+		client.EXPECT().NewExportClient(name).Return(transferv1.NewExportServiceClient(serveFake(t, nil)), nil).AnyTimes()
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	svc := newExportService(client, fakeRouteTable{nodes: names}, nil, logger.GetLogger("export-test"))
+	return svc, transferv1.NewExportServiceClient(serveFake(t, svc))
+}
+
+// runExport sends frames, half-closes and collects every answer until the stream ends.
+func runExport(t *testing.T, client transferv1.ExportServiceClient, frames ...*transferv1.ExportRequest) ([]*transferv1.ExportResponse, error) {
+	t.Helper()
+	stream, err := client.Export(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range frames {
+		if err = stream.Send(f); err != nil {
+			break // the stream ended; Recv reports why
+		}
+	}
+	_ = stream.CloseSend()
+	var got []*transferv1.ExportResponse
+	for {
+		frame, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return got, nil
+		}
+		if recvErr != nil {
+			return got, recvErr
+		}
+		got = append(got, frame)
+	}
+}
+
+func waitClosed(t *testing.T, ch chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(10 * time.Second):
+		t.Fatal(what)
+	}
+}
+
+func assertExportFrames[T proto.Message](t *testing.T, got, want []T) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %d frames, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if !proto.Equal(got[i], want[i]) {
+			t.Fatalf("frame %d changed: got %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestExportRelay_ForwardsFramesUnchangedAndHalfClose(t *testing.T) {
+	nodeA, nodeB := newFakeExportNode(), newFakeExportNode()
+	client := newExportRelay(t, map[string]transferv1.ExportServiceServer{testNodeA: nodeA, testNodeB: nodeB}, fanOutExtras{})
+	sent := []*transferv1.ExportRequest{exportInit(testNodeB), exportUnit("g1"), exportUnit("g2")}
+	got, err := runExport(t, client, sent...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]*transferv1.ExportResponse{readyFrame()}, unitAnswer("g1")...)
+	want = append(want, unitAnswer("g2")...)
+	assertExportFrames(t, got, want)
+
+	waitClosed(t, nodeB.exited, "the target node's handler must end")
+	received, sawEOF := nodeB.snapshot()
+	assertExportFrames(t, received, sent)
+	if !sawEOF {
+		t.Fatal("the client's half-close must reach the node as io.EOF")
+	}
+	if received, _ = nodeA.snapshot(); len(received) != 0 {
+		t.Fatalf("only the target node may get the stream, %s got %v", testNodeA, received)
+	}
+}
+
+func TestExportRelay_InvalidFirstFrame(t *testing.T) {
+	node := newFakeExportNode()
+	client := newExportRelay(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	badInit := exportInit(testNodeA)
+	badInit.GetInit().SessionId = "NOT-HEX"
+	noFormat := exportInit(testNodeA)
+	noFormat.GetInit().Format = transferv1.Format_FORMAT_UNSPECIFIED
+	for name, frames := range map[string][]*transferv1.ExportRequest{
+		"no frame":       nil,
+		"unit first":     {exportUnit("g")},
+		"empty frame":    {{}},
+		"bad session id": {badInit},
+		"no format":      {noFormat},
+		"no target":      {exportInit("")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := runExport(t, client, frames...); status.Code(err) != codes.InvalidArgument {
+				t.Fatalf("got %v, want InvalidArgument", err)
+			}
+		})
+	}
+	if received, _ := node.snapshot(); len(received) != 0 {
+		t.Fatalf("an invalid stream must not reach the node, got %v", received)
+	}
+}
+
+func TestExportRelay_UnknownTargetIsNotFound(t *testing.T) {
+	client := newExportRelay(t, map[string]transferv1.ExportServiceServer{testNodeA: newFakeExportNode()}, fanOutExtras{})
+	_, err := runExport(t, client, exportInit("data-x"))
+	if status.Code(err) != codes.NotFound || !strings.Contains(err.Error(), `data node "data-x" is not registered`) {
+		t.Fatalf("got %v, want NotFound naming the node", err)
+	}
+}
+
+func TestExportRelay_UpstreamFailuresKeepTheirCode(t *testing.T) {
+	client := newExportRelay(t, nil, fanOutExtras{dead: []string{"dead"}, noClient: []string{"gone"}, old: []string{"old"}})
+	for target, want := range map[string]codes.Code{"dead": codes.Unavailable, "gone": codes.Unavailable, "old": codes.Unimplemented} {
+		t.Run(target, func(t *testing.T) {
+			if _, err := runExport(t, client, exportInit(target), exportUnit("g")); status.Code(err) != want {
+				t.Fatalf("got %v, want %s", err, want)
+			}
+		})
+	}
+}
+
+func TestExportRelay_LocalPipelineWithoutExportServerIsUnimplemented(t *testing.T) {
+	svc := newExportService(queue.Local(), nil, func() string { return testLocalNodeAddr }, logger.GetLogger("export-test"))
+	_, err := runExport(t, transferv1.NewExportServiceClient(serveFake(t, svc)), exportInit(testLocalNodeAddr))
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("got %v, want Unimplemented", err)
+	}
+}
+
+func TestExportRelay_UpstreamErrorReachesClient(t *testing.T) {
+	node := newFakeExportNode()
+	node.failWith = status.Error(codes.FailedPrecondition, "export session feed expired")
+	client := newExportRelay(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	got, err := runExport(t, client, exportInit(testNodeA), exportUnit("g"))
+	if status.Code(err) != codes.FailedPrecondition || status.Convert(err).Message() != "export session feed expired" {
+		t.Fatalf("got %v, want the node's status unchanged", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("no frame expected, got %v", got)
+	}
+}
+
+func TestExportRelay_ClientCancelTearsDownUpstream(t *testing.T) {
+	node := newFakeExportNode()
+	client := newExportRelay(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Export(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.Send(exportInit(testNodeA)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	waitClosed(t, node.exited, "canceling the client must end the node's handler")
+	if _, sawEOF := node.snapshot(); sawEOF {
+		t.Fatal("a canceled client must not look like a clean half-close to the node")
+	}
+}
+
+func TestExportRelay_StandaloneUsesLocalPipeline(t *testing.T) {
+	node := newFakeExportNode()
+	q := queue.Local()
+	q.SetExportServer(node)
+	svc := newExportService(q, nil, func() string { return testLocalNodeAddr }, logger.GetLogger("export-test"))
+	client := transferv1.NewExportServiceClient(serveFake(t, svc))
+
+	if _, err := runExport(t, client, exportInit(testNodeA)); status.Code(err) != codes.NotFound {
+		t.Fatalf("a standalone liaison only knows itself, got %v", err)
+	}
+	sent := []*transferv1.ExportRequest{exportInit(testLocalNodeAddr), exportUnit("g1")}
+	got, err := runExport(t, client, sent...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertExportFrames(t, got, append([]*transferv1.ExportResponse{readyFrame()}, unitAnswer("g1")...))
+	waitClosed(t, node.exited, "the local handler must end")
+	received, sawEOF := node.snapshot()
+	assertExportFrames(t, received, sent)
+	if !sawEOF {
+		t.Fatal("the client's half-close must reach the local handler as io.EOF")
+	}
+}
+
+func TestExportRelay_LeavesNoGoroutine(t *testing.T) {
+	nodes := map[string]transferv1.ExportServiceServer{testNodeA: &fakeExportNode{}}
+	client := newExportRelay(t, nodes, fanOutExtras{})
+	run := func(cancelEarly bool) {
+		nodes[testNodeA].(*fakeExportNode).exited = make(chan struct{})
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stream, err := client.Export(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = stream.Send(exportInit(testNodeA)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = stream.Recv(); err != nil {
+			t.Fatal(err)
+		}
+		if !cancelEarly {
+			_ = stream.CloseSend()
+			if _, err = stream.Recv(); !errors.Is(err, io.EOF) {
+				t.Fatalf("got %v, want io.EOF", err)
+			}
+		}
+		cancel()
+		waitClosed(t, nodes[testNodeA].(*fakeExportNode).exited, "the node's handler must end")
+	}
+	run(false) // warm up the connections
+	before := runtime.NumGoroutine()
+	for i := 0; i < 20; i++ {
+		run(i%2 == 0)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for runtime.NumGoroutine() > before && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := runtime.NumGoroutine(); after > before {
+		t.Fatalf("goroutines grew from %d to %d", before, after)
+	}
+}
+
+// chunkExportNode answers init with ready and then one chunk per size. With hold it then waits
+// for the stream to end instead of returning.
+type chunkExportNode struct {
+	transferv1.UnimplementedExportServiceServer
+	exited chan struct{}
+	sizes  []int
+	rows   uint64
+	hold   bool
+}
+
+func (c *chunkExportNode) Export(stream transferv1.ExportService_ExportServer) error {
+	defer close(c.exited)
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(readyFrame()); err != nil {
+		return err
+	}
+	for _, size := range c.sizes {
+		content := make([]byte, size)
+		for i := range content {
+			content[i] = byte(i)
+		}
+		chunk := &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: content, Rows: c.rows}}}
+		if err := stream.Send(chunk); err != nil {
+			return err
+		}
+	}
+	if c.hold {
+		<-stream.Context().Done()
+		return stream.Context().Err()
 	}
 	return nil
 }
@@ -1705,6 +2106,274 @@ func TestExportPlan_CreateSessionRejectedBeforeUnitsStopsTheSender(t *testing.T)
 	for fanOutGoroutines() > 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("%d fan-out goroutines still running after %d rejected creates", fanOutGoroutines(), attempts)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func rateInit(target string, bytesPerSecond uint64) *transferv1.ExportRequest {
+	req := exportInit(target)
+	req.GetInit().LiaisonBytesPerSecond = bytesPerSecond
+	return req
+}
+
+func assertRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
+	t.Helper()
+	r.mu.Lock()
+	limit := r.limiter.Limit()
+	r.mu.Unlock()
+	if limit != wantLimit {
+		t.Fatalf("got limit %v, want limit %v", limit, wantLimit)
+	}
+}
+
+func TestRelayLimiter_LastWinsAndIdleIsUnlimited(t *testing.T) {
+	r := newRelayLimiter()
+	assertRelayRate(t, r, rate.Inf)
+
+	releaseA := r.open(100)
+	assertRelayRate(t, r, 100)
+	if r.pieceSize() != 100 {
+		t.Fatalf("a rate below one chunk per second relays pieces of one second's worth, got %d", r.pieceSize())
+	}
+	releaseShared := r.open(100)
+	if r.pieceSize() != 50 {
+		t.Fatalf("two relays share one second's worth, got %d", r.pieceSize())
+	}
+	releaseShared()
+	releaseB := r.open(4 << 20)
+	assertRelayRate(t, r, 4<<20)
+	releaseC := r.open(0)
+	assertRelayRate(t, r, rate.Inf) // 0 overrides an earlier limit
+	releaseC()
+	assertRelayRate(t, r, rate.Inf) // closing a stream does not restore an older value
+	releaseD := r.open(1 << 40)
+	assertRelayRate(t, r, 1<<40)
+	releaseB()
+	releaseD()
+	assertRelayRate(t, r, 1<<40) // A is still active
+	releaseA()
+	assertRelayRate(t, r, rate.Inf)
+	if r.pieceSize() != relayBurst {
+		t.Fatalf("an idle relay goes back to whole chunks, got %d", r.pieceSize())
+	}
+}
+
+func TestRelayLimiter_TakeLargerThanBurstWaits(t *testing.T) {
+	r := newRelayLimiter()
+	defer r.open(2 << 20)()
+	start := time.Now()
+	// The bucket starts full at one 1 MiB burst, so the other 2 MiB wait about one second.
+	if err := r.wait(context.Background(), 3<<20); err != nil {
+		t.Fatalf("a take larger than the burst must wait, not fail: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 750*time.Millisecond || elapsed > 5*time.Second {
+		t.Fatalf("waited %v, want about 1s", elapsed)
+	}
+}
+
+// A relay opening with a lower rate shrinks the burst under a wait that sized its step for the
+// old one: the wait takes smaller steps instead of failing.
+func TestRelayLimiter_LowerRateDuringWaitTakesSmallerSteps(t *testing.T) {
+	r := newRelayLimiter()
+	defer r.open(8 << 20)()
+	done := make(chan struct{})
+	//panicdiag:allow-rawgo the test toggles the shared rate while waits run
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			// The last relay opened sets the rate: a low one shrinks the burst for a moment,
+			// the high one restores it.
+			r.open(64 << 10)()
+			r.open(8 << 20)()
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	for waits := 0; ; waits++ {
+		if err := r.wait(ctx, 256<<10); err != nil {
+			<-done
+			t.Fatalf("wait %d failed while the rate changed: %v", waits, err)
+		}
+		select {
+		case <-done:
+			return
+		default:
+		}
+	}
+}
+
+func TestRelayLimiter_UnlimitedDoesNotWait(t *testing.T) {
+	r := newRelayLimiter()
+	start := time.Now()
+	if err := r.wait(context.Background(), 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	defer r.open(0)()
+	if err := r.wait(context.Background(), 1<<30); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("an unlimited relay must not wait, took %v", elapsed)
+	}
+}
+
+func TestRelayLimiter_CanceledWaitReturnsCanceled(t *testing.T) {
+	r := newRelayLimiter()
+	defer r.open(1)()
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if err := r.wait(ctx, 2<<20); status.Code(err) != codes.Canceled {
+		t.Fatalf("got %v, want Canceled", err)
+	}
+}
+
+func TestExportRelay_ThrottlesChunksAndResetsWhenIdle(t *testing.T) {
+	node := &chunkExportNode{exited: make(chan struct{}), sizes: []int{3 << 19, 16}}
+	svc, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	stream, err := client.Export(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.Send(rateInit(testNodeA, 1<<20)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	assertRelayRate(t, svc.relayRate, 1<<20)
+	start := time.Now()
+	_ = stream.CloseSend()
+	var chunks int
+	for {
+		frame, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatal(recvErr)
+		}
+		if frame.GetChunk() != nil {
+			chunks++
+		}
+	}
+	// 1.5 MiB at 1 MiB/s from a full 1 MiB bucket: the chunk larger than the burst goes out as
+	// a 1 MiB piece at once and a 512 KiB piece about 500ms later, then the small chunk.
+	if elapsed := time.Since(start); elapsed < 250*time.Millisecond || elapsed > 5*time.Second {
+		t.Fatalf("relayed in %v, want about 500ms", elapsed)
+	}
+	if chunks != 3 {
+		t.Fatalf("got %d chunks, want 3", chunks)
+	}
+	waitClosed(t, node.exited, "the node's handler must end")
+	waitRelayRate(t, svc.relayRate, rate.Inf)
+}
+
+// Below one chunk per second the relay splits a chunk into pieces of one second's worth: the
+// client gets a frame about every second, with the bytes in order and the chunk's rows on
+// every piece, instead of the whole chunk after a long wait.
+func TestExportRelay_SplitsChunksBelowOneChunkPerSecond(t *testing.T) {
+	const rate, size = 64 << 10, 256 << 10
+	node := &chunkExportNode{exited: make(chan struct{}), sizes: []int{size}, rows: 7}
+	_, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	stream, err := client.Export(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.Send(rateInit(testNodeA, rate)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	_ = stream.CloseSend()
+	var content []byte
+	var pieces int
+	for {
+		frame, recvErr := stream.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			break
+		}
+		if recvErr != nil {
+			t.Fatal(recvErr)
+		}
+		chunk := frame.GetChunk()
+		if chunk == nil {
+			continue
+		}
+		if len(chunk.GetContent()) > rate || chunk.GetRows() != 7 {
+			t.Fatalf("piece of %d bytes with %d rows, want at most %d bytes with 7 rows", len(chunk.GetContent()), chunk.GetRows(), rate)
+		}
+		content = append(content, chunk.GetContent()...)
+		pieces++
+	}
+	// One second's worth goes out at once, the other three a second apart.
+	if elapsed := time.Since(start); elapsed < 2500*time.Millisecond || elapsed > 10*time.Second {
+		t.Fatalf("relayed in %v, want about 3s", elapsed)
+	}
+	if pieces != size/rate || len(content) != size {
+		t.Fatalf("got %d pieces and %d bytes, want %d pieces and %d bytes", pieces, len(content), size/rate, size)
+	}
+	for i, b := range content {
+		if b != byte(i) {
+			t.Fatalf("byte %d is %d: the pieces must keep the chunk's bytes in order", i, b)
+		}
+	}
+	waitClosed(t, node.exited, "the node's handler must end")
+}
+
+func TestExportRelay_CanceledClientWhileThrottledEndsRelay(t *testing.T) {
+	node := &chunkExportNode{exited: make(chan struct{}), sizes: []int{2 << 20}, hold: true}
+	svc, client := newExportRelayService(t, map[string]transferv1.ExportServiceServer{testNodeA: node}, fanOutExtras{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream, err := client.Export(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = stream.Send(rateInit(testNodeA, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = stream.Recv(); err != nil {
+		t.Fatal(err)
+	}
+	// At 1 byte/s the 2 MiB chunk goes out one byte a second: the first byte at once, the rest
+	// would take weeks.
+	time.AfterFunc(100*time.Millisecond, cancel)
+	var received int
+	for {
+		frame, recvErr := stream.Recv()
+		if recvErr != nil {
+			if status.Code(recvErr) != codes.Canceled {
+				t.Fatalf("got %v, want Canceled", recvErr)
+			}
+			break
+		}
+		received += len(frame.GetChunk().GetContent())
+	}
+	if received > 1 {
+		t.Fatalf("received %d bytes before the cancel, want at most the first one", received)
+	}
+	waitClosed(t, node.exited, "the relay must end and tear the node's stream down")
+	// The handler returned: its relay is no longer counted.
+	waitRelayRate(t, svc.relayRate, rate.Inf)
+}
+
+// waitRelayRate waits for the relay handler to return and the limiter to settle.
+func waitRelayRate(t *testing.T, r *relayLimiter, wantLimit rate.Limit) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		limit := r.limiter.Limit()
+		r.mu.Unlock()
+		if limit == wantLimit {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("got limit %v, want limit %v", limit, wantLimit)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
