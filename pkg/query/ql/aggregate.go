@@ -206,14 +206,12 @@ func aggregateOutputType(call AggregateCall) vectorized.ColumnType {
 
 // AggregateStatistics returns the structural state of a local aggregate, including after Close.
 func AggregateStatistics(source vectorized.PullOperator) (AggregateStats, bool) {
-	op, ok := source.(*aggregateOperator)
-	if !ok {
-		if raw, rawOK := source.(*rawOperator); rawOK {
-			return AggregateStatistics(raw.source)
+	for current := source; current != nil; current = operatorSource(current) {
+		if op, ok := current.(*aggregateOperator); ok {
+			return op.statistics(), true
 		}
-		return AggregateStats{}, false
 	}
-	return op.statistics(), true
+	return AggregateStats{}, false
 }
 
 func (o *aggregateOperator) statistics() AggregateStats {

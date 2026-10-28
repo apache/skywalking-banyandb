@@ -175,7 +175,6 @@ func TestTypedMeasureNamesFailBeforeExecution(t *testing.T) {
 		"SELECT __ql.clock::TAG, time AS clock FROM g.m",
 		"SELECT missing FROM g.m",
 		"SELECT host AS node FROM g.m WHERE node = 'a'",
-		"SELECT host FROM g.m WHERE time >= now() OR host = 'a'",
 		"SELECT host, SUM(v) AS total FROM MEASURE m IN g",
 		"SELECT host FROM g.m LIMIT -1",
 		"SELECT host FROM g.m WHERE time = 1",

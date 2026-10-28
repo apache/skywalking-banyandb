@@ -1,28 +1,28 @@
 # Catalog B implementation tickets and verification contracts
 
-Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are implemented in PR 2;
-six capability tickets remain planned for PRs 3 and 4.** Implementation and
-correctness do not imply that every historical performance gate passed: T02's
-original acceptance remains inconclusive/stopped. Current aggregation scope,
-checks and benchmark limits are in the [PR 2 verification record](pr2-verification.md).
-The [PR 1 verification record](pr1-verification.md) and [T01 support record](t01-verification.md)
-retain their original bases and evidence.
+Status: **T02/T03/T05 are merged in PR #1417; T07/T08 are merged in PR #1424;
+T10/T12/T14 are implemented in PR 3.** T15/T16/T17 and extended exact count-distinct
+composition remain planned for PR 4. Implementation and correctness do not imply
+that every historical performance gate passed: T02's original acceptance remains
+inconclusive/stopped. Current scope and validation status are in the
+[PR 3 verification record](pr3-verification.md). The [PR 1 record](pr1-verification.md),
+[PR 2 record](pr2-verification.md) and ticket records retain their original bases
+and evidence.
 
 The original design-review base was `012115c5`. PR #1412 merged as `15635181b`;
-PR 2 is based on merged PR #1417 at `e05ed7f22`, including #1413's native aggregation
-optimization. This document defines the [language contract](README.md),
-[batch engine design](datafusion-engine.md) and [compiled-plan reuse design](plan-reuse.md).
-T02/T03/T05/T07/T08 commands are implemented. Commands for later capabilities
-remain planned contracts. Existing `QLB-T01` labels and measurements retain their
-historical meaning.
+PR 3 is based on merged PR #1424 at `e409a6c6`. This document defines the
+[language contract](README.md), [batch engine design](datafusion-engine.md) and
+[compiled-plan reuse design](plan-reuse.md). T02/T03/T05/T07/T08/T10/T12/T14 commands
+are implemented. Commands for later capabilities remain planned contracts.
+Existing `QLB-T01` labels and measurements retain their historical meaning.
 
 ## Four-PR delivery
 
 | PR | Scope | State in this branch |
 |---|---|---|
 | [1 — execution foundation](https://github.com/apache/skywalking-banyandb/pull/1417) | T02 shared batches, T03 typed raw QL, T05 compiled-plan reuse and required compatibility repairs | Merged as PR #1417 |
-| 2 — SQL aggregation | T07 local aggregation and T08 native split/merge | Prepared on merged PR #1417; see the PR 2 record |
-| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Planned |
+| [2 — SQL aggregation](https://github.com/apache/skywalking-banyandb/pull/1424) | T07 local aggregation and T08 native split/merge | Merged as PR #1424 |
+| 3 — expressions and filtering | T10 expressions, T12 field WHERE and T14 HAVING/membership | Implemented in this branch; see the PR 3 record |
 | 4 — complete grouping/output composition | T15 DISTINCT, T16 computed/ordinal grouping, T17 ordering/pagination and count-distinct composition | Planned |
 
 Each PR carries its own generated cases, focused benchmark evidence and language
@@ -54,12 +54,13 @@ formats; no Rust runtime or Arrow IPC dependency. SQL operators stay on the liai
 Shared native Go buffering/ownership and read/dispatch compatibility repairs are
 included with their regression tests, as described in the PR 1 verification record.
 
-**Readiness:** PR #1412 and PR #1417 are merged. The shared batch seam, typed
-raw-query interfaces and compiled-template cache are available on main; local
-aggregation and native merging are available in this branch. Later tickets still
-require their listed prerequisites, independent expected results, activation
-proof and focused benchmarks. Historical measurements retain their original
-bases and verdicts; the PR 2 record covers this isolated aggregation branch.
+**Readiness:** PRs #1412, #1417 and #1424 are merged. The shared batch seam, typed
+raw-query interfaces, compiled-template cache, local aggregation and native merging
+are available on main. Typed expressions, raw field filtering and HAVING are
+available in this branch. Later tickets still require their listed prerequisites,
+independent expected results, activation proof and focused benchmarks. Historical
+measurements retain their original bases and verdicts; the PR 3 record covers
+this isolated expression/filter branch.
 
 ### Dependency and benchmark map
 
@@ -314,7 +315,7 @@ explicitly rejected until T07/T08 admits them.
 Time binding supports fixed INTERVAL, one execution clock, WHERE/TIME intersection,
 contradiction-to-Empty and exact millisecond boundary arithmetic. Pure-time OR can
 prune by an envelope only while retaining its full residual. A residual prevents
-native aggregate/final-limit pushdown. Mixed field/time OR follows in T12.
+native aggregate/final-limit pushdown. T12 adds mixed field/time OR.
 
 **E2E cases:** `raw-aliases` projects host AS node and v AS value with F's types/nulls;
 `repeated-source` preserves independent descriptors for repeated projections;
@@ -524,12 +525,15 @@ limits and monotonic admission charges remain enforced without spilling.
 interpreter cost, and does masked evaluation save work when branches are unused?
 
 **Boundary/activation:** SELECT expressions activate the shared typed evaluator:
-arithmetic, decimal/exponent floats, unary signs, CAST/::type, comparisons,
+arithmetic (+, -, *, /, %), decimal/exponent floats, unary signs, CAST/::type, comparisons,
 AND/OR/NOT, IS NULL, IN, CASE and COALESCE. Preserve ::TAG/::FIELD and accepted
-legacy identifiers containing '-'/'*'. WHERE/HAVING use these kernels in T12/T14.
+legacy identifiers containing '-'/'*'. T12 reuses these kernels in WHERE; HAVING
+follows in T14.
 Constants remain scalars; selections use one physical index space (nil=all,
 empty=none); split before uint16 capacity, skip zero-active batches and evaluate
-conditional arms only for eligible rows. No new parameter wire types.
+conditional arms only for eligible rows. Native batches already obey the 65,536
+physical-row bound; reject oversized external input before uint16 indexing.
+No new parameter wire types.
 
 **Numeric decisions:** INT/BIGINT=int64, FLOAT/DOUBLE=float64. Checked integer
 arithmetic; int/int division truncates toward zero, mixed numeric operations
@@ -537,6 +541,11 @@ promote to double. Division by zero, overflow and invalid/out-of-range casts fai
 with InvalidArgument. Double-to-int truncates after finite/range checks. No implicit
 string conversion; CAST(? AS DOUBLE) accepts bound strings. Null propagates.
 Pin timestamp units/timezone and accepted cast pairs in binder tests.
+
+Implemented timestamp units are UTC Unix nanoseconds in the signed int64 range.
+String casts use RFC3339Nano; timestamp-to-STRING normalizes to UTC. Boolean and
+untyped-null outputs require an explicit supported cast. Integer remainder of
+the minimum int64 by -1 is zero; division of that pair is an overflow error.
 
 **E2E cases:** `arithmetic-F`: v+2={2,4,6,NULL,8,NULL}; `cast-parameter` changes bound
 string doubles; `integer-division` gives -5 / 2 = -2; `numeric-errors` covers invalid
@@ -547,7 +556,9 @@ output needs a supported cast; timestamps/arrays use existing response mapping.
 `unreachable-invalid-arm` never raises errors from masked rows. Cover typed null,
 empty/non-empty IN and changed parameters under repeated execution.
 
-**Benchmark:** P(T10) measures expression projection through RPC; K(T10) compares
+**Benchmark:** P(T10) measures five expression/control projections through RPC
+at 1,024 and 32,768 input/output rows over the existing nullable fixture, with
+a 256-MiB query budget. Every row is evaluated and returned. K(T10) compares
 independent scalar evaluation at batches 1/1,024/65,536 with dense/selected/null
 inputs. Vary constant/column/parameter expressions, null density, branch depth
 and first-arm hit rates 0/50/100%; measure ns/active-row, allocations and RPC cost.
@@ -559,6 +570,13 @@ within this capability; successful expression execution supplies its benchmark.
 **Checks/readiness:** E(T10), P(T10), K(T10); focused `./pkg/bydbql`,
 `./pkg/query/ql`. Blocked by T03. Numeric policy, masking, casts and predicate
 kernels form one usable expression layer with a real projection caller.
+
+**Implementation:** see [T10 verification](t10-verification.md) and the
+[language guide](../../../interacting/bydbql.md#59-typed-select-expressions).
+The evaluator uses existing native batches and scalar ConstColumn outputs.
+At the final projection boundary, constant arrays require tracked row headers
+for the unchanged serializer; their payload remains shared. The scalar-constant
+benchmark gate does not hide this array-output expansion.
 
 ### T12 — Filter raw fields before grouping, projection and final limits
 
@@ -578,16 +596,53 @@ omits the filtered field from SELECT and still returns the correct final limit.
 FALSE and UNKNOWN both drop rows. Test a low-budget cancellation/error path.
 
 **Benchmark:** P(T12) varies selectivity 0/1/50/100%, raw projection versus local
-aggregation and hidden-column widths. G3: exactly one raw leaf, all required input
+aggregation and hidden-column widths. G3: exactly one logical raw scan (two
+physical data-node leaf RPCs in the distributed fixture), all required input
 rows examined (no intermediate 100/final-limit cap), zero native aggregate leaves
 when a residual remains, and aggregate input count equals filter TRUE count.
 K(T12) reports filtered rows/s and copied bytes; G1/G2 apply.
+
+**Implemented protocol:** P(T12) has 16 variants at 1,024/16,384 input rows:
+0/1/50/100% predicate thresholds × raw/scalar aggregate × one/two hidden predicate
+fields. Every query scans complete input, without LIMIT. The fixed schedule is
+100 timed/5 warmups and 20 timed/3 warmups, one worker, 256-MiB query budget,
+five fresh 4-CPU/8-GiB Docker repetitions and CPU/heap profiles. Actual TRUE counts
+are recorded because partial 100-row cycles round the nominal percentages.
+K(T12), `BenchmarkFilterT12`, measures the complete public one-batch lifecycle at
+1/1,024/65,536 rows, four thresholds and dense/selected-null inputs: 24 variants,
+five one-second samples. It reports examined and passing throughput, ns/examined
+row, output-copy bytes and charged selection/state bytes. It makes no speedup
+claim against unsupported old SQL. Output-copy bytes are structurally zero because
+the filter borrows columns; unit tests and K's pre-timing identity checks prove
+that property. The RPC counter is a consistency invariant, not measured copy
+telemetry, and excludes charged boundary decoding scratch. Large-input 100k/1m
+resource probes use the same owning scalar aggregate query; native admission
+failures remain explicit blockers for successful large-input measurements.
+The 16-MiB readiness failure is recorded separately.
+The initial 32,768-row full-output smoke exceeds cumulative parent admission
+during final response encoding. This failure is retained; successful sizes are
+fixed before timing without changing native policy.
 
 **Checks/readiness:** E(T12), P(T12), K(T12); focused `./pkg/query/ql`,
 `./pkg/bydbql`, `./banyand/liaison/grpc`. Blocked by T07/T10. Float criteria never
 become unsupported tag-only protobuf criteria.
 
+**Implementation:** see [T12 verification](t12-verification.md) and the
+[language guide](../../../interacting/bydbql.md#510-field-and-expression-filters).
+The generated QL-only suite adds 48 specs with independent expected values and
+passes all 340 selected specs on both topologies, including unchanged legacy
+routing across groups with incompatible unused column types. Required T12 work counters,
+hidden columns, resource cleanup, bind reuse and bypass are checked. Safe native
+tag/time pruning never replaces a residual. T14 subsequently adds collection
+membership composition with new residual expressions; MATCH composition remains
+explicitly rejected.
+
 ### T14 — Execute grouped queries with HAVING and membership predicates
+
+**Status: implemented.** The generated suite adds 163 T14 specs and 35 coverage
+obligations; the full suite contains 503 selected specs per real Query RPC topology. The
+owning K(T14) and P(T14) protocols, results, resource probes and retained typed
+indexed-array membership restriction are recorded in [T14 verification](t14-verification.md).
 
 **Performance question:** what does filtering completed groups cost, and do hidden
 or repeated aggregates trigger unnecessary native work or result materialization?
@@ -616,10 +671,18 @@ and separately account for fewer output rows. K(T14) measures filtering group
 batches. G3: repeated SELECT/HAVING calls add zero branches; filter input equals
 completed groups, not raw rows; hidden slots are never serialized. Both membership
 spellings produce the same work; their alias alone is not the performance claim.
-G1/G2 apply; report group-filter CPU, retained state, output bytes and RPC latency.
+G1/G2 apply. K(T14) isolates group-filter execution cost. P(T14) reports inclusive
+process CPU, allocated/reserved state, output rows/bytes and RPC latency; shared-kernel
+profiles cannot isolate HAVING CPU. Per-operator peak retained bytes and physical
+storage reads remain explicitly unavailable. Hidden-call variants omit the two
+visible AVG fields, so their latency comparison also includes narrower output.
+Actual full BydbQL response bytes are measured over the six independently checked
+timed samples after profiling stops. Contextual identifiers and indexed-array
+rejections have generated coverage. A live index-binding check precedes native
+dispatch even on compiled-plan cache hits; native indexed storage is unchanged.
 
 **Checks/readiness:** E(T14), P(T14), K(T14); focused `./pkg/bydbql`,
-`./pkg/query/ql`. Blocked by T08/T10/T12. Grammar compatibility, reference errors
+`./pkg/query/ql`. Prerequisites T08/T10/T12 are implemented. Grammar compatibility, reference errors
 and membership cases are acceptance details of executable grouped queries.
 
 ### T15 — Implement DISTINCT on the complete visible tuple

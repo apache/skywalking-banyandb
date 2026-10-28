@@ -54,6 +54,17 @@ func BindParams(g *Grammar, params []*modelv1.TagValue) error {
 		}
 	}
 	b.expandLists()
+	if g.Select != nil && g.Select.Projection != nil {
+		for _, column := range g.Select.Projection.Columns {
+			expandExpressionLists(column.Expression)
+		}
+	}
+	if g.Select != nil && g.Select.Where != nil {
+		expandExpressionLists(g.Select.Where.Expression)
+	}
+	if g.Select != nil && g.Select.Having != nil {
+		expandExpressionLists(g.Select.Having.Expression)
+	}
 	g.paramsBound = true
 	return nil
 }
@@ -85,13 +96,25 @@ type binder struct {
 // depth-first left-to-right, so the slot order needs no re-sorting.
 func (b *binder) collect(g *Grammar) {
 	if g.Select != nil {
+		if g.Select.Projection != nil {
+			for _, column := range g.Select.Projection.Columns {
+				walkGrammarExpression(column.Expression, b.collectExpression)
+			}
+		}
 		if g.Select.Projection != nil && g.Select.Projection.TopN != nil {
 			topN := g.Select.Projection.TopN
 			b.collectIntSlot(&topN.N, &topN.NParam, math.MaxInt32)
 		}
 		b.collectTime(g.Select.Time)
 		if g.Select.Where != nil {
-			b.collectOrExpr(g.Select.Where.Expr)
+			if g.Select.Where.Expression != nil {
+				walkGrammarExpression(g.Select.Where.Expression, b.collectExpression)
+			} else {
+				b.collectOrExpr(g.Select.Where.Expr)
+			}
+		}
+		if g.Select.Having != nil {
+			walkGrammarExpression(g.Select.Having.Expression, b.collectExpression)
 		}
 		if g.Select.Limit != nil {
 			b.collectIntSlot(&g.Select.Limit.Value, &g.Select.Limit.Param, math.MaxUint32)
@@ -453,4 +476,28 @@ func resolveCountParam(p *modelv1.TagValue, maxValue int64) (int, error) {
 		return 0, err
 	}
 	return int(bound), nil
+}
+
+func (b *binder) collectExpression(expression *GrammarExpression) {
+	if b.countOnly {
+		b.count++
+		return
+	}
+	b.slots = append(b.slots, func(parameter *modelv1.TagValue) error {
+		if expression.ListParam {
+			values, listErr := resolveListParam(parameter)
+			if listErr != nil {
+				return listErr
+			}
+			literal := boundExpressionLiteral(resolvedParam{values: values})
+			expression.Type, expression.Literal, expression.Param = literal.Type, literal.Literal, false
+			return nil
+		}
+		literal, err := resolveExpressionParam(parameter)
+		if err != nil {
+			return err
+		}
+		expression.Type, expression.Literal, expression.Param = literal.Type, literal.Literal, false
+		return nil
+	})
 }

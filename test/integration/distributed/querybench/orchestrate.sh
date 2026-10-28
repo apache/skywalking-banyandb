@@ -59,8 +59,12 @@ if [[ ",${SCENARIOS}," == *",qlb_t05,"* ]]; then
     exit 2
   fi
 fi
-if [[ ( ",${SCENARIOS}," == *",qlb_t07,"* || ",${SCENARIOS}," == *",qlb_t08,"* ) && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
-  echo "T07/T08 require measure and DQB_QUERY_WORKERS=1" >&2
+if [[ ( ",${SCENARIOS}," == *",qlb_t07,"* || ",${SCENARIOS}," == *",qlb_t08,"* || ",${SCENARIOS}," == *",qlb_t10,"* || ",${SCENARIOS}," == *",qlb_t12,"* ) && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
+  echo "T07/T08/T10/T12 require measure and DQB_QUERY_WORKERS=1" >&2
+  exit 2
+fi
+if [[ ",${SCENARIOS}," == *",qlb_t14,"* && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
+  echo "T14 requires measure and DQB_QUERY_WORKERS=1" >&2
   exit 2
 fi
 
@@ -133,11 +137,17 @@ run_variant() {
     for scenario in "${SCEN_ARR[@]}"; do
       local query_iterations="${DQB_QUERY_ITERATIONS:-50}"
       local warmup_iterations="${DQB_WARMUP_ITERATIONS:-3}"
-      if [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" ]]; then
+      if [[ "${scenario}" == "qlb_t12" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          16384) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T12 successful queries require cardinality 1024,16384" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" || "${scenario}" == "qlb_t10" || "${scenario}" == "qlb_t14" ]]; then
         case "${card}" in
           1024) query_iterations=100; warmup_iterations=5 ;;
           32768) query_iterations=20; warmup_iterations=3 ;;
-          *) echo "T07/T08 successful queries require cardinality 1024,32768" >&2; exit 2 ;;
+          *) echo "T07/T08/T10/T14 successful queries require cardinality 1024,32768" >&2; exit 2 ;;
         esac
       fi
       echo "[orchestrate] === engine=${ENGINE} cardinality=${card} mode=${mode} scenario=${scenario} s=${spans_per_trace} dist=${span_dist} sel=${selectivity} k=${trace_id_batch} shard=${shard_num} nodes=${data_nodes} bytes=${span_bytes} ==="
