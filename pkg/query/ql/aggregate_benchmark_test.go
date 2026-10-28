@@ -267,6 +267,8 @@ func aggregateKernelReference(inputs []aggregateKernelInput, functions []Aggrega
 		for index, function := range functions {
 			values[index].null = current.count == 0 && function != AggregateCount
 			switch function {
+			case AggregateCountDistinct:
+				panic("distinct benchmark uses its own oracle")
 			case AggregateCount:
 				values[index].value = float64(current.count)
 			case AggregateSum:

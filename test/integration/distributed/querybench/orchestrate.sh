@@ -28,6 +28,8 @@ set -euo pipefail
 cd /work
 
 REPORT_DIR="${DQB_REPORT_DIR:-/work/.omx/bench-reports/distributed-query}"
+mkdir -p "${REPORT_DIR}"
+exec > >(tee -a "${REPORT_DIR}/run.log") 2>&1
 SHARD_DIR="${REPORT_DIR}/shards"
 PROFILE_DIR="${REPORT_DIR}/profiles"
 # Keep compilation and cluster storage on the mounted workspace as well.
@@ -59,8 +61,12 @@ if [[ ",${SCENARIOS}," == *",qlb_t05,"* ]]; then
     exit 2
   fi
 fi
-if [[ ( ",${SCENARIOS}," == *",qlb_t07,"* || ",${SCENARIOS}," == *",qlb_t08,"* ) && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
-  echo "T07/T08 require measure and DQB_QUERY_WORKERS=1" >&2
+if [[ ( ",${SCENARIOS}," == *",qlb_t07,"* || ",${SCENARIOS}," == *",qlb_t08,"* || ",${SCENARIOS}," == *",qlb_t10,"* || ",${SCENARIOS}," == *",qlb_t12,"* ) && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
+  echo "T07/T08/T10/T12 require measure and DQB_QUERY_WORKERS=1" >&2
+  exit 2
+fi
+if [[ ",${SCENARIOS}," == *",qlb_t14,"* && ( "${ENGINE}" != "measure" || "${DQB_QUERY_WORKERS:-4}" != "1" ) ]]; then
+  echo "T14 requires measure and DQB_QUERY_WORKERS=1" >&2
   exit 2
 fi
 
@@ -82,8 +88,17 @@ mkdir -p "${SHARD_DIR}"
 rm -f "${SHARD_DIR}"/*.json
 rm -rf "${PROFILE_DIR}"
 
-echo "[orchestrate] building test binary..."
-go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
+if [[ -n "${DQB_TEST_BINARY:-}" ]]; then
+  BINARY="${DQB_TEST_BINARY}"
+  if [[ ! -f "${BINARY}" || ! -x "${BINARY}" ]]; then
+    echo "DQB_TEST_BINARY must name an executable test binary" >&2
+    exit 2
+  fi
+  echo "[orchestrate] reusing test binary ${BINARY}"
+else
+  echo "[orchestrate] building test binary..."
+  go test -tags=querymetrics -c -o "${BINARY}" ./test/integration/distributed/querybench
+fi
 
 # DQB_SOAK=1: run the in-process sustained soak (Instrument 2) instead of the
 # matrix benchmark. The soak test hard-fails unless DQB_IN_CONTAINER=1 (already
@@ -133,11 +148,35 @@ run_variant() {
     for scenario in "${SCEN_ARR[@]}"; do
       local query_iterations="${DQB_QUERY_ITERATIONS:-50}"
       local warmup_iterations="${DQB_WARMUP_ITERATIONS:-3}"
-      if [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" ]]; then
+      if [[ "${scenario}" == "qlb_t12" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          16384) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T12 successful queries require cardinality 1024,16384" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t17" ]]; then
         case "${card}" in
           1024) query_iterations=100; warmup_iterations=5 ;;
           32768) query_iterations=20; warmup_iterations=3 ;;
-          *) echo "T07/T08 successful queries require cardinality 1024,32768" >&2; exit 2 ;;
+          *) echo "T17 successful queries require 1024 or 32768 rows" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t16" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          32768) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T16 successful queries require 1024 or 32768 rows" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t15" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          8192) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T15 successful queries require 1024 or 8192 rows" >&2; exit 2 ;;
+        esac
+      elif [[ "${scenario}" == "qlb_t07" || "${scenario}" == "qlb_t08" || "${scenario}" == "qlb_t10" || "${scenario}" == "qlb_t14" ]]; then
+        case "${card}" in
+          1024) query_iterations=100; warmup_iterations=5 ;;
+          32768) query_iterations=20; warmup_iterations=3 ;;
+          *) echo "T07/T08/T10/T14 successful queries require cardinality 1024,32768" >&2; exit 2 ;;
         esac
       fi
       echo "[orchestrate] === engine=${ENGINE} cardinality=${card} mode=${mode} scenario=${scenario} s=${spans_per_trace} dist=${span_dist} sel=${selectivity} k=${trace_id_batch} shard=${shard_num} nodes=${data_nodes} bytes=${span_bytes} ==="

@@ -25,18 +25,20 @@ import (
 )
 
 type aggregateValue struct {
-	text string
-	raw  []byte
-	i64  int64
-	f64  float64
-	typ  vectorized.ColumnType
-	null bool
+	text      string
+	raw       []byte
+	i64       int64
+	f64       float64
+	typ       vectorized.ColumnType
+	null      bool
+	timestamp bool
 }
 
 type aggregateReader struct {
-	column vectorized.Column
-	def    vectorized.ColumnDef
-	index  int
+	column    vectorized.Column
+	def       vectorized.ColumnDef
+	index     int
+	timestamp bool
 }
 
 func aggregateScalarType(typ vectorized.ColumnType) bool {
