@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package cluster connects the data transfer commands to a cluster through its liaisons: the
+// connection preflight, the group listing and the dry-run Plan call of an export.
 package cluster
 
 import (
@@ -34,7 +36,7 @@ import (
 func FetchGroups(ctx context.Context, conn *grpc.ClientConn) ([]*commonv1.Group, error) {
 	resp, err := databasev1.NewGroupRegistryServiceClient(conn).List(ctx, &databasev1.GroupRegistryServiceListRequest{})
 	if err != nil {
-		return nil, exitcode.Exit(exitcode.ExitCodeFor(err), "list groups: %w", err)
+		return nil, exitcode.Exit(exitcode.For(err), "list groups: %w", err)
 	}
 	return slices.DeleteFunc(resp.GetGroup(), func(g *commonv1.Group) bool {
 		return common.IsInternalGroup(g.GetMetadata().GetName())

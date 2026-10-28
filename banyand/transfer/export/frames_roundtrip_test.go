@@ -98,11 +98,11 @@ func assertRoundTrip(t *testing.T, units []*transferv1.UnitInventory, res *clust
 			t.Fatalf("unit %d (%s) did not survive the round trip", i, units[i].GetSegment().GetUnit().GetSegmentSuffix())
 		}
 	}
-	want := exporter.BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{
+	want := exporter.BuildReport(&cluster.Info{}, &cluster.PlanResult{
 		Frames:        []*transferv1.UnitFrame{{NodeId: roundTripNode, Stage: "warm", Units: units}},
 		AnsweredNodes: []string{roundTripNode},
 	})
-	if rep := exporter.BuildReport(&cluster.ClusterInfo{}, res); !reflect.DeepEqual(rep, want) {
+	if rep := exporter.BuildReport(&cluster.Info{}, res); !reflect.DeepEqual(rep, want) {
 		t.Fatalf("the reassembled report differs from the unsplit one:\n got %+v\nwant %+v", rep, want)
 	}
 }

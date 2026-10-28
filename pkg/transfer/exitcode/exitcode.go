@@ -15,6 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package exitcode defines the process exit codes of data export and import and maps errors to them.
 package exitcode
 
 import (
@@ -57,11 +58,11 @@ func Exit(code int, format string, args ...any) *ExitError {
 	return &ExitError{Code: code, Err: fmt.Errorf(format, args...)}
 }
 
-// ExitCodeFor maps an error to the exit code of its cause: an ExitError keeps its code,
+// For maps an error to the exit code of its cause: an ExitError keeps its code,
 // INVALID_ARGUMENT is a usage error, a refusal the server made before writing anything
 // (permission, authentication, precondition, not found, or UNIMPLEMENTED from a server
 // without data export) is a preflight rejection, and everything else failed at run time.
-func ExitCodeFor(err error) int {
+func For(err error) int {
 	var exitErr *ExitError
 	if errors.As(err, &exitErr) {
 		return exitErr.Code

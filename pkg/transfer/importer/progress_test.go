@@ -79,7 +79,9 @@ func TestImportProgressNilPrintsNothing(t *testing.T) {
 	var ip *importProgress
 	e := progressEntry("g", 0, 1)
 	item := &itemProgress{}
-	ip.itemStarted(&e, item)
-	ip.acked(&e, item, 1)
-	ip.itemDone(&e, item)
+	assert.NotPanics(t, func() {
+		ip.itemStarted(&e, item)
+		ip.acked(&e, item, 1)
+		ip.itemDone(&e, item)
+	})
 }

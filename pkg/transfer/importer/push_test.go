@@ -211,7 +211,7 @@ func TestPushFailsOnAMidStreamErrorWithoutRetrying(t *testing.T) {
 	opts.WriteBatchSize = 1
 	_, err := p.push(t, nil, opts)
 	require.Error(t, err)
-	assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err))
+	assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err))
 	assert.Equal(t, 1, strings.Count(err.Error(), "stream/sw_stream/hot/20261016/shard-0"), "the work item is named once: %v", err)
 	assert.ErrorContains(t, err, "record 2")
 	assert.ErrorContains(t, err, "2 of 3 work item(s) done")
@@ -396,7 +396,7 @@ func TestPushRetriesOnlyAFirstBatchNoNodeTookPartIn(t *testing.T) {
 				return
 			}
 			require.Error(t, err)
-			assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err))
+			assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err))
 			assert.ErrorContains(t, err, status.Convert(c.err).Message())
 			assert.Equal(t, 1, streamInitCount(p.f), "the first batch is not resent")
 			assert.NotContains(t, log.String(), "retrying via")
@@ -437,7 +437,7 @@ func TestPushGivesUpWhenSendRetryTimeoutIsUsedUp(t *testing.T) {
 	opts.SendRetryTimeout = 50 * time.Millisecond
 	_, err := p.push(t, nil, opts)
 	require.Error(t, err)
-	assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err))
+	assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err))
 	assert.ErrorContains(t, err, "server is under memory pressure")
 	p.f.mu.Lock()
 	inits := len(p.f.inits)
@@ -590,7 +590,7 @@ func TestPushReportsAnInterruptionAsTheCause(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, context.Canceled), err)
 	assert.NotContains(t, err.Error(), "end of the import stream")
-	assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err))
+	assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err))
 	assert.Contains(t, log.String(), "work items done")
 	assert.Contains(t, log.String(), "work items not done")
 }

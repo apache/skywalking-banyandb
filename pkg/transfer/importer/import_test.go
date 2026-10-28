@@ -51,7 +51,7 @@ func (r importRun) code() int {
 	if r.err == nil {
 		return 0
 	}
-	return exitcode.ExitCodeFor(r.err)
+	return exitcode.For(r.err)
 }
 
 func runImport(t *testing.T, f *fakeLiaison, li *cluster.Liaison, opts config.Import) importRun {
@@ -331,7 +331,7 @@ func TestRunImportInterruptedVerifyIsARuntimeFailure(t *testing.T) {
 	}
 	res, err := RunImport(ctx, env, opts)
 	require.Error(t, err)
-	assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err), log.String())
+	assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err), log.String())
 	require.NotNil(t, res.Verify, "the push finished before the interrupt")
 	assert.Contains(t, strings.Join(res.Verify.Incomplete, "\n"), "interrupted")
 }

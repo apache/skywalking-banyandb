@@ -46,7 +46,7 @@ func (r ImportRun) ExitCode() int {
 	if r.Err == nil {
 		return 0
 	}
-	return exitcode.ExitCodeFor(r.Err)
+	return exitcode.For(r.Err)
 }
 
 // DefaultImportOptions are the bydbctl defaults of an import of input, read from the option

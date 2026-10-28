@@ -54,7 +54,7 @@ func RunPlan(ctx context.Context, conn *grpc.ClientConn, selectors []*transferv1
 }
 
 // Unsupported adds an upgrade hint to the UNIMPLEMENTED answer of a server without
-// ExportService; the gRPC status stays reachable for exitcode.ExitCodeFor.
+// ExportService; the gRPC status stays reachable for exitcode.For.
 func Unsupported(err error) error {
 	if status.Code(err) == codes.Unimplemented {
 		return fmt.Errorf("the server does not support data export (needs 0.12+): %w", err)

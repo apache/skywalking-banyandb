@@ -586,7 +586,7 @@ type namedImport struct {
 	name string
 }
 
-func (n namedImport) Targets(ctx context.Context, req *transferv1.TargetsRequest) (*transferv1.TargetsResponse, error) {
+func (n namedImport) Targets(_ context.Context, req *transferv1.TargetsRequest) (*transferv1.TargetsResponse, error) {
 	return n.targets(n.name, req)
 }
 
@@ -630,8 +630,8 @@ func (f *fakeLiaison) serveAs(t *testing.T, name string, withImport bool) *clust
 }
 
 // clusterOf is the preflight answer for the fake's data nodes.
-func clusterOf(f *fakeLiaison, addr string) *cluster.ClusterInfo {
-	info := &cluster.ClusterInfo{Liaison: addr}
+func clusterOf(f *fakeLiaison, addr string) *cluster.Info {
+	info := &cluster.Info{Liaison: addr}
 	for _, n := range f.nodes {
 		info.DataNodes = append(info.DataNodes, &databasev1.Node{Metadata: &commonv1.Metadata{Name: n}, Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}})
 	}

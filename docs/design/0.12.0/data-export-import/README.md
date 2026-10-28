@@ -1672,7 +1672,7 @@ Verify assumes no other writes reach the target during the import, does not cove
 | `4` | `--verify` failed |
 | `5` | the re-check found a different data plan and `--abort-on-plan-change` was given |
 
-Errors before step 6 map through the export's `ExitCodeFor`; every error from step 6 on is `3`.
+Errors before step 6 map through `exitcode.For`; every error from step 6 on is `3`.
 
 #### 5.4.10 Known limitations
 

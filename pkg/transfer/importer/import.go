@@ -43,7 +43,7 @@ type Env struct {
 	// Log receives warnings, progress and the verify report (stderr); Out the plan (stdout).
 	Log      io.Writer
 	Out      io.Writer
-	Cluster  *cluster.ClusterInfo
+	Cluster  *cluster.Info
 	Liaisons *cluster.Liaisons
 	// Hook, when set, is called after every acknowledged batch (see PushOptions.Hook).
 	Hook func(event string)
@@ -113,7 +113,7 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	d := decider{liaisons: env.Liaisons.All, cluster: env.Cluster, art: art, opts: &opts, endpoint: env.Cluster.Liaison + " (ROLE_LIAISON)"}
 	first, err := d.decide(ctx, now(), !opts.SchemaOnly)
 	if err != nil {
-		return nil, exitcode.Exit(exitcode.ExitCodeFor(err), "%w", err)
+		return nil, exitcode.Exit(exitcode.For(err), "%w", err)
 	}
 	for _, l := range first.state.Info {
 		fmt.Fprintf(env.Log, "info: %s\n", l)
@@ -251,7 +251,7 @@ type decision struct {
 }
 
 type decider struct {
-	cluster  *cluster.ClusterInfo
+	cluster  *cluster.Info
 	art      *Artifact
 	opts     *config.Import
 	endpoint string

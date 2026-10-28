@@ -167,7 +167,7 @@ func envFor(t *testing.T, opts testOptions, fakes ...*fakeLiaison) Env {
 	}
 	return Env{
 		Log: opts.Log, Out: opts.Out, Terminal: opts.Terminal, Confirm: opts.Confirm, Liaisons: liaisons, Groups: fakes[0].groups,
-		Cluster: &cluster.ClusterInfo{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
+		Cluster: &cluster.Info{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
 	}
 }
 

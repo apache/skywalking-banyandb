@@ -112,7 +112,7 @@ func TestRunPlan_MergesSegmentPiecesAcrossFrames(t *testing.T) {
 	if len(res.Frames) != 2 || !proto.Equal(res.Frames[0], whole.GetUnits()) || !proto.Equal(res.Frames[1], other.GetUnits()) {
 		t.Fatalf("the pieces must merge into the whole segment, got %+v", res.Frames)
 	}
-	rep := BuildReport(&cluster.ClusterInfo{}, res)
+	rep := BuildReport(&cluster.Info{}, res)
 	if len(rep.Rows) != 2 || rep.Rows[0].Segments != 1 || rep.Rows[0].Shards != 3 || len(rep.MultiSource) != 1 {
 		t.Fatalf("a merged segment counts once with no extra sources: %+v %+v", rep.Rows, rep.MultiSource)
 	}
@@ -190,8 +190,8 @@ func TestRunPlan_MergesShardPiecesAcrossFrames(t *testing.T) {
 		!proto.Equal(res.Frames[1], other.GetUnits()) {
 		t.Fatalf("the shard pieces must merge into the whole segment, got %+v", res.Frames)
 	}
-	got := BuildReport(&cluster.ClusterInfo{}, res)
-	want := BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{
+	got := BuildReport(&cluster.Info{}, res)
+	want := BuildReport(&cluster.Info{}, &cluster.PlanResult{
 		Frames: []*transferv1.UnitFrame{
 			{NodeId: node, Stage: "warm", Units: []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Segment{Segment: whole}}}},
 			other.GetUnits(),
@@ -250,7 +250,7 @@ func TestRunPlan_ServerWithoutExportService(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "does not support data export (needs 0.12+)") {
 		t.Fatalf("an older server must get the upgrade hint, got %v", err)
 	}
-	if code := exitcode.ExitCodeFor(err); code != exitcode.ExitPreflight {
+	if code := exitcode.For(err); code != exitcode.ExitPreflight {
 		t.Fatalf("UNIMPLEMENTED is a preflight rejection, got exit %d", code)
 	}
 }

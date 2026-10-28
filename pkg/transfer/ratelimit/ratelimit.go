@@ -15,6 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
+// Package ratelimit paces data transfer streams: the byte rate a process relays and the byte
+// and row rates a data node admits imported rows at.
 package ratelimit
 
 import (

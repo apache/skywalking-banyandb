@@ -227,7 +227,7 @@ func countsManifest(t *testing.T) (*manifest.Manifest, []*nodeJob) {
 		group("sw_idx", commonv1.Catalog_CATALOG_MEASURE), group("sw_rep", commonv1.Catalog_CATALOG_STREAM),
 		group("ui_template", commonv1.Catalog_CATALOG_PROPERTY),
 	}, nil)
-	info := &cluster.ClusterInfo{DataNodes: []*databasev1.Node{
+	info := &cluster.Info{DataNodes: []*databasev1.Node{
 		{Metadata: &commonv1.Metadata{Name: nodeA}, TzName: "Asia/Shanghai"},
 		{Metadata: &commonv1.Metadata{Name: nodeB}, TzName: "UTC"},
 	}}

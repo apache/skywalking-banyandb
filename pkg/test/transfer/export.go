@@ -47,7 +47,7 @@ func (r ExportRun) ExitCode() int {
 	if r.Err == nil {
 		return 0
 	}
-	return exitcode.ExitCodeFor(r.Err)
+	return exitcode.For(r.Err)
 }
 
 // SessionID returns the session id the run announced, or "".

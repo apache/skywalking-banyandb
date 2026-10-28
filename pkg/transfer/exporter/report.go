@@ -91,7 +91,7 @@ func (r *Report) LargestNodeCompressedBytes() (node string, size uint64) {
 
 // BuildReport folds Plan frames into the table, the multi-source list and the NODES gap.
 // Every list is non-nil so the json and yaml renderings print [] rather than null.
-func BuildReport(info *cluster.ClusterInfo, result *cluster.PlanResult) *Report {
+func BuildReport(info *cluster.Info, result *cluster.PlanResult) *Report {
 	rep := &Report{
 		Rows:             []Row{},
 		MultiSource:      []MultiSource{},

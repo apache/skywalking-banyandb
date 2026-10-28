@@ -33,8 +33,8 @@ func TestExitError(t *testing.T) {
 
 func TestExitCodeForKeepsImportCodes(t *testing.T) {
 	for _, code := range []int{ExitVerify, ExitPlanChanged} {
-		if got := ExitCodeFor(Exit(code, "import")); got != code {
-			t.Fatalf("ExitCodeFor kept %d as %d", code, got)
+		if got := For(Exit(code, "import")); got != code {
+			t.Fatalf("For kept %d as %d", code, got)
 		}
 	}
 	if ExitVerify != 4 || ExitPlanChanged != 5 {

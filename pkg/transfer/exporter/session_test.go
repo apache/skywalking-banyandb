@@ -109,16 +109,16 @@ func TestExitCodeFor(t *testing.T) {
 		exitcode.ExitRuntime:   status.Error(codes.Unavailable, "down"),
 	}
 	for want, err := range cases {
-		if got := exitcode.ExitCodeFor(err); got != want {
-			t.Fatalf("exitcode.ExitCodeFor(%v) = %d, want %d", err, got, want)
+		if got := exitcode.For(err); got != want {
+			t.Fatalf("exitcode.For(%v) = %d, want %d", err, got, want)
 		}
 	}
 	for _, code := range []codes.Code{codes.Unauthenticated, codes.FailedPrecondition, codes.NotFound, codes.Unimplemented} {
-		if got := exitcode.ExitCodeFor(status.Error(code, "x")); got != exitcode.ExitPreflight {
-			t.Fatalf("exitcode.ExitCodeFor(%v) = %d, want %d", code, got, exitcode.ExitPreflight)
+		if got := exitcode.For(status.Error(code, "x")); got != exitcode.ExitPreflight {
+			t.Fatalf("exitcode.For(%v) = %d, want %d", code, got, exitcode.ExitPreflight)
 		}
 	}
-	if exitcode.ExitCodeFor(errors.New("plain")) != exitcode.ExitRuntime || exitcode.ExitCodeFor(exitcode.Exit(exitcode.ExitUsage, "u")) != exitcode.ExitUsage {
+	if exitcode.For(errors.New("plain")) != exitcode.ExitRuntime || exitcode.For(exitcode.Exit(exitcode.ExitUsage, "u")) != exitcode.ExitUsage {
 		t.Fatal("a plain error is a runtime failure; an exitcode.ExitError keeps its code")
 	}
 }
@@ -332,7 +332,7 @@ func TestCreateSession_ExhaustedRetriesReportEveryAttempt(t *testing.T) {
 	_, _, err := CreateSession(context.Background(), conn, nil, SessionOptions{})
 	var exitErr *exitcode.ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitRuntime {
-		t.Fatalf("UNAVAILABLE before any frame maps through exitcode.ExitCodeFor, got %v", err)
+		t.Fatalf("UNAVAILABLE before any frame maps through exitcode.For, got %v", err)
 	}
 	for i := 1; i <= createRetries; i++ {
 		if !strings.Contains(err.Error(), fmt.Sprintf("#%d", i)) {

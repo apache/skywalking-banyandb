@@ -37,9 +37,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
-// ClusterInfo is what the connection preflight learned about the source cluster from the
+// Info is what the connection preflight learned about the source cluster from the
 // primary liaison.
-type ClusterInfo struct {
+type Info struct {
 	Liaison    string
 	DataNodes  []*databasev1.Node
 	Standalone bool
@@ -117,7 +117,7 @@ const maxRecvMsgSize = 32 << 20
 // or is not a liaison is a configuration error that stops the preflight, the first such
 // candidate in order winning. At least one candidate must be usable; the cluster information
 // comes from the first, the primary.
-func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*Liaisons, *ClusterInfo, error) {
+func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*Liaisons, *Info, error) {
 	if len(candidates) == 0 {
 		return nil, nil, exitcode.Exit(exitcode.ExitUsage, "no liaison address given")
 	}
@@ -178,7 +178,7 @@ func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*
 		return err
 	}
 	usable := &Liaisons{}
-	var primary *ClusterInfo
+	var primary *Info
 	var errs []error
 	for i, addr := range candidates {
 		<-tasks[i].Done()
@@ -209,7 +209,7 @@ func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*
 // probeResult is the outcome of probing one candidate.
 type probeResult struct {
 	conn *grpc.ClientConn
-	info *ClusterInfo
+	info *Info
 	err  error
 }
 
@@ -222,7 +222,7 @@ func (e *unusableError) Unwrap() error { return e.err }
 
 // probe dials one candidate and describes it. A transport-class failure or an empty registry
 // is an unusableError; a refusal is a final exitcode.ExitError.
-func probe(ctx context.Context, addr string, timeout time.Duration, opts ConnectOptions, dialOpts []grpc.DialOption) (*grpc.ClientConn, *ClusterInfo, error) {
+func probe(ctx context.Context, addr string, timeout time.Duration, opts ConnectOptions, dialOpts []grpc.DialOption) (*grpc.ClientConn, *Info, error) {
 	// ConnWithAuth runs its own health-check deadline and takes no ctx.
 	conn, err := grpchelper.ConnWithAuth(addr, timeout, opts.Username, opts.Password, dialOpts...) //nolint:contextcheck
 	if err != nil {
@@ -264,7 +264,7 @@ func canceled(ctx context.Context) error {
 
 // describe checks the endpoint is a liaison and reads its data-node table. An RPC failure
 // keeps its gRPC status so Preflight can tell a transport loss from a refusal.
-func describe(ctx context.Context, conn *grpc.ClientConn, addr string) (*ClusterInfo, error) {
+func describe(ctx context.Context, conn *grpc.ClientConn, addr string) (*Info, error) {
 	cur, err := databasev1.NewNodeQueryServiceClient(conn).GetCurrentNode(ctx, &databasev1.GetCurrentNodeRequest{})
 	if err != nil {
 		return nil, exitcode.Exit(exitcode.ExitPreflight, "%s: GetCurrentNode: %w", addr, err)
@@ -277,7 +277,7 @@ func describe(ctx context.Context, conn *grpc.ClientConn, addr string) (*Cluster
 	if err != nil {
 		return nil, exitcode.Exit(exitcode.ExitPreflight, "%s: GetClusterState: %w", addr, err)
 	}
-	info := &ClusterInfo{Liaison: addr}
+	info := &Info{Liaison: addr}
 	if tire2 := state.GetRouteTables()["tire2"]; len(tire2.GetRegistered()) > 0 {
 		info.DataNodes = tire2.GetRegistered()
 		return info, nil

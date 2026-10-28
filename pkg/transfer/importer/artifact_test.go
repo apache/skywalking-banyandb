@@ -160,7 +160,7 @@ func TestOpenArtifactRejects(t *testing.T) {
 			_, err := OpenArtifact(context.Background(), dir, tc.checksum)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.contains)
-			assert.Equal(t, exitcode.ExitPreflight, exitcode.ExitCodeFor(err))
+			assert.Equal(t, exitcode.ExitPreflight, exitcode.For(err))
 		})
 	}
 }
@@ -171,7 +171,7 @@ func TestOpenArtifactStopsOnCancel(t *testing.T) {
 	cancel()
 	_, err := OpenArtifact(ctx, dir, true)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, exitcode.ExitRuntime, exitcode.ExitCodeFor(err))
+	assert.Equal(t, exitcode.ExitRuntime, exitcode.For(err))
 }
 
 func TestCtxReaderStopsOnCancel(t *testing.T) {

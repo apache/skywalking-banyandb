@@ -246,7 +246,7 @@ func checkDataFiles(ctx context.Context, dir string, m *manifest.Manifest, verif
 // Manifest paths are slash-separated, so a backslash is rejected on every OS.
 func checkFile(ctx context.Context, dir string, f manifest.File, verifyChecksum bool) error {
 	if err := ctx.Err(); err != nil {
-		return exitcode.Exit(exitcode.ExitCodeFor(err), "artifact %s: %w", dir, err)
+		return exitcode.Exit(exitcode.For(err), "artifact %s: %w", dir, err)
 	}
 	if f.Path == "" || strings.Contains(f.Path, "\\") || !filepath.IsLocal(filepath.FromSlash(f.Path)) {
 		return exitcode.Exit(exitcode.ExitPreflight, "artifact file path %q escapes the artifact", f.Path)
@@ -270,7 +270,7 @@ func checkFile(ctx context.Context, dir string, f manifest.File, verifyChecksum 
 	crc := crc32.NewIEEE()
 	if _, err = io.Copy(crc, ctxReader{ctx: ctx, r: file}); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return exitcode.Exit(exitcode.ExitCodeFor(ctxErr), "artifact %s: %w", dir, ctxErr)
+			return exitcode.Exit(exitcode.For(ctxErr), "artifact %s: %w", dir, ctxErr)
 		}
 		return exitcode.Exit(exitcode.ExitPreflight, "artifact file %s: %v", f.Path, err)
 	}

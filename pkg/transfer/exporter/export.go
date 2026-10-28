@@ -61,7 +61,7 @@ type Env struct {
 	// Confirm asks the operator a yes/no question and reports a yes; nil when nobody can
 	// answer, and then a cluster held by another session refuses the export.
 	Confirm  func(ctx context.Context, question string) bool
-	Cluster  *cluster.ClusterInfo
+	Cluster  *cluster.Info
 	Liaisons *cluster.Liaisons
 	// Groups is the full group list from cluster.FetchGroups; RunExport picks the selected ones.
 	Groups []*commonv1.Group
@@ -135,7 +135,7 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		if schema, err = schemasync.Export(ctx, conn, groups, opts.Output); err != nil {
 			// Leave the output directory empty again, so the same command can run next.
 			_ = os.RemoveAll(filepath.Join(opts.Output, schemasync.Dir))
-			return exitcode.Exit(exitcode.ExitCodeFor(err), "export schema: %w", err)
+			return exitcode.Exit(exitcode.For(err), "export schema: %w", err)
 		}
 		prog.Printf("schema of %d group(s) written to %s", len(groups), filepath.Join(opts.Output, schemasync.Dir))
 	}
@@ -400,7 +400,7 @@ func compressLabel(c transferv1.Compress) string {
 // unit's key degrades to (catalog, group): every node's shards of the group land in one unit,
 // whose stage is the stage of its first source (jobs are in node order). Shards come from the
 // Plan statistics, their totalCount and rowCounts from the exported files.
-func fillManifest(m *manifest.Manifest, info *cluster.ClusterInfo, jobs []*nodeJob) {
+func fillManifest(m *manifest.Manifest, info *cluster.Info, jobs []*nodeJob) {
 	tz := map[string]string{}
 	if info != nil {
 		for _, n := range info.DataNodes {

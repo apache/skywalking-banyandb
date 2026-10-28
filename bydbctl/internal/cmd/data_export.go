@@ -193,7 +193,7 @@ func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export)
 	}
 	result, err := cluster.RunPlan(ctx, primary, opts.Selectors)
 	if err != nil {
-		return exitcode.Exit(exitcode.ExitCodeFor(err), "%w", err)
+		return exitcode.Exit(exitcode.For(err), "%w", err)
 	}
 	report := exporter.BuildReport(info, result)
 	for _, w := range exporter.StageWarnings(groups, result) {

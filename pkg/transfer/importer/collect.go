@@ -58,7 +58,7 @@ var barrierProbeTimeout = 5 * time.Second
 // those groups; a failed Plan leaves them unknown, so overwriting them needs --force); and whether every
 // node has applied the target's current schema revision (a best-effort barrier probe whose
 // laggards become Notes).
-func Collect(ctx context.Context, liaisons []*cluster.Liaison, info *cluster.ClusterInfo, art *Artifact, opts SchemaOptions) (*TargetState, error) {
+func Collect(ctx context.Context, liaisons []*cluster.Liaison, info *cluster.Info, art *Artifact, opts SchemaOptions) (*TargetState, error) {
 	conn := liaisons[0].Conn
 	state := NewTargetState()
 	state.DataNodes = info.DataNodes
@@ -117,7 +117,7 @@ func listResources(ctx context.Context, conn *grpc.ClientConn, state *TargetStat
 				return state.Add(kind, m)
 			})
 			if err != nil {
-				return exitcode.Exit(exitcode.ExitCodeFor(err), "target: %w", err)
+				return exitcode.Exit(exitcode.For(err), "target: %w", err)
 			}
 			return nil
 		})
@@ -245,7 +245,7 @@ func askTargets(ctx context.Context, l *cluster.Liaison, keys []RouteKey) ([]tar
 		}
 		code := status.Code(a.err)
 		if code != codes.InvalidArgument && code != codes.FailedPrecondition && code != codes.NotFound && !slices.Contains(blockerCodes, code) {
-			return nil, exitcode.Exit(exitcode.ExitCodeFor(a.err), "import targets of %s/%s via %s: %w", keys[i].Group, keys[i].Stage, l.Addr, a.err)
+			return nil, exitcode.Exit(exitcode.For(a.err), "import targets of %s/%s via %s: %w", keys[i].Group, keys[i].Stage, l.Addr, a.err)
 		}
 	}
 	return answers, nil

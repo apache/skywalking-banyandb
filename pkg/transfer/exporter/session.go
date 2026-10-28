@@ -251,14 +251,14 @@ retry:
 	return nil, nil, exitcode.Exit(code, "create export session: %w", errors.Join(errs...))
 }
 
-// createExitCode follows exitcode.ExitCodeFor while no attempt got past the first frame, and is
+// createExitCode follows exitcode.For while no attempt got past the first frame, and is
 // exitcode.ExitRuntime afterwards; a data node without data export is a preflight refusal either
 // way, since the liaison rolls the half-created session back.
 func createExitCode(started bool, last error) int {
 	if started && status.Code(last) != codes.Unimplemented {
 		return exitcode.ExitRuntime
 	}
-	return exitcode.ExitCodeFor(last)
+	return exitcode.For(last)
 }
 
 // refusedByOccupant lists the sessions once so the refusal names the occupant(s) with

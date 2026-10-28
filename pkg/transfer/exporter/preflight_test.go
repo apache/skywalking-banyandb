@@ -253,7 +253,7 @@ func TestFetchGroups_ExitCodeFollowsTheStatus(t *testing.T) {
 	}
 	defer conn.Close()
 	_, err = cluster.FetchGroups(context.Background(), conn.Primary())
-	if code := exitcode.ExitCodeFor(err); code != exitcode.ExitRuntime || !strings.Contains(err.Error(), "list groups") {
+	if code := exitcode.For(err); code != exitcode.ExitRuntime || !strings.Contains(err.Error(), "list groups") {
 		t.Fatalf("an UNAVAILABLE registry is a run-time failure (exit 3), got exit %d: %v", code, err)
 	}
 }

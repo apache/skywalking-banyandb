@@ -92,7 +92,7 @@ func newReleaseSessionCmd() *cobra.Command {
 			defer func() { _ = liaisons.Close() }()
 			result, err := exporter.ReleaseSession(ctx, liaisons.Primary(), id)
 			if err != nil {
-				return exitcode.Exit(exitcode.ExitCodeFor(err), "%w", err)
+				return exitcode.Exit(exitcode.For(err), "%w", err)
 			}
 			var failed []string
 			for _, frame := range result.Failed {
@@ -177,7 +177,7 @@ type liaisonConn struct {
 	ctx      context.Context
 	bounded  context.Context
 	liaisons *cluster.Liaisons
-	cluster  *cluster.ClusterInfo
+	cluster  *cluster.Info
 	cancel   context.CancelFunc
 	stop     context.CancelFunc
 }

@@ -306,7 +306,7 @@ func planServiceSpecs() {
 		want := defaultShardSources(frames)
 		gomega.Expect(want).NotTo(gomega.BeEmpty())
 		summary := transfertest.Summary(frames)
-		rep := exporter.BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{
+		rep := exporter.BuildReport(&cluster.Info{}, &cluster.PlanResult{
 			Frames:           transfertest.UnitFrames(frames),
 			AnsweredNodes:    summary.GetAnsweredNodes(),
 			UnreachableNodes: summary.GetUnreachableNodes(),

@@ -44,7 +44,7 @@ func nodes(names ...string) []*databasev1.Node {
 // sampleReport has four registered nodes: a and b answered the dry run, c and d were
 // reported unreachable.
 func sampleReport() *Report {
-	info := &cluster.ClusterInfo{DataNodes: nodes("a", "b", "c", "d")}
+	info := &cluster.Info{DataNodes: nodes("a", "b", "c", "d")}
 	result := &cluster.PlanResult{
 		Frames: unitFrames(
 			unitFrame("a", "", "m", 1_700_000_000_000_000_000, 1_700_086_400_000_000_000, 5),
@@ -87,7 +87,7 @@ func TestBuildReport_NodesComeFromTheLiaisonNotThePreflight(t *testing.T) {
 	// e registered after the preflight and was reported unreachable: it is a gap and joins
 	// the data-node list; d left the registry before the plan and is not counted. b answered
 	// but was also reported unreachable (its frames were dropped), so it is listed once.
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a", "b", "d")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, UnreachableNodes: []string{"b", "e"}})
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a", "b", "d")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, UnreachableNodes: []string{"b", "e"}})
 	if got := rep.MissingNodes; len(got) != 2 || got[0] != "b" || got[1] != "e" {
 		t.Fatalf("missing nodes = %v, want [b e]", got)
 	}
@@ -102,7 +102,7 @@ func TestBuildReport_ShardsAreDistinctPerRow(t *testing.T) {
 	third := unitFrame("a", "", "m", 1, 2, 1)
 	segmentOf(third).Unit.ShardIds = []uint32{1}
 	segmentOf(third).Shards[0].ShardId = 1
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(
 		unitFrame("a", "", "m", 1, 2, 1), second, third,
 	)})
 	if len(rep.Rows) != 1 || rep.Rows[0].Segments != 3 || rep.Rows[0].Shards != 2 || rep.Rows[0].Parts != 3 {
@@ -116,7 +116,7 @@ func TestBuildReport_ShardsAreDistinctPerRow(t *testing.T) {
 func TestBuildReport_SegmentLevelRawBytesOnlyForIndexMode(t *testing.T) {
 	indexMode := unitFrame("a", "", "m", 1, 2, 0)
 	segmentOf(indexMode).SegmentLevel.DocCount = 7
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(
 		unitFrame("a", "", "plain", 1, 2, 1), indexMode,
 	)})
 	if rep.Rows[0].Group != "m" || rep.Rows[0].UncompressedBytes != 310 || rep.Rows[0].EstRows != 7 {
@@ -138,7 +138,7 @@ func propertyFrame(node string) *transferv1.UnitFrame {
 }
 
 func TestBuildReport_PropertyRows(t *testing.T) {
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a", "b")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, Frames: []*transferv1.UnitFrame{
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a", "b")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, Frames: []*transferv1.UnitFrame{
 		propertyFrame("a"), propertyFrame("b"),
 	}})
 	if len(rep.MultiSource) != 0 {
@@ -167,7 +167,7 @@ func TestBuildReport_PropertyRows(t *testing.T) {
 }
 
 func TestBuildReport_AllAnswered(t *testing.T) {
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}})
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}})
 	if len(rep.MissingNodes) != 0 || len(rep.Rows) != 0 {
 		t.Fatalf("an answered node without data is not a gap: %+v", rep)
 	}
@@ -252,7 +252,7 @@ func TestBuildReport_IndexModeSegmentIsNotAMultiSourceUnit(t *testing.T) {
 	}
 	// Two nodes holding the same index-mode segment may be replicas or different shards;
 	// the plan cannot tell, so the segment is never listed.
-	rep := BuildReport(&cluster.ClusterInfo{DataNodes: nodes("a", "b")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, Frames: []*transferv1.UnitFrame{
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a", "b")}, &cluster.PlanResult{AnsweredNodes: []string{"a", "b"}, Frames: []*transferv1.UnitFrame{
 		indexMode("b", 9), indexMode("a", 7),
 	}})
 	if len(rep.MultiSource) != 0 {
@@ -282,7 +282,7 @@ func TestBuildReport_TimeRangeMergesShardsAndSkipsEmptyOnes(t *testing.T) {
 		&transferv1.ShardStat{ShardId: 2}, // no flushed timestamps: must not pull the minimum to 0
 		&transferv1.ShardStat{ShardId: 3, MinTimestamp: 350, MaxTimestamp: 900, TotalCount: 1},
 	)
-	rep := BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(frame)})
+	rep := BuildReport(&cluster.Info{}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(frame)})
 	if row := rep.Rows[0]; row.MinTimestamp != 100 || row.MaxTimestamp != 900 || row.Shards != 4 {
 		t.Fatalf("time range must span every non-empty shard: %+v", row)
 	}
@@ -295,7 +295,7 @@ func TestBuildReport_TimeRangeIsOrderIndependent(t *testing.T) {
 		frame := unitFrame("a", "", "m", 300, 400, 1)
 		seg := segmentOf(frame)
 		seg.Shards = append(seg.Shards, order...)
-		row := BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(frame)}).Rows[0]
+		row := BuildReport(&cluster.Info{}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(frame)}).Rows[0]
 		return row.MinTimestamp, row.MaxTimestamp
 	}
 	noMin := &transferv1.ShardStat{ShardId: 1, MaxTimestamp: 5000, TotalCount: 1}
@@ -309,11 +309,11 @@ func TestBuildReport_TimeRangeIsOrderIndependent(t *testing.T) {
 
 func TestRender_NodesLine(t *testing.T) {
 	for name, tc := range map[string]struct {
-		cluster *cluster.ClusterInfo
+		cluster *cluster.Info
 		want    string
 	}{
-		"standalone":   {cluster: &cluster.ClusterInfo{Standalone: true}, want: "NODES     standalone process [a]\n"},
-		"all answered": {cluster: &cluster.ClusterInfo{}, want: "NODES     1 data node(s) [a], all answered\n"},
+		"standalone":   {cluster: &cluster.Info{Standalone: true}, want: "NODES     standalone process [a]\n"},
+		"all answered": {cluster: &cluster.Info{}, want: "NODES     1 data node(s) [a], all answered\n"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var buf bytes.Buffer
@@ -329,7 +329,7 @@ func TestRender_NodesLine(t *testing.T) {
 
 func TestBuildReport_JSONHasNoNull(t *testing.T) {
 	var buf bytes.Buffer
-	if err := Render(&buf, "json", BuildReport(&cluster.ClusterInfo{}, &cluster.PlanResult{})); err != nil {
+	if err := Render(&buf, "json", BuildReport(&cluster.Info{}, &cluster.PlanResult{})); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(buf.String(), "null") {
