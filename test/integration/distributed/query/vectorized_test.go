@@ -101,12 +101,14 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		dataAddr0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config)
-		dataAddr1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config)
+		// Match the standalone fixture's host-independent allowance for complete
+		// DISTINCT and sorting scans: 4 GiB provides a bounded 128 MiB per query.
+		dataAddr0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
+		dataAddr1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
 		dataNodeAddrs = []string{dataAddr0, dataAddr1}
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
+		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--allowed-bytes", "4GiB")
 		stopFn = func() {
 			closerLiaisonNode()
 			closeDataNode0()

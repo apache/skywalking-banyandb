@@ -153,7 +153,10 @@ The broader liaison race suite fails `TestExportRelay_TwoRelaysShareOneRate`.
 The isolated test also fails on unchanged main `86659118` (one of three runs):
 a relay emits a 98,304-byte piece after its peer finishes, while the test expects
 every piece to remain at most 65,536 bytes. The limiter computes piece size from
-the currently active relay count. Export code/tests are identical on main and
-this branch; no export fix is included. Base evidence is
+the currently active relay count. At initial validation, export code/tests were
+identical on main and this branch. The CI follow-up corrects the test to allow
+the surviving relay's full-burst pieces while retaining the initial shared-size,
+byte/row integrity and combined rate checks; export production code is unchanged.
+Base evidence is
 `/mnt/d/pr4-base-export-control.log`. Focused measure/QL/cache liaison race tests
 pass. This record does not describe the broader liaison suite as passing.

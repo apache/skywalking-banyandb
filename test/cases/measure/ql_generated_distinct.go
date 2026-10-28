@@ -89,8 +89,12 @@ func prepareGeneratedDistinctFixture(base time.Time, readiness []qlgen.Case) {
 		inner.Expect(writeGeneratedQLFixture(writeCtx, SharedContext.Connection, writes)).To(gm.Succeed())
 		for _, c := range readiness {
 			query, expected := renderGeneratedQLCase(base, c)
-			_, queryErr := measuredata.VerifyQL(writeCtx, SharedContext.Connection, query, expected, true)
-			inner.Expect(queryErr).NotTo(gm.HaveOccurred())
+			// Each readiness page gets its own RPC deadline. Sharing the write
+			// deadline makes later pages expire cumulatively under race/coverage.
+			queryCtx, queryCancel := context.WithTimeout(context.Background(), 20*time.Second)
+			_, queryErr := measuredata.VerifyQL(queryCtx, SharedContext.Connection, query, expected, true)
+			queryCancel()
+			inner.Expect(queryErr).NotTo(gm.HaveOccurred(), c.Name)
 		}
 	}, flags.EventuallyTimeout, 100*time.Millisecond).Should(gm.Succeed())
 }

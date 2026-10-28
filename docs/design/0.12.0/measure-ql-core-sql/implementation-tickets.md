@@ -964,13 +964,13 @@ changes accompany this acceptance revision. Spilling and retained-result session
 pagination remain explicitly deferred. There is no new Catalog B feature ticket.
 
 
-### DPO #81 count-distinct composition follow-up
+### Count-distinct composition follow-up
 
 The existing native count-distinct operation now composes through the extended
 QL path with multiple aggregates, aliases, multi-key grouping, HAVING, general
-ORDER BY and final LIMIT/OFFSET. This addresses the four single-measure composition gaps identified in
-[DPO #81](https://github.com/tetrateio/DPO/issues/81) for queries expressed using
-the extended path: multiple aggregates, deterministic tie-breaking, complete
+ORDER BY and final LIMIT/OFFSET. This addresses four single-measure composition
+gaps for queries expressed using the extended path: multiple aggregates,
+deterministic tie-breaking, complete
 aggregation without an implicit 100-group cap, and pagination after ordering.
 Use an alias or the extended source form to select extended scalar/grouped
 semantics; use `ORDER BY count_alias DESC, unique_group_key ASC` for ranked pages.
