@@ -906,7 +906,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 // bus while retaining the native validation-error body expected by direct callers.
 func measureExecutionError(err error) error {
 	if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || errors.Is(err, protector.ErrQueryResourceExhausted) ||
-		errors.Is(err, protector.ErrQueryWindowPressure) || errors.Is(err, protector.ErrQueryTooLarge) ||
+		errors.Is(err, protector.ErrQueryTooLarge) ||
 		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
 	}

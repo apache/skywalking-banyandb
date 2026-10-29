@@ -20,6 +20,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 func TestQueryBudgetSharedOwners(t *testing.T) {
@@ -94,7 +96,7 @@ func TestQueryBudgetAdmitConcurrentHeldReservations(t *testing.T) {
 	}
 }
 
-func TestQueryBudgetWindowShrinksWithAvailableMemory(t *testing.T) {
+func TestQueryBudgetPressureShrinksAllowanceNotAdmission(t *testing.T) {
 	const limit = 256 << 20
 	pm := &budgetProtector{limit: limit, avail: limit}
 	budget := NewQueryBudget(pm)
@@ -103,21 +105,24 @@ func TestQueryBudgetWindowShrinksWithAvailableMemory(t *testing.T) {
 		t.Fatal(initialErr)
 	}
 	release()
-	// Leave only 2 MiB above headroom: 1 MiB overhead plus 256 estimated entries.
+	// Leave only 2 MiB above headroom: the assignment is 2 MiB, 1 MiB of it fixed overhead.
 	pm.avail = limit/10 + (2 << 20)
-	unexpectedRelease, pressureErr := budget.Admit(context.Background(), 1000, 0, 20)
-	if pressureErr == nil {
-		unexpectedRelease()
-		t.Fatal("large query was admitted despite a smaller dynamic window")
+	ctx, largeRelease, largeErr := budget.AdmitContext(context.Background(), 10000, 0, 20)
+	if largeErr != nil {
+		t.Fatalf("a large requested window must be admitted; memory is bounded by charges: %v", largeErr)
 	}
-	if !errors.Is(pressureErr, ErrQueryWindowPressure) {
-		t.Fatalf("expected window-pressure rejection, got %v", pressureErr)
+	defer largeRelease()
+	lease, ok := querypkg.BudgetLeaseFromContext(ctx)
+	if !ok {
+		t.Fatal("missing lease")
 	}
-	smallRelease, smallErr := budget.Admit(context.Background(), 100, 0, 20)
-	if smallErr != nil {
-		t.Fatalf("small query should still fit: %v", smallErr)
+	reservation := lease.(*QueryReservation)
+	if chargeErr := reservation.Charge(2 << 20); !errors.Is(chargeErr, ErrQueryResourceExhausted) {
+		t.Fatalf("retained data beyond the shrunken allowance must be rejected, got %v", chargeErr)
 	}
-	smallRelease()
+	if chargeErr := reservation.Charge(512 << 10); chargeErr != nil {
+		t.Fatalf("data within the allowance must be accepted: %v", chargeErr)
+	}
 }
 
 func TestQueryReservationDoubleReleaseAndChargeOverflow(t *testing.T) {

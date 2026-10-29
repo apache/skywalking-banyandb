@@ -55,6 +55,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Stop rejecting stream, trace and property queries whose limit + offset exceeds 1792 when no memory limit is configured. Admission estimated 4 KiB per requested row before reading data, so OAP's default LIMIT 10000 failed with RESOURCE_EXHAUSTED even on tiny datasets; memory is still bounded by the 100,000-row window ceiling, the preallocation caps and the charges for data actually read.
 - Keep native index compaction progressing when persistence replaces unchanged in-memory segments with file-backed readers.
 - Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
 - Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.

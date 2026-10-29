@@ -74,6 +74,7 @@ var traceEntries = []any{
 	g.Entry("filter by state and duration range and ids order by timestamp desc",
 		helpers.Args{Input: "state_duration_range_and_ids_order_timestamp_desc", Duration: 1 * time.Hour}),
 	g.Entry("filter by endpoint", helpers.Args{Input: "eq_endpoint_order_duration_asc", Duration: 1 * time.Hour}),
+	g.Entry("large limit on small data", helpers.Args{Input: "all_limit_10000", Want: "all", Duration: 1 * time.Hour}),
 	g.Entry("order by timestamp limit 2", helpers.Args{Input: "order_timestamp_desc_limit", Duration: 1 * time.Hour}),
 	g.Entry("filter by trace id and service unknown", helpers.Args{Input: "eq_trace_id_and_service_unknown", Duration: 1 * time.Hour, WantEmpty: true}),
 	g.Entry("filter by query", helpers.Args{Input: "having_query_tag", Duration: 1 * time.Hour}),
