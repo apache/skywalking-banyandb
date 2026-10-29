@@ -27,6 +27,7 @@ func wrapAggregateQuery(ctx context.Context, source vectorized.PullOperator, pla
 	ctx = vectorized.WithQueryMemoryTracker(ctx, 256<<20)
 	input := *plan
 	input.Aggregate = nil
+	input.Expressions = nil
 	input.Having = nil
 	input.Limit = nil
 	input.Offset = 0

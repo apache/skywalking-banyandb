@@ -405,3 +405,17 @@ func TestCodec_Encode_UnsupportedRole(t *testing.T) {
 		t.Fatalf("got %v, want ErrUnsupportedColumnRole", err)
 	}
 }
+
+func TestCodecsRejectDecimalTransport(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleField, Name: "total", Type: vectorized.ColumnTypeDecimal, Scale: 10}})
+	batch := vectorized.NewRecordBatch(schema, 1)
+	codec := testCodec
+	codec.ColumnarWireVersion = 4
+	for name, encode := range map[string]func(*vectorized.RecordBatch) ([]byte, error){"row": codec.Encode, "columnar": codec.EncodeColumnar} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := encode(batch); !errors.Is(err, ErrUnsupportedColumnType) {
+				t.Fatalf("got %v, want ErrUnsupportedColumnType", err)
+			}
+		})
+	}
+}

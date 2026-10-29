@@ -165,7 +165,7 @@ func (ms *measureService) executeNativeAggregate(ctx context.Context, request *m
 		outputs[index] = ql.Slot{ID: ql.SlotID(index), Source: output.Column, Output: output.Column, Nullable: true, Timestamp: output.Timestamp}
 	}
 	response, collectErr := collectPlannedMeasure(ctx, operator, statuses, &ql.RawPlan{
-		Slots: outputs, Having: plan.Having, Distinct: plan.Distinct, Limit: plan.Limit, Offset: plan.Offset,
+		Slots: outputs, Having: plan.Having, Expressions: plan.Expressions, Distinct: plan.Distinct, Sort: plan.Sort, Limit: plan.Limit, Offset: plan.Offset,
 	})
 	tracker.Release(bytes)
 	if collectErr != nil {

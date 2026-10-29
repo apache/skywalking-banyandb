@@ -50,6 +50,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -399,7 +400,7 @@ func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.To
 	if err != nil {
 		return nil, err
 	}
-	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && topic == apidata.TopicInternalMeasureQuery {
+	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && apidata.IsInternalMeasureQueryTopic(topic) {
 		// Native measure streams use a dedicated64KiB static window. Reserve
 		// every pending stream before opening any of them.
 		capBytes, reserveErr := scope.ReserveFanout(len(names), nativeQueryReceiveWindow, maxReceiveMessageSize)
@@ -785,12 +786,14 @@ func guardedNativeReceiveError(err error) error {
 	if err == nil || status.Code(err) != codes.Unknown {
 		return err
 	}
-	sentinel := vectorized.ErrMemoryBudgetExceeded.Error()
 	message := err.Error()
-	canonical := message == sentinel || strings.HasPrefix(message, sentinel+":") ||
-		strings.Contains(message, ": "+sentinel+":") || strings.HasSuffix(message, ": "+sentinel)
-	if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || canonical {
-		return status.Error(codes.ResourceExhausted, message)
+	for _, limitErr := range []error{vectorized.ErrMemoryBudgetExceeded, native.ErrQueryLimit} {
+		sentinel := limitErr.Error()
+		canonical := message == sentinel || strings.HasPrefix(message, sentinel+":") ||
+			strings.Contains(message, ": "+sentinel+":") || strings.HasSuffix(message, ": "+sentinel)
+		if errors.Is(err, limitErr) || canonical {
+			return status.Error(codes.ResourceExhausted, message)
+		}
 	}
 	return err
 }

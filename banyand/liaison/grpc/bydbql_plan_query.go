@@ -27,12 +27,13 @@ import (
 
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 )
 
 func planQueryStatus(err error) error {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
-		errors.Is(err, protector.ErrQueryTooLarge) || errors.Is(err, protector.ErrQueryResourceExhausted) {
+		errors.Is(err, protector.ErrQueryTooLarge) || errors.Is(err, protector.ErrQueryResourceExhausted) || errors.Is(err, native.ErrQueryLimit) {
 		return queryStatus(err)
 	}
 	if errors.Is(err, bydbql.ErrInvalidMeasureQuery) {

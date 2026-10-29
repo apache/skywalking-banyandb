@@ -143,6 +143,10 @@ func FixtureWrites(base time.Time) []*measurev1.WriteRequest {
 // FixtureDigest identifies the exact schema and values used by generated expectations.
 func FixtureDigest() string {
 	data, err := json.Marshal(struct {
+		PatternSchemas      []*databasev1.Measure
+		PatternRows         []patternRow
+		PatternRules        []*databasev1.IndexRule
+		PatternBindings     []*databasev1.IndexRuleBinding
 		ParentChildSchemas  []*databasev1.Measure
 		ParentChildRows     [][]parentChildRow
 		ParentChildRules    [][]*databasev1.IndexRule
@@ -182,6 +186,7 @@ func FixtureDigest() string {
 		T14Indexes          []*databasev1.IndexRule
 		T14ReviewBindings   []*databasev1.IndexRuleBinding
 	}{
+		PatternSchemas: patternSchemas(), PatternRows: patternRows(), PatternRules: patternAllRules(), PatternBindings: patternBindings(),
 		ParentChildSchemas:  []*databasev1.Measure{ParentChildFixtureSchema(ParentChildFixtureName), ParentChildFixtureSchema(ParentChildPageFixtureName)},
 		ParentChildRows:     [][]parentChildRow{parentChildRows(ParentChildFixtureName), parentChildRows(ParentChildPageFixtureName)},
 		ParentChildRules:    [][]*databasev1.IndexRule{ParentChildIndexRules(ParentChildFixtureName), ParentChildIndexRules(ParentChildPageFixtureName)},

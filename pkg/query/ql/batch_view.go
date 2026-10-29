@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -48,7 +49,8 @@ func RetainBatchView(ctx context.Context, batch *vectorized.RecordBatch, indices
 			if !vectorized.ConstSupported(col.Type()) {
 				return nil, fmt.Errorf("unsupported constant type %v", col.Type())
 			}
-		case *vectorized.TypedColumn[int64], *vectorized.TypedColumn[float64], *vectorized.TypedColumn[string], *vectorized.TypedColumn[[]byte],
+		case *vectorized.TypedColumn[decimal.Int128], *vectorized.TypedColumn[int64], *vectorized.TypedColumn[float64],
+			*vectorized.TypedColumn[string], *vectorized.TypedColumn[[]byte],
 			*vectorized.TypedColumn[[]int64], *vectorized.TypedColumn[[]string], *vectorized.TypedColumn[*modelv1.TagValue], *vectorized.TypedColumn[*modelv1.FieldValue]:
 		default:
 			return nil, fmt.Errorf("unsupported native batch column %T", column)
@@ -127,11 +129,13 @@ func copyViewColumn(column vectorized.Column) (vectorized.Column, error) {
 			return vectorized.NewConstString(strings.Clone(constant.Str()), constant.Len()), nil
 		case vectorized.ColumnTypeBytes:
 			return vectorized.NewConstBytes(bytes.Clone(constant.Bytes()), constant.Len()), nil
-		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray, vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue:
+		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray, vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue, vectorized.ColumnTypeDecimal:
 			return nil, fmt.Errorf("unsupported constant type %v", constant.Type())
 		}
 	}
 	switch col := column.(type) {
+	case *vectorized.TypedColumn[decimal.Int128]:
+		return copyTypedView(col, func(v decimal.Int128) decimal.Int128 { return v }), nil
 	case *vectorized.TypedColumn[int64]:
 		return copyTypedView(col, func(v int64) int64 { return v }), nil
 	case *vectorized.TypedColumn[float64]:

@@ -43,22 +43,24 @@ var ErrInvalidMeasureQuery = errors.New("invalid measure query")
 // MeasureTemplate contains immutable, schema-resolved measure planning metadata.
 // Each Bind creates independent requests and operators; no parameter or clock value is retained.
 type MeasureTemplate struct {
-	statement      *PreparedStatement
-	request        *measurev1.QueryRequest
-	predicate      *measurePredicate
-	legacyTags     map[string]*tagSpecWithFamily
-	aggregate      *ql.AggregatePlan
-	filter         *measureExpression
-	having         *measureExpression
-	havingOutputs  []ql.Slot
-	filterTags     map[measureColumnKey]bool
-	nativeEntities []vectorized.ColumnDef
-	slots          []ql.Slot
-	expressions    []measureExpressionOutput
-	groups         []measureExpressionOutput
-	ordering       []measureSortKey
-	sortVisible    int
-	extended       bool
+	statement       *PreparedStatement
+	request         *measurev1.QueryRequest
+	predicate       *measurePredicate
+	legacyTags      map[string]*tagSpecWithFamily
+	aggregate       *ql.AggregatePlan
+	filter          *measureExpression
+	having          *measureExpression
+	havingOutputs   []ql.Slot
+	filterTags      map[measureColumnKey]bool
+	patterns        []measurePattern
+	nativeEntities  []vectorized.ColumnDef
+	slots           []ql.Slot
+	expressions     []measureExpressionOutput
+	groups          []measureExpressionOutput
+	aggregateInputs []measureAggregateInput
+	ordering        []measureSortKey
+	sortVisible     int
+	extended        bool
 }
 
 // MeasureExecution is one fresh binding of a measure template.
@@ -178,10 +180,10 @@ func (m *MeasureTemplate) compileTyped(schemas map[string]*databasev1.Measure) e
 	switch {
 	case stmt.Having != nil || stmt.GroupBy != nil:
 		err = m.compileAggregate(columns)
-	case hasMeasureExpressions(stmt.Projection):
-		err = m.compileExpressions(columns)
 	case measureAggregateCount(stmt) > 0:
 		err = m.compileAggregate(columns)
+	case hasMeasureExpressions(stmt.Projection):
+		err = m.compileExpressions(columns)
 	default:
 		err = m.compileRaw(columns)
 	}
@@ -287,6 +289,7 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	if err != nil {
 		return nil, invalidMeasure(err)
 	}
+
 	if stmt.Limit != nil {
 		limit := uint32(run.resolveCount(stmt.Limit.Value, stmt.Limit.Param, stmt.Limit.ParamIndex))
 		plan.Limit = &limit
@@ -320,10 +323,11 @@ func (m *MeasureTemplate) Bind(bound *BoundQuery, now time.Time) (*MeasureExecut
 	request.Offset = 0
 	request.Limit = math.MaxUint32
 	plan.NativeAggregate = m.bindNativeAggregate(request, plan)
+
 	if err = m.bindMeasureEntities(request, plan); err != nil {
 		return nil, invalidMeasure(err)
 	}
-	return &MeasureExecution{Request: request, Plan: plan}, nil
+	return m.finishPatternExecution(request, plan)
 }
 
 func requiresMeasurePlan(stmt *GrammarSelectStatement) bool {
@@ -370,7 +374,7 @@ func measureAggregateCount(stmt *GrammarSelectStatement) int {
 	}
 	count := 0
 	for _, column := range stmt.Projection.Columns {
-		if column.Aggregate != nil {
+		if column.Aggregate != nil || column.Expression != nil && havingHasAggregate(column.Expression) {
 			count++
 		}
 	}
@@ -456,15 +460,15 @@ func (m *MeasureTemplate) bindLocalOperators(bound *BoundQuery) (*ql.RawPlan, er
 		Slots: slices.Clone(m.slots), Distinct: m.statement.template.Select.Distinct, Ordered: m.statement.template.Select.OrderBy != nil,
 	}
 
-	plan.Expressions, err = m.bindExpressions(bound)
-	if err != nil {
-		return nil, err
-	}
 	if m.aggregate != nil {
 		plan.Aggregate, err = m.bindAggregate(bound)
 		if err != nil {
 			return nil, err
 		}
+	}
+	plan.Expressions, err = m.bindExpressions(bound, plan.Aggregate)
+	if err != nil {
+		return nil, err
 	}
 	if plan.Distinct {
 		if err = ql.ValidateDistinct(plan); err != nil {

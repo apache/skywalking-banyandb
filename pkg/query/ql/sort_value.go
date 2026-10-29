@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -45,6 +46,11 @@ func (o *sortOperator) bindKey(expr *Expression, key SortKey) (sortBoundKey, err
 	bound := sortBoundKey{}
 	var compare func(sortValue, sortValue) int
 	switch expr.Type {
+	case ExpressionDecimal:
+		bound.read = func(value *expressionVector, row int) sortValue {
+			return sortValue{extra: value.decimalAt(row), null: value.isNull(row)}
+		}
+		compare = func(left, right sortValue) int { return left.extra.(decimal.Int128).Cmp(right.extra.(decimal.Int128)) }
 	case ExpressionInt, ExpressionTimestamp:
 		bound.read = func(value *expressionVector, row int) sortValue {
 			return sortValue{number: uint64(value.intAt(row)), null: value.isNull(row)}
@@ -135,11 +141,13 @@ func sortReadColumn(column vectorized.Column) (func(int) sortValue, error) {
 			value.text = constant.Str()
 		case vectorized.ColumnTypeBytes:
 			value.raw = constant.Bytes()
-		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray, vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue:
+		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeStrArray, vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue, vectorized.ColumnTypeDecimal:
 		}
 		return func(int) sortValue { return value }, nil
 	}
 	switch typed := column.(type) {
+	case *vectorized.TypedColumn[decimal.Int128]:
+		read = func(row int) sortValue { return sortValue{extra: typed.Data()[row]} }
 	case *vectorized.TypedColumn[int64]:
 		read = func(row int) sortValue { return sortValue{number: uint64(typed.Data()[row])} }
 	case *vectorized.TypedColumn[float64]:
@@ -173,6 +181,8 @@ func sortAppendValue(column vectorized.Column, value sortValue) {
 		return
 	}
 	switch typed := column.(type) {
+	case *vectorized.TypedColumn[decimal.Int128]:
+		typed.Append(value.extra.(decimal.Int128))
 	case *vectorized.TypedColumn[int64]:
 		typed.Append(int64(value.number))
 	case *vectorized.TypedColumn[float64]:
@@ -198,6 +208,8 @@ func sortValueBound(value sortValue) (payload, descriptor int64) {
 	}
 	payload = int64(len(value.text)) + int64(len(value.raw))
 	switch extra := value.extra.(type) {
+	case decimal.Int128:
+		descriptor += 24
 	case []int64:
 		payload += int64(len(extra)) * 8
 	case []string:

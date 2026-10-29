@@ -40,6 +40,13 @@ func (m *MeasureTemplate) compileAggregate(columns *measureColumns) error {
 	if err != nil {
 		return err
 	}
+	composed := false
+	for _, column := range projection {
+		composed = composed || column.Expression != nil && havingHasAggregate(column.Expression)
+	}
+	if composed {
+		return m.compileAggregateComposition(columns, inputs, plan, projection)
+	}
 	outputs := make(map[measureColumnKey]bool)
 	for index, column := range projection {
 		var output ql.AggregateOutput
@@ -189,4 +196,60 @@ func sqlAggregateFunction(name string) (ql.AggregateFunction, error) {
 	default:
 		return 0, fmt.Errorf("unsupported SQL aggregation function %q", name)
 	}
+}
+
+// compileAggregateComposition resolves expression leaves against finalized group outputs.
+func (m *MeasureTemplate) compileAggregateComposition(columns *measureColumns, inputs *measureExpressionInputs,
+	plan *ql.AggregatePlan, projection []*GrammarColumn,
+) error {
+	stmt := m.statement.template.Select
+	for index, column := range projection {
+		expression := aggregateColumnExpression(column, columns)
+		if column.Aggregate != nil {
+			expression = &GrammarExpression{Op: "aggregate", Aggregate: column.Aggregate, TypeSpec: column.TypeSpec}
+		}
+		recipe, err := m.compileHavingExpression(expression, columns, plan, inputs.add)
+		if err != nil {
+			return err
+		}
+		definition := vectorized.ColumnDef{Name: fmt.Sprintf("expr_%d", index+1), Role: vectorized.RoleField}
+		computed := true
+		if recipe.completedOutput != nil && column.Expression == nil {
+			output := plan.Outputs[*recipe.completedOutput]
+			if output.IsGroup {
+				definition, _, err = aggregateGroupOutput(m.groups[output.Index], definition.Name)
+				computed = m.groups[output.Index].computed
+			} else if column.Aggregate != nil && column.Aggregate.Argument == nil {
+				_, definition, err = resolveMeasureAggregate(column.Aggregate, column.TypeSpec, columns)
+			}
+			if err != nil {
+				return err
+			}
+			if !output.IsGroup {
+				computed = false
+			}
+		}
+		if column.Alias != nil {
+			definition.Name, err = column.Alias.ToString(true)
+			if err != nil {
+				return err
+			}
+		}
+		m.expressions = append(m.expressions, measureExpressionOutput{expression: recipe, column: definition, computed: computed})
+	}
+	if stmt.Having != nil {
+		if err := m.compileHaving(columns, plan, inputs.add); err != nil {
+			return err
+		}
+	}
+	if !hasNativeExpressionInput(inputs.slots) && len(columns.ordered) > 0 {
+		inputs.add(columns.ordered[0])
+	}
+	m.slots, m.aggregate = inputs.slots, plan
+	m.request = baseMeasureRequest(stmt)
+	m.request.TagProjection, m.request.FieldProjection = rawScanProjection(m.slots)
+	if stmt.Where != nil {
+		return m.compileWhere(columns)
+	}
+	return nil
 }

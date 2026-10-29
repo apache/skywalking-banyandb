@@ -48,6 +48,12 @@ func (m *MeasureTemplate) compileWhere(columns *measureColumns) error {
 	if err != nil {
 		return err
 	}
+	if hasMeasurePattern(expression) {
+		expression, err = m.extractPatterns(expression, columns)
+		if err != nil || expression == nil {
+			return err
+		}
+	}
 	inputs := newMeasureExpressionInputs(m.slots)
 	recipe, err := compileMeasureExpression(expression, columns, inputs)
 	if err != nil {
@@ -252,25 +258,7 @@ func grammarLiteralExpression(value *GrammarValue) *ql.Expression {
 // envelopes while OR unions them, retaining the full predicate for correlation.
 func (m *measureExpression) bindFilter(bound *BoundQuery, now time.Time) (*ql.Expression, []ql.MillisRange, error) {
 	if m.temporal != nil {
-		comparison := *m.temporal
-		value := *comparison.Value
-		if value.Param {
-			parameter := bound.values[value.ParamIndex]
-			text := parameter.timeStr
-			if parameter.expression != nil {
-				switch parameter.expression.Type {
-				case ql.ExpressionString:
-					text = parameter.expression.Literal.String
-				case ql.ExpressionTimestamp:
-					text = time.Unix(0, parameter.expression.Literal.Int64).UTC().Format(time.RFC3339Nano)
-				default:
-					return nil, nil, fmt.Errorf("time comparison requires timestamp strings or timestamp parameters")
-				}
-			}
-			value.Param, value.String = false, &text
-		}
-		comparison.Value = &value
-		ranges, err := bindTimeComparison(&transformRun{}, now, &comparison)
+		ranges, err := bindTimeComparison(&transformRun{bound: bound.values}, now, m.temporal)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -397,6 +385,9 @@ func necessaryFilterCriteria(expression *ql.Expression, tags map[measureColumnKe
 func (m *MeasureTemplate) bindWhere(bound *BoundQuery, now time.Time, request *measurev1.QueryRequest, plan *ql.RawPlan) ([]ql.MillisRange, error) {
 	ranges := allMeasureTime()
 	var err error
+	if err = m.bindPatterns(bound, plan); err != nil {
+		return nil, err
+	}
 	if m.predicate != nil {
 		ranges, request.Criteria, err = m.predicate.bind(&transformRun{bound: bound.values}, now)
 		if err != nil {

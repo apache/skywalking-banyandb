@@ -1,0 +1,20 @@
+Null display is "NULL".
+PostgreSQL 17.6 (Debian 17.6-2.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit
+CREATE TABLE
+INSERT 0 10
+INSERT 0 3
+CREATE VIEW
+scalar|899999999.9999999990
+grouped|a|999999999.9999999990|10
+grouped|b|-100000000.0000000000|2
+grouped|c|NULL|0
+having|a|999999999.9999999990
+numeric_order|b|-100000000.0000000000
+numeric_order|a|999999999.9999999990
+numeric_order|c|NULL
+null_only|NULL
+empty|NULL
+cancellation|0.0000000000
+beyond_int64_coefficient|t
+safe_mixed|-100000000.0000000000|-1000000000000000000
+source_cancellation|0.0000000000

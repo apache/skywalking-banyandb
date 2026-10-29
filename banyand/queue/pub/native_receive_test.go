@@ -46,12 +46,16 @@ import (
 
 type nativeOversizeServer struct {
 	clusterv1.UnimplementedServiceServer
-	bodyBytes int
+	responseError string
+	bodyBytes     int
 }
 
 func (s *nativeOversizeServer) Send(stream grpc.BidiStreamingServer[clusterv1.SendRequest, clusterv1.SendResponse]) error {
 	if _, err := stream.Recv(); err != nil {
 		return err
+	}
+	if s.responseError != "" {
+		return stream.Send(&clusterv1.SendResponse{Error: s.responseError})
 	}
 	size := s.bodyBytes
 	if size == 0 {
@@ -116,6 +120,11 @@ func TestNativeFutureCloseCancelsUnreadAndFailedSendStreams(t *testing.T) {
 func TestGuardedNativeReceiveErrorPreservesStatusesAndUnrelatedErrors(t *testing.T) {
 	for _, message := range []string{
 		"memory budget exceeded", "memory budget exceeded: used 12 + requested 8 > limit 16",
+		"native: query budget exceeded", "filter indexed LIKE pattern: native: query budget exceeded",
+		"wildcard work limit exceeded (used 1, requested 1, limit 1): native: query budget exceeded",
+		"wildcard expanded terms limit exceeded (used 1, requested 1, limit 1): native: query budget exceeded",
+		"wildcard allocation bytes limit exceeded (used 0, requested 8, limit 1): native: query budget exceeded",
+		"wildcard automaton requires 1048584 bytes, limit 1048576: native: query budget exceeded",
 		"vec raw-frame emit: pipeline next: memory budget exceeded: storage envelope",
 	} {
 		require.Equal(t, codes.ResourceExhausted, status.Code(guardedNativeReceiveError(errors.New(message))))
@@ -225,4 +234,33 @@ func TestNativeReceiveDefaultBudgetAllowsFrameLargerThan32KiB(t *testing.T) {
 	require.NoError(t, stream.CloseSend())
 	scope.Close()
 	require.Zero(t, tracker.Used())
+}
+
+func TestPatternUnknownWorkerTopicFailsFuture(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	clusterv1.RegisterServiceServer(server, &nativeOversizeServer{responseError: "invalid topic"})
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	t.Cleanup(func() { server.Stop(); require.NoError(t, <-served) })
+	connection, err := grpc.NewClient(listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, connection.Close()) })
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	stream, err := clusterv1.NewServiceClient(connection).Send(ctx)
+	require.NoError(t, err)
+	require.NoError(t, stream.Send(&clusterv1.SendRequest{Topic: data.TopicInternalMeasurePatternQuery.String()}))
+
+	pending := &future{
+		receiveGuarded: true, log: logger.GetLogger("pattern-worker-test"), clients: []clusterv1.Service_SendClient{stream},
+		cancelFn: []func(){cancel}, topics: []bus.Topic{data.TopicInternalMeasurePatternQuery}, nodes: []string{"old"},
+		groups: []string{"g"}, roles: []string{"data"}, tiers: []string{"hot"}, starts: []time.Time{time.Now()},
+	}
+
+	messages, err := pending.GetAll()
+	require.ErrorContains(t, err, "invalid topic")
+	require.Empty(t, messages)
+	require.Empty(t, pending.clients)
 }

@@ -29,6 +29,24 @@ type expressionCompare func(*expressionVector, *expressionVector, int) bool
 
 func expressionComparison(op string, typ ExpressionType) expressionCompare {
 	switch typ {
+	case ExpressionDecimal:
+		return func(a, b *expressionVector, row int) bool {
+			order := a.decimalAt(row).CmpScaled(a.scale, b.decimalAt(row), b.scale)
+			switch op {
+			case "=":
+				return order == 0
+			case "!=":
+				return order != 0
+			case "<":
+				return order < 0
+			case "<=":
+				return order <= 0
+			case ">":
+				return order > 0
+			default:
+				return order >= 0
+			}
+		}
 	case ExpressionFloat:
 		return expressionFloatComparison(op)
 	case ExpressionInt, ExpressionTimestamp, ExpressionNull:
