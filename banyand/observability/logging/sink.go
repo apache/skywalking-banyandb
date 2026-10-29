@@ -63,7 +63,10 @@ const (
 	// topic still had no subscriber after the bounded retries. The stream
 	// service registers that topic and can start after the first flush.
 	reasonDestinationUnready = "destination_unready"
-	reasonShutdown           = "shutdown_deadline"
+	// reasonLocateFailed counts a batch a liaison dropped because no data node
+	// could be located for it, after the bounded retries.
+	reasonLocateFailed = "locate_failed"
+	reasonShutdown     = "shutdown_deadline"
 )
 
 // maxBufferBytes bounds what the buffer holds, queued and in flight. It is a
@@ -355,6 +358,8 @@ func lossReason(err error) string {
 		return reasonSchemaIncompatible
 	case errors.Is(err, bus.ErrTopicNotExist):
 		return reasonDestinationUnready
+	case errors.Is(err, errLocateFailed):
+		return reasonLocateFailed
 	default:
 		return reasonPublishFailed
 	}

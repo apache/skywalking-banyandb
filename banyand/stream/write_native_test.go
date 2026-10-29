@@ -26,7 +26,11 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -78,5 +82,43 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	w.Rev(context.Background(), malformed)
 	if n := sink.count(); n != 1 {
 		t.Fatalf("an ordinary refused write was stored %d times, want 1", n)
+	}
+}
+
+// TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage covers a log event a
+// liaison sent: it arrives over the cluster server without the mark its
+// context carried on the liaison. What the callback logs about it must still
+// reach the console and not native storage; the same refusal for an event of
+// another group is stored as usual.
+func TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage(t *testing.T) {
+	printed := len(console.String())
+	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
+	require.NoError(t, logger.Init(logger.Logging{
+		Env: "prod", Level: "warn",
+		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
+	}))
+	sink := &nativeLines{}
+	defer logger.AttachNativeSink(sink)()
+
+	w := &writeCallback{l: logger.GetLogger("stream")}
+	// A timestamp before the epoch is refused before the callback reads any
+	// schema, so the callback logs "cannot handle write event".
+	refused := func(group string) bus.Message {
+		return bus.NewMessage(1, []any{&streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
+			Metadata: &commonv1.Metadata{Group: group, Name: "log"},
+			Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(time.Unix(-1, 0)), TagFamilies: []*modelv1.TagFamilyForWrite{}},
+		}}})
+	}
+
+	w.Rev(context.Background(), refused(logger.NativeLogGroup))
+	require.Eventually(t, func() bool { return strings.Contains(console.String()[printed:], "cannot handle write event") },
+		5*time.Second, 10*time.Millisecond, "the refused log event was not reported on the console")
+	if n := sink.count(); n != 0 {
+		t.Fatalf("the refusal of a received log event was stored natively %d times", n)
+	}
+
+	w.Rev(context.Background(), refused("sw_metric"))
+	if n := sink.count(); n != 1 {
+		t.Fatalf("the refusal of an ordinary event was stored %d times, want 1", n)
 	}
 }

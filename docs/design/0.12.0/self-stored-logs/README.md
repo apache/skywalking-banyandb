@@ -1,6 +1,6 @@
 # Self-Stored Logs
 
-Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **design**.
+Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **implemented** and under review.
 
 BanyanDB self-stores its metrics into the `_monitoring` group but has no equivalent for its own
 logs: `pkg/logger` writes to a single `io.Writer` fixed at `logger.Init` time, so logs leave the
@@ -256,7 +256,7 @@ The queue package tests the guarantees through the `BufferedPublisher` interface
 
 ### 3.6 Phase 2: the liaison route
 
-Status: **design**. The liaison stores its own logs. It has no storage engine, so it sends them to a data node.
+Status: **implemented**, under review. The liaison stores its own logs. It has no storage engine, so it sends them to a data node.
 
 It follows native metrics in what it selects and section 3.3 in how it sends. A liaison's native metrics locate shard `0` of their group, then publish through the liaison tier to a liaison's write queue, which writes part files and survives a data node outage on disk. Native logs locate shard `0` of `_monitoring_log` among the data nodes and publish to that node over the tier-2 client. No liaison write queue, no part files, no disk: memory only, as section 3.2 requires.
 
@@ -274,12 +274,12 @@ Logger -> filter/encode -> BufferedPublisher.Offer                 (logging, as 
 
 Every liaison sends its logs to the same data node, the owner of shard `0`. A liaison logs much less than a data node, so one destination is enough for this phase.
 
-`_monitoring_log` has `Replicas` `0`, so there is no replica to fail over to. The tier-2 client already moves the destination instead. Its health check evicts an unreachable node every 10s by default (`--data-client-health-check-interval`). Eviction removes the node from the selector, so shard `0` then maps to another data node, and back when the node returns. The liaison follows that without a mechanism of its own:
+`_monitoring_log` has `Replicas` `0`, so there is no replica to fail over to. The tier-2 client already moves the destination instead. It removes a node from the selector when the node stops answering: at once when the node closes its connections or fails the writability probe the publisher runs before it sends, and otherwise at its health check, every 10s by default (`--data-client-health-check-interval`). Shard `0` then maps to another data node, and back when the node returns. The liaison follows that without a mechanism of its own:
 
 ```text
-owner of shard 0 stops -> publish fails: breaker open, no client for the node
+owner of shard 0 stops -> the batch is not sent: not writable, breaker open, no client for the node
   -> retryable: the batch stays at the head of the buffer, retried once per interval
-  -> each attempt locates again -> eviction within 10s -> the next data node stores it
+  -> each attempt locates again -> the node is removed within 10s -> the next data node stores it
 ```
 
 Up to 10 retries at the 1s interval cover the 10s health check, so a node outage costs no logs when the buffer holds them; past the buffer bound the newest events are dropped as `buffer_full`. A data node does not check shard ownership on ingest, and a query through the liaison reads every data node, as the phase-1 placement check shows with rows on five data nodes. So events stored on the next data node stay queryable.
@@ -289,8 +289,9 @@ Up to 10 retries at the 1s interval cover the 10s health check, so a node outage
 | Part | Change |
 |---|---|
 | Queue module | `NewRemoteDelivery(client Client, topic bus.Topic, locate func() (string, error), timeout time.Duration) Delivery`. Each call to `Deliver`, retries included, calls `locate`, puts the node ID on every message, publishes through the client's batch publisher and turns the errors of `Publish` and `Close` into the batch's error, as the local adapter does. The queue module knows no group: the caller's `locate` does. |
-| Logging module | The delivery wrapper of phase 1, with the destination as a parameter: local on standalone and data nodes, remote on a liaison. Schema setup, identity stamping and the counters do not change. `locate` asks the liaison's stream data-node selector, the one its part sync already uses, for shard `0`, replica `0` of `_monitoring_log`. |
-| Liaison setup | `pkg/cmdsetup/liaison.go` creates the logging service with the tier-2 client, the selector and the liaison's memory protector, and marks the role as supporting native logging, so the root command attaches the native sink when a liaison runs. |
+| Logging module | The delivery wrapper of phase 1, with the destination as a parameter: local on standalone and data nodes, remote on a liaison. Schema setup, identity stamping and the counters do not change. `locate` asks for shard `0`, replica `0` of `_monitoring_log`. |
+| Liaison setup | `pkg/cmdsetup/liaison.go` gives the route its own round-robin selector over the data nodes, registered on the tier-2 client for `TopicStreamWrite`, as each liaison topic has one. It selects as the stream part sync does, and a node the publisher removes for this topic leaves only this selector. The setup creates the logging service with the tier-2 client, that selector and the liaison's memory protector, stops it before the clients so the final drain can still send, and marks the role as supporting native logging, so the root command attaches the native sink when a liaison runs. |
+| Tier-2 batch publisher | `Publish` marks the errors it raises before a message is sent with `queue.ErrNotSent`: node not writable, breaker open, no client, the stream cannot open. Their text does not change. `RemoteDelivery` retries a batch only when every message has such an error. |
 | Counters | `locate_failed` joins the closed `reason` set. No other new reason and no new metric. |
 
 #### Failure handling
@@ -298,7 +299,8 @@ Up to 10 retries at the 1s interval cover the 10s health check, so a node outage
 | Situation | Behaviour | Counted as |
 |---|---|---|
 | `locate` fails: no data node registered yet, or the selector does not know the group yet | Both are transient at startup. Retryable: the batch stays at the head of the buffer and is retried once per interval, up to 10 retries, as `destination_unready` is in phase 1 | `locate_failed` after the retries or at shutdown |
-| the batch did not reach the node: breaker open, no client for the node, the stream cannot open, a send fails | Retryable, as above. The next attempt locates again, so it reaches the next data node once the client evicts this one | `publish_failed` after the retries or at shutdown |
+| no message of the batch was sent: the node is not writable, breaker open, no client for the node, the stream cannot open | Retryable, as above. The next attempt locates again, so it reaches the next data node once the client removes this one | `publish_failed` after the retries or at shutdown |
+| a send failed, or only part of the batch was sent | The node may have stored what was sent, so the batch is dropped, never retried | `publish_failed` |
 | the data node answered with an error in `Close`'s map: disk full, invalid request | The node decided, so the batch is dropped, never retried | `publish_failed` |
 | the node did not answer within the publish timeout | The node may have stored the batch, so it is dropped, never retried: a retry could store it twice | `publish_failed` |
 | a remote write is stuck | as a stuck local write: settled at the drain deadline, released if it returns | `shutdown_deadline` |
@@ -322,10 +324,10 @@ The buffer, its bounds, the memory policy of section 5.1, the schema, the entity
 
 | Level | Test |
 |---|---|
-| Queue | `RemoteDelivery` with a mock client: the located node ID is on every message; each attempt locates again, so a retry goes to the node `locate` returns then; a `locate` error and a batch that never reached the node are retryable; a node error in `Close`'s map and a timeout end the batch; success returns nil |
+| Queue | `RemoteDelivery` with a mock client: the located node ID is on every message; each attempt locates again, so a retry goes to the node `locate` returns then; a `locate` error and a batch with no message sent are retryable; a batch with one message sent, a failed send, a node error in `Close`'s map and a timeout end the batch; success returns nil. The tier-2 publisher marks a node with no client and a node that is not writable as not sent, with the error text unchanged |
 | Logging | a liaison counts `locate_failed` after the retries; a remote `Outcome` maps to the reasons above |
 | Recursion | a failed tier-2 batch publish logs nothing that reaches native storage; a data node's log about a received `_monitoring_log` write is not stored |
-| Integration | the distributed suite: a liaison's marker is stored on the owner of shard `0` and is queryable through the liaison. Then that data node stops: a later marker is stored on another data node after the client evicts it, and is queryable; with publish retries disabled, the falsifier, it is lost |
+| Integration | two suites, a liaison and data nodes in one process. One runs the shared cases of phase 1 with the liaison as the producer. The other stores a liaison marker on the owner of shard `0`, stops that data node, and finds the next marker on the other data node through the liaison; with `locate` run only once, the falsifier, it is lost. A node stopped in process closes its connections and is removed at once, so the retries that bridge the health check are covered by the queue tests |
 | E2E | the liaison joins the identity set; its rows are placed on the owner of shard `0`, read from the query trace as the data-node placement check does |
 
 Each new assertion is checked to fail when its change is reverted.
@@ -387,8 +389,8 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | schema | a `log` stream exists whose families, tag order or entity differ from this version's | refuse and count, with one error through normal logging. The schema check keeps running every 10s instead of the sink staying disabled, so an operator can drop and recreate the stream without a restart; waiting alone never clears it | `schema_incompatible` |
 | selection | `locate` errors: no data node registered yet, or the group not yet known to the selector | retried once per tick, up to 10 retries, then dropped; never published to an empty node | `locate_failed` — *phase 2* |
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
-| remote publish | the batch never reached the node: breaker open, no client, the stream or a send failed | retried once per tick, up to 10 retries, each locating again, so it follows the client's eviction to the next data node | `publish_failed` — *phase 2* |
-| remote publish | the node answered with an error, or did not answer in time and may have stored the batch | batch dropped, never re-queued | `publish_failed` — *phase 2* |
+| remote publish | no message of the batch was sent: the node is not writable, breaker open, no client, the stream could not open | retried once per tick, up to 10 retries, each locating again, so it follows the client's removal of the node to the next data node | `publish_failed` — *phase 2* |
+| remote publish | a send failed, the node answered with an error, or it did not answer in time and may have stored the batch | batch dropped, never re-queued | `publish_failed` — *phase 2* |
 | destination | local topic not yet subscribed | keep its events, still charged, at the head of the buffer, and retry them once per tick in batches under the same limits, up to 10 retries each, then drop. Nothing is retained at shutdown, where there is no next tick | `destination_unready` |
 | destination | the `log` stream is dropped at runtime | **known gap**: the stream write callback logs `cannot handle write event` and reports success, so the batch is counted as written. The schema check recreates the stream within 10s. The fix is in the shared write callback, where a wrong status makes the liaison fail over the data node, so it lands in its own PR, tracked in [apache/skywalking#14158](https://github.com/apache/skywalking/issues/14158) | – |
 | read path | a data node has not yet caught up on the schema | its query processor returns stream-not-exist and the distributed planner discards the whole response, blanking the query. **Pre-existing** for any group created while the cluster is running, user groups included — not introduced here. Mitigation is a one-site change in the planner, out of scope for this feature | – |

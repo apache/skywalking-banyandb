@@ -18,10 +18,10 @@
 # The producers' identities and events (TC2), and a data node at the default
 # (TC3b).
 #
-# A group created through the liaison makes every data node log one
-# `initialized` line under the group's module. The rows of that event must
-# come from exactly the five producers, one each, under its own node_id, as a
-# data node. data5 runs with native logging
+# A group created through the liaison makes every data node, and the liaison,
+# log one `initialized` line under the group's module. The rows of that event
+# must come from exactly the five producing data nodes and the liaison, one
+# each, under its own node_id and node_type. data5 runs with native logging
 # off: it logs the same line to its console, and stores nothing.
 #
 #   check-identities.sh <liaison-http-host:port>
@@ -38,7 +38,7 @@ wait_liaison
 # and little else, far below the query limit.
 since=$(now_utc -5)
 module=$(create_marker_group)
-want=$(printf '%s\n' "${producers[@]}" | sort | paste -sd, -)
+want=$(printf '%s\n' "${producers[@]}" "$liaison" | sort | paste -sd, -)
 
 # Polled until every producer's line is in, and then read once more, so a sixth
 # identity arriving late is still seen.

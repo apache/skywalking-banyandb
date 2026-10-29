@@ -297,6 +297,16 @@ func (w *writeCallback) log(ctx context.Context) *logger.Logger {
 	return logger.FetchOrDefault(ctx, "stream", w.l)
 }
 
+// logGroup returns the logger for what a write logs about an event of group.
+// An event of the native log group is a native log write wherever it came
+// from: one a liaison sent arrives without the mark its context carried there.
+func (w *writeCallback) logGroup(ctx context.Context, group string) *logger.Logger {
+	if group == logger.NativeLogGroup {
+		ctx = logger.WithNativeWrite(ctx)
+	}
+	return w.log(ctx)
+}
+
 func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
@@ -334,7 +344,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.log(ctx).Error().Err(handleErr).Msg("cannot handle write event")
+			w.logGroup(ctx, metadata.GetGroup()).Error().Err(handleErr).Msg("cannot handle write event")
 			continue
 		}
 		groups = newGroups
@@ -350,12 +360,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				// The raw elements are stored above; finish index admission even
 				// if the request has been canceled since.
 				if err := index.WriteContext(context.WithoutCancel(ctx), es.docs); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write element index")
+					w.logGroup(ctx, groupName).Error().Err(err).Msg("cannot write element index")
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
 				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write series index")
+					w.logGroup(ctx, groupName).Error().Err(err).Msg("cannot write series index")
 				}
 			}
 		}
