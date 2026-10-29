@@ -21,6 +21,8 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 // ErrInvalidExpression identifies an invalid expression or an expression value error.
@@ -74,10 +76,12 @@ func ResolvePredicate(expression *Expression) (*Expression, error) {
 func resolveExpressionType(expression *Expression) error {
 	switch expression.Op {
 	case "literal":
-		if expression.Type > ExpressionStringArray {
-			return expressionError("unknown literal type")
-		}
+		return resolveExpressionLiteral(expression)
 	case "column":
+		expression.Scale = expression.Source.Scale
+		if expression.Source.Type == vectorized.ColumnTypeDecimal && expression.Scale > 18 {
+			return expressionError("decimal scale must be between 0 and 18")
+		}
 		if expression.Type != ExpressionTimestamp {
 			expression.Type = expressionColumnType(expression.Source)
 		}
@@ -200,18 +204,22 @@ func resolveExpressionComparison(expression *Expression) error {
 	return nil
 }
 
+func resolveExpressionLiteral(expression *Expression) error {
+	if expression.Type > ExpressionDecimal {
+		return expressionError("unknown literal type")
+	}
+	if expression.Type == ExpressionDecimal && expression.Scale > 18 {
+		return expressionError("decimal scale must be between 0 and 18")
+	}
+	return nil
+}
+
 func resolveExpressionConditional(expression *Expression) error {
 	if len(expression.Args) == 0 {
 		return expressionError("%s requires arguments", expression.Op)
 	}
 	if expression.Op == "coalesce" {
-		typ, err := commonExpressionType(expression.Args)
-		if err != nil {
-			return err
-		}
-		expression.Type = typ
-		coerceExpressionArgs(expression.Args, typ)
-		return nil
+		return resolveExpressionCoalesce(expression)
 	}
 	start := 0
 	if expression.Op == "simple_case" {
@@ -245,6 +253,9 @@ func resolveExpressionConditional(expression *Expression) error {
 		if err != nil {
 			return err
 		}
+		if typ == ExpressionDecimal {
+			return expressionError("decimal simple CASE comparisons are unsupported")
+		}
 		if typ == ExpressionIntArray || typ == ExpressionStringArray {
 			return expressionError("simple CASE requires scalar comparisons")
 		}
@@ -259,12 +270,51 @@ func resolveExpressionConditional(expression *Expression) error {
 	if err != nil {
 		return err
 	}
+	if typ == ExpressionDecimal {
+		return expressionError("decimal CASE results are unsupported")
+	}
 	coerceExpressionArgs(values, typ)
 	for index := start; index < len(expression.Args)-1; index += 2 {
 		expression.Args[index+1] = values[(index-start)/2]
 	}
 	expression.Args[len(expression.Args)-1] = values[len(values)-1]
 	expression.Type = typ
+	return nil
+}
+
+func resolveExpressionCoalesce(expression *Expression) error {
+	typ, err := commonExpressionType(expression.Args)
+	if err != nil {
+		return err
+	}
+	expression.Type = typ
+	if typ == ExpressionDecimal {
+		setScale := false
+		for _, arg := range expression.Args {
+			if arg.Type != ExpressionDecimal {
+				continue
+			}
+			if !setScale {
+				expression.Scale, setScale = arg.Scale, true
+			} else if expression.Scale != arg.Scale {
+				return expressionError("COALESCE decimal arguments must have matching scale")
+			}
+		}
+		for _, arg := range expression.Args {
+			if arg.Type == ExpressionNull {
+				arg.Scale = expression.Scale
+				continue
+			}
+			if arg.Type == ExpressionDecimal {
+				continue
+			}
+			if arg.Type != ExpressionInt || arg.Op != "literal" || arg.Literal.Int64 != 0 {
+				return expressionError("COALESCE decimal fallback must be integer zero")
+			}
+			arg.Type, arg.Scale = ExpressionDecimal, expression.Scale
+		}
+	}
+	coerceExpressionArgs(expression.Args, typ)
 	return nil
 }
 
@@ -278,6 +328,10 @@ func commonExpressionType(args []*Expression) (ExpressionType, error) {
 			typ = arg.Type
 			continue
 		}
+		if (typ == ExpressionDecimal && arg.Type == ExpressionInt) || (typ == ExpressionInt && arg.Type == ExpressionDecimal) {
+			typ = ExpressionDecimal
+			continue
+		}
 		if (typ == ExpressionInt && arg.Type == ExpressionFloat) || (typ == ExpressionFloat && arg.Type == ExpressionInt) {
 			typ = ExpressionFloat
 			continue
@@ -289,7 +343,7 @@ func commonExpressionType(args []*Expression) (ExpressionType, error) {
 
 func coerceExpressionArgs(args []*Expression, typ ExpressionType) {
 	for index, arg := range args {
-		if arg.Type == typ {
+		if arg.Type == typ || (typ == ExpressionDecimal && arg.Type == ExpressionInt) {
 			continue
 		}
 		if arg.Type == ExpressionNull && arg.Op == "literal" {

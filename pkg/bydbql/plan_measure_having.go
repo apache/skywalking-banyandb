@@ -84,12 +84,14 @@ func (m *MeasureTemplate) compileHavingExpression(
 		return ql.Expression{}, fmt.Errorf("HAVING column %q must appear in GROUP BY; SELECT aliases are outside HAVING scope", name)
 	}, func(subtree *GrammarExpression) (*measureExpression, bool, error) {
 		if subtree.Aggregate != nil {
-			call, output, err := resolveMeasureAggregate(subtree.Aggregate, subtree.TypeSpec, columns)
+			call, output, err := m.resolveAggregateInput(subtree.Aggregate, subtree.TypeSpec, columns, plan, addInput)
 			if err != nil {
 				return nil, true, err
 			}
 			index := addMeasureAggregateCall(plan, call)
-			addInput(call.Source)
+			if subtree.Aggregate.Argument == nil {
+				addInput(call.Source)
+			}
 			return havingCompletedOutput(plan, output, index, false), true, nil
 		}
 		if havingHasAggregate(subtree) {

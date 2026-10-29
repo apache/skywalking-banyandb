@@ -371,6 +371,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 	for i := range segments {
 		sd, sortedValues, err := segments[i].IndexDB().Search(ctx, series, storage.IndexSearchOpts{
 			Criteria:             mqo.Criteria,
+			PatternRequests:      mqo.PatternRequests,
 			Fields:               mqo.Fields,
 			Order:                mqo.Order,
 			PreloadSize:          preloadSize,
@@ -564,6 +565,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 	var err error
 	opts := storage.IndexSearchOpts{
 		Criteria:             mqo.Criteria,
+		PatternRequests:      mqo.PatternRequests,
 		Fields:               mqo.Fields,
 		IndexModeSubject:     mqo.Name,
 		Order:                mqo.Order,

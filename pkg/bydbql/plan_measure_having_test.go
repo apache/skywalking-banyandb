@@ -150,7 +150,6 @@ func TestMeasureHavingValidatesScopeAndClauseOrderBeforeDispatch(t *testing.T) {
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING missing>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(missing)>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(SUM(v))>3",
-		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v+1)>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v)",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v)='three'",
 		"SELECT host FROM g.m HAVING TRUE",

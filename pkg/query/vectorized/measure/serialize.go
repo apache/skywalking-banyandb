@@ -27,6 +27,7 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -120,6 +121,13 @@ func buildDataPoint(b *vectorized.RecordBatch, schema *vectorized.BatchSchema, r
 			f := &fieldSlab[i]
 			f.Name = schema.Columns[colIdx].Name
 			f.Value = columnValueToFieldValue(b.Columns[colIdx], rowIdx)
+			if typed, ok := b.Columns[colIdx].(*vectorized.TypedColumn[decimal.Int128]); ok && !typed.IsNull(rowIdx) {
+				cell := &strFieldCell{}
+				cell.v.Value = typed.Data()[rowIdx].String(schema.Columns[colIdx].Scale)
+				cell.w.Str = &cell.v
+				cell.fv.Value = &cell.w
+				f.Value = &cell.fv
+			}
 			dp.Fields[i] = f
 		}
 	}

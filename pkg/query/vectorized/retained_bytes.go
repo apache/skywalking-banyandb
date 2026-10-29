@@ -20,6 +20,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 )
 
 // EstimatedRetainedBytes estimates row references, column capacity and payloads
@@ -39,6 +40,8 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			continue
 		}
 		switch column.Type() {
+		case ColumnTypeDecimal:
+			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[decimal.Int128])))
 		case ColumnTypeInt64:
 			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[int64])))
 		case ColumnTypeFloat64:

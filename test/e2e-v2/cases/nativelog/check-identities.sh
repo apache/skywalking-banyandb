@@ -64,8 +64,9 @@ if echo "$marked" | jq -e 'any(.[]; .error)' >/dev/null; then
 fi
 
 # data5 printed the line: without that, its absence from storage proves nothing.
+# Read all output so an early grep exit cannot break docker logs under pipefail.
 disabled_logged=false
-if docker logs "$(container_of data5)" 2>&1 | grep -q "\"module\":\"${module}\""; then
+if docker logs "$(container_of data5)" 2>&1 | grep -F "\"module\":\"${module}\"" >/dev/null; then
 	disabled_logged=true
 fi
 disabled_rows=$(query_log "$(node_eq "$disabled")" | rows | jq -s 'if any(.[]; .error) then "query failed" else length end')

@@ -334,7 +334,7 @@ func (s *server) marshalResponse(
 
 // rawBodyAllowed reports whether a response on the topic may be a raw []byte frame.
 func rawBodyAllowed(topic bus.Topic) bool {
-	return (topic == data.TopicInternalMeasureQuery && data.MeasureWireModeRaw()) ||
+	return (data.IsInternalMeasureQueryTopic(topic) && data.MeasureWireModeRaw()) ||
 		(topic == data.TopicTraceQuery && data.TraceWireModeRaw()) ||
 		(topic == data.TopicStreamQuery && data.StreamWireModeRaw())
 }

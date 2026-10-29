@@ -547,7 +547,7 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	}
 	var payload any = req
 	if batches {
-		payload = &vmeasure.BatchQueryRequest{Request: req}
+		payload = measureBatchRequest(req, rawPlan)
 	}
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), payload))
 	if err != nil {

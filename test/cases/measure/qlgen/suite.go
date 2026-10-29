@@ -39,6 +39,8 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	PatternReadiness             []AggregateFixture            `json:"pattern_readiness"`
+	PatternScenarios             []AggregateScenario           `json:"pattern_scenarios"`
 	ParentChildReadiness         []AggregateFixture            `json:"parent_child_readiness"`
 	ParentChildScenarios         []AggregateScenario           `json:"parent_child_scenarios"`
 	SortingResources             []SortingResource             `json:"sorting_resources"`
@@ -161,6 +163,9 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validatePatterns(s); err != nil {
+		return err
+	}
 	if err := validateParentChild(s); err != nil {
 		return err
 	}
@@ -204,6 +209,12 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, fixture := range s.PatternReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	for _, scenario := range s.PatternScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, fixture := range s.ParentChildReadiness {
 		cases = append(cases, fixture.Cases...)
 	}
