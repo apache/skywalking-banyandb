@@ -135,6 +135,11 @@ func generateQG3Decimal(b *suiteBuilder) ([]AggregateScenario, error) {
 		return nil, err
 	}
 	scenarios = append(scenarios, ordered)
+	membership, err := generateQG3Membership()
+	if err != nil {
+		return nil, err
+	}
+	scenarios = append(scenarios, membership...)
 	b.features["qg3.decimal"] = true
 	return scenarios, nil
 }

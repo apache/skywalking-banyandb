@@ -31,10 +31,20 @@ import (
 
 func TestNativeWildcardAllocationAndWorkBudgets(t *testing.T) {
 	withPatternTermView(t, nil, func(t *testing.T, view *ReadView) {
-		for _, limits := range []WildcardLimits{{MaxWork: 1}, {MaxTerms: 1}, {MaxBytes: 1}} {
-			budget := NewWildcardBudget(limits)
+		for _, tc := range []struct {
+			resource string
+			limits   WildcardLimits
+		}{
+			{"work", WildcardLimits{MaxWork: 1}},
+			{"expanded terms", WildcardLimits{MaxTerms: 1}},
+			{"allocation bytes", WildcardLimits{MaxBytes: 1}},
+		} {
+			budget := NewWildcardBudget(tc.limits)
 			_, err := view.MatchTermsSet(context.Background(), TermSetRequest{Field: "name", Wildcard: [][]byte{[]byte("*")}, PatternBudget: budget, MaxTerms: math.MaxUint64})
 			require.ErrorIs(t, err, ErrQueryLimit)
+			require.ErrorContains(t, err, "wildcard "+tc.resource+" limit exceeded")
+			require.ErrorContains(t, err, "limit 1")
+			require.True(t, strings.HasSuffix(err.Error(), ": "+ErrQueryLimit.Error()), "remote receive mapping requires the canonical sentinel")
 		}
 		budget := NewWildcardBudget(WildcardLimits{MaxWork: 32})
 		_, err := view.MatchTermsSet(context.Background(), TermSetRequest{
@@ -200,9 +210,38 @@ func TestNativeWildcardLongStateBitset(t *testing.T) {
 
 func TestNativeWildcardLongExactAutomatonCeiling(t *testing.T) {
 	withPatternTermView(t, nil, func(t *testing.T, view *ReadView) {
-		_, err := view.MatchTermsSet(context.Background(), TermSetRequest{
-			Field: "name", Wildcard: [][]byte{[]byte(strings.Repeat("x", 65500))}, MaxTerms: math.MaxUint64,
-		})
-		require.ErrorIs(t, err, ErrQueryLimit, "exact lookup still reserves the complete automaton object")
+		for _, length := range []int{65500, 65536} {
+			_, err := view.MatchTermsSet(context.Background(), TermSetRequest{
+				Field: "name", Wildcard: [][]byte{[]byte(strings.Repeat("x", length))}, MaxTerms: math.MaxUint64,
+			})
+			require.ErrorIs(t, err, ErrQueryLimit, "exact lookup still reserves the complete automaton object")
+			require.ErrorContains(t, err, "automaton")
+			require.ErrorContains(t, err, "limit 1048576")
+		}
+	})
+}
+
+func TestNativeWildcardRequestLimitDiagnostics(t *testing.T) {
+	patterns := make([]WildcardPattern, MaxSQLPatterns+1)
+	for index := range patterns {
+		patterns[index] = WildcardPattern{Syntax: WildcardSyntaxSQL, Pattern: "%"}
+	}
+	withPatternTermView(t, nil, func(t *testing.T, view *ReadView) {
+		for _, tc := range []struct {
+			message string
+			request TermSetRequest
+		}{
+			{"SQL wildcard pattern count 17 exceeds limit 16", TermSetRequest{WildcardPatterns: patterns}},
+			{"wildcard request expanded terms exceed limit 1", TermSetRequest{Wildcard: [][]byte{[]byte("*")}, MaxTerms: 1}},
+			{"wildcard candidate count 2 exceeds limit 1", TermSetRequest{Wildcard: [][]byte{[]byte("*")}, MaxTerms: math.MaxUint64, MaxCandidates: 1}},
+		} {
+			t.Run(tc.message, func(t *testing.T) {
+				tc.request.Field = "name"
+				_, err := view.MatchTermsSet(context.Background(), tc.request)
+				require.ErrorIs(t, err, ErrQueryLimit)
+				require.ErrorContains(t, err, tc.message)
+				require.True(t, strings.HasSuffix(err.Error(), ": "+ErrQueryLimit.Error()))
+			})
+		}
 	})
 }

@@ -913,6 +913,14 @@ using `sum(v::numeric / 10000000000)::numeric(38,10)` and the corresponding
 `GROUP BY`, `HAVING`, `ORDER BY`, and separate `sum(...)` and `count(v)` expressions. Decimal
 strings preserve all ten fractional places.
 
+`qg3_membership_generate.go` adds 16 generated `IN`/`NOT IN` scenarios using
+the existing six-row fixture, whose integer sum is 12. They cover integer and
+decimal operand order, a decimal later in the list, scales 0/1/2, aggregate
+operands, NULL list entries and a later matching integer. Each scenario binds
+the full, null-only and empty intervals, then repeats with the plan cache
+bypassed: 48 bindings and 96 QL RPCs per topology. Expected truth values come
+from the worked fixture totals, independently of the production evaluator.
+
 ### Bounded decimal sums
 
 The QG3 cases exercise `SUM(DECIMAL_FROM_SCALED(v::FIELD, 10))` over scaled

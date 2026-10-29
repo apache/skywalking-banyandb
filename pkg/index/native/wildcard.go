@@ -125,11 +125,11 @@ func (b *WildcardBudget) Stats() WildcardStats {
 	return WildcardStats{Work: b.work.Load(), Terms: b.terms.Load(), Bytes: b.bytes.Load()}
 }
 
-func spendWildcardPattern(counter *atomic.Uint64, limit, amount uint64) error {
+func spendWildcardPattern(counter *atomic.Uint64, limit, amount uint64, resource string) error {
 	for {
 		current := counter.Load()
 		if amount > limit-current {
-			return ErrQueryLimit
+			return fmt.Errorf("wildcard %s limit exceeded (used %d, requested %d, limit %d): %w", resource, current, amount, limit, ErrQueryLimit)
 		}
 		if counter.CompareAndSwap(current, current+amount) {
 			return nil
@@ -141,11 +141,11 @@ func (b *WildcardBudget) spendWork(ctx context.Context, amount uint64) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return spendWildcardPattern(&b.work, b.limits.MaxWork, amount)
+	return spendWildcardPattern(&b.work, b.limits.MaxWork, amount, "work")
 }
 
 func (b *WildcardBudget) reserve(ctx context.Context, amount uint64) error {
-	if err := spendWildcardPattern(&b.bytes, b.limits.MaxBytes, amount); err != nil {
+	if err := spendWildcardPattern(&b.bytes, b.limits.MaxBytes, amount, "allocation bytes"); err != nil {
 		return err
 	}
 	return query.ReserveAllocation(ctx, amount)
@@ -157,7 +157,7 @@ func ValidateWildcardPattern(pattern WildcardPattern) error {
 		return fmt.Errorf("wildcard syntax %d: %w", pattern.Syntax, ErrInvalidQuery)
 	}
 	if pattern.Syntax == WildcardSyntaxSQL && len(pattern.Pattern) > MaxSQLPatternBytes {
-		return fmt.Errorf("wildcard pattern exceeds %d bytes: %w", MaxSQLPatternBytes, ErrQueryLimit)
+		return fmt.Errorf("SQL wildcard pattern length %d exceeds %d bytes: %w", len(pattern.Pattern), MaxSQLPatternBytes, ErrQueryLimit)
 	}
 	if len(pattern.Escape) > utf8.UTFMax || !utf8.ValidString(pattern.Pattern) || !utf8.ValidString(pattern.Escape) || utf8.RuneCountInString(pattern.Escape) > 1 {
 		return fmt.Errorf("wildcard pattern and escape require valid UTF-8 and at most one escape scalar: %w", ErrInvalidQuery)
@@ -235,14 +235,14 @@ func (b *WildcardBudget) program(ctx context.Context, pattern WildcardPattern) (
 		return program, nil
 	}
 	if programBytes > wildcardAutomatonBytes {
-		return nil, fmt.Errorf("wildcard program exceeds automaton allowance: %w", ErrQueryLimit)
+		return nil, fmt.Errorf("wildcard program requires %d automaton bytes, limit %d: %w", programBytes, wildcardAutomatonBytes, ErrQueryLimit)
 	}
 	if err := b.spendWork(ctx, uint64(len(pattern.Pattern))+1); err != nil {
 		return nil, err
 	}
 	// Include program, maximum token and literal buffers, and a conservative
 	// bounded map allowance before any of them are allocated.
-	if err := spendWildcardPattern(&b.bytes, b.limits.MaxBytes, programBytes); err != nil {
+	if err := spendWildcardPattern(&b.bytes, b.limits.MaxBytes, programBytes, "allocation bytes"); err != nil {
 		return nil, err
 	}
 	if b.reservePrograms != nil {

@@ -17,6 +17,7 @@ package native
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"unicode/utf8"
 	"unsafe"
@@ -52,7 +53,7 @@ func newWildcardAutomaton(ctx context.Context, budget *WildcardBudget, pattern W
 	initialBytes := wildcardAllocationSize(uint64(unsafe.Sizeof(wildcardAutomaton{})))
 	programBytes := uint64(len(pattern.Pattern))*16 + 512
 	if programBytes > wildcardAutomatonBytes-initialBytes {
-		return nil, ErrQueryLimit
+		return nil, fmt.Errorf("wildcard automaton requires %d bytes, limit %d: %w", programBytes+initialBytes, wildcardAutomatonBytes, ErrQueryLimit)
 	}
 	if err = budget.reserve(ctx, initialBytes); err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func wildcardAllocationSize(size uint64) uint64 { return size + size/4 + 64 }
 func (a *wildcardAutomaton) reserve(size uint64) error {
 	size = wildcardAllocationSize(size)
 	if a.bytes > wildcardAutomatonBytes || size > wildcardAutomatonBytes-a.bytes {
-		return ErrQueryLimit
+		return fmt.Errorf("wildcard automaton byte limit exceeded (used %d, requested %d, limit %d): %w", a.bytes, size, wildcardAutomatonBytes, ErrQueryLimit)
 	}
 	if err := a.budget.reserve(a.ctx, size); err != nil {
 		return err

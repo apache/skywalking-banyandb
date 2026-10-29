@@ -121,6 +121,10 @@ func TestGuardedNativeReceiveErrorPreservesStatusesAndUnrelatedErrors(t *testing
 	for _, message := range []string{
 		"memory budget exceeded", "memory budget exceeded: used 12 + requested 8 > limit 16",
 		"native: query budget exceeded", "filter indexed LIKE pattern: native: query budget exceeded",
+		"wildcard work limit exceeded (used 1, requested 1, limit 1): native: query budget exceeded",
+		"wildcard expanded terms limit exceeded (used 1, requested 1, limit 1): native: query budget exceeded",
+		"wildcard allocation bytes limit exceeded (used 0, requested 8, limit 1): native: query budget exceeded",
+		"wildcard automaton requires 1048584 bytes, limit 1048576: native: query budget exceeded",
 		"vec raw-frame emit: pipeline next: memory budget exceeded: storage envelope",
 	} {
 		require.Equal(t, codes.ResourceExhausted, status.Code(guardedNativeReceiveError(errors.New(message))))

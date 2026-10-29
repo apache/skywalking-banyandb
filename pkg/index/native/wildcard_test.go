@@ -100,7 +100,9 @@ func TestNativeWildcardPatternValidation(t *testing.T) {
 		require.ErrorIs(t, ValidateWildcardPattern(pattern), ErrInvalidQuery)
 	}
 	require.NoError(t, ValidateWildcardPattern(WildcardPattern{Syntax: WildcardSyntaxSQL, Pattern: strings.Repeat("x", MaxSQLPatternBytes)}))
-	require.ErrorIs(t, ValidateWildcardPattern(WildcardPattern{Syntax: WildcardSyntaxSQL, Pattern: strings.Repeat("x", MaxSQLPatternBytes+1)}), ErrQueryLimit)
+	err := ValidateWildcardPattern(WildcardPattern{Syntax: WildcardSyntaxSQL, Pattern: strings.Repeat("x", MaxSQLPatternBytes+1)})
+	require.ErrorIs(t, err, ErrQueryLimit)
+	require.ErrorContains(t, err, "SQL wildcard pattern length 1025 exceeds 1024 bytes")
 	require.NoError(t, ValidateWildcardPattern(WildcardPattern{Syntax: WildcardSyntaxSQL, Pattern: "a☃_b", Escape: "☃"}))
 }
 
@@ -404,6 +406,7 @@ func TestNativeWildcardPatternAutomatonCeiling(t *testing.T) {
 		PatternBudget:    budget,
 	})
 	require.ErrorIs(t, err, ErrQueryLimit)
+	require.ErrorContains(t, err, "wildcard automaton byte limit exceeded")
 	require.Less(t, budget.Stats().Bytes, uint64(2<<20))
 	require.Less(t, budget.Stats().Work, uint64(2_000_000))
 	require.NoError(t, scope.Close())

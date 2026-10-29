@@ -81,3 +81,67 @@ func TestDecimalLiteralProjectionRespectsBudgetAndScale(t *testing.T) {
 	require.NoError(t, operator.Close())
 	require.Zero(t, vectorized.QueryMemoryTracker(ctx, 0).Used())
 }
+
+func TestDecimalMembershipUsesEveryOperandType(t *testing.T) {
+	defs := []vectorized.ColumnDef{
+		{Name: "amount", Role: vectorized.RoleField, Type: vectorized.ColumnTypeDecimal, Scale: 1},
+		{Name: "other", Role: vectorized.RoleField, Type: vectorized.ColumnTypeDecimal, Scale: 2},
+		{Name: "probe", Role: vectorized.RoleField, Type: vectorized.ColumnTypeInt64},
+	}
+	amount := &Expression{Op: "column", Source: defs[0]}
+	other := &Expression{Op: "column", Source: defs[1]}
+	probe := &Expression{Op: "column", Source: defs[2]}
+	for _, test := range []struct {
+		name     string
+		args     []*Expression
+		expected []int64
+		nulls    []int
+	}{
+		{"integer_first", []*Expression{expressionInt(1), amount}, []int64{1, 0, 0, 0}, []int{3}},
+		{"decimal_last", []*Expression{expressionInt(1), expressionInt(2), amount}, []int64{1, 0, 0, 0}, []int{3}},
+		{"integer_column", []*Expression{probe, amount}, []int64{1, 0, 1, 0}, []int{3}},
+		{"decimal_first", []*Expression{amount, expressionInt(1)}, []int64{1, 0, 0, 0}, []int{3}},
+		{"different_scales", []*Expression{amount, other}, []int64{1, 0, 1, 0}, []int{3}},
+		{"null_candidate", []*Expression{expressionInt(1), amount, expressionNullLiteral()}, []int64{1, 0, 0, 0}, []int{1, 2, 3}},
+		{"match_after_decimal", []*Expression{expressionInt(1), amount, expressionInt(1)}, []int64{1, 1, 1, 1}, nil},
+	} {
+		for _, operation := range []string{"in", "not_in"} {
+			t.Run(test.name+"/"+operation, func(t *testing.T) {
+				schema := vectorized.NewBatchSchema(defs)
+				batch := vectorized.NewRecordBatch(schema, 4)
+				for row, coefficient := range []int64{10, 15, -10} {
+					batch.Columns[0].(*vectorized.TypedColumn[decimal.Int128]).Append(decimal.FromInt64(coefficient))
+					batch.Columns[1].(*vectorized.TypedColumn[decimal.Int128]).Append(decimal.FromInt64([]int64{100, 250, -100}[row]))
+					batch.Columns[2].(*vectorized.TypedColumn[int64]).Append([]int64{1, 1, -1}[row])
+				}
+				batch.Columns[0].AppendNull()
+				batch.Columns[1].AppendNull()
+				batch.Columns[2].(*vectorized.TypedColumn[int64]).Append(1)
+				batch.Len = 4
+				source := &rawSource{schema: schema, batches: []*vectorized.RecordBatch{batch}}
+				ctx := vectorized.WithQueryMemoryTracker(t.Context(), 1<<20)
+				expression := expressionBoolProjection(&Expression{Op: operation, Args: test.args})
+				op, err := WrapExpressions(ctx, source, &ExpressionPlan{Outputs: []ExpressionOutput{{
+					Expr: expression, Column: vectorized.ColumnDef{Name: "result", Role: vectorized.RoleField},
+				}}})
+				require.NoError(t, err)
+				t.Cleanup(func() {
+					require.NoError(t, op.Close())
+					require.Zero(t, vectorized.QueryMemoryTracker(ctx, 0).Used())
+				})
+				require.NoError(t, op.Init(ctx))
+				require.NotPanics(t, func() {
+					result, nextErr := op.NextBatch(ctx)
+					require.NoError(t, nextErr)
+					expected := append([]int64(nil), test.expected...)
+					if operation == "not_in" {
+						for row := range expected {
+							expected[row] = 1 - expected[row]
+						}
+					}
+					expressionAssertInts(t, result, expected, test.nulls)
+				})
+			})
+		}
+	}
+}

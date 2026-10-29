@@ -1,6 +1,6 @@
 # Combined measure QL follow-up verification
 
-This delivery combines the three local features on merged main `b54a9fc76`
+The original integration combined the three local features on merged main `b54a9fc76`
 (PR #1438), without importing the historical Catalog B branch again:
 
 | Capability | Original commit | Integrated commit |
@@ -8,6 +8,11 @@ This delivery combines the three local features on merged main `b54a9fc76`
 | Indexed LIKE/ILIKE and shared native wildcard execution | `145962b6b` | `145962b6b` |
 | Scalar aggregate composition and computed aggregate inputs | `532e5c4aa` | `fe086e543` |
 | Exact bounded decimal sums | `1a0050540` | `790d37f25` |
+
+The commits, binary hashes and test counts below describe that pre-rebase
+integration. They remain unchanged as historical evidence. See
+[review-fixes-verification.md](review-fixes-verification.md) for the rebase onto
+`39d33bc5d`, its verification and the subsequent review fixes.
 
 Decimal aggregation depends on the computed-input machinery. Merge resolution
 preserves both pattern filtering and computed-input restrictions on native

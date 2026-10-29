@@ -544003,6 +544003,777 @@
           "ordered": true
         }
       ]
+    },
+    {
+      "name": "qg3_decimal_membership_integer_first_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_integer_first_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_first_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 0)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_fractional_mismatch_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_fractional_mismatch_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_fractional_mismatch_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_integer_aggregate_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_integer_aggregate_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) NOT IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) NOT IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_integer_aggregate_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(v) NOT IN (0, SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_mixed_list_scales_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_mixed_list_scales_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_mixed_list_scales_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_decimal_first_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_decimal_first_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) NOT IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) NOT IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_decimal_first_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v, 1)) NOT IN (1, 2)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_different_scales_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_different_scales_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) NOT IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) NOT IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_different_scales_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING SUM(DECIMAL_FROM_SCALED(v * 10, 1)) NOT IN (SUM(DECIMAL_FROM_SCALED(v * 100, 2)))\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_null_candidate_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_null_candidate_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_null_candidate_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), NULL)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_match_after_decimal_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "str": {
+                        "value": "1.2"
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {
+            "dataPoints": [
+              {
+                "fields": [
+                  {
+                    "name": "result",
+                    "value": {
+                      "null": 0
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
+    },
+    {
+      "name": "qg3_decimal_membership_match_after_decimal_not_in",
+      "cases": [
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_not_in_binding_0",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:-1}}\"}},{\"str\":{\"value\":\"{{time:6000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 6,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_not_in_binding_1",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:3000}}\"}},{\"str\":{\"value\":\"{{time:4000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_inputs": 1,
+          "aggregate_groups": 1
+        },
+        {
+          "ticket": "T07",
+          "name": "qg3_decimal_membership_match_after_decimal_not_in_binding_2",
+          "query": "SELECT SUM(DECIMAL_FROM_SCALED(v, 1)) AS result FROM replicated_group.ql_t07 WHERE time \u003e= ? AND time \u003c ? HAVING 12 NOT IN (SUM(DECIMAL_FROM_SCALED(v, 1)), 12)\n#!params: [{\"str\":{\"value\":\"{{time:7000}}\"}},{\"str\":{\"value\":\"{{time:8000}}\"}}]",
+          "want": {},
+          "features": [
+            "qg3.decimal",
+            "t07.rebind"
+          ],
+          "aggregate_groups": 1
+        }
+      ]
     }
   ],
   "fixture_digest": "a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258",

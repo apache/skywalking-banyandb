@@ -336,14 +336,20 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 		node.eval = node.timeBucket(expr.Literal.Int64)
 	case "negate", "positive":
 		node.eval = node.unary(expr.Op)
-	case "=", "!=", "<", "<=", ">", ">=":
+	case "=", "!=", "<", "<=", ">", ">=", "in", "not_in":
 		comparisonType := expr.Args[0].Type
-		if expr.Args[1].Type == ExpressionDecimal {
-			comparisonType = ExpressionDecimal
+		// Integers retain their type when resolved alongside exact decimals.
+		for _, arg := range expr.Args[1:] {
+			if arg.Type == ExpressionDecimal {
+				comparisonType = ExpressionDecimal
+				break
+			}
 		}
-		node.eval = node.comparison(expr.Op, comparisonType)
-	case "in", "not_in":
-		node.eval = node.membership(expr.Op == "not_in", expr.Args[0].Type)
+		if expr.Op == "in" || expr.Op == "not_in" {
+			node.eval = node.membership(expr.Op == "not_in", comparisonType)
+		} else {
+			node.eval = node.comparison(expr.Op, comparisonType)
+		}
 	case "contains", "not_contains":
 		node.eval = node.contains(expr.Op == "not_contains", expr.Args[0].Type, expr.Args[1].Type)
 	case "and", "or":

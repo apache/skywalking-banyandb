@@ -17,6 +17,7 @@ package native
 
 import (
 	"context"
+	"fmt"
 	"math"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
@@ -49,7 +50,7 @@ func compileTermPatterns(ctx context.Context, request TermSetRequest, shared *Wi
 		}
 	}
 	if sqlCount > MaxSQLPatterns {
-		return nil, ErrQueryLimit
+		return nil, fmt.Errorf("SQL wildcard pattern count %d exceeds limit %d: %w", sqlCount, MaxSQLPatterns, ErrQueryLimit)
 	}
 	budget := request.PatternBudget
 	if budget == nil {
@@ -142,7 +143,7 @@ func wildcardCandidates(ctx context.Context, segment *memorySegment, request Ter
 			}
 			result.Or(posting)
 			if exceedsCandidates(result, request.MaxCandidates) {
-				return nil, ErrQueryLimit
+				return nil, fmt.Errorf("wildcard candidate count %d exceeds limit %d: %w", result.GetCardinality(), request.MaxCandidates, ErrQueryLimit)
 			}
 		}
 	}
@@ -153,9 +154,9 @@ func (a *wildcardAutomaton) expand(expanded *uint64, localLimit uint64) error {
 		return err
 	}
 	if localLimit != 0 && *expanded >= localLimit {
-		return ErrQueryLimit
+		return fmt.Errorf("wildcard request expanded terms exceed limit %d: %w", localLimit, ErrQueryLimit)
 	}
-	if err := spendWildcardPattern(&a.budget.terms, a.budget.limits.MaxTerms, 1); err != nil {
+	if err := spendWildcardPattern(&a.budget.terms, a.budget.limits.MaxTerms, 1, "expanded terms"); err != nil {
 		return err
 	}
 	*expanded++

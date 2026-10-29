@@ -1012,6 +1012,8 @@ For scaled integer fields, `SUM(DECIMAL_FROM_SCALED(cost_scaled, 10))` accumulat
 
 Decimal results remain numeric for HAVING comparisons and ORDER BY. Comparisons with integers and other decimal sums use their scales exactly; floating-point operands are unsupported. `COALESCE` accepts decimal arguments of matching scale, NULL, and the integer literal zero. Decimal arithmetic, casts, CASE results, and general decimal storage are unsupported. Distributed execution merges raw rows and performs decimal aggregation locally; decimal partials are not transported. Group state and buffers share the query memory budget.
 
+`IN` and `NOT IN` use the same exact comparisons regardless of operand order, including an integer on the left and decimal sums in the list. With a nonempty list, a NULL left operand yields UNKNOWN. A matching list entry takes precedence over a NULL entry; without a match, a NULL entry makes the result UNKNOWN.
+
 Within a measure predicate, `CONTAINS` and `NOT CONTAINS` are aliases of the existing infix `HAVING` and `NOT HAVING` operators. CONTAINS is contextual, so existing tags named `contains` and resources named `contains-svc` remain valid. The new aliases are limited to measure queries; other resource types keep their existing syntax.
 
 ```sql
