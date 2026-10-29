@@ -29,7 +29,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
 type nativeLines struct {
@@ -55,14 +54,10 @@ func (n *nativeLines) count() int {
 // and not native storage, where storing it would refuse and log again. The
 // same refusal for any other write is stored as usual.
 func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
-	console, err := test.CaptureStderr()
-	require.NoError(t, err)
-	// Logging is initialized again once stderr is back, so later tests do not
-	// write to the pipe.
-	defer func() {
-		console.Restore()
-		_ = logger.Init(logger.Logging{Env: "prod", Level: "info"})
-	}()
+	printed := len(console.String())
+	// Logging is initialized again afterwards, so later tests do not inherit
+	// native logging.
+	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
 	require.NoError(t, logger.Init(logger.Logging{
 		Env: "prod", Level: "warn",
 		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
@@ -74,7 +69,7 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	malformed := bus.NewMessage(1, "not a batch")
 
 	w.Rev(logger.WithNativeWrite(context.Background()), malformed)
-	require.Eventually(t, func() bool { return strings.Contains(console.String(), "invalid event data type") },
+	require.Eventually(t, func() bool { return strings.Contains(console.String()[printed:], "invalid event data type") },
 		5*time.Second, 10*time.Millisecond, "the refused native write was not reported on the console")
 	if n := sink.count(); n != 0 {
 		t.Fatalf("the refused native write was stored natively %d times", n)
