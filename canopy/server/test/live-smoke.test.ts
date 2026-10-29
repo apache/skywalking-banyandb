@@ -19,7 +19,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
-import secureSession from '@fastify/secure-session';
+import { registerSession } from '../src/plugins/session.js';
 import { loadConfig } from '../src/config.js';
 import { registerAuth } from '../src/routes/auth.js';
 import { registerProxy } from '../src/plugins/proxy.js';
@@ -37,11 +37,7 @@ describe.skipIf(!isLive)('Live smoke tests (requires BANYANDB_TARGET)', () => {
 
     const config = loadConfig();
     app = Fastify({ logger: false });
-    await app.register(secureSession, {
-      secret: config.sessionSecret,
-      salt: 'canopy-session-salt-v1',
-      cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: false },
-    });
+    await registerSession(app, config);
     await registerAuth(app, config);
     await registerProxy(app, config);
     await app.ready();

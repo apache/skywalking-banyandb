@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	vecplan "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/plan"
@@ -63,9 +64,11 @@ type measureDistributedExecutable interface {
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	batchRequest, batchMode := message.Data().(*vmeasure.BatchQueryRequest)
+	var patterns []model.IndexedPattern
 	if batchMode {
 		queryCriteria = batchRequest.Request
 		ok = queryCriteria != nil
+		patterns = batchRequest.Patterns
 	}
 	n := time.Now()
 	now := n.UnixNano()
@@ -89,7 +92,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if p.broadcastTimeout > 0 {
 		vecCfg.BroadcastTimeout = p.broadcastTimeout
 	}
-	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
+	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg, patterns...)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
@@ -141,7 +144,6 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
 				span.Stop()
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 			case error:
 				span.Error(d)
 				span.Stop()
@@ -244,12 +246,12 @@ func (p *measureQueryProcessor) analyzeDistributedPlan(
 	queryCriteria *measurev1.QueryRequest,
 	measureSchemas []*databasev1.Measure,
 	measureIndexRules [][]*databasev1.IndexRule,
-	vecCfg vmeasure.VectorizedConfig,
+	vecCfg vmeasure.VectorizedConfig, patterns ...model.IndexedPattern,
 ) (measureDistributedExecutable, error) {
 	if len(measureSchemas) == 0 {
 		return nil, fmt.Errorf("vec distributed plan requires at least one measure schema")
 	}
-	return vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg)
+	return vecplan.AnalyzeDistributed(queryCriteria, measureSchemas, measureIndexRules, vecCfg, patterns...)
 }
 
 func (p *measureQueryProcessor) buildNodeSelectors(queryCriteria *measurev1.QueryRequest, ml *logger.Logger) (map[string][]string, error) {

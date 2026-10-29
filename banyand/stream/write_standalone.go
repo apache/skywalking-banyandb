@@ -290,14 +290,21 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 	return nil
 }
 
+// log returns the logger for one write. A native log write carries its own
+// logger in ctx, so what this write path logs about it reaches the console
+// and never native storage, where it would be written and logged again.
+func (w *writeCallback) log(ctx context.Context) *logger.Logger {
+	return logger.FetchOrDefault(ctx, "stream", w.l)
+}
+
 func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
-		w.l.Warn().Msg("invalid event data type")
+		w.log(ctx).Warn().Msg("invalid event data type")
 		return
 	}
 	if len(events) < 1 {
-		w.l.Warn().Msg("empty event")
+		w.log(ctx).Warn().Msg("empty event")
 		return
 	}
 	groups := make(map[string]*elementsInGroup)
@@ -313,14 +320,14 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		case []byte:
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
-				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.log(ctx).Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				if firstErr == nil {
 					firstErr = fmt.Errorf("cannot unmarshal event: %w", err)
 				}
 				continue
 			}
 		default:
-			w.l.Warn().Msg("invalid event data type")
+			w.log(ctx).Warn().Msg("invalid event data type")
 			if firstErr == nil {
 				firstErr = fmt.Errorf("invalid event data type %T", e)
 			}
@@ -335,7 +342,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			w.log(ctx).Error().Err(handleErr).Msg("cannot handle write event")
 			if firstErr == nil {
 				firstErr = handleErr
 			}
@@ -355,12 +362,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				// The raw elements are stored above; finish index admission even
 				// if the request has been canceled since.
 				if err := index.WriteContext(context.WithoutCancel(ctx), es.docs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write element index")
+					w.log(ctx).Error().Err(err).Msg("cannot write element index")
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
 				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
-					w.l.Error().Err(err).Msg("cannot write series index")
+					w.log(ctx).Error().Err(err).Msg("cannot write series index")
 				}
 			}
 		}

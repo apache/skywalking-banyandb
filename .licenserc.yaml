@@ -113,6 +113,9 @@ header: # `header` section is configurations for source codes license header.
     - '.github/PULL_REQUEST_TEMPLATE'
     - '**/*.prof'
     - '**/baseline.txt'
+    # Captured benchmark, validation and oracle output retains its original bytes.
+    - 'verification/qg2bench/**/*.log'
+    - 'verification/qg3bench/**/*.log'
 
   comment: on-failure # on what condition license-eye will comment on the pull request, `on-failure`, `always`, `never`.
 

@@ -38,6 +38,7 @@ type ColumnDef struct {
 	TagFamily string
 	Role      ColumnRole
 	Type      ColumnType
+	Scale     uint8
 	// Entity marks a RoleTag column that is one of the measure's entity tags: its
 	// value is a function of the series, so it is the same for every row of one
 	// series. A scan that knows its rows' series uses that to carry the column as a

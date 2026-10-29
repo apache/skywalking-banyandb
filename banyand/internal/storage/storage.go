@@ -35,6 +35,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/index/native/criteria"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -83,6 +84,8 @@ type SupplyTSDB[T TSTable] func() T
 //
 //nolint:govet // option fields are grouped by purpose, not padding.
 type IndexSearchOpts struct {
+	// PatternRequests intersect whole-value indexed patterns before row reads.
+	PatternRequests []native.TermSetRequest
 	// Criteria is the filter the series index evaluates over the universe
 	// (the series matchers for Search, or IndexModeSubject for
 	// SearchWithoutSeries) via a criteria.FieldResolver-backed

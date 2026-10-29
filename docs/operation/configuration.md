@@ -277,6 +277,15 @@ These flags configure the connections a liaison holds to the data nodes it queri
 - `--logging-level string`: The root level of logging (default: "info").
 - `--logging-levels strings`: The logging level of each module, one per module.
 - `--logging-modules strings`: The modules whose logging level overrides the root one.
+- `--logging-native-enabled`: Store this process's own logs in BanyanDB, in addition to normal logging. Supported by `standalone` and `data`; `liaison` warns and ignores it.
+- `--logging-native-exclude-modules strings`: Modules never sent to native storage, with the modules named under them; adds to the built-in protections.
+- `--logging-native-level string`: The minimum level reaching native storage, independent of `--logging-level` (default: "info").
+- `--logging-native-levels strings`: The native level of each module in `--logging-native-modules`, one per module.
+- `--logging-native-modules strings`: The modules whose native level overrides `--logging-native-level`; an excluded module stays excluded.
+- `--logging-native-ttl-days uint32`: Retention of the `_monitoring_log` group in days, used when the group is created (default: 7).
+
+See [Logging](observability/logging.md#native-self-storage) for how native self-storage works.
+
 - `--node-host string`: The node host of the server, only used when `node-host-provider` is "flag".
 - `--node-host-provider nodeIDProvider`: The node host provider, can be hostname, IP, or flag (default: Hostname).
 

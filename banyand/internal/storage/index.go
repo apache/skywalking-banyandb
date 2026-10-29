@@ -526,6 +526,13 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		return SeriesData{}, nil, errors.WithMessage(filterErr, "filter series index")
 	}
 
+	for _, pattern := range opts.PatternRequests {
+		hits, filterErr = view.FilterTermsSet(ctx, hits, pattern)
+		if filterErr != nil {
+			return SeriesData{}, nil, errors.WithMessage(filterErr, "filter indexed LIKE pattern")
+		}
+	}
+
 	// sorted selects SortHits/ProjectSortValue only for an index order
 	// (opts.Order.Index != nil), matching the previous release and NIDX-03
 	// §6.2: a time order (resolveOrderBy's {Type: OrderByTypeTime, Index:
