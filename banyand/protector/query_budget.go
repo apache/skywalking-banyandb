@@ -99,10 +99,28 @@ func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	return nil
 }
 
+// Refund returns bytes previously charged to the reservation, never taking its
+// usage below zero. It does not affect the retained-result counter.
+func (r *QueryReservation) Refund(bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released.Load() {
+		return
+	}
+	used := r.used.Load()
+	if bytes > used {
+		bytes = used
+	}
+	r.used.Store(used - bytes)
+}
+
 // Limit returns the reservation's assigned byte budget.
 func (r *QueryReservation) Limit() uint64 { return r.assigned }
 
-// Used returns the cumulative bytes charged to the reservation.
+// Used returns the bytes currently charged to the reservation (charges minus refunds).
 func (r *QueryReservation) Used() uint64 { return r.used.Load() }
 
 // Owner identifies the shared query pool owning this reservation.

@@ -48,6 +48,11 @@ func (l *tinyMergeLease) Charge(bytes uint64) error {
 	l.remaining -= bytes
 	return nil
 }
+
+func (l *tinyMergeLease) Refund(bytes uint64) {
+	l.remaining = min(l.remaining+bytes, 1<<20)
+}
+
 func (*tinyMergeLease) Limit() uint64  { return 1 << 20 }
 func (l *tinyMergeLease) Used() uint64 { return (1 << 20) - l.remaining }
 func (*tinyMergeLease) Owner() any     { return "merge-test" }
@@ -380,4 +385,55 @@ func bytesCompare(a, b []byte) int {
 	default:
 		return 0
 	}
+}
+
+// TestSortedMergeRefundsAtPruneAndClose verifies the merge hands a batch's charge
+// back as soon as a prune drops the batch's last retained row, not only at Close,
+// and that every charge is eventually refunded exactly once.
+func TestSortedMergeRefundsAtPruneAndClose(t *testing.T) {
+	schema := tsSchema()
+	const budget = uint64(1 << 20)
+	lease := &tinyMergeLease{remaining: budget}
+	ctx := query.WithBudgetLease(context.Background(), lease)
+	merge := NewSortedMergeWithCap(schema, false, 4, 2)
+	require.NoError(t, merge.Init(ctx))
+
+	first := buildBatch(schema, []testRow{{ts: 100, elemID: 100}, {ts: 101, elemID: 101}})
+	require.NoError(t, merge.Consume(ctx, first))
+	afterFirst := lease.Used()
+	require.Equal(t, vectorized.EstimatedRetainedBytes(first), afterFirst)
+
+	// The second batch holds the two lowest timestamps; the cap (2 rows, pruned at
+	// 4 rows) drops every row of the first batch, so its charge is refunded here.
+	second := buildBatch(schema, []testRow{{ts: 1, elemID: 1}, {ts: 2, elemID: 2}})
+	require.NoError(t, merge.Consume(ctx, second))
+	require.Equal(t, vectorized.EstimatedRetainedBytes(second), lease.Used(),
+		"the pruned batch's charge must be refunded at the prune, before Close")
+
+	require.NoError(t, merge.Finalize(ctx))
+	require.NoError(t, merge.Close())
+	require.Zero(t, lease.Used(), "charges and refunds must balance after Close")
+	require.NoError(t, merge.Close())
+	require.Zero(t, lease.Used(), "Close must be idempotent")
+}
+
+// TestSortedMergeChargesEqualRefundsAcrossPrunes drives many batches through a
+// small cap and checks that nothing stays charged beyond what the retained rows pin.
+func TestSortedMergeChargesEqualRefundsAcrossPrunes(t *testing.T) {
+	schema := tsSchema()
+	lease := &tinyMergeLease{remaining: 1 << 20}
+	ctx := query.WithBudgetLease(context.Background(), lease)
+	merge := NewSortedMergeWithCap(schema, true, 8, 3)
+	require.NoError(t, merge.Init(ctx))
+	var peak uint64
+	for i := 0; i < 200; i++ {
+		batch := buildBatch(schema, []testRow{{ts: int64(i*2 + 1), elemID: uint64(i*2 + 1)}, {ts: int64(i*2 + 2), elemID: uint64(i*2 + 2)}})
+		require.NoError(t, merge.Consume(ctx, batch))
+		peak = max(peak, lease.Used())
+	}
+	one := vectorized.EstimatedRetainedBytes(buildBatch(schema, []testRow{{ts: 1, elemID: 1}, {ts: 2, elemID: 2}}))
+	require.LessOrEqual(t, peak, 6*one, "retention must stay bounded by the cap, not grow with the input")
+	require.NoError(t, merge.Finalize(ctx))
+	require.NoError(t, merge.Close())
+	require.Zero(t, lease.Used())
 }

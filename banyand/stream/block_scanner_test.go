@@ -19,6 +19,7 @@ package stream
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -214,4 +216,142 @@ func allPartsFlushed(tst *tsTable) func() bool {
 		}
 		return true
 	}
+}
+
+// recordingProtector is a protector.Memory fake with a fixed available-bytes figure
+// that records every AcquireResource request.
+type recordingProtector struct {
+	protector.Memory
+	acquired  []uint64
+	available int64
+}
+
+func (r *recordingProtector) AvailableBytes() int64 { return r.available }
+
+func (r *recordingProtector) AcquireResource(_ context.Context, size uint64) error {
+	r.acquired = append(r.acquired, size)
+	return nil
+}
+
+// newUniformElements builds one element per series with identical tags, so every
+// series yields one block of the same uncompressed size.
+func newUniformElements(seriesCount int) *elements {
+	es := &elements{}
+	for i := 1; i <= seriesCount; i++ {
+		es.seriesIDs = append(es.seriesIDs, common.SeriesID(i))
+		es.timestamps = append(es.timestamps, 1)
+		es.elementIDs = append(es.elementIDs, uint64(i))
+		es.tagFamilies = append(es.tagFamilies, []tagValues{{
+			tag: "singleTag", values: []*tagValue{
+				{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte("value-0123456789"), valueArr: nil},
+			},
+		}})
+	}
+	return es
+}
+
+// uniformSeriesCount spans two full batches and a partial third one.
+const uniformSeriesCount = blockScannerBatchSize*2 + 8
+
+type scanOutcome struct {
+	err     error
+	batches [][]uint64 // uncompressed block sizes per delivered batch.
+}
+
+func scanUniform(t *testing.T, pm protector.Memory) scanOutcome {
+	t.Helper()
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+	fileSystem := fs.NewLocalFileSystem()
+	tst, err := newTSTable(fileSystem, tmpPath, common.Position{},
+		logger.GetLogger("test"), timestamp.TimeRange{}, option{flushTimeout: 0, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}}, nil)
+	require.NoError(t, err)
+	tst.mustAddElements(newUniformElements(uniformSeriesCount))
+	require.Eventually(t, allPartsFlushed(tst), 30*time.Second, 100*time.Millisecond, "mem parts not flushed to disk in time")
+	tst.Close()
+	tst, err = newTSTable(fileSystem, tmpPath, common.Position{},
+		logger.GetLogger("test"), timestamp.TimeRange{}, option{
+			flushTimeout: defaultFlushTimeout, mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{},
+		}, nil)
+	require.NoError(t, err)
+	defer tst.Close()
+
+	sids := make([]common.SeriesID, 0, uniformSeriesCount)
+	for i := 1; i <= uniformSeriesCount; i++ {
+		sids = append(sids, common.SeriesID(i))
+	}
+	qo := queryOptions{minTimestamp: 1, maxTimestamp: 1, sortedSids: sids}
+	var parts []*part
+	s := tst.currentSnapshot()
+	require.NotNil(t, s)
+	parts, _ = s.getParts(parts, qo.minTimestamp, qo.maxTimestamp)
+	bsn := &blockScanner{parts: getDisjointParts(parts, true), qo: qo, asc: true, pm: pm}
+
+	var out scanOutcome
+	batchCh := make(chan *blockScanResultBatch)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for batch := range batchCh {
+			if batch.err != nil {
+				out.err = batch.err
+			}
+			sizes := make([]uint64, 0, len(batch.bss))
+			for i := range batch.bss {
+				sizes = append(sizes, batch.bss[i].bm.uncompressedSizeBytes)
+			}
+			out.batches = append(out.batches, sizes)
+			releaseBlockScanResultBatch(batch)
+		}
+	}()
+	bsn.scan(context.Background(), batchCh)
+	close(batchCh)
+	<-done
+	return out
+}
+
+func sumSizes(sizes []uint64) uint64 {
+	var total uint64
+	for _, v := range sizes {
+		total += v
+	}
+	return total
+}
+
+func TestBlockScanner_QuotaCountsEachBlockOncePerBatch(t *testing.T) {
+	// Learn the real block size with an unbounded quota.
+	probe := scanUniform(t, &recordingProtector{available: 1 << 40})
+	require.NoError(t, probe.err)
+	require.Len(t, probe.batches, 3)
+	blockBytes := probe.batches[0][0]
+	require.NotZero(t, blockBytes)
+	batchBytes := sumSizes(probe.batches[0])
+	require.Equal(t, uint64(blockScannerBatchSize)*blockBytes, batchBytes)
+
+	t.Run("quota just above one batch's bytes succeeds", func(t *testing.T) {
+		// The old running total reached about b*k*(k+1)/2 for k blocks, far above this quota.
+		pm := &recordingProtector{available: int64(batchBytes) + 1}
+		out := scanUniform(t, pm)
+		require.NoError(t, out.err)
+		require.Len(t, out.batches, 3)
+		require.Len(t, out.batches[0], blockScannerBatchSize)
+	})
+
+	t.Run("quota below one batch's bytes reports the batch's own figure", func(t *testing.T) {
+		pm := &recordingProtector{available: int64(batchBytes) - 1}
+		out := scanUniform(t, pm)
+		require.Error(t, out.err)
+		require.Contains(t, out.err.Error(), "block scan quota exceeded")
+		require.Contains(t, out.err.Error(),
+			fmt.Sprintf("used %d bytes, quota is %d bytes", batchBytes, batchBytes-1))
+	})
+
+	t.Run("totals do not accumulate across batches", func(t *testing.T) {
+		pm := &recordingProtector{available: int64(batchBytes)}
+		out := scanUniform(t, pm)
+		require.NoError(t, out.err)
+		require.Len(t, out.batches, 3)
+		// Only full batches reach AcquireResource, and each asks for its own bytes.
+		require.Equal(t, []uint64{batchBytes, batchBytes}, pm.acquired)
+	})
 }
