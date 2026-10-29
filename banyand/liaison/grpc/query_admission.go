@@ -73,7 +73,7 @@ func queryStatus(err error) error {
 	if errors.Is(err, protector.ErrQueryTooLarge) {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
-	if errors.Is(err, protector.ErrQueryResourceExhausted) || errors.Is(err, protector.ErrQueryWindowPressure) {
+	if errors.Is(err, protector.ErrQueryResourceExhausted) {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	return err

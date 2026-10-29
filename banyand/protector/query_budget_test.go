@@ -99,9 +99,59 @@ func TestQueryBudgetFallbackIsFinite(t *testing.T) {
 	release()
 }
 
-func TestQueryBudgetAdmitRejectsWindowUnderPressure(t *testing.T) {
-	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
-	if _, err := b.Admit(context.Background(), 100000, 0, 20); !errors.Is(err, ErrQueryWindowPressure) {
-		t.Fatalf("want dynamic window rejection, got %v", err)
+func TestQueryBudgetFallbackPoolAdmitsLargeWindows(t *testing.T) {
+	for _, limit := range []uint32{1792, 1793, 10000, 100000} {
+		b := NewQueryBudget(&Nop{})
+		release, err := b.Admit(context.Background(), limit, 0, 20)
+		if err != nil {
+			t.Fatalf("limit %d must be admitted by the fallback pool: %v", limit, err)
+		}
+		release()
+		if b.Reserved() != 0 {
+			t.Fatalf("reservation leaked: %d", b.Reserved())
+		}
+	}
+	b := NewQueryBudget(nil)
+	release, err := b.Admit(context.Background(), 5000, 5000, 20)
+	if err != nil {
+		t.Fatalf("limit plus offset 10000 must be admitted: %v", err)
+	}
+	release()
+}
+
+func TestQueryBudgetAbsoluteWindowStillRejected(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	if _, err := b.Admit(context.Background(), 100001, 0, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want absolute window rejection, got %v", err)
+	}
+	if _, err := b.Admit(context.Background(), 60000, 40001, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want absolute window rejection for limit+offset, got %v", err)
+	}
+}
+
+func TestQueryBudgetExhaustedPoolStillRejected(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	var releases []func()
+	for {
+		release, err := b.Admit(context.Background(), 10000, 0, 20)
+		if err != nil {
+			if !errors.Is(err, ErrQueryResourceExhausted) {
+				t.Fatalf("want pool exhaustion, got %v", err)
+			}
+			break
+		}
+		releases = append(releases, release)
+		if len(releases) > 64 {
+			t.Fatal("pool never exhausted")
+		}
+	}
+	if len(releases) != int(queryMaxFraction) {
+		t.Fatalf("want %d admitted queries, got %d", queryMaxFraction, len(releases))
+	}
+	for _, release := range releases {
+		release()
+	}
+	if b.Reserved() != 0 {
+		t.Fatalf("reservation leaked: %d", b.Reserved())
 	}
 }

@@ -36,17 +36,14 @@ var (
 	ErrQueryTooLarge = errors.New("query memory request exceeds per-query limit")
 	// ErrQueryResourceExhausted indicates exhaustion of a query allowance or the shared pool.
 	ErrQueryResourceExhausted = errors.New("query memory pool exhausted")
-	// ErrQueryWindowPressure indicates a result window exceeding the current assignment.
-	ErrQueryWindowPressure = errors.New("query result window exceeds current memory budget")
 )
 
-// Admission uses conservative initial estimates, not measured per-record maxima.
-// Execution charges and the absolute window are additional bounds; these values
-// should be calibrated with representative Property, Stream and Trace workloads.
+// Admission does not estimate the memory of a result window: the requested limit
+// is only bounded by the absolute window, while execution charges the memory it
+// actually retains against the assignment.
 const (
-	queryFixedOverhead       uint64 = 1 << 20
-	queryEstimatedEntryBytes uint64 = 4 << 10
-	queryAbsoluteWindow      uint64 = 100000
+	queryFixedOverhead  uint64 = 1 << 20
+	queryAbsoluteWindow uint64 = 100000
 )
 
 // QueryBudget provides an atomic, finite reservation pool for one service.
@@ -262,13 +259,6 @@ func (b *QueryBudget) AdmitContext(ctx context.Context, limit, offset, defaultLi
 		if !reservationOk || reservation.released.Load() {
 			return nil, nil, ErrQueryResourceExhausted
 		}
-		maxWindow := uint64(0)
-		if reservation.assigned > queryFixedOverhead {
-			maxWindow = (reservation.assigned - queryFixedOverhead) / queryEstimatedEntryBytes
-		}
-		if window > maxWindow {
-			return nil, nil, ErrQueryWindowPressure
-		}
 		if !reservation.retain() {
 			return nil, nil, ErrQueryResourceExhausted
 		}
@@ -294,10 +284,6 @@ func (b *QueryBudget) AdmitContext(ctx context.Context, limit, offset, defaultLi
 		assignment = minUint64(assignment, available-current)
 		if assignment <= queryFixedOverhead {
 			return nil, nil, ErrQueryResourceExhausted
-		}
-		maxWindow := (assignment - queryFixedOverhead) / queryEstimatedEntryBytes
-		if window > maxWindow {
-			return nil, nil, ErrQueryWindowPressure
 		}
 		if b.reserved.CompareAndSwap(current, current+assignment) {
 			reservation := &QueryReservation{owner: b, assigned: assignment, refs: 1}
@@ -369,18 +355,4 @@ func minUint64(left, right uint64) uint64 {
 		return left
 	}
 	return right
-}
-
-// MaxWindow computes the policy ceiling without accounting for current contention.
-// AdmitContext must be used for admission against available memory.
-func (b *QueryBudget) MaxWindow(fixedOverhead, estimatedBytesPerEntry, absoluteCeiling uint64) uint64 {
-	maxQuery := b.MaxQuery()
-	if estimatedBytesPerEntry == 0 || maxQuery <= fixedOverhead {
-		return 0
-	}
-	window := (maxQuery - fixedOverhead) / estimatedBytesPerEntry
-	if window > absoluteCeiling {
-		return absoluteCeiling
-	}
-	return window
 }
