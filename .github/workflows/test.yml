@@ -49,7 +49,7 @@ on:
 jobs:
   test:
     name: ${{ inputs.test-name }} (${{ inputs.timezone }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - name: Checkout code

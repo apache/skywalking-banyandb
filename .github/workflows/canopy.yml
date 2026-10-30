@@ -39,7 +39,7 @@ jobs:
   build-test:
     name: Build & Test
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: canopy
@@ -103,7 +103,7 @@ jobs:
   # and handed to the integration test; the dual-arch push happens on main.
   image-build:
     name: Image build (canopy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: build-test
     # On a PR, build-test gates the image. On main it is skipped, and a skipped
     # dependency would skip this job too — so accept 'skipped' explicitly.
@@ -161,7 +161,7 @@ jobs:
   integration-test:
     name: Integration test (${{ matrix.mode }})
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: image-build
     permissions:
       contents: read
@@ -241,13 +241,13 @@ jobs:
   continuous-integration:
     name: Continuous Integration
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Canopy-only change — Go CI (ci.yml) skipped via paths-ignore; required check satisfied."
 
   push-banyandb-image:
     name: push-banyandb-image
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Canopy-only change — docker image build (publish-docker.yml) skipped via paths-ignore; required check satisfied."

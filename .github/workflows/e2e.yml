@@ -30,7 +30,7 @@ concurrency:
 jobs:
   DockerImage:
     name: Build Docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout code
@@ -51,7 +51,7 @@ jobs:
 
   StoragePlugins:
     name: ${{ matrix.test.name }}${{ matrix.engine.suffix }}
-    runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.test.runs-on || 'ubuntu-24.04' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
@@ -141,7 +141,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -166,7 +166,7 @@ jobs:
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [StoragePlugins]
     steps:
