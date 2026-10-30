@@ -18,6 +18,7 @@ package controller
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -145,10 +146,37 @@ func PinToCPUs(cpus []int) error {
 		}
 		cpuSet.Set(cpu)
 	}
-	if affinityErr := unix.SchedSetaffinity(0, &cpuSet); affinityErr != nil {
-		return fmt.Errorf("cannot set controller CPU affinity: %w", affinityErr)
+	// Linux affinity is per thread. Repeat until every observed thread is pinned,
+	// including threads created during an earlier pass; later threads inherit it.
+	pinnedThreads := make(map[int]struct{})
+	for {
+		threads, readErr := os.ReadDir("/proc/self/task")
+		if readErr != nil {
+			return fmt.Errorf("cannot list controller threads: %w", readErr)
+		}
+		changed := false
+		for _, thread := range threads {
+			threadID, parseErr := strconv.Atoi(thread.Name())
+			if parseErr != nil {
+				return fmt.Errorf("cannot parse controller thread ID %q: %w", thread.Name(), parseErr)
+			}
+			if _, pinned := pinnedThreads[threadID]; pinned {
+				continue
+			}
+			setErr := unix.SchedSetaffinity(threadID, &cpuSet)
+			if errors.Is(setErr, unix.ESRCH) {
+				continue
+			}
+			if setErr != nil {
+				return fmt.Errorf("cannot set controller thread %d CPU affinity: %w", threadID, setErr)
+			}
+			pinnedThreads[threadID] = struct{}{}
+			changed = true
+		}
+		if !changed {
+			return nil
+		}
 	}
-	return nil
 }
 
 // ValidateResourceIsolation rejects controller resources included in data-node measurements.

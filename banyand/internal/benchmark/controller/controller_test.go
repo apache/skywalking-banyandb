@@ -16,12 +16,17 @@
 package controller
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/apache/skywalking-banyandb/banyand/internal/benchmark"
 )
@@ -55,4 +60,58 @@ func TestValidateResourceIsolation(t *testing.T) {
 	require.ErrorContains(t, ValidateResourceIsolation(dataNode, ResourceIdentity{PID: 20, Cgroup: dataNode.Cgroup, CPUs: []int{2}}), "cgroup")
 	require.ErrorContains(t, ValidateResourceIsolation(dataNode, ResourceIdentity{PID: 20, Cgroup: controller.Cgroup, CPUs: []int{1, 2}}), "CPU")
 	require.ErrorContains(t, ValidateResourceIsolation(dataNode, ResourceIdentity{PID: 10, Cgroup: controller.Cgroup, CPUs: []int{2}}), "process")
+}
+
+func TestPinToCPUsAllThreads(t *testing.T) {
+	const helperEnv = "BANYANDB_TEST_PIN_ALL_THREADS"
+	if os.Getenv(helperEnv) != "1" {
+		executable, executableErr := os.Executable()
+		require.NoError(t, executableErr)
+		command := exec.Command(executable, "-test.run=^TestPinToCPUsAllThreads$", "-test.count=1")
+		command.Env = append(os.Environ(), helperEnv+"=1")
+		output, commandErr := command.CombinedOutput()
+		require.NoError(t, commandErr, "%s", output)
+		return
+	}
+
+	identity, identityErr := CurrentResourceIdentity(os.Getpid())
+	require.NoError(t, identityErr)
+	if len(identity.CPUs) < 2 {
+		t.Skip("requires at least two allowed CPUs")
+	}
+	// Keep several OS threads alive so pinning just the caller cannot pass.
+	const workers = 4
+	ready := make(chan struct{}, workers)
+	release := make(chan struct{})
+	defer close(release)
+	for worker := 0; worker < workers; worker++ {
+		go func() {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			ready <- struct{}{}
+			<-release
+		}()
+	}
+	for worker := 0; worker < workers; worker++ {
+		<-ready
+	}
+	selectedCPU := identity.CPUs[len(identity.CPUs)-1]
+	require.NoError(t, PinToCPUs([]int{selectedCPU}))
+	pinned, pinnedErr := CurrentResourceIdentity(os.Getpid())
+	require.NoError(t, pinnedErr)
+	assert.Equal(t, []int{selectedCPU}, pinned.CPUs)
+	threads, threadsErr := os.ReadDir("/proc/self/task")
+	require.NoError(t, threadsErr)
+	for _, thread := range threads {
+		threadID, parseErr := strconv.Atoi(thread.Name())
+		require.NoError(t, parseErr)
+		var affinity unix.CPUSet
+		affinityErr := unix.SchedGetaffinity(threadID, &affinity)
+		if errors.Is(affinityErr, unix.ESRCH) {
+			continue
+		}
+		require.NoError(t, affinityErr)
+		assert.Equal(t, 1, affinity.Count(), "thread %d", threadID)
+		assert.True(t, affinity.IsSet(selectedCPU), "thread %d", threadID)
+	}
 }
