@@ -116,6 +116,7 @@ func measureBatchRequest(request *measurev1.QueryRequest, plan *ql.RawPlan) *vme
 	result := &vmeasure.BatchQueryRequest{Request: request}
 	if plan != nil {
 		result.Patterns = plan.Patterns
+		result.SeriesOrder = len(request.GetGroups()) == 1 && plan.CanScanSeries()
 	}
 	return result
 }

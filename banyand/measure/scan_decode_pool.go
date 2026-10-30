@@ -298,6 +298,8 @@ func (p *decodePool) reserve(n int64, ahead bool) bool {
 // when the cursor's last reference goes.
 type scanReservation struct {
 	budget      *scanBudget
+	cursor      *blockCursor
+	reuse       *scanDecodeSlot
 	failure     error
 	bytes       int64
 	sharedBytes int64
@@ -309,8 +311,9 @@ func (r *scanReservation) release() {
 	if r.budget == nil || !r.released.CompareAndSwap(false, true) {
 		return
 	}
+	r.cursor = nil
 	r.budget.give(r.bytes)
-	if r.budget.shared != nil {
+	if r.budget.shared != nil && r.reuse == nil {
 		r.budget.shared.Release(r.sharedBytes)
 	}
 }
@@ -333,6 +336,7 @@ const (
 type scanBudget struct {
 	tracker       *vectorized.MemoryTracker
 	shared        *vectorized.MemoryTracker
+	reuse         *scanDecodeReuse
 	node          *decodePool
 	held          atomic.Int64
 	columns       uint64
@@ -373,7 +377,13 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 		if amount == 0 {
 			amount = n
 		}
-		if err := b.shared.Reserve(amount); err != nil {
+		var err error
+		if b.reuse != nil && r.cursor != nil {
+			r.reuse, err = b.reuse.acquire(r.cursor, amount)
+		} else {
+			err = b.shared.Reserve(amount)
+		}
+		if err != nil {
 			r.failure = err
 			if b.tracker != nil {
 				b.tracker.Release(n)
@@ -391,6 +401,9 @@ func (b *scanBudget) tryReserve(size uint64, ahead bool, r *scanReservation) res
 	liveReservedBytes.Add(n)
 	r.budget, r.bytes = b, n
 	r.released.Store(false)
+	if r.reuse != nil {
+		r.cursor.res = r
+	}
 	return reserveOK
 }
 
@@ -483,6 +496,9 @@ func (b *scanBudget) releaseWorkspace() {
 		return
 	}
 	b.closing.Store(true)
+	if b.reuse != nil {
+		b.reuse.close()
+	}
 	b.finishWorkspace()
 }
 

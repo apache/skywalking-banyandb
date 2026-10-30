@@ -119,6 +119,9 @@ func emptyPlannedMeasure(ctx context.Context, statuses map[string]modelv1.Status
 	}
 	empty := *plan
 	empty.Empty, empty.Residual, empty.Ranges = true, false, nil
+	// The bound predicate has already been validated. No row reaches it on
+	// empty input, so its hidden source columns need not exist in this schema.
+	empty.Filter = nil
 	source := &emptyMeasureScan{schema: vectorized.NewBatchSchema(columns), tracker: tracker, reserved: bytes}
 	return collectPlannedMeasure(ctx, source, statuses, &empty)
 }

@@ -33,7 +33,21 @@ type suiteBuilder struct {
 // Generate expands the finite measure-QL model into executable QL-only cases.
 // Expected results come from fixture rows, never from native requests or captures.
 func Generate() (Suite, error) {
+	shardReadiness, readinessErr := P2ContributionReadiness()
+	if readinessErr != nil {
+		return Suite{}, readinessErr
+	}
+	shardScenarios, shardErr := generateP2()
+	if shardErr != nil {
+		return Suite{}, shardErr
+	}
+	capacityReadiness, capacityScenarios, capacityErr := generateP1()
+	if capacityErr != nil {
+		return Suite{}, capacityErr
+	}
 	b := &suiteBuilder{features: make(map[string]bool)}
+	b.features["p2.shard_aggregates"] = true
+	b.features["p1.directory_lists"], b.features["p1.case_maps"] = true, true
 	b.add("generated_scan_all", baseQuery(), "source.explicit", "projection.mixed", "values.nulls")
 	indexed := baseQuery()
 	indexed.Where = &Predicate{Op: "IN", Column: "host", Values: []any{"a", "b", "c", "d"}}
@@ -125,6 +139,9 @@ func Generate() (Suite, error) {
 	}
 	suite := Suite{
 		PatternReadiness: patternReadiness, PatternScenarios: patternScenarios,
+		ShardAggregateScenarios: shardScenarios,
+		ShardAggregateReadiness: []AggregateFixture{{Name: P1FixtureName, Cases: []Case{shardReadiness}}},
+		CapacityReadiness:       capacityReadiness, CapacityScenarios: capacityScenarios, CapacityFixtureDigest: P1FixtureDigest(),
 		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
 		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
 		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,

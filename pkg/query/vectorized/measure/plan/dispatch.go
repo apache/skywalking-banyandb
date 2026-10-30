@@ -20,6 +20,7 @@ package plan
 import (
 	"context"
 	"fmt"
+	"math"
 	"sync/atomic"
 
 	"github.com/pkg/errors"
@@ -106,10 +107,29 @@ func Dispatch(
 	return iter, planStr, err
 }
 
+// DispatchSeriesBatches executes a complete raw input for a QL plan that permits series ordering.
+func DispatchSeriesBatches(ctx context.Context, req *measurev1.QueryRequest, metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
+	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation bool, patterns ...native.TermSetRequest,
+) (*BatchResult, string, error) {
+	if req == nil || len(req.Groups) != 1 || req.OrderBy != nil || req.GroupBy != nil || req.Agg != nil || req.Top != nil ||
+		req.Offset != 0 || req.Limit != math.MaxUint32 || emitPartial || measureSchema.GetIndexMode() {
+		return nil, "", fmt.Errorf("vec dispatch: series order requires a complete local raw input")
+	}
+	return dispatchBatches(ctx, req, metadata, measureSchema, logicalSchema, ec, cfg, false, skipProjectionValidation, true, patterns...)
+}
+
 // DispatchBatches executes the native scan and reduction path without materializing DataPoints.
 func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata *commonv1.Metadata,
 	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
 	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation bool, patterns ...native.TermSetRequest,
+) (resultBatch *BatchResult, planStr string, err error) {
+	return dispatchBatches(ctx, req, metadata, measureSchema, logicalSchema, ec, cfg, emitPartial, skipProjectionValidation, false, patterns...)
+}
+
+func dispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata *commonv1.Metadata,
+	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
+	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation, seriesOrder bool, patterns ...native.TermSetRequest,
 ) (resultBatch *BatchResult, planStr string, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
@@ -127,6 +147,9 @@ func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata 
 		return nil, "", prepareErr
 	}
 	p, scan, opts, hidden := prepared.plan, prepared.scan, prepared.options, prepared.hidden
+	if seriesOrder {
+		opts.Order = &index.OrderBy{Type: index.OrderByTypeSeries, Sort: modelv1.Sort_SORT_ASC}
+	}
 	scan.Params.PatternRequests = patterns
 	opts.PatternRequests = patterns
 	// An empty entity set is an impossible selector, not a storage request

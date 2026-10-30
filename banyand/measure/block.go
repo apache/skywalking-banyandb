@@ -890,6 +890,10 @@ NEXT_FIELD:
 	}
 	bc.timestamps = append(bc.timestamps, tmpBlock.timestamps[start:end+1]...)
 	bc.versions = append(bc.versions, tmpBlock.versions[start:end+1]...)
+	if bc.res != nil && bc.res.reuse != nil {
+		bc.copyDecodedRows(tmpBlock, start, end+1)
+		return true
+	}
 
 	for _, cf := range tmpBlock.tagFamilies {
 		tf := columnFamily{
@@ -986,6 +990,11 @@ func releaseBlockCursor(bc *blockCursor) {
 	if res := bc.res; res != nil {
 		bc.res = nil
 		res.release()
+		if res.reuse != nil {
+			bc.reset()
+			res.reuse.put(bc)
+			return
+		}
 	}
 	bc.reset()
 	blockCursorPool.Put(bc)
@@ -1416,18 +1425,29 @@ var blockPointerPool = pool.Register[*blockPointer]("measure-blockPointer")
 // The shared scan envelope includes twice a normal batch per projected column.
 func (bc *blockCursor) boundDecodeBacking(tmpBlock *block) {
 	rows := 2 * max(int(bc.bm.count), 16)
+	encoded := 2 * max(int(bc.bm.uncompressedSizeBytes), 1024)
+	reusing := bc.res != nil && bc.res.reuse != nil
+	if reusing {
+		rows = 2 * int(bc.res.reuse.rows)
+		encoded = 2 * int(bc.res.reuse.encoded)
+	}
 	if cap(bc.timestamps) > rows {
 		bc.timestamps = nil
 	}
 	if cap(bc.versions) > rows {
 		bc.versions = nil
 	}
-	bc.columnValuesDecoder.ResetBounded(2 * max(int(bc.bm.uncompressedSizeBytes), 1024))
+	bc.columnValuesDecoder.ResetBounded(encoded)
 	// Cursor columns are copied afresh from the temporary block below. Clear stale
 	// pooled descriptors so an unused prior projection cannot keep its buffers live.
-	clear(bc.fields.columns[:cap(bc.fields.columns)])
-	for idx := range bc.tagFamilies[:cap(bc.tagFamilies)] {
-		bc.tagFamilies[:cap(bc.tagFamilies)][idx] = columnFamily{}
+	if reusing {
+		boundFamilyBacking(&bc.fields, len(bc.fieldProjection), rows)
+		boundCursorFamilies(bc, rows)
+	} else {
+		clear(bc.fields.columns[:cap(bc.fields.columns)])
+		for idx := range bc.tagFamilies[:cap(bc.tagFamilies)] {
+			bc.tagFamilies[:cap(bc.tagFamilies)][idx] = columnFamily{}
+		}
 	}
 	if cap(tmpBlock.timestamps) > rows {
 		tmpBlock.timestamps = nil
