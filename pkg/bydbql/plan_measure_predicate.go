@@ -234,7 +234,7 @@ func checkTimeValuePositions(grammar *Grammar) error {
 		}
 		return nil
 	}
-	if grammar.Select != nil && grammar.Select.Where != nil {
+	if grammar.Select != nil && grammar.Select.Where != nil && grammar.Select.Where.Expr != nil {
 		return checkOr(grammar.Select.Where.Expr)
 	}
 	if grammar.TopN != nil && grammar.TopN.Where != nil {

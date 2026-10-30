@@ -47,9 +47,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -66,6 +68,10 @@ var batchOpenDurationBuckets = meter.Buckets{1, 5, 10, 30, 60, 120, 300, 600, 18
 // validated on admission and then by a request failing on it, so a dead node keeps absorbing
 // queries — each paying the full broadcast timeout — until one of them evicts it.
 const defaultHealthCheckInterval = 10 * time.Second
+
+// defaultScanIdleTimeout is how long a Scan stream may stay silent, neither a chunk nor a
+// heartbeat, before the publisher fails it. The publisher sends it to the data node, which heartbeats well within it.
+const defaultScanIdleTimeout = 15 * time.Second
 
 // ChunkedSyncClientConfig configures chunked sync client behavior.
 type ChunkedSyncClientConfig struct {
@@ -331,7 +337,9 @@ func (p *pub) BroadcastContext(ctx context.Context, timeout time.Duration, topic
 
 type nativeReceiveLimitKey struct{}
 
-func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+// selectNodes resolves the active nodes a message targets: every active node when
+// the message carries no node selectors, otherwise the nodes matching any selector.
+func (p *pub) selectNodes(messages bus.Message) (map[string]struct{}, error) {
 	nodes := p.connMgr.ActiveRegisteredNodes()
 	if len(nodes) == 0 {
 		return nil, errors.New("no active nodes")
@@ -367,13 +375,21 @@ func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.To
 	}
 
 	if l := p.log.Debug(); l.Enabled() {
-		l.Msgf("broadcasting message to %s nodes", names)
+		l.Msgf("selected nodes %s", names)
 	}
 
 	if len(names) == 0 {
 		return nil, fmt.Errorf("no nodes match the selector %v", messages.NodeSelectors())
 	}
-	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && topic == apidata.TopicInternalMeasureQuery {
+	return names, nil
+}
+
+func (p *pub) broadcast(ctx context.Context, timeout time.Duration, topic bus.Topic, messages bus.Message) ([]bus.Future, error) {
+	names, err := p.selectNodes(messages)
+	if err != nil {
+		return nil, err
+	}
+	if scope, guarded := vectorized.NativeReceiveScopeFromContext(ctx); guarded && apidata.IsInternalMeasureQueryTopic(topic) {
 		// Native measure streams use a dedicated64KiB static window. Reserve
 		// every pending stream before opening any of them.
 		capBytes, reserveErr := scope.ReserveFanout(len(names), nativeQueryReceiveWindow, maxReceiveMessageSize)
@@ -726,7 +742,7 @@ func (l *future) Get() (msg bus.Message, err error) {
 	}
 	if resp.Error != "" {
 		errReason = sendErrReasonServerRejected
-		remoteErr := errors.New(resp.Error)
+		remoteErr := remoteError(resp.Status, resp.Error)
 		if l.receiveGuarded {
 			remoteErr = guardedNativeReceiveError(remoteErr)
 		}
@@ -751,18 +767,40 @@ func (l *future) Get() (msg bus.Message, err error) {
 	return bus.Message{}, fmt.Errorf("invalid topic %s", t)
 }
 
+// remoteResourceExhaustedError is a data node's report that a query exhausted its
+// memory allowance. It matches protector.ErrQueryResourceExhausted so callers can
+// map it to RESOURCE_EXHAUSTED even though only a string crossed the wire.
+type remoteResourceExhaustedError struct{ msg string }
+
+func (e *remoteResourceExhaustedError) Error() string { return e.msg }
+
+func (*remoteResourceExhaustedError) Is(target error) bool {
+	return target == protector.ErrQueryResourceExhausted
+}
+
+// remoteError rebuilds the error a data node reported, keeping the identity its
+// status carries.
+func remoteError(st modelv1.Status, msg string) error {
+	if st == modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		return &remoteResourceExhaustedError{msg: msg}
+	}
+	return errors.New(msg)
+}
+
 // guardedNativeReceiveError recovers the canonical memory sentinel across the
 // legacy SendResponse.Error string envelope without changing the wire contract.
 func guardedNativeReceiveError(err error) error {
 	if err == nil || status.Code(err) != codes.Unknown {
 		return err
 	}
-	sentinel := vectorized.ErrMemoryBudgetExceeded.Error()
 	message := err.Error()
-	canonical := message == sentinel || strings.HasPrefix(message, sentinel+":") ||
-		strings.Contains(message, ": "+sentinel+":") || strings.HasSuffix(message, ": "+sentinel)
-	if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) || canonical {
-		return status.Error(codes.ResourceExhausted, message)
+	for _, limitErr := range []error{vectorized.ErrMemoryBudgetExceeded, native.ErrQueryLimit} {
+		sentinel := limitErr.Error()
+		canonical := message == sentinel || strings.HasPrefix(message, sentinel+":") ||
+			strings.Contains(message, ": "+sentinel+":") || strings.HasSuffix(message, ": "+sentinel)
+		if errors.Is(err, limitErr) || canonical {
+			return status.Error(codes.ResourceExhausted, message)
+		}
 	}
 	return err
 }

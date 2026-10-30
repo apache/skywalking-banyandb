@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/discovery/file"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema/property"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/cmdsetup"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -735,6 +736,7 @@ func startLiaisonNodeWithAuth(
 			fmt.Sprintf("--node-discovery-file-path=%s", config.NodeDiscovery.FileWriter.Path()))
 	}
 	beforeCount := property.CountSchemaRegistries()
+	beforeMemories := protector.CountMemories()
 	closeFn := CMD(flags...)
 	gomega.Eventually(helpers.HTTPHealthCheckWithAuth(httpAddr, "", username, password), testflags.EventuallyTimeout).Should(gomega.Succeed())
 	if config.NodeDiscovery.FileWriter != nil {
@@ -762,7 +764,13 @@ func startLiaisonNodeWithAuth(
 		}
 	}
 
+	// The health check guarantees the node's command has been constructed, so its protector is the last one created.
+	if afterMemories := protector.CountMemories(); afterMemories > beforeMemories {
+		bindNodeMemory(grpcAddr, afterMemories-1)
+	}
+
 	return grpcAddr, httpAddr, func() {
+		unbindNodeMemory(grpcAddr)
 		fmt.Printf("Liaison %d write queue path: %s\n", ports[0], path)
 		_ = filepath.Walk(path, func(path string, _ os.FileInfo, err error) error {
 			if err != nil {

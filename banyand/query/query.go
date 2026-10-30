@@ -111,10 +111,13 @@ func (q *queryService) PreRun(ctx context.Context) error {
 	q.log = logger.GetLogger(moduleName)
 	return multierr.Combine(
 		q.pipeline.Subscribe(data.TopicStreamQuery, q.sqp),
+		q.pipeline.SubscribeStream(data.TopicStreamQuery, q.sqp),
 		q.pipeline.Subscribe(data.TopicMeasureQuery, q.mqp),
 		q.pipeline.Subscribe(data.TopicInternalMeasureQuery, q.imqp),
+		q.pipeline.Subscribe(data.TopicInternalMeasurePatternQuery, q.imqp),
 		q.pipeline.Subscribe(data.TopicTopNQuery, q.nqp),
 		q.pipeline.Subscribe(data.TopicTraceQuery, q.tqp),
+		q.pipeline.SubscribeStream(data.TopicTraceQuery, q.tqp),
 	)
 }
 

@@ -23,6 +23,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"go.uber.org/multierr"
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -127,6 +129,7 @@ func SupportsDistributedRows(req *measurev1.QueryRequest) bool {
 // decodes them into vectorized batches, and runs the liaison operators without
 // routing through the row-compatible logical distributedPlan.
 type DistributedPlan struct {
+	patterns       []model.IndexedPattern
 	queryTemplate  *measurev1.QueryRequest
 	nodeTemplate   *measurev1.QueryRequest
 	orderByTag     *resolvedOrderByTag
@@ -173,11 +176,22 @@ func AnalyzeDistributed(
 	req *measurev1.QueryRequest,
 	measureSchemas []*databasev1.Measure,
 	indexRules [][]*databasev1.IndexRule,
-	cfg vmeasure.VectorizedConfig,
+	cfg vmeasure.VectorizedConfig, patterns ...model.IndexedPattern,
 ) (*DistributedPlan, error) {
 	if req == nil {
 		return nil, fmt.Errorf("vec distributed analyze: nil request")
 	}
+	if len(patterns) > 0 {
+		if len(measureSchemas) != len(req.Groups) || len(indexRules) != len(req.Groups) {
+			return nil, fmt.Errorf("LIKE requires schemas and active index rules for every group")
+		}
+		for i, schema := range measureSchemas {
+			if err := model.ValidateIndexedPatterns(schema, indexRules[i], patterns); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	if len(measureSchemas) == 0 {
 		return nil, fmt.Errorf("vec distributed analyze: no measure schemas supplied")
 	}
@@ -278,6 +292,7 @@ func AnalyzeDistributed(
 		}
 	}
 	plan := &DistributedPlan{
+		patterns:            append([]model.IndexedPattern(nil), patterns...),
 		queryTemplate:       queryTemplate,
 		nodeTemplate:        nodeTemplate,
 		measureSchemas:      measureSchemas,
@@ -543,9 +558,10 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		addTraceTagf(broadcastSpan, tracelabels.TagBroadcastTimeoutMS, "%d", p.broadcastTimeout().Milliseconds())
 		addTraceTag(broadcastSpan, tracelabels.TagTimeRange, dctx.TimeRange().String())
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := broadcastNativeMeasure(ctx, dctx, p.broadcastTimeout(),
-			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
+		ff, releaseRequest, broadcastErr := p.broadcastRequest(ctx, dctx, internalRequest)
+		defer releaseRequest()
 		if broadcastErr != nil {
+			releaseRequest()
 			if broadcastSpan != nil {
 				broadcastSpan.Error(fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr))
 				stopTraceSpan(broadcastSpan)
@@ -553,6 +569,7 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 			return nil, fmt.Errorf("vec distributed plan: broadcast: %w", broadcastErr)
 		}
 		frames, _, nodes, responseErr := collectRawFrameResponsesWithNodes(ff)
+		releaseRequest()
 		applyFanoutCap(broadcastSpanCtx, broadcastSpan, nodes)
 		addTraceTagf(broadcastSpan, tracelabels.TagResponseCount, "%d", len(frames))
 		frameBytesTotal := 0
@@ -648,9 +665,10 @@ func (p *DistributedPlan) broadcastMultiGroup(
 		addTraceTag(broadcastSpan, tracelabels.TagGroupName, groupName)
 		addTraceTagf(broadcastSpan, tracelabels.TagNodeCount, "%d", nodeSelectorCount(dctx.NodeSelectors()))
 		internalRequest := &measurev1.InternalQueryRequest{Request: nodeRequest, AggReturnPartial: queryRequest.GetAgg() != nil}
-		ff, broadcastErr := broadcastNativeMeasure(ctx, dctx, p.broadcastTimeout(),
-			bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), internalRequest))
+		ff, releaseRequest, broadcastErr := p.broadcastRequest(ctx, dctx, internalRequest)
+		defer releaseRequest()
 		if broadcastErr != nil {
+			releaseRequest()
 			wrappedErr := fmt.Errorf("vec distributed plan: broadcast group %s: %w", groupName, broadcastErr)
 			if broadcastSpan != nil {
 				broadcastSpan.Error(wrappedErr)
@@ -660,6 +678,7 @@ func (p *DistributedPlan) broadcastMultiGroup(
 			continue
 		}
 		rawFrames, _, groupNodes, responseErr := collectRawFrameResponsesWithNodes(ff)
+		releaseRequest()
 		applyFanoutCap(broadcastSpanCtx, broadcastSpan, groupNodes)
 		addTraceTagf(broadcastSpan, tracelabels.TagResponseCount, "%d", len(rawFrames))
 		if responseErr != nil {
@@ -684,15 +703,15 @@ func (p *DistributedPlan) broadcastMultiGroup(
 	return allGroupFrames, partialSchemas, nil
 }
 
-func broadcastNativeMeasure(
-	ctx context.Context, dctx executor.DistributedExecutionContext, timeout time.Duration, message bus.Message,
+func broadcastNativeMeasureTopic(ctx context.Context, dctx executor.DistributedExecutionContext, timeout time.Duration,
+	topic bus.Topic, message bus.Message,
 ) (futures []bus.Future, err error) {
 	if broadcaster, ok := dctx.(interface {
 		BroadcastContext(context.Context, time.Duration, bus.Topic, bus.Message) ([]bus.Future, error)
 	}); ok {
-		futures, err = broadcaster.BroadcastContext(ctx, timeout, data.TopicInternalMeasureQuery, message)
+		futures, err = broadcaster.BroadcastContext(ctx, timeout, topic, message)
 	} else {
-		futures, err = dctx.Broadcast(timeout, data.TopicInternalMeasureQuery, message)
+		futures, err = dctx.Broadcast(timeout, topic, message)
 	}
 	if err != nil {
 		for _, pending := range futures {
@@ -1420,4 +1439,33 @@ func releaseReplaced(old, replacement []*vectorized.RecordBatch) {
 		return
 	}
 	releaseBatches(old)
+}
+
+func (p *DistributedPlan) broadcastRequest(ctx context.Context, dctx executor.DistributedExecutionContext,
+	request *measurev1.InternalQueryRequest,
+) ([]bus.Future, func(), error) {
+	release := func() {}
+	topic := data.TopicInternalMeasureQuery
+	var payload any = request
+	if len(p.patterns) > 0 {
+		encodeBytes := vmeasure.PatternEncodeReservationBytes(request, p.patterns)
+		tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
+		if err := tracker.Reserve(encodeBytes); err != nil {
+			return nil, release, err
+		}
+		release = sync.OnceFunc(func() { tracker.Release(encodeBytes) })
+		body, err := vmeasure.EncodeMeasurePatternRequest(request, p.patterns)
+		if err != nil {
+			return nil, release, err
+		}
+		topic = data.TopicInternalMeasurePatternQuery
+		payload = body
+	}
+	group := ""
+	if groups := request.GetRequest().GetGroups(); len(groups) > 0 {
+		group = groups[0]
+	}
+	message := bus.NewMessageWithSelectorsAndGroup(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), group, payload)
+	futures, err := broadcastNativeMeasureTopic(ctx, dctx, p.broadcastTimeout(), topic, message)
+	return futures, release, err
 }

@@ -20,7 +20,12 @@ services:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
       service: banyandb
-    command: standalone
+    volumes:
+      - ./auth-config.yaml:/auth-config.yaml
+    entrypoint: /bin/sh -c
+    command: |
+      "chmod 600 /auth-config.yaml &&
+       /banyand standalone --auth-config-file=/auth-config.yaml"
     networks:
       - e2e
 
@@ -28,10 +33,20 @@ services:
     extends:
       file: ../../../script/docker-compose/base-compose.yml
       service: oap
+    volumes:
+      - ./config/bydb-topn.yml:/skywalking/config/bydb-topn.yml
     environment:
+      SW_ADMIN_SERVER: default
+      SW_INSPECT: default
       SW_STORAGE: banyandb
+      SW_STORAGE_BANYANDB_USER: admin
+      SW_STORAGE_BANYANDB_PASSWORD: admin
+      # The TTL of the minute metrics should be hot + warm stage, which is 7 + 15 = 22.
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_WARM_STAGE: "true"
+      SW_STORAGE_BANYANDB_METRICS_MINUTE_ENABLE_COLD_STAGE: "true"
     ports:
       - 12800
+      - 17128
     depends_on:
       banyandb:
         condition: service_healthy

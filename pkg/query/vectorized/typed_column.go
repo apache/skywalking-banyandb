@@ -19,6 +19,7 @@ package vectorized
 
 import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 )
 
 // TypedColumn is a generic Column with element type T.
@@ -206,6 +207,8 @@ func NewFieldValueColumn(capacity int) *TypedColumn[*modelv1.FieldValue] {
 // Panics on unknown type — programmer error, not data error.
 func NewColumnForType(t ColumnType, capacity int) Column {
 	switch t {
+	case ColumnTypeDecimal:
+		return &TypedColumn[decimal.Int128]{typ: t, data: make([]decimal.Int128, 0, capacity)}
 	case ColumnTypeInt64:
 		return NewInt64Column(capacity)
 	case ColumnTypeFloat64:

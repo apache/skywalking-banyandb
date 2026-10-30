@@ -50,6 +50,22 @@ verify:
     expected: expected/node-info.yml
   - includes:
     - ../storage/storage-cases.yaml
+  # The storage case runs these inline in its own e2e.yaml; keep them for the cluster topology.
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(service_resp_time,3,des,attr0='GENERAL',attr1!='Not_exist')/100"
+    expected: ../storage/expected/topN-OP-service.yml
+  # trace
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls
+    expected: ../storage/expected/traces-v2-list.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-provider
+    expected: ../storage/expected/traces-v2-list.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-consumer
+    expected: ../storage/expected/traces-v2-list.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-consumer --endpoint-name=POST:/users
+    expected: ../storage/expected/traces-v2-list.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --tags http.method=POST
+    expected: ../storage/expected/traces-v2-list.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --tags http.method=POST,http.status_code=201
+    expected: ../storage/expected/empty-traces-v2-list.yml
 
 cleanup:
   on: always

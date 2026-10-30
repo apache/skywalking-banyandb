@@ -30,6 +30,8 @@ services:
       file: ../../../script/docker-compose/base-compose.yml
       service: oap
     environment:
+      # OAP drops records older than their TTL on receipt; this case writes data dated days ago.
+      TESTING_TTL: "true"
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_RECORDS_TTL_DAYS: 5
       SW_STORAGE_BANYANDB_TRACE_TTL_DAYS: 5

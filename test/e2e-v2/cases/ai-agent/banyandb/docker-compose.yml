@@ -1,0 +1,303 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# AI agent conversations, end to end with the AI Sessionizer (asz), in one storage root:
+#   fixture.yaml, three sessions      build -> collect, once
+#   workspace-changes.yaml, one       build -> collect, once, after the fixture's pass: a session whose every
+#   session                           tool call changed files, in the same root
+#   provider-bodies.yaml, one         build -> collect, once, after the workspace-changes pass: a session whose
+#   session                           calls' request and response bodies landed as provider_body records
+#   mcp-calls.yaml, one session       build -> collect, once, after the provider-bodies pass: calls to MCP servers,
+#                                     each with the plugin's execution record landed beside the transcripts
+#   prompt-snapshot-withheld.yaml  build -> collect, once, after the mcp-calls pass: the records named
+#                                     system_prompt and tool_schemas, and the bodies of every call
+#   three-rounds.yaml, one session    build through the first checkpoint -> collect, then through the second,
+#                                     then to the end: three rounds over files cut at each stage, and the final
+#                                     document must cover it all
+#   lost-file.yaml, one session       build -> collect over a copy of asz.yaml that names no receiver, twice, then
+#                                     delete a landed file, then push: the round that bound the file is sent, the
+#                                     file is not
+#   asz collect                       one pass of the pipeline: parse what is landed, derive the runtime's token
+#                                     metric from it, and send the files, the rounds and the metrics to the
+#                                     receiver asz.yaml names; a scenario root has no source to land from
+#   asz view                          the Sessionizer's own asz.view documents, the reference the OAP's must equal
+# The asz image is distroless and has no shell; the one-shot steps chain through
+# service_completed_successfully. `scenario build` keeps what a person appends to its asz.yaml, so the receiver
+# is appended once and every later pass reads the one file.
+x-asz: &asz
+  image: ghcr.io/apache/skywalking-ai-sessionizer:${SW_AI_SESSIONIZER_COMMIT}
+  volumes:
+    - aszdata:/asz/data
+    - ../fixture.yaml:/asz/fixture.yaml:ro
+    - ../three-rounds.yaml:/asz/three-rounds.yaml:ro
+    - ../lost-file.yaml:/asz/lost-file.yaml:ro
+    - ../workspace-changes.yaml:/asz/workspace-changes.yaml:ro
+    - ../provider-bodies.yaml:/asz/provider-bodies.yaml:ro
+    - ../mcp-calls.yaml:/asz/mcp-calls.yaml:ro
+    - ../prompt-snapshot-withheld.yaml:/asz/prompt-snapshot-withheld.yaml:ro
+  networks:
+    - e2e
+
+services:
+  # Extends the plain test/docker definition rather than script/docker-compose/base-compose.yml:
+  # the multi-MB conversation files this case stores must run without the CPU and memory caps
+  # the other cases put on the testing image, as SkyWalking runs it.
+  banyandb:
+    extends:
+      file: ../../../../docker/base-compose.yml
+      service: banyandb
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    networks:
+      - e2e
+
+  oap:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: oap
+    environment:
+      SW_STORAGE: banyandb
+      SW_AI_AGENT_CONVERSATION_MAX_FILE_BYTES: 2097152
+    ports:
+      - 12800
+    depends_on:
+      banyandb:
+        condition: service_healthy
+    networks:
+      - e2e
+
+  # A second OAP over the same storage, with the hide setting: what it serves is what a reader of an instance that
+  # withholds the system prompt and the tool schemas sees. It boots after the first, which initialises the shared
+  # schema, and receives nothing: the Sessionizer pushes to oap, and both read one BanyanDB.
+  oaphide:
+    extends:
+      file: ../../../script/docker-compose/base-compose.yml
+      service: oap
+    environment:
+      SW_STORAGE: banyandb
+      SW_AI_AGENT_CONVERSATION_MAX_FILE_BYTES: 2097152
+      SW_AI_AGENT_CONVERSATION_HIDE: system_prompt,tool_schemas
+    ports:
+      - 12800
+    depends_on:
+      oap:
+        condition: service_healthy
+    networks:
+      - e2e
+
+  # The asz image runs as a non-root user; a fresh named volume is root-owned.
+  asz-volume:
+    image: busybox:1.36
+    command: ["sh", "-c", "chown -R 65532:65532 /asz/data"]
+    volumes:
+      - aszdata:/asz/data
+    networks:
+      - e2e
+
+  # ---- fixture.yaml: three sessions, one stage
+  asz-build:
+    <<: *asz
+    command: ["scenario", "build", "/asz/fixture.yaml", "--format", "sd", "--out", "/asz/data", "--repeat", "3"]
+    depends_on:
+      asz-volume:
+        condition: service_completed_successfully
+  # The receiver and this sender's identity, appended to the asz.yaml `build` wrote. The copy taken first names no
+  # receiver: a pass over it parses and derives but sends nothing, which the lost-file stage needs.
+  asz-config:
+    image: busybox:1.36
+    command:
+      - sh
+      - -c
+      - "cp /asz/data/asz.yaml /asz/data/asz-local.yaml && printf 'export:\\n  otlp:\\n    protocol: grpc\\n    endpoint: oap:11800\\n    service_name: e2e-ai-agent\\n    instance_id: e2e-sender\\n' >> /asz/data/asz.yaml"
+    volumes:
+      - aszdata:/asz/data
+    depends_on:
+      asz-build:
+        condition: service_completed_successfully
+    networks:
+      - e2e
+  asz-collect:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      asz-config:
+        condition: service_completed_successfully
+      oap:
+        condition: service_healthy
+  # ---- workspace-changes.yaml: every producer of a change record, one session in the same root. A scenario's
+  # clock starts when it is built and runs ahead of the wall clock, so this one waits for the fixture's pass, which
+  # waited for the OAP to be healthy: built any sooner, it would begin inside the first conversation's window.
+  wc-build:
+    <<: *asz
+    command: ["scenario", "build", "/asz/workspace-changes.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      asz-collect:
+        condition: service_completed_successfully
+  wc-collect:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      wc-build:
+        condition: service_completed_successfully
+  # ---- provider-bodies.yaml: the request and response bodies of every call, one session in the same root. The build
+  # lands them as provider_body records beside the transcripts, and the pass sends them like any landed file.
+  pb-build:
+    <<: *asz
+    command: ["scenario", "build", "/asz/provider-bodies.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      wc-collect:
+        condition: service_completed_successfully
+  pb-collect:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      pb-build:
+        condition: service_completed_successfully
+  # ---- mcp-calls.yaml: calls to MCP servers, one session in the same root. The build lands the plugin's execution
+  # records as execution files beside the transcripts; the pass sends them like any landed file, and derives from them
+  # the calls to each MCP server and their time.
+  mcp-build:
+    <<: *asz
+    command: ["scenario", "build", "/asz/mcp-calls.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      pb-collect:
+        condition: service_completed_successfully
+  mcp-collect:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      mcp-build:
+        condition: service_completed_successfully
+  # ---- prompt-snapshot-withheld.yaml: the records that carry what the runtime sent the model, named system_prompt
+  # and tool_schemas, with the provider bodies of every call, one session in the same root. The withheld case reads it
+  # through the second OAP, which has the hide setting.
+  psw-build:
+    <<: *asz
+    command: ["scenario", "build", "/asz/prompt-snapshot-withheld.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      mcp-collect:
+        condition: service_completed_successfully
+  psw-collect:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      psw-build:
+        condition: service_completed_successfully
+  # ---- three-rounds.yaml: one session in three stages, each parsed and sent before the next is built
+  mr-build-1:
+    <<: *asz
+    command: ["scenario", "build", "/asz/three-rounds.yaml", "--format", "sd", "--out", "/asz/data", "--through", "first"]
+    depends_on:
+      psw-collect:
+        condition: service_completed_successfully
+  mr-collect-1:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      mr-build-1:
+        condition: service_completed_successfully
+  mr-build-2:
+    <<: *asz
+    command: ["scenario", "build", "/asz/three-rounds.yaml", "--format", "sd", "--out", "/asz/data", "--through", "second"]
+    depends_on:
+      mr-collect-1:
+        condition: service_completed_successfully
+  mr-collect-2:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      mr-build-2:
+        condition: service_completed_successfully
+  mr-build-3:
+    <<: *asz
+    command: ["scenario", "build", "/asz/three-rounds.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      mr-collect-2:
+        condition: service_completed_successfully
+  mr-collect-3:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      mr-build-3:
+        condition: service_completed_successfully
+  # ---- lost-file.yaml: a landed file lost after a round bound to it: the helper's transcript, seq 2 of its session,
+  # deleted after the second parse as a person would. The structure survives in the rounds, the document names the
+  # one file, and the OAP's document must equal the Sessionizer's for it. The ids are derived from the scenario, so
+  # they are fixed. A pass over asz.yaml would send the file with the round it parsed, so the two passes here run
+  # over the copy that names no receiver, and one push after the deletion sends what is left.
+  lf-build-1:
+    <<: *asz
+    command: ["scenario", "build", "/asz/lost-file.yaml", "--format", "sd", "--out", "/asz/data", "--through", "helped"]
+    depends_on:
+      mr-collect-3:
+        condition: service_completed_successfully
+  lf-collect-1:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz-local.yaml"]
+    depends_on:
+      lf-build-1:
+        condition: service_completed_successfully
+  lf-build-2:
+    <<: *asz
+    command: ["scenario", "build", "/asz/lost-file.yaml", "--format", "sd", "--out", "/asz/data"]
+    depends_on:
+      lf-collect-1:
+        condition: service_completed_successfully
+  lf-collect-2:
+    <<: *asz
+    command: ["collect", "-once", "-config", "/asz/data/asz-local.yaml"]
+    depends_on:
+      lf-build-2:
+        condition: service_completed_successfully
+  lf-lose:
+    image: busybox:1.36
+    command: ["sh", "-c", "rm /asz/data/c9d9b18b-be85-4906-850d-40a1cd240171/streams/a8e44ac8611c94121/transcript-*.sd"]
+    volumes:
+      - aszdata:/asz/data
+    networks:
+      - e2e
+    depends_on:
+      lf-collect-2:
+        condition: service_completed_successfully
+  lf-push:
+    <<: *asz
+    command: ["push", "-config", "/asz/data/asz.yaml"]
+    depends_on:
+      lf-lose:
+        condition: service_completed_successfully
+
+  asz:
+    <<: *asz
+    command: ["view", "-config", "/asz/data/asz.yaml", "0.0.0.0:8787"]
+    depends_on:
+      lf-push:
+        condition: service_completed_successfully
+
+  # The e2e runner probes a published port from inside its container with /bin/sh, which the distroless asz image
+  # does not have, so the port is published by a forwarder that has one.
+  aszview:
+    image: alpine/socat:1.8.0.0
+    command: ["TCP-LISTEN:8787,fork,reuseaddr", "TCP:asz:8787"]
+    ports:
+      - 8787
+    depends_on:
+      - asz
+    networks:
+      - e2e
+
+volumes:
+  aszdata:
+
+networks:
+  e2e:

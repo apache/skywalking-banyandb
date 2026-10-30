@@ -174,6 +174,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	measureSVC := &measureService{
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
@@ -186,6 +187,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	propertyService := &propertyServer{
 		schemaRegistry:   schemaRegistry,

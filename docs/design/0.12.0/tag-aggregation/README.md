@@ -1,6 +1,6 @@
 # Tag Aggregation and Time Bucketing in the Measure Query Engine
 
-Status: **design** — not implemented.
+Status: **implemented** in 0.12.0. The follow-ups in §10 are still open.
 
 This document specifies three additions to BanyanDB's existing measure query engine:
 

@@ -35,6 +35,18 @@ func Charge(ctx context.Context, bytes uint64) error {
 	return lease.Charge(bytes)
 }
 
+// Refund returns bytes previously charged with Charge to the active query lease
+// once the memory they accounted for has been released.
+// Calls outside admitted query contexts are intentionally no-ops.
+func Refund(ctx context.Context, bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	if lease, ok := BudgetLeaseFromContext(ctx); ok {
+		lease.Refund(bytes)
+	}
+}
+
 // ChargeResult accounts one retained result and its bytes before allocation.
 // Leases without result accounting retain byte-only charging; unadmitted calls are no-ops.
 func ChargeResult(ctx context.Context, bytes uint64) error {
@@ -55,6 +67,8 @@ func ChargeResult(ctx context.Context, bytes uint64) error {
 // allocations before they occur.
 type BudgetLease interface {
 	Charge(uint64) error
+	// Refund returns previously charged bytes; it never takes the lease below zero.
+	Refund(uint64)
 	Limit() uint64
 	Used() uint64
 	Owner() any

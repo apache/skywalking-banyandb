@@ -1,0 +1,162 @@
+[
+  {
+    "name": "cross-separator",
+    "value": "Amber-Bird",
+    "pattern": "%er-B%",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "default-escape",
+    "value": "a\\b",
+    "pattern": "a\\\\b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "disabled-escape",
+    "value": "a\\b",
+    "pattern": "a\\b",
+    "escape": "",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "empty-pattern",
+    "value": "",
+    "pattern": "",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "empty-percent",
+    "value": "",
+    "pattern": "%",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "empty-underscore",
+    "value": "",
+    "pattern": "_",
+    "escape": "\\",
+    "like": false,
+    "ilike": false
+  },
+  {
+    "name": "escaped-underscore-rejects",
+    "value": "a-b",
+    "pattern": "a!_b",
+    "escape": "!",
+    "like": false,
+    "ilike": false
+  },
+  {
+    "name": "literal-percent",
+    "value": "20%",
+    "pattern": "20!%",
+    "escape": "!",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "literal-question",
+    "value": "a?b",
+    "pattern": "a?b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "literal-star",
+    "value": "a*b",
+    "pattern": "a*b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "literal-underscore",
+    "value": "a_b",
+    "pattern": "a!_b",
+    "escape": "!",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "newline-character",
+    "value": "a\nb",
+    "pattern": "a_b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "null-pattern",
+    "value": "Amber-Bird",
+    "pattern": null,
+    "escape": "\\",
+    "like": null,
+    "ilike": null
+  },
+  {
+    "name": "null-value",
+    "value": null,
+    "pattern": "%",
+    "escape": "\\",
+    "like": null,
+    "ilike": null
+  },
+  {
+    "name": "one-character",
+    "value": "a-b",
+    "pattern": "a_b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "prefix",
+    "value": "Amber-Bird",
+    "pattern": "Amber%",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "substring",
+    "value": "Amber-Bird",
+    "pattern": "%amber%",
+    "escape": "\\",
+    "like": false,
+    "ilike": true
+  },
+  {
+    "name": "suffix",
+    "value": "Amber-Bird",
+    "pattern": "%Bird",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "unicode-character",
+    "value": "a中b",
+    "pattern": "a_b",
+    "escape": "\\",
+    "like": true,
+    "ilike": true
+  },
+  {
+    "name": "whole-value",
+    "value": "Amber-Bird",
+    "pattern": "Amber",
+    "escape": "\\",
+    "like": false,
+    "ilike": false
+  }
+]

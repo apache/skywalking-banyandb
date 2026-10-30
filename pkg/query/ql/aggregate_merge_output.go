@@ -39,11 +39,10 @@ type NativeAggregateStats struct {
 
 // NativeAggregateStatistics reports keyed merge work, including after Close.
 func NativeAggregateStatistics(source vectorized.PullOperator) (NativeAggregateStats, bool) {
-	if op, ok := source.(*nativeAggregateOperator); ok {
-		return op.statistics(), true
-	}
-	if raw, ok := source.(*rawOperator); ok {
-		return NativeAggregateStatistics(raw.source)
+	for current := source; current != nil; current = operatorSource(current) {
+		if op, ok := current.(*nativeAggregateOperator); ok {
+			return op.statistics(), true
+		}
 	}
 	return NativeAggregateStats{}, false
 }
@@ -66,7 +65,7 @@ func (o *nativeAggregateOperator) statistics() NativeAggregateStats {
 func (o *nativeAggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, error) {
 	if o.output == nil {
 		capacity := min(vectorized.DefaultBatchSize, len(o.keys))
-		bytes := int64(capacity)*int64(len(o.outputs))*25 + int64(len(o.outputs))*128
+		bytes := int64(capacity)*int64(len(o.schema.Columns))*25 + int64(len(o.schema.Columns))*128
 		if err := o.reserve(bytes); err != nil {
 			return nil, err
 		}
@@ -111,6 +110,9 @@ func (o *nativeAggregateOperator) emit(ctx context.Context) (*vectorized.RecordB
 				value = o.states[call.state].result(group, call.function)
 			}
 			appendAggregateValue(o.output.Columns[index], value)
+		}
+		if o.bucketIndex >= 0 {
+			appendAggregateValue(o.output.Columns[len(o.outputs)], o.groupValues[o.bucketIndex])
 		}
 	}
 	o.output.Len, o.position = end-o.position, end

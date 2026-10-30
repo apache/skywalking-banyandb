@@ -23,7 +23,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -118,23 +117,6 @@ func (m *mergePlan) Close() {
 	for _, p := range m.subPlans {
 		p.(executor.StreamCloser).Close()
 	}
-}
-
-// MergeGroupElements k-way merges the per-group ordered element slices into a
-// single ordered slice via the comparableElement/sortableElements +
-// sort.NewItemIter primitives. The merge is UNCAPPED — the caller applies the
-// outer offset:offset+limit slice.
-func MergeGroupElements(perGroup [][]*streamv1.Element, sortByTime bool, sortTagSpec logical.TagSpec, desc bool) []*streamv1.Element {
-	see := make([]sort.Iterator[*comparableElement], 0, len(perGroup))
-	for _, elements := range perGroup {
-		see = append(see, newSortableElements(elements, sortByTime, sortTagSpec))
-	}
-	iter := sort.NewItemIter(see, desc)
-	var result []*streamv1.Element
-	for iter.Next() {
-		result = append(result, iter.Val().Element)
-	}
-	return result
 }
 
 // Children implements logical.Plan.

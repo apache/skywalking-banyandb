@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -83,6 +84,8 @@ func leakStacks() string {
 // still holds a cursor, a reservation, a decode task or a query result. Decode
 // workers are not counted: the shared fixture pool lives for the whole run.
 func TestMain(m *testing.M) {
+	// Keep the fixed 64 MiB fallback query pool, whatever the memory of the host.
+	protector.SetHostMemoryForTest(0)
 	configureInvariantChecks()
 	if os.Getenv("BYDB_LEAK_STACKS") == "1" {
 		pool.EnableStackTracking(true)

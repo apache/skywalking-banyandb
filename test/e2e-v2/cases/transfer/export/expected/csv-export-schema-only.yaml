@@ -73,7 +73,7 @@ schema:
         - name: warm
           shardNum: 1
           replicas: 0
-          segmentInterval: 7d
+          segmentInterval: 10d
           ttl: 30d
           nodeSelector: "type=warm"
           close: false
@@ -102,12 +102,19 @@ schema:
       stages: []
     - name: sw_records
       catalog: stream
-      shardNum: 2
+      shardNum: 1
       replicas: 0
       segmentInterval: 1d
-      ttl: 3d
-      defaultStages: ["hot"]
-      stages: []
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 1
+          replicas: 0
+          segmentInterval: 2d
+          ttl: 7d
+          nodeSelector: "type=warm"
+          close: false
     - name: sw_trace
       catalog: trace
       shardNum: 2

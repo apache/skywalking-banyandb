@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/service"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/property"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -55,6 +56,8 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 	metricSvc := services.NewMetricService(metaSvc, dataPipeline, "standalone", nil)
 	metaSvc.SetMetricsRegistry(metricSvc)
 	pm := protector.NewMemory(metricSvc)
+	logSvc := logging.NewService(nativeLogSink, nativeLoggingConfig, metaSvc, dataPipeline, pm, metricSvc)
+	logSvc.SetNodeType("standalone")
 	propertySvc, err := property.NewService(metaSvc, dataPipeline, nil, metricSvc, pm)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate property service")
@@ -101,6 +104,7 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		metaSvc,
 		pm,
+		logSvc,
 		propertySvc,
 		measureSvc,
 		streamSvc,
@@ -146,5 +150,11 @@ func newStandaloneCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	standaloneCmd.Flags().AddFlagSet(standaloneGroup.RegisterFlags().FlagSet)
+	// This role registers a consumer for the native log sink, so the root
+	// command may safely attach it when this is the command being run.
+	if standaloneCmd.Annotations == nil {
+		standaloneCmd.Annotations = map[string]string{}
+	}
+	standaloneCmd.Annotations[nativeLoggingAnnotation] = "supported"
 	return standaloneCmd
 }
