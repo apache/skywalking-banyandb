@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -45,6 +47,17 @@ const (
 	queryFixedOverhead  uint64 = 1 << 20
 	queryAbsoluteWindow uint64 = 100000
 )
+
+// QueryFailure builds the error response of a query. A query that ran out of its memory allowance or result
+// window carries STATUS_RESOURCE_EXHAUSTED, so the caller can tell it apart from an internal error and report
+// RESOURCE_EXHAUSTED to the client. The message is formatted from format and args.
+func QueryFailure(cause error, format string, args ...any) *common.Error {
+	msg := fmt.Sprintf(format, args...)
+	if errors.Is(cause, ErrQueryResourceExhausted) || errors.Is(cause, ErrQueryWindowPressure) {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_RESOURCE_EXHAUSTED, msg)
+	}
+	return common.NewError("%s", msg)
+}
 
 // QueryBudget provides an atomic, finite reservation pool for one service.
 // Reservations are estimates and must remain held until response materialization
@@ -107,10 +120,35 @@ func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	return nil
 }
 
+// Refund returns bytes previously charged to the reservation, never taking its
+// usage below zero. An incremental reservation also hands the bytes back to the
+// shared pool. It does not affect the retained-result counter.
+func (r *QueryReservation) Refund(bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released.Load() {
+		return
+	}
+	used := r.used.Load()
+	if bytes > used {
+		bytes = used
+	}
+	if bytes == 0 {
+		return
+	}
+	r.used.Store(used - bytes)
+	if r.incremental {
+		r.owner.reserved.Add(^(bytes - 1))
+	}
+}
+
 // Limit returns the reservation's assigned byte budget.
 func (r *QueryReservation) Limit() uint64 { return r.assigned }
 
-// Used returns the cumulative bytes charged to the reservation.
+// Used returns the bytes currently charged to the reservation (charges minus refunds).
 func (r *QueryReservation) Used() uint64 { return r.used.Load() }
 
 // Owner identifies the shared query pool owning this reservation.

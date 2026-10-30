@@ -40,6 +40,16 @@ import (
 // via the protector) — a partial result would break vec==row equivalence.
 var ErrQueryMemoryBudgetExceeded = errors.New("stream: vectorized query memory budget exceeded")
 
+// heldCursor is a loaded blockCursor together with the budget it holds: the bytes
+// soft-reserved on the scan's memory tracker and the bytes charged to the query
+// lease. Both are returned when the cursor is released, so the scan is accounted
+// for the blocks it holds right now rather than for every block it ever read.
+type heldCursor struct {
+	bc         *blockCursor
+	memBytes   int64
+	leaseBytes uint64
+}
+
 // streamVecScan is a pull-based columnar scan source for the stream engine. It
 // yields *vectorized.RecordBatch values built directly from blockCursor columns,
 // never constructing a model.StreamResult. Each NextBatch call returns one batch
@@ -62,13 +72,17 @@ type streamVecScan struct {
 	ts             *blockScanner
 	tmpBlock       *block
 	mem            *vectorized.MemoryTracker
-	cur            *blockCursor
+	lease          query.BudgetLease
+	scanCh         chan *blockScanResultBatch
+	scanDone       chan struct{}
+	scanCancel     context.CancelFunc
 	segments       []storage.Segment[*tsTable, option]
 	series         []*pbv1.Series
-	pending        []*blockCursor
+	pending        []heldCursor
+	cur            heldCursor
 	orderTagFamily string
 	orderTagName   string
-	budgetErr      error
+	failErr        error
 	qo             queryOptions
 	batchSize      int
 	curOff         int
@@ -93,27 +107,27 @@ func (v *streamVecScan) NextBatch(ctx context.Context) (*vectorized.RecordBatch,
 		return nil, nil
 	}
 	for {
-		if v.cur == nil {
-			bc, err := v.nextCursor(ctx)
+		if v.cur.bc == nil {
+			held, err := v.nextCursor(ctx)
 			if err != nil {
 				return nil, err
 			}
-			if bc == nil {
+			if held.bc == nil {
 				return nil, nil
 			}
-			v.cur = bc
+			v.cur = held
 			v.curOff = 0
 		}
-		batch, err := v.cursorToBatch(v.cur, v.curOff)
+		batch, err := v.cursorToBatch(v.cur.bc, v.curOff)
 		if err != nil {
-			releaseBlockCursor(v.cur)
-			v.cur = nil
+			v.releaseHeld(v.cur)
+			v.cur = heldCursor{}
 			return nil, err
 		}
 		v.curOff += batch.Len
-		if v.curOff >= len(v.cur.timestamps) {
-			releaseBlockCursor(v.cur)
-			v.cur = nil
+		if v.curOff >= len(v.cur.bc.timestamps) {
+			v.releaseHeld(v.cur)
+			v.cur = heldCursor{}
 		}
 		if batch.Len == 0 {
 			continue
@@ -122,40 +136,58 @@ func (v *streamVecScan) NextBatch(ctx context.Context) (*vectorized.RecordBatch,
 	}
 }
 
-// nextCursor drains loaded blockCursors, refilling from the block scanner /
-// segment list on demand. It reuses the exact scan helpers the row path uses
-// (searchSeries, getBlockScanner, loadBlockCursor) — it does not duplicate their
-// logic. Returned cursors are positioned at their first row (asc) or last row
-// (desc); callers must releaseBlockCursor.
-func (v *streamVecScan) nextCursor(ctx context.Context) (*blockCursor, error) {
+// releaseHeld releases a cursor and returns its soft reservation and its lease
+// charge. It needs no context, so Release can call it on any path.
+func (v *streamVecScan) releaseHeld(held heldCursor) {
+	if held.bc != nil {
+		releaseBlockCursor(held.bc)
+	}
+	if held.memBytes > 0 && v.mem != nil {
+		v.mem.Release(held.memBytes)
+	}
+	if held.leaseBytes > 0 && v.lease != nil {
+		v.lease.Refund(held.leaseBytes)
+	}
+}
+
+// nextCursor returns the next loaded cursor, pulling ONE scanner result batch (at
+// most blockScannerBatchSize blocks) at a time and only when no loaded cursor is
+// left, so the scan holds a bounded number of decoded blocks instead of a whole
+// segment. It reuses the exact scan helpers the row path uses (searchSeries,
+// getBlockScanner, loadBlockCursor). A returned cursor is positioned at its first
+// row (asc) or last row (desc); the caller must releaseHeld it.
+func (v *streamVecScan) nextCursor(ctx context.Context) (heldCursor, error) {
 	for {
 		if len(v.pending) > 0 {
-			bc := v.pending[0]
+			held := v.pending[0]
+			v.pending[0] = heldCursor{}
 			v.pending = v.pending[1:]
-			return bc, nil
+			return held, nil
 		}
-		// Soft byte budget exceeded: after the already-loaded cursors drain, fail
-		// loud rather than returning a partial result (row-path parity — the row
+		// A soft-budget or scan failure surfaces after the already-loaded cursors
+		// drain, rather than returning a partial result (row-path parity — the row
 		// path errors under memory pressure via the protector).
-		if v.budgetErr != nil {
-			return nil, v.budgetErr
+		if v.failErr != nil {
+			return heldCursor{}, v.failErr
 		}
-		if v.ts != nil {
-			if err := v.fillFromScanner(ctx); err != nil {
-				return nil, err
-			}
-			if len(v.pending) > 0 {
-				continue
-			}
-			// Scanner drained for this segment.
-			if len(v.ts.parts) == 0 {
-				v.ts.close()
-				v.ts = nil
+		if v.scanCh != nil {
+			if err := v.pullScanBatch(ctx); err != nil {
+				return heldCursor{}, err
 			}
 			continue
 		}
+		if v.ts != nil {
+			if len(v.ts.parts) == 0 {
+				// Every part group of this segment is scanned.
+				v.ts.close()
+				v.ts = nil
+				continue
+			}
+			v.startScanner(ctx)
+			continue
+		}
 		if len(v.segments) == 0 {
-			return nil, nil
+			return heldCursor{}, nil
 		}
 		var segment storage.Segment[*tsTable, option]
 		if v.asc {
@@ -167,11 +199,11 @@ func (v *streamVecScan) nextCursor(ctx context.Context) (*blockCursor, error) {
 		}
 		qo, err := searchSeries(ctx, v.qo, segment, v.series)
 		if err != nil {
-			return nil, err
+			return heldCursor{}, err
 		}
 		ts, err := getBlockScanner(ctx, segment, qo, v.sm.l, v.sm.pm, v.tr)
 		if err != nil {
-			return nil, err
+			return heldCursor{}, err
 		}
 		if ts == nil {
 			continue
@@ -180,69 +212,124 @@ func (v *streamVecScan) nextCursor(ctx context.Context) (*blockCursor, error) {
 	}
 }
 
-// fillFromScanner pulls one round of block-scan batches and materializes them
-// into loaded blockCursors appended to v.pending.
-func (v *streamVecScan) fillFromScanner(ctx context.Context) error {
-	batchCh := make(chan *blockScanResultBatch, 1)
-	scanErrCh := make(chan struct{})
+// startScanner runs the block scanner for the next part group of the current
+// segment on its own goroutine, under a context the scan can cancel.
+func (v *streamVecScan) startScanner(ctx context.Context) {
+	scanCtx, cancel := context.WithCancel(ctx)
+	ch := make(chan *blockScanResultBatch, 1)
+	done := make(chan struct{})
+	scanner := v.ts
 	go func() {
-		defer close(scanErrCh)
-		v.ts.scan(ctx, batchCh)
-		close(batchCh)
+		defer close(done)
+		scanner.scan(scanCtx, ch)
+		close(ch)
 	}()
-	is := v.sm.indexSchema.Load().(indexSchema)
-	var scanErr error
-	for batch := range batchCh {
-		if batch.err != nil {
-			if scanErr == nil {
-				scanErr = batch.err
-			}
-			releaseBlockScanResultBatch(batch)
-			continue
-		}
-		for i := range batch.bss {
-			bs := &batch.bss[i]
-			if chargeErr := query.Charge(ctx, bs.bm.uncompressedSizeBytes); chargeErr != nil {
-				if v.budgetErr == nil {
-					v.budgetErr = chargeErr
-				}
-				continue
-			}
-			// Metadata preflight for the QueryMemoryMiB soft budget: predict whether
-			// decoding this block would push cumulative uncompressed bytes over the
-			// budget and, if so, FAIL LOUD before the expensive decode. The first block
-			// always decodes (first-block exception) so a too-small budget never
-			// rejects the whole query. When no budget is set (v.mem == nil) every block
-			// is decoded; the block scanner's protector.Memory quota still bounds it.
-			if v.mem != nil {
-				blockBytes := int64(bs.bm.uncompressedSizeBytes)
-				if v.budgetEngaged {
-					if reserveErr := v.mem.Reserve(blockBytes); reserveErr != nil {
-						if v.budgetErr == nil {
-							v.budgetErr = fmt.Errorf("%w: %w", ErrQueryMemoryBudgetExceeded, reserveErr)
-						}
-						continue
-					}
-				} else {
-					_ = v.mem.Reserve(blockBytes)
-					v.budgetEngaged = true
-				}
-			}
-			bc := generateBlockCursor()
-			bc.init(bs.p, &bs.bm, bs.qo)
-			if loadBlockCursor(bc, v.tmpBlock, bs.qo, is) {
-				if !v.asc {
-					bc.idx = len(bc.timestamps) - 1
-				} else {
-					bc.idx = 0
-				}
-				v.pending = append(v.pending, bc)
-			}
-		}
+	v.scanCh, v.scanDone, v.scanCancel = ch, done, cancel
+}
+
+// stopScanner cancels the running scanner, releases every result batch it has not
+// delivered and waits for its goroutine. It is a no-op when none is running.
+func (v *streamVecScan) stopScanner() {
+	if v.scanCancel == nil {
+		return
+	}
+	v.scanCancel()
+	for batch := range v.scanCh {
 		releaseBlockScanResultBatch(batch)
 	}
-	<-scanErrCh
-	return scanErr
+	<-v.scanDone
+	v.scanCh, v.scanDone, v.scanCancel = nil, nil, nil
+}
+
+// pullScanBatch takes one result batch from the running scanner and decodes its
+// blocks into v.pending. When the scanner has no more batches it is stopped, which
+// lets the caller move on to the next part group.
+func (v *streamVecScan) pullScanBatch(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	batch, ok := <-v.scanCh
+	if !ok {
+		v.stopScanner()
+		// A canceled context also ends the scanner early; do not mistake that for
+		// the end of the data.
+		return ctx.Err()
+	}
+	if batch.err != nil {
+		scanErr := batch.err
+		releaseBlockScanResultBatch(batch)
+		v.failErr = scanErr
+		v.stopScanner()
+		return scanErr
+	}
+	is := v.sm.indexSchema.Load().(indexSchema)
+	for i := range batch.bss {
+		bs := &batch.bss[i]
+		held, err := v.loadHeld(ctx, bs, is)
+		if err != nil {
+			v.failErr = err
+			break
+		}
+		if held.bc != nil {
+			v.pending = append(v.pending, held)
+		}
+	}
+	releaseBlockScanResultBatch(batch)
+	if v.failErr != nil {
+		v.stopScanner()
+	}
+	return nil
+}
+
+// loadHeld charges, soft-reserves and decodes one scanned block. A failure returns
+// an error with nothing held; a block with no matching row returns a zero cursor.
+func (v *streamVecScan) loadHeld(ctx context.Context, bs *blockScanResult, is indexSchema) (heldCursor, error) {
+	held := heldCursor{leaseBytes: bs.bm.uncompressedSizeBytes}
+	if v.lease != nil && held.leaseBytes > 0 {
+		if err := ctx.Err(); err != nil {
+			return heldCursor{}, err
+		}
+		if err := v.lease.Charge(held.leaseBytes); err != nil {
+			return heldCursor{}, err
+		}
+	} else {
+		held.leaseBytes = 0
+	}
+	// Metadata preflight for the QueryMemoryMiB soft budget: predict whether
+	// decoding this block would push the bytes this scan holds over the budget and,
+	// if so, FAIL LOUD before the expensive decode. The first block always decodes
+	// (first-block exception) so a too-small budget never rejects the whole query.
+	// When no budget is set (v.mem == nil) every block is decoded; the block
+	// scanner's protector.Memory quota still bounds it.
+	if v.mem != nil {
+		blockBytes := int64(bs.bm.uncompressedSizeBytes)
+		if v.budgetEngaged {
+			if reserveErr := v.mem.Reserve(blockBytes); reserveErr != nil {
+				v.releaseHeld(held)
+				return heldCursor{}, fmt.Errorf("%w: %w", ErrQueryMemoryBudgetExceeded, reserveErr)
+			}
+			held.memBytes = blockBytes
+		} else {
+			if v.mem.Reserve(blockBytes) == nil {
+				held.memBytes = blockBytes
+			}
+			v.budgetEngaged = true
+		}
+	}
+	bc := generateBlockCursor()
+	bc.init(bs.p, &bs.bm, bs.qo)
+	if !loadBlockCursor(bc, v.tmpBlock, bs.qo, is) {
+		// loadBlockCursor has already released the cursor; only the budget is left.
+		v.releaseHeld(held)
+		return heldCursor{}, nil
+	}
+	if !v.asc {
+		bc.idx = len(bc.timestamps) - 1
+	} else {
+		bc.idx = 0
+	}
+	held.bc = bc
+	return held, nil
 }
 
 // cursorToBatch converts a window [off, off+n) of a loaded blockCursor into a
@@ -332,19 +419,21 @@ func (v *streamVecScan) cursorToBatch(bc *blockCursor, off int) (*vectorized.Rec
 	return batch, nil
 }
 
-// Release frees the scan source's resources: the block scanner, the temp block,
-// any pending cursors, and the retained segment references.
+// Release frees the scan source's resources: it stops the scanner goroutine,
+// releases the current and pending cursors together with their budget, closes the
+// block scanner, the temp block, and the retained segment references.
 func (v *streamVecScan) Release() {
 	if v.closed {
 		return
 	}
 	v.closed = true
-	if v.cur != nil {
-		releaseBlockCursor(v.cur)
-		v.cur = nil
+	v.stopScanner()
+	if v.cur.bc != nil {
+		v.releaseHeld(v.cur)
+		v.cur = heldCursor{}
 	}
-	for _, bc := range v.pending {
-		releaseBlockCursor(bc)
+	for _, held := range v.pending {
+		v.releaseHeld(held)
 	}
 	v.pending = nil
 	if v.ts != nil {
@@ -395,7 +484,7 @@ type vecScanSource interface {
 // the vec path is forbidden to build. Routing the vec path through Query would
 // therefore violate the no-row-tuple constraint. queryVectorized is wired into
 // the data-node processor / standalone egress in M6.
-func (s *stream) queryVectorized(_ context.Context, sqo model.StreamQueryOptions) (vecScanSource, error) {
+func (s *stream) queryVectorized(ctx context.Context, sqo model.StreamQueryOptions) (vecScanSource, error) {
 	if err := validateQueryInput(sqo); err != nil {
 		return nil, err
 	}
@@ -453,7 +542,7 @@ func (s *stream) queryVectorized(_ context.Context, sqo model.StreamQueryOptions
 
 	// Per-query soft byte budget: cap cumulative uncompressed block bytes decoded
 	// by this scan at QueryMemoryMiB. Enforced as a metadata preflight in
-	// fillFromScanner (first-block exception). This is independent of, and in
+	// loadHeld (first-block exception). This is independent of, and in
 	// addition to, the block scanner's process-wide protector.Memory quota.
 	var mem *vectorized.MemoryTracker
 	if s.vectorized.QueryMemoryMiB > 0 {
@@ -482,6 +571,10 @@ func (s *stream) queryVectorized(_ context.Context, sqo model.StreamQueryOptions
 		orderTagFamily: orderTagFamily,
 		orderTagName:   orderTagName,
 		tmpBlock:       generateBlock(),
+	}
+	// The lease is captured once so Release can refund without a context.
+	if lease, admitted := query.BudgetLeaseFromContext(ctx); admitted {
+		scan.lease = lease
 	}
 	segmentsNeedRelease = false
 	return scan, nil

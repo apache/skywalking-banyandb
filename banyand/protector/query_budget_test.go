@@ -16,9 +16,11 @@ package protector
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
@@ -350,5 +352,100 @@ func TestMeasureAdmissionSamplesOnceAndGrowthChecksReportedPressure(t *testing.T
 	defer legacyRelease()
 	if memory.refreshes != 2 {
 		t.Fatal("legacy admission must retain fresh sampling")
+	}
+}
+
+func TestQueryReservationRefund(t *testing.T) {
+	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
+	ctx, release, err := b.AdmitMeasureContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	lease, ok := querypkg.BudgetLeaseFromContext(ctx)
+	if !ok {
+		t.Fatal("no lease")
+	}
+	base := lease.Used()
+	baseReserved := b.Reserved()
+	if err = querypkg.Charge(ctx, 1000); err != nil {
+		t.Fatal(err)
+	}
+	if lease.Used() != base+1000 || b.Reserved() != baseReserved+1000 {
+		t.Fatalf("charge: used=%d reserved=%d", lease.Used(), b.Reserved())
+	}
+	querypkg.Refund(ctx, 400)
+	if lease.Used() != base+600 || b.Reserved() != baseReserved+600 {
+		t.Fatalf("refund: used=%d reserved=%d", lease.Used(), b.Reserved())
+	}
+	// A refunded allowance is chargeable again, and over-refunding clamps at zero.
+	if err = querypkg.Charge(ctx, 400); err != nil {
+		t.Fatal(err)
+	}
+	querypkg.Refund(ctx, 1<<40)
+	if lease.Used() != 0 || b.Reserved() != 0 {
+		t.Fatalf("over-refund: used=%d reserved=%d", lease.Used(), b.Reserved())
+	}
+}
+
+func TestQueryReservationRefundKeepsResultCounterAndIsConcurrent(t *testing.T) {
+	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
+	ctx, release, err := b.AdmitContext(context.Background(), 10, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	reservation := mustReservation(ctx, t)
+	if err = querypkg.ChargeResult(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	results := reservation.results
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if chargeErr := querypkg.Charge(ctx, 10); chargeErr == nil {
+					querypkg.Refund(ctx, 10)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if reservation.results != results {
+		t.Fatalf("refund changed the result counter: %d -> %d", results, reservation.results)
+	}
+	if reservation.Used() < 100 || reservation.Used() > 100+queryFixedOverhead {
+		t.Fatalf("unexpected used after balanced charge/refund: %d", reservation.Used())
+	}
+}
+
+func mustReservation(ctx context.Context, t *testing.T) *QueryReservation {
+	t.Helper()
+	lease, ok := querypkg.BudgetLeaseFromContext(ctx)
+	if !ok {
+		t.Fatal("no lease")
+	}
+	reservation, ok := lease.(*QueryReservation)
+	if !ok {
+		t.Fatalf("unexpected lease type %T", lease)
+	}
+	return reservation
+}
+
+func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
+	for _, cause := range []error{ErrQueryResourceExhausted, ErrQueryWindowPressure} {
+		failure := QueryFailure(fmt.Errorf("scan: %w", cause), "execute %s: %v", "plan", cause)
+		if failure.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+			t.Fatalf("%v: status %v", cause, failure.Status())
+		}
+	}
+	failure := QueryFailure(errors.New("boom"), "execute %s: %v", "plan", "boom")
+	if failure.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
+		t.Fatalf("an ordinary failure must stay an internal error, got %v", failure.Status())
+	}
+	if want := "code: STATUS_INTERNAL_ERROR, msg: execute plan: boom"; failure.Error() != want {
+		t.Fatalf("message: %q, want %q", failure.Error(), want)
 	}
 }
