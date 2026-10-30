@@ -168,6 +168,7 @@ type BatchAggregation struct {
 	rowsIn           int64
 	runsFolded       int64
 	rowsOut          int64
+	dedupScope       int64
 	// spanFolds counts how many times Consume resolved a group once for an
 	// entire span (consumeSpan) rather than once per row — the
 	// test-observable counter for design §7.7's stage-8a magnitude claim.
@@ -309,6 +310,15 @@ func NewBatchAggregation(
 // false (per-row behavior) until called.
 func (a *BatchAggregation) SetAllKeysIndexResolved(allResolved bool) {
 	a.allKeysIndexResolved = allResolved
+}
+
+// SetDedupScope sets the scope AggModeReduce's replica dedup applies to the
+// partials consumed next. Shard ids are only unique within a storage group,
+// so the liaison scopes each partial by the group it came from: two groups
+// reporting the same (shard, group key) are separate contributions, not
+// replicas. Defaults to 0, a single scope.
+func (a *BatchAggregation) SetDedupScope(scope int64) {
+	a.dedupScope = scope
 }
 
 // deriveAggValuePath inspects the pre-built AggSpec list to determine which

@@ -591,7 +591,7 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 		if queryRequest.GetAgg() == nil {
 			return p.executeRows(ctx, frames, queryRequest, borrowRows)
 		}
-		return p.executeAgg(ctx, frames, queryRequest, nil)
+		return p.executeAgg(ctx, frames, queryRequest, nil, nil)
 	}
 
 	// Multi-group path: one broadcast per group so each data node returns a
@@ -609,14 +609,16 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 	// into one layout derived from the groups' schemas, not from whichever
 	// groups returned rows.
 	flatFrames := make([][]byte, 0, len(allGroupFrames))
+	frameGroups := make([]int64, 0, len(allGroupFrames))
 	for _, gf := range allGroupFrames {
 		flatFrames = append(flatFrames, gf.body)
+		frameGroups = append(frameGroups, int64(gf.group))
 	}
 	target, targetErr := multiGroupAggTarget(partialSchemas, len(groups), queryRequest.GetTagProjection())
 	if targetErr != nil {
 		return nil, fmt.Errorf("vec distributed plan: %w", targetErr)
 	}
-	return p.executeAgg(ctx, flatFrames, queryRequest, target)
+	return p.executeAgg(ctx, flatFrames, queryRequest, target, frameGroups)
 }
 
 // broadcastMultiGroup broadcasts one request per group so each data node
@@ -832,9 +834,13 @@ func collectRawFrameResponsesWithNodes(ff []bus.Future) ([][]byte, []*commonv1.T
 	return frames, traces, nodes, err
 }
 
-// executeAgg reduces the agg partials in frames. A non-nil target is the
-// layout every partial is reshaped onto first (multi-group queries).
-func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest, target *vectorized.BatchSchema) (*BatchResult, error) {
+// executeAgg reduces the agg partials in frames. For multi-group queries,
+// target is the layout every partial is reshaped onto first and
+// frameGroups holds each frame's group, which scopes replica dedup since
+// shard ids are only unique within a group.
+func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *measurev1.QueryRequest,
+	target *vectorized.BatchSchema, frameGroups []int64,
+) (*BatchResult, error) {
 	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
 	bucketed := req.GetGroupBy().GetTimeBucket() != nil
 	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
@@ -851,7 +857,8 @@ func (p *DistributedPlan) executeAgg(ctx context.Context, frames [][]byte, req *
 	addTraceTagf(reduceSpan, tracelabels.TagFramesIn, "%d", len(frames))
 	frameDecodeDurations := collectFrameDecodeDurations(ctx, frames)
 	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFramesToSchema(frames, target, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
+	batches, aggValuePath, reduceErr := vmeasure.ReduceRawFramesToSchema(frames, target, frameGroups,
+		keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
 	if reduceErr != nil {
 		if reduceSpan != nil {
 			reduceSpan.Error(reduceErr)
