@@ -47,6 +47,7 @@ var (
 		TopicMeasureSeriesIndexUpdate.String():  TopicMeasureSeriesIndexUpdate,
 		TopicMeasureSeriesSync.String():         TopicMeasureSeriesSync,
 		TopicPropertyRepair.String():            TopicPropertyRepair,
+		TopicPropertyPartSync.String():          TopicPropertyPartSync,
 		TopicStreamSeriesIndexWrite.String():    TopicStreamSeriesIndexWrite,
 		TopicStreamLocalIndexWrite.String():     TopicStreamLocalIndexWrite,
 		TopicStreamSeriesSync.String():          TopicStreamSeriesSync,
@@ -125,6 +126,9 @@ var (
 			return nil
 		},
 		TopicStreamElementIndexSync: func() proto.Message {
+			return nil
+		},
+		TopicPropertyPartSync: func() proto.Message {
 			return nil
 		},
 		TopicTraceWrite: func() proto.Message {
@@ -269,6 +273,7 @@ var operationMap = map[bus.Topic]string{
 	TopicMeasureSeriesSync:         OperationFileSyncValue,
 	TopicTraceSeriesSync:           OperationFileSyncValue,
 	TopicStreamElementIndexSync:    OperationFileSyncValue,
+	TopicPropertyPartSync:          OperationFileSyncValue,
 	TopicStreamWrite:               OperationBatchWriteValue,
 	TopicMeasureWrite:              OperationBatchWriteValue,
 	TopicTraceWrite:                OperationBatchWriteValue,
