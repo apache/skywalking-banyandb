@@ -101,3 +101,20 @@ func applyNextQueryPool(m *memory) {
 		m.queryBudget = NewQueryBudget(pinnedPoolMemory{Memory: m, limit: poolBytes * queryPoolFraction})
 	})
 }
+
+// SetHostMemoryForTest makes the query budget see totalBytes as the host's memory, whatever the machine has, and
+// returns a function that restores the previous reading. Zero stands for unreadable host memory, which gives the
+// fixed 64 MiB fallback pool (8 MiB per query). It is intended for tests.
+func SetHostMemoryForTest(totalBytes uint64) (restore func()) {
+	hostMemory.Lock()
+	previous := hostMemory.read
+	previousTotal, previousDone := hostMemory.total, hostMemory.done
+	hostMemory.read = func() uint64 { return totalBytes }
+	hostMemory.done = false
+	hostMemory.Unlock()
+	return func() {
+		hostMemory.Lock()
+		hostMemory.read, hostMemory.total, hostMemory.done = previous, previousTotal, previousDone
+		hostMemory.Unlock()
+	}
+}

@@ -169,6 +169,9 @@ func (m *memory) AcquireResource(ctx context.Context, size uint64) error {
 	}
 }
 
+// allowedPercentValue returns the configured --allowed-percent.
+func (m *memory) allowedPercentValue() int { return m.allowedPercent }
+
 // GetLimit returns the memory limit of the protector.
 func (m *memory) GetLimit() uint64 {
 	return m.limit.Load()
