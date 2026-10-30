@@ -63,7 +63,8 @@ var _ = g.Describe("stream query budget (distributed)", func() {
 		config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(dir))
 		// Only the data node runs short of budget; the liaison keeps its default pool, so the failure
 		// is the data node's and has to cross the wire to reach the client.
-		protector.SetNextQueryPool(budget.QueryPoolBytes)
+		// The data node starts an embedded schema server first, which creates a protector of its own; skip it.
+		protector.SetQueryPoolAfter(1, budget.QueryPoolBytes)
 		closeData := setup.DataNode(config)
 		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)
 		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
