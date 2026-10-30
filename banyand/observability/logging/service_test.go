@@ -59,21 +59,29 @@ type fakeClient struct {
 	timeouts []time.Duration
 	// batchSizes records the message count of every Publish.
 	batchSizes []int
-	published  atomic.Int64
-	// publishDelay slows every Publish, in nanoseconds, to hold a batch in flight.
-	publishDelay atomic.Int64
+	// messageNodes records the node every published message is addressed to.
+	messageNodes []string
 	// unreadyFor makes the next N Close calls answer as a local bus with no
 	// subscriber on the topic: a nil map and bus.ErrTopicNotExist.
 	unreadyFor atomic.Int64
+	// publishDelay slows every Publish, in nanoseconds, to hold a batch in flight.
+	publishDelay atomic.Int64
 	// closes counts Close calls, which is one per publish attempt.
-	closes         atomic.Int64
+	closes atomic.Int64
+	// started counts the publishes that have begun, delayed or not.
+	started        atomic.Int64
+	published      atomic.Int64
 	mu             sync.Mutex
 	panicOnPublish atomic.Bool
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
-	// started counts the publishes that have begun, delayed or not.
-	started atomic.Int64
+}
+
+func (f *fakeClient) seenMessageNodes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.messageNodes...)
 }
 
 func (f *fakeClient) seenBatchSizes() []int {
@@ -153,6 +161,7 @@ func (p *fakePublisher) Publish(ctx context.Context, _ bus.Topic, messages ...bu
 	defer p.client.mu.Unlock()
 	p.client.batchSizes = append(p.client.batchSizes, len(messages))
 	for _, m := range messages {
+		p.client.messageNodes = append(p.client.messageNodes, m.Node())
 		iwr, ok := m.Data().(*streamv1.InternalWriteRequest)
 		if !ok {
 			continue
@@ -841,4 +850,75 @@ func TestEveryPublishCarriesTheNativeWriteMark(t *testing.T) {
 	if got, _ := client.markedModules.Load().(string); got != "NATIVE-LOG.STREAM" {
 		t.Fatalf("the write path would log this batch under %q, want NATIVE-LOG.STREAM", got)
 	}
+}
+
+// fakeLocator answers Locate the way a liaison's node registry does.
+type fakeLocator struct {
+	err   error
+	node  string
+	calls atomic.Int64
+}
+
+func (l *fakeLocator) Locate(group, name string, shardID, replicaID uint32) (string, error) {
+	l.calls.Add(1)
+	if group != GroupName || name != StreamName || shardID != 0 || replicaID != 0 {
+		return "", fmt.Errorf("located %s/%s(%d,%d), want shard 0 of the log stream", group, name, shardID, replicaID)
+	}
+	return l.node, l.err
+}
+
+// TestLiaisonSendsToTheDataNodeOfShardZero covers the liaison route: every
+// message is addressed to the data node that owns shard 0 of the log group,
+// carries the liaison's own identity, and is counted as written.
+func TestLiaisonSendsToTheDataNodeOfShardZero(t *testing.T) {
+	client := &fakeClient{}
+	locator := &fakeLocator{node: "data-2"}
+	_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })
+	sink.SetNode(NodeInfo{NodeID: "liaison-0", NodeType: "liaison"})
+
+	const admitted = 7
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "LIAISON-GRPC", []byte(sampleLine))
+	}
+	waitFor(t, "every event to be written", func() bool { return sink.Written() == admitted })
+
+	for i, node := range client.seenMessageNodes() {
+		if node != "data-2" {
+			t.Fatalf("message %d is addressed to %q, want the owner of shard 0", i, node)
+		}
+	}
+	for i, id := range client.seenNodeIDs() {
+		if id != "liaison-0" {
+			t.Fatalf("element %d carries node_id %q, want the liaison's own", i, id)
+		}
+	}
+}
+
+// TestLiaisonCountsWhatNoDataNodeTook covers a liaison that locates no data
+// node: the batch is held for the bounded retries, publishes nothing, and is
+// then counted as locate_failed, never as written.
+func TestLiaisonCountsWhatNoDataNodeTook(t *testing.T) {
+	client := &fakeClient{}
+	locator := &fakeLocator{err: errors.New("no nodes available")}
+	_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })
+
+	const admitted = 5
+	for i := 0; i < admitted; i++ {
+		sink.Admit(zerolog.InfoLevel, "LIAISON-GRPC", []byte(sampleLine))
+	}
+	waitFor(t, "the batch to be counted as locate_failed", func() bool {
+		return sink.Dropped(reasonLocateFailed) == admitted
+	})
+	// The interval may split the events into more than one batch, and each
+	// batch is located once per attempt.
+	if got := locator.calls.Load(); got < destinationRetries+1 {
+		t.Fatalf("located %d times, want at least the first attempt and %d retries", got, destinationRetries)
+	}
+	if got := client.published.Load(); got != 0 {
+		t.Fatalf("published %d events with no node located", got)
+	}
+	if got := sink.Written(); got != 0 {
+		t.Fatalf("%d events counted as written with no node located", got)
+	}
+	waitSettled(t, sink)
 }

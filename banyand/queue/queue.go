@@ -129,6 +129,27 @@ var ErrStreamClosed = errors.New("node stream closed")
 // ErrScanIdleTimeout is the terminal error of a node stream that went silent.
 var ErrScanIdleTimeout = errors.New("scan stream idle timeout")
 
+// ErrNotSent marks an error of BatchPublisher.Publish raised before the message
+// left for its node: the node was not reachable or not writable, so it cannot
+// have stored the message.
+var ErrNotSent = errors.New("message not sent")
+
+// NotSent wraps err as raised before the message left for its node. The error
+// keeps its text, and errors.Is finds both ErrNotSent and err.
+func NotSent(err error) error {
+	return notSentError{err: err}
+}
+
+type notSentError struct {
+	err error
+}
+
+func (e notSentError) Error() string { return e.err.Error() }
+
+func (e notSentError) Unwrap() error { return e.err }
+
+func (e notSentError) Is(target error) bool { return target == ErrNotSent }
+
 // BatchPublisher is the interface for publishing data in batch.
 //
 //go:generate mockgen -destination=./batch_publisher_mock.go -package=queue . BatchPublisher

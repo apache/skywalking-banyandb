@@ -57,15 +57,28 @@ const (
 	schemaTimeout = 5 * time.Second
 	// schemaRetryInterval is how often a failed schema creation is retried.
 	schemaRetryInterval = 10 * time.Second
-	// destinationRetries bounds how many ticks a batch is held while the local
-	// write topic has no subscriber. At the one-second interval that covers ten
-	// seconds of startup; past it the batch is dropped and counted.
+	// destinationRetries bounds how many ticks a batch is held while its
+	// destination cannot take it: the local write topic has no subscriber, or a
+	// liaison has no data node it reached. At the one-second interval that
+	// covers ten seconds, the data client's default health check, so a batch
+	// outlives the eviction of an unreachable node; past it the batch is
+	// dropped and counted.
 	destinationRetries = 10
 )
 
 // errSchemaUnavailable is the delivery failure while the schema has never
 // been established.
 var errSchemaUnavailable = errors.New("the native log schema is not established yet")
+
+// errLocateFailed is the delivery failure of a liaison that located no data
+// node for the log group.
+var errLocateFailed = errors.New("no data node located for the native log group")
+
+// NodeLocator locates the node that stores a shard of a group, as a liaison's
+// node registry does.
+type NodeLocator interface {
+	Locate(group, name string, shardID, replicaID uint32) (string, error)
+}
 
 // timing holds the internal intervals. They are constants in production; a
 // field lets a test shorten them.
@@ -94,8 +107,12 @@ type Service struct {
 	omr      observability.MetricsRegistry
 	metrics  *metrics
 	pipeline queue.Client
-	sink     *Sink
-	closer   *run.Closer
+	// nodes is set on a liaison, which has no storage engine: each batch goes
+	// to the data node it locates. Elsewhere it is nil and batches are written
+	// through the local pipeline.
+	nodes  NodeLocator
+	sink   *Sink
+	closer *run.Closer
 	// stopMaintain cancels the loop's context, so a schema pass in progress
 	// does not hold GracefulStop for its whole timeout.
 	stopMaintain context.CancelFunc
@@ -129,6 +146,17 @@ func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 		closer:   run.NewCloser(1),
 		timing:   defaultTiming,
 	}
+}
+
+// NewLiaisonService returns the service of a liaison. A liaison has no storage
+// engine, so it sends each batch over client, its tier-2 client, to the data
+// node nodes locates for shard 0 of the log group.
+func NewLiaisonService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
+	client queue.Client, nodes NodeLocator, pm protector.Memory, omr observability.MetricsRegistry,
+) *Service {
+	s := NewService(sink, cfg, md, client, pm, omr)
+	s.nodes = nodes
+	return s
 }
 
 // Name implements run.Unit.
@@ -181,10 +209,25 @@ func (s *Service) Serve() run.StopNotify {
 
 // delivery is what the publisher delivers each batch through.
 func (s *Service) delivery() queue.Delivery {
-	return &delivery{
-		svc:   s,
-		local: queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout),
+	dest := queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout)
+	if s.nodes != nil {
+		dest = queue.NewRemoteDelivery(s.pipeline, data.TopicStreamWrite, s.locate, s.timing.writeTimeout)
 	}
+	return &delivery{svc: s, dest: dest}
+}
+
+// locate returns the data node that owns shard 0 of the log group, the shard
+// every event is written to. It runs for every attempt, so a retried batch
+// goes to the node that owns the shard by then.
+func (s *Service) locate() (string, error) {
+	node, err := s.nodes.Locate(GroupName, StreamName, shardID, 0)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", errLocateFailed, err)
+	}
+	if node == "" {
+		return "", errLocateFailed
+	}
+	return node, nil
 }
 
 // bindPressure makes the sink drop while the memory protector reports high
@@ -290,12 +333,12 @@ func (s *Service) warnOnce(done *bool, msg string) {
 	s.l.Warn().Msg(msg)
 }
 
-// delivery prepares each batch for the local write path: it checks the
-// schema, stamps the identity known by now, and marks the context so the
-// write path's own logging about these events is never collected.
+// delivery prepares each batch for its destination: it checks the schema,
+// stamps the identity known by now, and marks the context so the write path's
+// own logging about these events is never collected.
 type delivery struct {
 	svc   *Service
-	local queue.Delivery
+	dest  queue.Delivery
 	batch []any
 }
 
@@ -328,14 +371,15 @@ func (d *delivery) Deliver(ctx context.Context, batch []any) error {
 	}
 	// Marked here and not on the publisher's context: the publisher is built
 	// before logging is initialized, and the mark is a logger.
-	err := d.local.Deliver(logger.WithNativeWrite(ctx), d.batch)
+	err := d.dest.Deliver(logger.WithNativeWrite(ctx), d.batch)
 	clear(d.batch)
 	return err
 }
 
 // internalRequest adds what the internal write path needs. The shard is always
-// shard 0, as for native metrics: the request goes to this node's own local
-// pipeline, so the logs stay on the node that produced them.
+// shard 0, as for native metrics: a standalone or data node writes to its own
+// local pipeline, so its logs stay on the node that produced them, and a
+// liaison sends to the data node that owns shard 0.
 func internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
 	entity := entityOf(req)
 	if _, err := entity.ToEntity(); err != nil {

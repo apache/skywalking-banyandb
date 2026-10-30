@@ -19,11 +19,13 @@ package pub
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
+	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
@@ -32,6 +34,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
@@ -134,6 +137,7 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 			)
 			gomega.Expect(err).Should(gomega.MatchError(common.NewErrorWithStatus(
 				modelv1.Status_STATUS_DISK_FULL, modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]).Error()))
+			gomega.Expect(errors.Is(err, queue.ErrNotSent)).Should(gomega.BeTrue(), "a node that is not writable was sent nothing")
 		}
 		cee, err := bp.Close()
 		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
@@ -144,6 +148,26 @@ var _ = ginkgo.Describe("publish clients register/unregister", func() {
 		gomega.Eventually(func(g gomega.Gomega) {
 			verifyClientsWithGomega(g, p, data.TopicStreamWrite, 1, 0, 1, 1)
 		}, flags.EventuallyTimeout).Should(gomega.Succeed())
+	})
+
+	ginkgo.It("should mark what it did not send", func() {
+		addr1 := getAddress()
+		closeFn := setup(addr1, codes.OK, 200*time.Millisecond)
+		defer closeFn()
+		p := newPub()
+		defer p.GracefulStop()
+		p.OnAddOrUpdate(getDataNode("node1", addr1))
+		verifyClients(p, 1, 0, 1, 0)
+		bp := p.NewBatchPublisher(3 * time.Second)
+		_, err := bp.Publish(context.TODO(), data.TopicStreamWrite,
+			bus.NewBatchMessageWithNode(bus.MessageID(1), "unknown-node", &streamv1.InternalWriteRequest{}),
+			bus.NewBatchMessageWithNode(bus.MessageID(2), "node1", &streamv1.InternalWriteRequest{}),
+		)
+		gomega.Expect(err).Should(gomega.MatchError("failed to get client for node unknown-node"))
+		gomega.Expect(errors.Is(err, queue.ErrNotSent)).Should(gomega.BeTrue(), "a node with no client was sent nothing")
+		gomega.Expect(multierr.Errors(err)).Should(gomega.HaveLen(1), "the message to node1 was sent")
+		_, err = bp.Close()
+		gomega.Expect(err).ShouldNot(gomega.HaveOccurred())
 	})
 
 	ginkgo.It("should register and unregister liaison nodes", func() {

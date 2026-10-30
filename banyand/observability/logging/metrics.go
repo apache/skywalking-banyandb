@@ -34,7 +34,8 @@ var logScope = observability.RootScope.SubScope("logging")
 var allReasons = []string{
 	reasonBufferFull, reasonMemoryPressure, reasonOversizeEvent,
 	reasonEncodeFailed, reasonPublishFailed, reasonSchemaMissing,
-	reasonSchemaIncompatible, reasonDestinationUnready, reasonShutdown,
+	reasonSchemaIncompatible, reasonDestinationUnready, reasonLocateFailed,
+	reasonShutdown,
 }
 
 // metrics reports what the sink lost and what it wrote. They are gauges rather

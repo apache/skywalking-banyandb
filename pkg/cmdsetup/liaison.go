@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -87,6 +88,14 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
 
+	// A liaison has no storage engine: it sends its own logs over the tier-2
+	// client to the data node that owns shard 0 of the log group, bypassing
+	// its disk-backed write queue.
+	nativeLogNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	logSvc := logging.NewLiaisonService(nativeLogSink, nativeLoggingConfig, metaSvc, tire2Client,
+		grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire2Client, nativeLogNodeSel), pm, metricSvc)
+	logSvc.SetNodeType("liaison")
+
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC, traceSVC)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
@@ -113,6 +122,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		metaSvc,
 		pm,
+		// Stopped before the clients below: units stop in this order, and the
+		// final drain sends through the tier-2 client.
+		logSvc,
 		localPipeline,
 		internalPipeline,
 		tire1Client,
@@ -124,6 +136,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		traceLiaisonNodeSel,
 		traceDataNodeSel,
 		propertyNodeSel,
+		nativeLogNodeSel,
 		streamSVC,
 		measureSVC,
 		traceSVC,
@@ -155,7 +168,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel, traceDataNodeSel} {
+				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel, traceDataNodeSel, nativeLogNodeSel} {
 					sel.SetNodeSelector(ls)
 				}
 			}
@@ -183,6 +196,12 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	liaisonCmd.Flags().AddFlagSet(liaisonGroup.RegisterFlags().FlagSet)
+	// This role registers a consumer for the native log sink, so the root
+	// command may safely attach it when this is the command being run.
+	if liaisonCmd.Annotations == nil {
+		liaisonCmd.Annotations = map[string]string{}
+	}
+	liaisonCmd.Annotations[nativeLoggingAnnotation] = "supported"
 	liaisonCmd.PersistentFlags().StringVar(&nodeSelector, "data-node-selector", "",
 		"the data node selector. e.g. key1=value1,key2=value2. If not set, all nodes are selected")
 	return liaisonCmd

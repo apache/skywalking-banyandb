@@ -58,6 +58,9 @@ type NativeLogging struct {
 // logger taken from a context marked by WithNativeWrite.
 const NativeWriteModule = "native-log"
 
+// NativeLogGroup is the group native log events are stored in.
+const NativeLogGroup = "_monitoring_log"
+
 // reservedExcludedModules are never sent to native storage, whatever an
 // operator configures; --logging-native-exclude-modules adds to them. Each
 // covers logging caused by storing native logs, so admitting it would let one
@@ -68,7 +71,7 @@ const NativeWriteModule = "native-log"
 //   - _MONITORING_LOG is the storage of the log group itself: a tsdb logger
 //     is named after its group, and its segments, shards, flushes and merges
 //     log under it.
-var reservedExcludedModules = []string{strings.ToUpper(NativeWriteModule), "_MONITORING_LOG"}
+var reservedExcludedModules = []string{strings.ToUpper(NativeWriteModule), strings.ToUpper(NativeLogGroup)}
 
 // WithNativeWrite marks ctx as carrying a native log write. Work done under
 // it that takes its logger from the context with Fetch or FetchOrDefault logs

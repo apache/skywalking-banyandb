@@ -40,6 +40,11 @@ verify:
         bash test/e2e-v2/cases/nativelog/check-refusal.sh
         ${liaison_host}:${liaison_17913}
       expected: expected/refusal.yaml
+    # It pauses a data node and resumes it before it ends.
+    - query: >-
+        bash test/e2e-v2/cases/nativelog/check-liaison.sh
+        ${liaison_host}:${liaison_17913}
+      expected: expected/liaison.yaml
     # Last: it restarts a data node.
     - query: >-
         bash test/e2e-v2/cases/nativelog/check-restart.sh
