@@ -182,7 +182,7 @@ schema:
         - name: warm
           shardNum: 1
           replicas: 0
-          segmentInterval: 7d
+          segmentInterval: 10d
           ttl: 30d
           nodeSelector: "type=warm"
           close: false

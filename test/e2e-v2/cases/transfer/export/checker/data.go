@@ -99,7 +99,7 @@ func lookup(values []printedValue, key string) string {
 
 // knownSource reports whether a row comes from a source whose values the expectations can
 // pin: an event report-events.sh reported, the traffic, call rate and response time of a
-// trace-mocker service, a span of one, or one of OAP's General UI templates.
+// trace-mocker service, a span of one, or the UI template the e2e setup creates.
 func knownSource(group, resource string, values []printedValue) bool {
 	switch group {
 	case "sw_records":
@@ -112,7 +112,7 @@ func knownSource(group, resource string, values []printedValue) bool {
 	case "sw_trace":
 		return mockServiceID(lookup(values, "service_id"))
 	case "sw_property":
-		return resource == uiTemplate && strings.HasPrefix(lookup(values, "_id"), generalTemplatePrefix)
+		return resource == uiTemplate && lookup(values, "_id") == e2eTemplateID
 	default:
 		return false
 	}

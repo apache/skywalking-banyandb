@@ -48,7 +48,43 @@ verify:
   cases:
     - includes:
       - ../storage-cases.yaml
-
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql metrics exec --expression="top_n(service_resp_time,3,des,attr0='GENERAL',attr1!='Not_exist')/100"
+      expected: ../expected/topN-OP-service.yml
+    # trace
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls
+      expected: ../expected/traces-v2-list.yml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-provider
+      expected: ../expected/traces-v2-list.yml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-consumer
+      expected: ../expected/traces-v2-list.yml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --service-name=e2e-service-consumer --endpoint-name=POST:/users
+      expected: ../expected/traces-v2-list.yml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --tags http.method=POST
+      expected: ../expected/traces-v2-list.yml
+    - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql tv2 ls --tags http.method=POST,http.status_code=201
+      expected: ../expected/empty-traces-v2-list.yml
+    - query: |
+        swctl --display json --admin-url=http://${oap_host}:${oap_17128} admin config ttl
+      expected: ../expected/ttl-config-banyandb.yml
+    # The effective bydb.yml / bydb-topn.yml config is surfaced in /debugging/config/dump
+    # (one representative key per section) and the credentials are masked. Assertions live
+    # in the query; it prints `config-dump-ok` only when all of them pass.
+    - query: |
+        dump=$(curl -s http://${oap_host}:${oap_17128}/debugging/config/dump)
+        exact() { echo "$dump" | grep -Fqx "$1" || { echo "missing or unexpected: $1"; exit 1; }; }
+        exists() { echo "$dump" | grep -Fq "$1" || { echo "missing: $1"; exit 1; }; }
+        exact 'storage.provider=banyandb'
+        exact 'storage.banyandb.global.user=******'
+        exact 'storage.banyandb.global.password=******'
+        exact 'storage.banyandb.global.namespace=sw'
+        exists 'storage.banyandb.global.targets='
+        exact 'storage.banyandb.records.ttl=3'
+        exact 'storage.banyandb.metricsMinute.ttl=7'
+        exact 'storage.banyandb.metricsMinute.enableWarmStage=true'
+        exact 'storage.banyandb.metricsMinute.additionalLifecycleStages.0.name=warm'
+        exists 'storage.banyandb.topN.endpoint_cpm.endpoint_cpm-service.countersNumber='
+        echo config-dump-ok
+      expected: ../expected/config-dump-banyandb.yml
 cleanup:
   on: always
   collect:
@@ -62,3 +98,4 @@ cleanup:
           - /tmp/measure/
           - /tmp/property/
           - /tmp/schema-property/
+          - /tmp/accesslog/
