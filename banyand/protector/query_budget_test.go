@@ -435,11 +435,9 @@ func mustReservation(ctx context.Context, t *testing.T) *QueryReservation {
 }
 
 func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
-	for _, cause := range []error{ErrQueryResourceExhausted, ErrQueryWindowPressure} {
-		failure := QueryFailure(fmt.Errorf("scan: %w", cause), "execute %s: %v", "plan", cause)
-		if failure.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
-			t.Fatalf("%v: status %v", cause, failure.Status())
-		}
+	exhausted := QueryFailure(fmt.Errorf("scan: %w", ErrQueryResourceExhausted), "execute %s: %v", "plan", ErrQueryResourceExhausted)
+	if exhausted.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		t.Fatalf("status %v", exhausted.Status())
 	}
 	failure := QueryFailure(errors.New("boom"), "execute %s: %v", "plan", "boom")
 	if failure.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {

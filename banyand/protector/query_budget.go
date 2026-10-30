@@ -48,12 +48,12 @@ const (
 	queryAbsoluteWindow uint64 = 100000
 )
 
-// QueryFailure builds the error response of a query. A query that ran out of its memory allowance or result
-// window carries STATUS_RESOURCE_EXHAUSTED, so the caller can tell it apart from an internal error and report
+// QueryFailure builds the error response of a query. A query that ran out of its memory allowance carries
+// STATUS_RESOURCE_EXHAUSTED, so the caller can tell it apart from an internal error and report
 // RESOURCE_EXHAUSTED to the client. The message is formatted from format and args.
 func QueryFailure(cause error, format string, args ...any) *common.Error {
 	msg := fmt.Sprintf(format, args...)
-	if errors.Is(cause, ErrQueryResourceExhausted) || errors.Is(cause, ErrQueryWindowPressure) {
+	if errors.Is(cause, ErrQueryResourceExhausted) {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_RESOURCE_EXHAUSTED, msg)
 	}
 	return common.NewError("%s", msg)
