@@ -26,7 +26,9 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 const (
@@ -58,7 +60,8 @@ const (
 // RESOURCE_EXHAUSTED to the client. The message is formatted from format and args.
 func QueryFailure(cause error, format string, args ...any) *common.Error {
 	msg := fmt.Sprintf(format, args...)
-	if errors.Is(cause, ErrQueryResourceExhausted) {
+	// The same limits the liaison's queryStatus reports as RESOURCE_EXHAUSTED.
+	if errors.Is(cause, ErrQueryResourceExhausted) || errors.Is(cause, vectorized.ErrMemoryBudgetExceeded) || errors.Is(cause, native.ErrQueryLimit) {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_RESOURCE_EXHAUSTED, msg)
 	}
 	return common.NewError("%s", msg)
