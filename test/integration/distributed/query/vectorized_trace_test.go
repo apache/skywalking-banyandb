@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
@@ -54,15 +55,15 @@ import (
 // vectorized_trace_test.go. Together they satisfy the directive that
 // integration standalone and distributed verify row and vec independently.
 func init() {
-	registerDistributedTraceSuite("vec trace independent verification (distributed)", "Vec (distributed): Scanning Traces", nil)
+	registerDistributedTraceSuite("vec trace independent verification (distributed)", "Vec (distributed): Scanning Traces", false)
 	// The same table on a cluster whose liaison asks the data nodes for chunks of one
 	// trace or about 1 KiB, so every fixture is carried by many chunks per node.
 	registerDistributedTraceSuite("vec trace independent verification (distributed, tiny scan chunks)",
 		"Vec (distributed, tiny chunks): Scanning Traces",
-		[]string{"--stream-query-max-chunk-rows-trace=1", "--stream-query-max-chunk-bytes=1KiB"})
+		true)
 }
 
-func registerDistributedTraceSuite(describe, table string, liaisonFlags []string) {
+func registerDistributedTraceSuite(describe, table string, tinyChunks bool) {
 	ginkgo.Describe(describe, ginkgo.Ordered, func() {
 		var (
 			vectorizedConn  *grpc.ClientConn
@@ -90,7 +91,11 @@ func registerDistributedTraceSuite(describe, table string, liaisonFlags []string
 			closeDataNode1 := setup.DataNode(config)
 			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
 			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, liaisonFlags...)
+			if tinyChunks {
+				// The liaison created next asks the data nodes for chunks of one row or about 1 KiB.
+				dquery.SetNextChunkLimits(1, 1, 1<<10)
+			}
+			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 			stopFn = func() {
 				closerLiaisonNode()
 				closeDataNode0()
@@ -147,7 +152,7 @@ func registerDistributedTraceSuite(describe, table string, liaisonFlags []string
 			// A node with no matching trace sends no chunk, so chunks can be fewer than streams.
 			gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", int64(0)),
 				"the data nodes sent no chunk on their Scan streams")
-			if len(liaisonFlags) > 0 {
+			if tinyChunks {
 				// With one-trace chunks the fixtures that return several traces must be split.
 				gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", scanDelta),
 					"tiny chunk caps did not split any node result into several chunks")

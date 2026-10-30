@@ -179,6 +179,9 @@ func (m *MeasureTemplate) bindAggregate(bound *BoundQuery) (*ql.AggregatePlan, e
 		}
 		plan.GroupExpressions.Outputs = append(plan.GroupExpressions.Outputs, ql.ExpressionOutput{Expr: resolved, Column: definition})
 	}
+	if err := m.bindAggregateInputs(bound, plan); err != nil {
+		return nil, err
+	}
 	seen := make(map[measureColumnKey]bool, len(plan.Outputs))
 	for index, output := range plan.Outputs {
 		if output.IsGroup {

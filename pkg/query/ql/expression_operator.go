@@ -22,11 +22,13 @@ import (
 	"math"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 type expressionVector struct {
 	column       vectorized.Column
+	decimals     []decimal.Int128
 	ints         []int64
 	floats       []float64
 	bools        []bool
@@ -37,6 +39,7 @@ type expressionVector struct {
 	nulls        []bool
 	literal      ExpressionScalar
 	typ          ExpressionType
+	scale        uint8
 	constant     bool
 }
 
@@ -48,6 +51,16 @@ func (v *expressionVector) isNull(row int) bool {
 		return v.column.IsNull(row)
 	}
 	return v.nulls[row]
+}
+
+func (v *expressionVector) decimalAt(row int) decimal.Int128 {
+	if v.typ == ExpressionInt {
+		return decimal.FromInt64(v.intAt(row))
+	}
+	if v.constant {
+		return v.literal.Decimal
+	}
+	return v.decimals[row]
 }
 
 func (v *expressionVector) intAt(row int) int64 {
@@ -162,6 +175,7 @@ func wrapExpressions(ctx context.Context, source vectorized.PullOperator, plan *
 		op.outputs = append(op.outputs, node)
 		def := output.Column
 		def.Type = expressionStorageType(resolved.Type)
+		def.Scale = resolved.Scale
 		defs = append(defs, def)
 	}
 	for index, def := range source.OutputSchema().Columns {
@@ -223,6 +237,8 @@ func expressionColumnType(def vectorized.ColumnDef) ExpressionType {
 		return ExpressionTimestamp
 	}
 	switch def.Type {
+	case vectorized.ColumnTypeDecimal:
+		return ExpressionDecimal
 	case vectorized.ColumnTypeInt64:
 		return ExpressionInt
 	case vectorized.ColumnTypeFloat64:
@@ -243,6 +259,8 @@ func expressionColumnType(def vectorized.ColumnDef) ExpressionType {
 
 func expressionStorageType(typ ExpressionType) vectorized.ColumnType {
 	switch typ {
+	case ExpressionDecimal:
+		return vectorized.ColumnTypeDecimal
 	case ExpressionFloat:
 		return vectorized.ColumnTypeFloat64
 	case ExpressionString:
@@ -287,7 +305,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 	if err := o.reserve(1536 + int64(len(expr.Args))*16); err != nil {
 		return nil, err
 	}
-	node := &expressionNode{op: o, value: expressionVector{typ: expr.Type}, index: -1}
+	node := &expressionNode{op: o, value: expressionVector{typ: expr.Type, scale: expr.Scale}, index: -1}
 	o.nodes = append(o.nodes, node)
 	for _, arg := range expr.Args {
 		child, err := o.compile(arg)
@@ -298,7 +316,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 	}
 	switch expr.Op {
 	case "literal":
-		node.scalarValue = expressionVector{typ: expr.Type, constant: true, literal: expr.Literal}
+		node.scalarValue = expressionVector{typ: expr.Type, scale: expr.Scale, constant: true, literal: expr.Literal}
 		node.eval = node.literal
 	case "column":
 		node.index = sourceIndex(o.source.OutputSchema(), expr.Source)
@@ -318,10 +336,20 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 		node.eval = node.timeBucket(expr.Literal.Int64)
 	case "negate", "positive":
 		node.eval = node.unary(expr.Op)
-	case "=", "!=", "<", "<=", ">", ">=":
-		node.eval = node.comparison(expr.Op, expr.Args[0].Type)
-	case "in", "not_in":
-		node.eval = node.membership(expr.Op == "not_in", expr.Args[0].Type)
+	case "=", "!=", "<", "<=", ">", ">=", "in", "not_in":
+		comparisonType := expr.Args[0].Type
+		// Integers retain their type when resolved alongside exact decimals.
+		for _, arg := range expr.Args[1:] {
+			if arg.Type == ExpressionDecimal {
+				comparisonType = ExpressionDecimal
+				break
+			}
+		}
+		if expr.Op == "in" || expr.Op == "not_in" {
+			node.eval = node.membership(expr.Op == "not_in", comparisonType)
+		} else {
+			node.eval = node.comparison(expr.Op, comparisonType)
+		}
 	case "contains", "not_contains":
 		node.eval = node.contains(expr.Op == "not_contains", expr.Args[0].Type, expr.Args[1].Type)
 	case "and", "or":
@@ -345,7 +373,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 				if evalErr != nil {
 					return nil, evalErr
 				}
-				node.scalarValue = expressionVector{typ: expr.Type, constant: true, literal: value.scalarAt(0)}
+				node.scalarValue = expressionVector{typ: expr.Type, scale: expr.Scale, constant: true, literal: value.scalarAt(0)}
 				node.scalarReady = true
 				o.payloadBytes = payloadBefore
 				o.stats.ScalarEvaluations++
@@ -384,16 +412,21 @@ func (n *expressionNode) literal(_ context.Context, _ *vectorized.RecordBatch, _
 }
 
 func (n *expressionNode) output(value *expressionVector, size int) (vectorized.Column, error) {
-	if value.constant && !value.isNull(0) && (value.typ == ExpressionIntArray || value.typ == ExpressionStringArray) {
+	if value.constant && !value.isNull(0) && (value.typ == ExpressionIntArray || value.typ == ExpressionStringArray || value.typ == ExpressionDecimal) {
 		literal := value.literal
 		if err := n.buffer(size); err != nil {
 			return nil, err
 		}
-		if value.typ == ExpressionIntArray {
+		switch value.typ {
+		case ExpressionDecimal:
+			for row := 0; row < size; row++ {
+				n.value.decimals[row] = literal.Decimal
+			}
+		case ExpressionIntArray:
 			for row := 0; row < size; row++ {
 				n.value.intArrays[row] = literal.Ints
 			}
-		} else {
+		default:
 			for row := 0; row < size; row++ {
 				n.value.stringArrays[row] = literal.Strings
 			}
@@ -419,6 +452,8 @@ func (n *expressionNode) column(ctx context.Context, batch *vectorized.RecordBat
 		return &n.value, nil
 	}
 	switch value := c.(type) {
+	case *vectorized.TypedColumn[decimal.Int128]:
+		n.value.decimals = value.Data()
 	case *vectorized.TypedColumn[int64]:
 		n.value.ints = value.Data()
 	case *vectorized.TypedColumn[float64]:
@@ -453,6 +488,8 @@ func (n *expressionNode) buffer(size int) error {
 	}
 	width := int64(8)
 	switch n.value.typ { //nolint:exhaustive // Numeric types share the default int64 width.
+	case ExpressionDecimal:
+		width = 24
 	case ExpressionBool:
 		width = 1
 	case ExpressionString:
@@ -476,6 +513,8 @@ func (n *expressionNode) buffer(size int) error {
 	n.op.recordWork(ExpressionStats{BufferBytes: uint64(bytes), FullColumnAllocations: uint64(boolInt(size > 1))})
 	n.value.nulls = make([]bool, size)
 	switch n.value.typ {
+	case ExpressionDecimal:
+		n.value.decimals = make([]decimal.Int128, size)
 	case ExpressionFloat:
 		n.value.floats = make([]float64, size)
 	case ExpressionBool:
@@ -535,6 +574,8 @@ func (v *expressionVector) output(size int) vectorized.Column {
 	}
 	var output vectorized.Column
 	switch v.typ {
+	case ExpressionDecimal:
+		output = vectorized.NewColumnFromSlice(vectorized.ColumnTypeDecimal, v.decimals[:size])
 	case ExpressionFloat:
 		output = vectorized.NewColumnFromSlice(vectorized.ColumnTypeFloat64, v.floats[:size])
 	case ExpressionString:

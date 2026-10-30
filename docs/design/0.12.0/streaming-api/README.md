@@ -399,9 +399,8 @@ message WriteResponse {
 Semantics:
 
 - **Acknowledgement and application per sealed batch, not per stream.** The liaison still groups
-  rows per node, but it seals a node's batch by size or age: `--write-batch-seal-rows`
-  (default 4,096), `--write-batch-seal-bytes` (default 8 MiB) or `--write-batch-seal-interval`
-  (default 200 ms), whichever comes first. A sealed batch is one `cluster.v1 Send` stream in batch
+  rows per node, but it seals a node's batch by size or age: at 8 MiB or 200 ms after its first
+  row, whichever comes first. Both values are fixed. A sealed batch is one `cluster.v1 Send` stream in batch
   mode, exactly as today, and the data node applies it when that stream closes, exactly as today;
   the data node code does not change, and an acknowledgement keeps today's meaning (§3.1): the
   batch was applied under the storage engine's guarantees. When the node acknowledges the batch,
@@ -410,7 +409,7 @@ Semantics:
   message, so a metadata switch mid-stream lands on the batch that follows it. Half-close seals
   every open batch and acknowledges the rest before the server completes, so a client that reads
   acknowledgements only after `onCompleted` sees exactly today's behaviour, and a client that reads
-  them as they arrive gets each within the seal interval plus one round trip.
+  them as they arrive gets each within the 200 ms seal age plus one round trip.
 - **Send-then-read clients must not deadlock.** The repository's own fixtures, and any client
   written against today's contract, send every row, half-close, and only then read
   (`test/cases/trace/data/data.go`). If the liaison's acknowledgement `Send` blocked while such a
@@ -436,15 +435,17 @@ Semantics:
   outcome and the client retries it on a new stream, the rule clients already follow today.
   Retries are safe where writes are idempotent: measure (versioned upsert), stream with a client
   `element_id`, and trace (spans are deduplicated by span ID at query time).
-- **Backpressure.** The liaison keeps at most `--write-max-inflight-batches` (default 4) sealed,
-  unacknowledged batches per node per stream. Beyond that it stops calling `Recv`, so the client's
-  HTTP/2 window fills and the client blocks: that is the enforcement, and it needs no client
-  support. When the memory protector reports high pressure, or a data node rejects a batch with
+- **Backpressure.** The liaison keeps a window of sealed, unacknowledged batches per node per
+  stream. The window starts at 4, grows by one for every window's worth of clean acknowledgements
+  up to 16 (but not while the liaison's own memory protector reports high pressure), and halves,
+  down to 1, when a node refuses a batch with `DISK_FULL` or `STATUS_SERVER_BUSY`. When the window
+  is full, it stops calling `Recv`, so the client's HTTP/2 window
+  fills and the client blocks: that is the enforcement, and it needs no client support. When the memory protector reports high pressure, or a data node rejects a batch with
   `DISK_FULL` or with the new `STATUS_SERVER_BUSY` (the batch write listener's health check gains a
   memory-pressure verdict, mirroring `SYNC_STATUS_SERVER_BUSY` on the chunked sync), the liaison
   sets `retry_after_ms` on the acknowledgements it sends and keeps the stream open. A busy batch is
   retried by the liaison with backoff, so clients that do not understand the new status are not
-  asked to; only when pressure persists past `--write-pressure-timeout` (default 30 s) does the
+  asked to; only when pressure persists past the stream's deadline (30 s when the client set none) does the
   batch fail with `STATUS_SERVER_BUSY` and the stream end with `RESOURCE_EXHAUSTED`, as the
   load-shedding interceptor does for new streams today.
 - **Typed status.** `status_code` is set on every response; the string `status` stays for existing
@@ -654,9 +655,11 @@ standalone runs the same liaison code as a cluster without encoding.
 (`defaultQueryTimeout` in their distributed plans) and 15 s for measure (`--dst-broadcast-timeout`).
 A long scan, such as a needle search over a large time range, cannot finish inside it. `Scan`
 replaces it with an idle deadline. A node stream lives as long as the caller's context; while a
-data node scans without output it sends a heartbeat every `--scan-heartbeat-interval` (default
-2 s); the liaison fails a node stream that sends nothing, neither chunk nor heartbeat, for
-`--scan-idle-timeout` (default 15 s). A dead or wedged node is still detected within the idle
+data node scans without output it sends a heartbeat; the liaison fails a node stream that sends
+nothing, neither chunk nor heartbeat, for 15 s. The liaison states that idle timeout in the `Scan`
+request (`idle_timeout_ms`) and the data node heartbeats at a fifth of it (at least every 50 ms,
+and every 2 s when the request states none), so the two sides cannot disagree and neither needs a
+flag. A dead or wedged node is still detected within the idle
 timeout, while a slow but live scan is bounded only by the client's own deadline and by
 cancellation.
 
@@ -729,8 +732,7 @@ Query path:
 
 Write path:
 
-1. **Client to liaison.** The liaison stops calling `Recv` once a `Write` stream has
-   `--write-max-inflight-batches` sealed, unacknowledged batches on any node. The client's window
+1. **Client to liaison.** The liaison stops calling `Recv` once a `Write` stream has a full window of sealed, unacknowledged batches on any node. The client's window
    fills.
 2. **Liaison to data node.** One `Send` stream per sealed batch and the HTTP/2 window, as today.
    The data node's `CheckHealth` reports disk today; it gains a memory-pressure verdict reported as
@@ -828,9 +830,9 @@ they all progress.
 - Measure index-mode dedup suppresses a series across sort windows, so its seen-set is charged
   and bounded by the number of series the query touches, as in the unary path.
 
-**Writes.** A `Write` stream holds at most one open and `--write-max-inflight-batches` sealed
-batches per node, so its liaison footprint is at most `nodes × 5 × 8 MiB` with the defaults, however
-long it runs. Beyond that the liaison stops reading. Under high pressure the liaison retries busy
+**Writes.** A `Write` stream holds at most one open and 16 sealed
+batches per node (the window's ceiling), so its liaison footprint is at most `nodes × 17 × 8 MiB`,
+however long it runs; the window shrinks under pressure, so it is usually far less. Beyond that the liaison stops reading. Under high pressure the liaison retries busy
 batches with backoff instead of failing the stream, and new write streams are rejected by the
 interceptor as today. Ingestion of any size proceeds at the rate the protector allows.
 
@@ -904,20 +906,22 @@ Aggregation: partial results need every input. The supported shapes:
 
 ## 9. Configuration
 
-| Flag | Default | Scope |
+The 0.12.0 streaming work adds no flags: operators do not restart nodes to retune, so each value is
+a constant, derived from another value, or adapts to load.
+
+| Value | Setting | How it is set |
 |---|---|---|
-| `--stream-query-max-chunk-rows-{trace,stream,measure}` | 256 / 4096 / 8192 | liaison, 0.12.0 |
-| `--stream-query-max-chunk-bytes` | 4 MiB internal (0.12.0); 2 MiB public (next milestone) | liaison |
-| `--stream-query-prefetch` | 2 | liaison, 0.12.0 |
-| `--scan-heartbeat-interval` | 2 s | data node, 0.12.0 |
-| `--scan-idle-timeout` | 15 s | liaison, 0.12.0 |
-| `--stream-query-idle-timeout` | 60 s | liaison, next milestone |
-| `--stream-query-pressure-timeout` | 30 s | liaison and data node, 0.12.0 |
-| `--write-batch-seal-rows` | 4096 | liaison |
-| `--write-batch-seal-bytes` | 8 MiB | liaison |
-| `--write-batch-seal-interval` | 200 ms | liaison |
-| `--write-max-inflight-batches` | 4 | liaison |
-| `--write-pressure-timeout` | 30 s | liaison |
+| Scan chunk rows | 256 trace / 4096 stream / 8192 measure | constant on the liaison |
+| Scan chunk bytes | 4 MiB internal (0.12.0); 2 MiB public (next milestone) | constant on the liaison |
+| Scan prefetch | 2 chunks per node | constant |
+| Scan idle timeout | 15 s | constant on the liaison, sent in the `Scan` request |
+| Scan heartbeat interval | idle timeout / 5, at least 50 ms; 2 s if the request states none | derived on the data node |
+| Write batch seal | 8 MiB or 200 ms after the first row | constants |
+| Write window | 4, between 1 and 16 batches per node | AIMD: +1 per window of clean acknowledgements, halved on `DISK_FULL` or `STATUS_SERVER_BUSY`, frozen while the liaison is under memory pressure |
+| Write pressure timeout | the stream's deadline, else 30 s | derived per stream |
+
+Next milestone, for the public streaming API: `--stream-query-idle-timeout` (60 s) and
+`--stream-query-pressure-timeout` (30 s).
 
 No environment variables and no compatibility switches, in line with the 0.12 upgrade policy.
 
@@ -1021,10 +1025,10 @@ results and goroutines back to their idle baseline.
 | Tracing | `trace: true` | The trailer carries one data-node sub-trace per node and the liaison span, matching the unary response's trace tree. |
 | RBAC | Method policies for the new methods, a read-only user, a denied user, and a user denied one of two groups in a multi-group request | `StreamQuery` is allowed as `data:read`; every denial returns `PERMISSION_DENIED` before the header and before any `Scan` stream is opened (the data-node counters do not move). |
 | Gateway | `POST /v1/trace/data/stream` through the HTTP gateway, including a stream throttled to last two minutes | Newline-delimited JSON, one `{"result":…}` per event, `{"error":…}` on failure; the concatenation equals the gRPC result; the stream outlives the server's 30 s write timeout. |
-| Write acknowledgement | One `Write` stream sending for ten minutes at a steady rate while reading concurrently | Every message is acknowledged within the seal interval plus one round trip; the pending list never exceeds one open plus four sealed batches per node; the liaison heap is flat. |
+| Write acknowledgement | One `Write` stream sending for ten minutes at a steady rate while reading concurrently | Every message is acknowledged within the seal age plus one round trip; the pending list never exceeds one open plus a window of sealed batches per node; the liaison heap is flat. |
 | Send-then-read writer | A client that sends 200,000 rows, half-closes, then reads, with the server's and the client's flow-control windows both smaller than the acknowledgements | The stream completes with every acknowledgement delivered; no deadlock. |
 | Applied before ack | Send, wait for an ack, kill the liaison, query the data nodes | Every acknowledged row is readable (applied under the storage engine's guarantees); unacknowledged rows are of unknown outcome and the test client retries them without duplicates in measure and stream. |
-| Write pressure | Force the protector high during a write stream, and separately make a data node answer `STATUS_SERVER_BUSY` | Acknowledgements carry `retry_after_ms`; busy batches are retried by the liaison and acknowledged after release; past `--write-pressure-timeout` the stream ends with `RESOURCE_EXHAUSTED` and the unacknowledged batches are reported, not replayed. |
+| Write pressure | Force the protector high during a write stream, and separately make a data node answer `STATUS_SERVER_BUSY` | Acknowledgements carry `retry_after_ms`; busy batches are retried by the liaison and acknowledged after release; past the pressure timeout the stream ends with `RESOURCE_EXHAUSTED` and the unacknowledged batches are reported, not replayed. |
 | Write compatibility | The existing write integration suites, a flush-per-stream client, a metadata switch mid-stream that straddles a seal, and the lifecycle row-replay and gossip paths | Unchanged results; the switched metadata lands on the following batch; the internal publisher callers are untouched. |
 
 ### 11.4 Client, end to end
@@ -1078,7 +1082,7 @@ and the merged `distributed-querybench.md` goes into the PR.
 | list-all, 1M rows | rows per second end to end | within 10% of the unary rows per second at the largest cardinality unary completes |
 | cancel after first chunk, 1M rows, incremental plans only (trace, stream rows, measure rows and bucketed aggregation) | data-node CPU seconds per query | under 10% of the uncancelled run |
 | write, 1 / 100 / 1,000 rows per flush | rows per second | long-lived stream at or above flush-per-stream at every batch size |
-| write, long-lived stream | acknowledgement latency p99 | under the seal interval plus 50 ms |
+| write, long-lived stream | acknowledgement latency p99 | under the 200 ms seal age plus 50 ms |
 
 ### 11.6 Soak
 

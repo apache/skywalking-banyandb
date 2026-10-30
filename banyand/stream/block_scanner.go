@@ -237,6 +237,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		}
 		return
 	}
+	// totalBlockBytes is the uncompressed size of the blocks in the current batch.
 	var totalBlockBytes uint64
 	for ti.nextBlock() {
 		p := ti.piHeap[0]
@@ -248,21 +249,23 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 		bs.qo.elementFilter = bsn.filterIndex[p.p]
 		bs.bm.copyFrom(p.curBlock)
 		quota := bsn.pm.AvailableBytes()
-		for i := range batch.bss {
-			totalBlockBytes += batch.bss[i].bm.uncompressedSizeBytes
-			if quota >= 0 && totalBlockBytes > uint64(quota) {
-				err := fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
-				batch.err = err
-				select {
-				case blockCh <- batch:
-				case <-ctx.Done():
-					releaseBlockScanResultBatch(batch)
-					bsn.l.Warn().Err(err).Msg("quota exceeded, context canceled")
-				}
-				return
+		totalBlockBytes += bs.bm.uncompressedSizeBytes
+		if quota >= 0 && totalBlockBytes > uint64(quota) {
+			err := fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)
+			batch.err = err
+			select {
+			case blockCh <- batch:
+			case <-ctx.Done():
+				releaseBlockScanResultBatch(batch)
+				bsn.l.Warn().Err(err).Msg("quota exceeded, context canceled")
 			}
+			return
 		}
 		if len(batch.bss) >= cap(batch.bss) {
+			if ctx.Err() != nil {
+				releaseBlockScanResultBatch(batch)
+				return
+			}
 			if err := bsn.pm.AcquireResource(ctx, totalBlockBytes); err != nil {
 				batch.err = fmt.Errorf("cannot acquire resource: %w", err)
 				select {
@@ -281,6 +284,7 @@ func (bsn *blockScanner) scan(ctx context.Context, blockCh chan *blockScanResult
 				return
 			}
 			batch = generateBlockScanResultBatch()
+			totalBlockBytes = 0
 		}
 	}
 	if ti.Error() != nil {

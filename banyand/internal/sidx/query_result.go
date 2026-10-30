@@ -349,13 +349,28 @@ func (qrh *QueryResponseHeap) reset() {
 	qrh.cursors = qrh.cursors[:0]
 }
 
+// mergeCapacityHint bounds preallocation derived from a request limit; the
+// slices grow on demand up to the rows actually merged.
+const mergeCapacityHintMax = 1024
+
+func mergeCapacityHint(limit int) int {
+	if limit < 0 {
+		return 0
+	}
+	if limit > mergeCapacityHintMax {
+		return mergeCapacityHintMax
+	}
+	return limit
+}
+
 // mergeWithHeap performs heap-based merge of QueryResponse shards.
 func (qrh *QueryResponseHeap) mergeWithHeap(limit int) *QueryResponse {
+	capacity := mergeCapacityHint(limit)
 	result := &QueryResponse{
-		Keys:    make([]int64, 0, limit),
-		Data:    make([][]byte, 0, limit),
-		SIDs:    make([]common.SeriesID, 0, limit),
-		PartIDs: make([]uint64, 0, limit),
+		Keys:    make([]int64, 0, capacity),
+		Data:    make([][]byte, 0, capacity),
+		SIDs:    make([]common.SeriesID, 0, capacity),
+		PartIDs: make([]uint64, 0, capacity),
 	}
 
 	step := -1

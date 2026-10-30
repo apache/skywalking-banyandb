@@ -22,8 +22,8 @@
 //	checker schema-only <artifact dir>
 //
 // Every row is checked against its group's schema, and the rows of known sources (the events
-// report-events.sh reports, trace-mocker's services and their metrics, OAP's General UI
-// templates) are printed under data, by resource, with their non-null columns, for the
+// report-events.sh reports, trace-mocker's services and their metrics, the UI template
+// the setup creates) are printed under data, by resource, with their non-null columns, for the
 // expectations to pin their values. The exported schema is printed under schema: the entries
 // per kind, every group with its resource options and the schema of those known resources;
 // the references between the entries are checked.
@@ -66,10 +66,12 @@ const (
 	eventUUIDPrefix = "export-e2e-"
 	// mockServicePrefix starts the names of trace-mocker's services.
 	mockServicePrefix = "mock_"
-	// uiTemplate is the name of the properties holding OAP's UI templates in sw_property, of
-	// which the generalTemplatePrefix ones are printed.
-	uiTemplate            = "ui_template"
-	generalTemplatePrefix = "General-"
+	// uiTemplate is the name of the properties holding UI templates in sw_property, of which
+	// the one with the e2eTemplateID is printed.
+	uiTemplate = "ui_template"
+	// e2eTemplateID is the id of the UI template the e2e setup creates through OAP's
+	// ui-management; OAP 11 no longer seeds any template itself.
+	e2eTemplateID = "transfer-e2e"
 	// maxProblems bounds the diagnostics printed per check.
 	maxProblems = 50
 	// maxValueLength clips a printed value; a clipped value ends with "...".

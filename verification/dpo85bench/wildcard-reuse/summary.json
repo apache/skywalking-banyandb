@@ -1,0 +1,65 @@
+{
+  "prefix": {
+    "baseline": {
+      "ns/op": 376028.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 130068.0,
+      "allocs/op": 465.0
+    },
+    "candidate": {
+      "ns/op": 38448.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 26204.0,
+      "B/op": 19875.0,
+      "allocs/op": 319.0
+    },
+    "change_percent": {
+      "ns/op": -89.77522950418586,
+      "B/op": -84.71953132207769,
+      "allocs/op": -31.397849462365592
+    }
+  },
+  "leading": {
+    "baseline": {
+      "ns/op": 1668145.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 186424.0,
+      "allocs/op": 576.0
+    },
+    "candidate": {
+      "ns/op": 705705.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 24780.0,
+      "B/op": 19004.0,
+      "allocs/op": 315.0
+    },
+    "change_percent": {
+      "ns/op": -57.69522433601395,
+      "B/op": -89.80603355791101,
+      "allocs/op": -45.3125
+    }
+  },
+  "no_match": {
+    "baseline": {
+      "ns/op": 1922068.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 0.0,
+      "B/op": 192265.0,
+      "allocs/op": 345.0
+    },
+    "candidate": {
+      "ns/op": 702785.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 5372.0,
+      "B/op": 7640.0,
+      "allocs/op": 58.0
+    },
+    "change_percent": {
+      "ns/op": -63.43599706149834,
+      "B/op": -96.02631784256104,
+      "allocs/op": -83.18840579710145
+    }
+  }
+}

@@ -51,6 +51,8 @@ var streamEntries = []any{
 	g.Entry("projection with http.method", helpers.Args{Input: "all_with_http_method", Duration: 1 * time.Hour}),
 	g.Entry("limit", helpers.Args{Input: "limit", Duration: 1 * time.Hour}),
 	g.Entry("max limit", helpers.Args{Input: "all_max_limit", Want: "all", Duration: 1 * time.Hour}),
+	// OAP's default LIMIT is 10000; a tiny dataset must not be rejected by an estimated window.
+	g.Entry("large limit on small data", helpers.Args{Input: "all_limit_10000", Want: "all", Duration: 1 * time.Hour}),
 	g.Entry("above absolute window", helpers.Args{
 		Input: "all_above_window", WantErr: true, WantErrCode: codes.InvalidArgument, Duration: 1 * time.Hour,
 	}),

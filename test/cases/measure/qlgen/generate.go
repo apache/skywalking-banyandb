@@ -98,6 +98,10 @@ func Generate() (Suite, error) {
 	if b.err != nil {
 		return Suite{}, b.err
 	}
+	patternReadiness, patternScenarios, patternErr := generatePatterns(b)
+	if patternErr != nil {
+		return Suite{}, patternErr
+	}
 	features := make([]Feature, 0, len(b.features))
 	for _, id := range slices.Sorted(maps.Keys(b.features)) {
 		status := "supported"
@@ -120,6 +124,7 @@ func Generate() (Suite, error) {
 		return Suite{}, parentChildErr
 	}
 	suite := Suite{
+		PatternReadiness: patternReadiness, PatternScenarios: patternScenarios,
 		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
 		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
 		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,

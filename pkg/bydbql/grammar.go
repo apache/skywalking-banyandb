@@ -113,6 +113,7 @@ type GrammarColumn struct {
 // express a per-alternative semantic predicate — ParseQuery's post-parse
 // check (checkAggregateAndGroupByShape) rejects it outside COUNT.
 type GrammarAggregateFunction struct {
+	Argument *GrammarExpression
 	Function string                 `parser:"@('SUM'|'MEAN'|'AVG'|'COUNT'|'MAX'|'MIN')"`
 	Distinct bool                   `parser:"'(' @'DISTINCT'?"`
 	Column   *GrammarIdentifierPath `parser:"@@"`

@@ -17,10 +17,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/bits"
 	"reflect"
 	"sync"
 	"sync/atomic"
 
+	"github.com/shirou/gopsutil/v3/mem"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -29,6 +34,8 @@ const (
 	queryMaxFraction            = 8
 	queryHeadroomPercent        = 10
 	queryFallbackPool    uint64 = 64 << 20
+	// defaultAllowedPercent mirrors the default of the protector's --allowed-percent flag.
+	defaultAllowedPercent = 75
 )
 
 var (
@@ -36,18 +43,26 @@ var (
 	ErrQueryTooLarge = errors.New("query memory request exceeds per-query limit")
 	// ErrQueryResourceExhausted indicates exhaustion of a query allowance or the shared pool.
 	ErrQueryResourceExhausted = errors.New("query memory pool exhausted")
-	// ErrQueryWindowPressure indicates a result window exceeding the current assignment.
-	ErrQueryWindowPressure = errors.New("query result window exceeds current memory budget")
 )
 
-// Admission uses conservative initial estimates, not measured per-record maxima.
-// Execution charges and the absolute window are additional bounds; these values
-// should be calibrated with representative Property, Stream and Trace workloads.
+// Admission does not estimate memory from the requested window: a limit says how
+// many rows a caller will accept, not how many exist. Memory is bounded by the
+// absolute window, capped preallocation and execution-time charges for data read.
 const (
-	queryFixedOverhead       uint64 = 1 << 20
-	queryEstimatedEntryBytes uint64 = 4 << 10
-	queryAbsoluteWindow      uint64 = 100000
+	queryFixedOverhead  uint64 = 1 << 20
+	queryAbsoluteWindow uint64 = 100000
 )
+
+// QueryFailure builds the error response of a query. A query that ran out of its memory allowance carries
+// STATUS_RESOURCE_EXHAUSTED, so the caller can tell it apart from an internal error and report
+// RESOURCE_EXHAUSTED to the client. The message is formatted from format and args.
+func QueryFailure(cause error, format string, args ...any) *common.Error {
+	msg := fmt.Sprintf(format, args...)
+	if errors.Is(cause, ErrQueryResourceExhausted) {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_RESOURCE_EXHAUSTED, msg)
+	}
+	return common.NewError("%s", msg)
+}
 
 // QueryBudget provides an atomic, finite reservation pool for one service.
 // Reservations are estimates and must remain held until response materialization
@@ -110,10 +125,35 @@ func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	return nil
 }
 
+// Refund returns bytes previously charged to the reservation, never taking its
+// usage below zero. An incremental reservation also hands the bytes back to the
+// shared pool. It does not affect the retained-result counter.
+func (r *QueryReservation) Refund(bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released.Load() {
+		return
+	}
+	used := r.used.Load()
+	if bytes > used {
+		bytes = used
+	}
+	if bytes == 0 {
+		return
+	}
+	r.used.Store(used - bytes)
+	if r.incremental {
+		r.owner.reserved.Add(^(bytes - 1))
+	}
+}
+
 // Limit returns the reservation's assigned byte budget.
 func (r *QueryReservation) Limit() uint64 { return r.assigned }
 
-// Used returns the cumulative bytes charged to the reservation.
+// Used returns the bytes currently charged to the reservation (charges minus refunds).
 func (r *QueryReservation) Used() uint64 { return r.used.Load() }
 
 // Owner identifies the shared query pool owning this reservation.
@@ -263,8 +303,8 @@ func (b *QueryBudget) AdmitMeasureContext(ctx context.Context) (context.Context,
 	return querypkg.WithBudgetLease(ctx, reservation), reservationReleaseForTransport(ctx, reservation), nil
 }
 
-// Admit reserves the complete dynamic assignment for a query after deriving a
-// result-window ceiling from current sampled memory and outstanding reservations.
+// Admit reserves the complete dynamic assignment for a query after deriving
+// the assignment from current sampled memory and outstanding reservations.
 func (b *QueryBudget) Admit(ctx context.Context, limit, offset, defaultLimit uint32) (func(), error) {
 	_, release, err := b.AdmitContext(ctx, limit, offset, defaultLimit)
 	return release, err
@@ -307,13 +347,6 @@ func (b *QueryBudget) AdmitContext(ctx context.Context, limit, offset, defaultLi
 		if !reservationOk || reservation.released.Load() {
 			return nil, nil, ErrQueryResourceExhausted
 		}
-		maxWindow := uint64(0)
-		if reservation.assigned > queryFixedOverhead {
-			maxWindow = (reservation.assigned - queryFixedOverhead) / queryEstimatedEntryBytes
-		}
-		if window > maxWindow {
-			return nil, nil, ErrQueryWindowPressure
-		}
 		if !reservation.retain() {
 			return nil, nil, ErrQueryResourceExhausted
 		}
@@ -339,10 +372,6 @@ func (b *QueryBudget) AdmitContext(ctx context.Context, limit, offset, defaultLi
 		assignment = minUint64(assignment, available-current)
 		if assignment <= queryFixedOverhead {
 			return nil, nil, ErrQueryResourceExhausted
-		}
-		maxWindow := (assignment - queryFixedOverhead) / queryEstimatedEntryBytes
-		if window > maxWindow {
-			return nil, nil, ErrQueryWindowPressure
 		}
 		if b.reserved.CompareAndSwap(current, current+assignment) {
 			reservation := &QueryReservation{owner: b, assigned: assignment, refs: 1}
@@ -396,13 +425,69 @@ func (b *QueryBudget) availableSnapshot(refresh bool) uint64 {
 	return minUint64(pool, uint64(available)-headroom)
 }
 
+// allowedPercentProvider is implemented by the protector to report its --allowed-percent setting.
+type allowedPercentProvider interface{ allowedPercentValue() int }
+
+// hostMemory caches the host's total memory, which is read once per process.
+var hostMemory struct {
+	read  func() uint64
+	total uint64
+	done  bool
+	sync.Mutex
+}
+
+// readHostMemoryTotal returns the host's total memory, or zero when it cannot be read.
+func readHostMemoryTotal() uint64 {
+	stat, err := mem.VirtualMemory()
+	if err != nil || stat == nil {
+		return 0
+	}
+	return stat.Total
+}
+
+func hostMemoryTotal() uint64 {
+	hostMemory.Lock()
+	defer hostMemory.Unlock()
+	if !hostMemory.done {
+		read := hostMemory.read
+		if read == nil {
+			read = readHostMemoryTotal
+		}
+		hostMemory.total, hostMemory.done = read(), true
+	}
+	return hostMemory.total
+}
+
+// unlimitedQueryLimit is the memory the query budget may use when the protector has no limit:
+// the host's total memory times the protector's allowed percentage, or zero when the host memory is unknown.
+func (b *QueryBudget) unlimitedQueryLimit() uint64 {
+	total := hostMemoryTotal()
+	if total == 0 {
+		return 0
+	}
+	percent := defaultAllowedPercent
+	if provider, ok := b.protector.(allowedPercentProvider); ok {
+		if configured := provider.allowedPercentValue(); configured > 0 && configured <= 100 {
+			percent = configured
+		}
+	}
+	high, low := bits.Mul64(total, uint64(percent))
+	quotient, _ := bits.Div64(high, low, 100) // high < 100 because percent <= 100
+	return quotient
+}
+
 func (b *QueryBudget) poolLimit() uint64 {
 	limit := uint64(0)
 	if b.protector != nil {
 		limit = b.protector.GetLimit()
 	}
 	if limit == 0 {
-		return queryFallbackPool
+		// The protector is disabled: no --allowed-bytes and no container memory limit. The pool is then sized from
+		// the host's memory, so a large machine is not held to a fixed 64 MiB. Only the query budget uses this
+		// figure; the protector itself stays disabled.
+		if limit = b.unlimitedQueryLimit(); limit == 0 {
+			return queryFallbackPool
+		}
 	}
 	pool := limit / queryPoolFraction
 	if pool == 0 {
@@ -416,18 +501,4 @@ func minUint64(left, right uint64) uint64 {
 		return left
 	}
 	return right
-}
-
-// MaxWindow computes the policy ceiling without accounting for current contention.
-// AdmitContext must be used for admission against available memory.
-func (b *QueryBudget) MaxWindow(fixedOverhead, estimatedBytesPerEntry, absoluteCeiling uint64) uint64 {
-	maxQuery := b.MaxQuery()
-	if estimatedBytesPerEntry == 0 || maxQuery <= fixedOverhead {
-		return 0
-	}
-	window := (maxQuery - fixedOverhead) / estimatedBytesPerEntry
-	if window > absoluteCeiling {
-		return absoluteCeiling
-	}
-	return window
 }

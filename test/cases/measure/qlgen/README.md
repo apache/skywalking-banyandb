@@ -192,11 +192,11 @@ cache-on/cache-off timing uses the separate, bounded T05 benchmark.
 ## T07 complete SQL aggregation
 
 The artifact declares `aggregate_scenarios`, independent `aggregate_readiness`
-queries, and `aggregate_rejections`. Its 41 scenarios each bind the exact same
+queries, and `aggregate_rejections`. Scenarios bind the exact same
 statement three times: the full input, null-only or smaller input, and empty
 input. The runner executes these calls cold and warm, then repeats all three
-with the compiled cache bypassed. Seven additional statements reject unsupported
-aggregation shapes before scanning. The existing 293 legacy and T03 cases and
+with the compiled cache bypassed. Additional statements reject unsupported
+aggregation shapes before scanning. The legacy and T03 cases and
 18 T05 processes keep their original query texts and expected values.
 
 `ql_t07` contains exactly fixture F's six rows. `ql_t07_groups` separately adds
@@ -217,6 +217,8 @@ NULL and empty strings remain separate. Counts retain integer type; AVG/MEAN
 divide the complete sum by the non-null count. Null-only and empty scalar COUNT
 is zero; other scalar aggregates are null, and grouped empty input has no rows.
 
+The QG2 cases use literal expected values for scalar and grouped aggregate composition, computed arguments, COUNT DISTINCT expressions, repeated aggregates, HAVING, ordered aliases with pagination, and changed expression parameters. They include all-null and empty windows, nested-aggregate and depth rejection, and run through the same standalone and distributed Query RPC harness. Computed aggregate inputs use local aggregation over complete raw input.
+
 Every successful aggregate RPC checks exact consumed rows after deduplication,
 actual group cardinality, one local aggregate execution, absence of source
 identity/timestamps on synthesized rows, and restored group/native memory
@@ -236,7 +238,7 @@ T07's new SQL semantics execute over one complete native raw scan.
 ## T08 native aggregate pushdown and keyed merge
 
 The artifact adds `native_aggregate_scenarios`, `native_aggregate_readiness`,
-and `native_aggregate_rejections`. The 30 scenarios retain three identical query
+and `native_aggregate_rejections`. The scenarios retain three identical query
 texts with independently evaluated changed bindings. Eligible native cohorts
 run cold, warm, with the compiled cache bypassed, and with native aggregation
 disabled so the identical SQL also exercises T07. Unsafe cohorts must use T07
@@ -848,3 +850,89 @@ After the empty-scalar correction, both container selections pass all nine specs
 including cached and bypassed executions with changed bindings. The final reports
 are `/mnt/d/qlb-empty-scalar-standalone-report.json` and
 `/mnt/d/qlb-empty-scalar-distributed-report.json`.
+
+### Indexed LIKE and ILIKE
+
+`pattern_fixture.go`, `pattern_generate.go`, `pattern_review_generate.go`,
+`pattern_aggregate_generate.go` and `pattern_oracle.go` generate 34 scenarios for neutral names in an explicit keyword index and an index with its
+analyzer omitted. Tokenized and missing indexes are rejection controls. One
+identity has two timestamps, ensuring COUNT DISTINCT is applied after pattern
+selection and field residuals. Tests retain separate case-distinct names.
+
+The independent oracle tokenizes SQL `%`, `_` and escapes and uses dynamic
+programming over Unicode scalars. It never calls production parser, evaluator or
+native automaton helpers. `testdata/pattern-postgres.sql` and the saved JSON pin
+20 ASCII/escape/NULL/empty/Unicode-character expectations from PostgreSQL 17.6
+under C.UTF-8; provenance records the image digest. Unicode simple-fold behavior
+has explicit independent unit expectations, including the final-sigma cycle and
+no multi-character expansion.
+
+The generated cohort covers whole-value/exact/prefix/suffix/infix matches,
+consecutive percent signs, punctuation/newline/Unicode scalars, empty and NULL,
+custom/disabled/default escapes, literal versus bound percent, invalid binding
+recovery, omitted analyzer parity, field residuals, grouped COUNT DISTINCT/SUM
+and HAVING, native index ordering with pagination, and explicit unsupported
+Boolean/index/type shapes. Missing-index validation also runs with a NULL
+pattern. Six additional ambiguity scenarios reject tags covered by two keyword
+rules (both numeric-ID orders), standard plus keyword rules, or multi-tag plus
+keyword rules (both binding orders). NULL and unmatched patterns must reject too.
+The ambiguity tags are separate from the readiness indexes. Six additional
+fixtures preserve `like`, `ilike`, `escape` and their hyphenated resource/group
+names through ordinary indexed readiness and actual LIKE/ESCAPE queries.
+LIKE/ILIKE/ESCAPE are contextual expression words; the audited grammar fingerprint
+still includes their custom expression parser and the global reservation list.
+These narrow source-name witnesses do not cover the broader pending quoted/dotted
+identifier inventory. Each scenario executes through the QL RPC with normal and bypassed
+plan caches. Ownership counters must return to their previous values.
+
+Three combined-feature scenarios filter names with LIKE/ILIKE before computed
+integer and decimal sums, then apply COALESCE, grouped HAVING, numeric ordering
+and pagination. Their 15 bindings include matched, unmatched and NULL patterns;
+the complete cohort has 123 bindings and 246 verification RPCs per topology.
+Expected values use independent pattern matching and small-integer arithmetic,
+without calling the production expression or decimal implementation.
+
+```sh
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/standalone/query \
+  -ginkgo.label-filter='measure-ql && QL-patterns' -ginkgo.fail-on-empty
+go test -tags=querymetrics -count=1 -timeout=30m ./test/integration/distributed/query \
+  -ginkgo.label-filter='measure-ql && QL-patterns' -ginkgo.fail-on-empty
+```
+
+Run topologies sequentially. The focused benchmark and before/after exact-query
+control are documented in `verification/dpo85bench/README.md` at repository root.
+
+### Bounded decimal aggregation
+
+The `ql_t07_decimal` fixture includes ten coefficients of 999999999999999999,
+negative coefficients -999999999999999999 and -1, and a null. Each represents
+an integer scaled by 10 decimal places. The generated scalar, grouped, HAVING,
+ordering, and mixed integer/decimal cases bind the full fixture, the null row,
+and an empty interval. The expected values were checked with PostgreSQL 17.6
+using `sum(v::numeric / 10000000000)::numeric(38,10)` and the corresponding
+`GROUP BY`, `HAVING`, `ORDER BY`, and separate `sum(...)` and `count(v)` expressions. Decimal
+strings preserve all ten fractional places.
+
+`qg3_membership_generate.go` adds 16 generated `IN`/`NOT IN` scenarios using
+the existing six-row fixture, whose integer sum is 12. They cover integer and
+decimal operand order, a decimal later in the list, scales 0/1/2, aggregate
+operands, NULL list entries and a later matching integer. Each scenario binds
+the full, null-only and empty intervals, then repeats with the plan cache
+bypassed: 48 bindings and 96 QL RPCs per topology. Expected truth values come
+from the worked fixture totals, independently of the production evaluator.
+
+### Bounded decimal sums
+
+The QG3 cases exercise `SUM(DECIMAL_FROM_SCALED(v::FIELD, 10))` over scaled
+int64 values through the QL RPC in standalone and distributed topologies. They
+include ten maximum numeric(18,10) coefficients in one group, a negative group,
+NULL and empty windows, cancellation, numeric ordering and HAVING, mixed integer
+and decimal aggregates, and `COALESCE` with zero and NULL. Rebound parameters
+exercise the cached plan. Invalid scales, overflow in the input expression, and
+ordinary int64 SUM overflow are rejected. Expected decimal strings retain ten
+fractional digits. The independent PostgreSQL oracle is recorded in
+`verification/qg3bench/postgres-oracle.sql` and its adjacent log.
+
+Decimal results have at most 38 coefficient digits and scales from 0 to 18.
+The normal int64 row and count limits cannot produce a precision-38 overflow
+in an RPC fixture; arithmetic boundary tests cover that bound directly.

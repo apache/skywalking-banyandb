@@ -675,6 +675,8 @@ func (m *timeMerge) gather(b *model.MeasureBatch) {
 				continue
 			}
 		case vectorized.ColumnTypeInt64Array, vectorized.ColumnTypeTagValue, vectorized.ColumnTypeFieldValue:
+		case vectorized.ColumnTypeDecimal:
+			panic("decimal columns cannot originate in native measure storage")
 		}
 		m.gatherCells(col, cp)
 	}

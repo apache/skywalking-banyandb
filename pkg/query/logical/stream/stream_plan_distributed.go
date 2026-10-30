@@ -19,13 +19,15 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
+	"io"
+	"sync"
 
-	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -39,8 +41,6 @@ import (
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
-
-const defaultQueryTimeout = 5 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedDistributed)(nil)
 
@@ -158,31 +158,54 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			}
 		}()
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicStreamQuery,
-		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest))
+	// The scan streams live as long as the caller's context; each node stream is
+	// bounded by the scatter idle timeout and its heartbeats rather than a fixed deadline.
+	scanCtx, cancelScan := context.WithCancel(ctx)
+	defer cancelScan()
+	streams, err := dctx.Scatter(scanCtx, data.TopicStreamQuery,
+		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest),
+		bus.ScatterOptions{})
 	if err != nil {
 		return nil, err
 	}
-	var allErr error
+	defer func() {
+		for _, ns := range streams {
+			ns.Close()
+		}
+	}()
+	nodes := make([]nodeStreamElements, len(streams))
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+	for idx := range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nodes[idx] = t.readNodeStream(scanCtx, streams[idx])
+			if nodes[idx].err != nil {
+				errOnce.Do(func() {
+					firstErr = nodes[idx].err
+					cancelScan()
+				})
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		err = firstErr
+		return nil, firstErr
+	}
 	var see []sort.Iterator[*comparableElement]
 	var responseCount int
-	for _, f := range ff {
-		if m, getErr := f.Get(); getErr != nil {
-			allErr = multierr.Append(allErr, getErr)
-		} else {
-			d := m.Data()
-			if d == nil {
-				continue
-			}
-			elements, decodeErr := t.decodeNodeElements(d, span)
-			if decodeErr != nil {
-				allErr = multierr.Append(allErr, decodeErr)
-				continue
-			}
-			responseCount++
-			see = append(see,
-				newSortableElements(elements, t.sortByTime, t.sortTagSpec))
+	for idx := range nodes {
+		if !nodes[idx].responded {
+			continue
 		}
+		responseCount++
+		if span != nil {
+			span.AddSubTrace(nodes[idx].subTrace)
+		}
+		see = append(see, newSortableElements(nodes[idx].elements, t.sortByTime, t.sortTagSpec))
 	}
 	iter := sort.NewItemIter(see, t.desc)
 	var result []*streamv1.Element
@@ -199,38 +222,73 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 		span.Tagf("element_id_count", "%d", len(seen))
 	}
 
-	return result, allErr
+	return result, nil
 }
 
-// decodeNodeElements converts a single node response into []*streamv1.Element,
+// nodeStreamElements is everything one node stream delivered.
+type nodeStreamElements struct {
+	err       error
+	subTrace  *commonv1.Trace
+	elements  []*streamv1.Element
+	responded bool
+}
+
+// readNodeStream reads a node stream to its end, decoding one chunk at a time, so
+// only the decoded elements of the node are held, never its encoded chunks.
+func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeStreamElements {
+	var out nodeStreamElements
+	for {
+		m, nextErr := ns.Next(ctx)
+		if errors.Is(nextErr, io.EOF) {
+			return out
+		}
+		if nextErr != nil {
+			out.err = fmt.Errorf("stream query on node %s: %w", ns.Node(), nextErr)
+			return out
+		}
+		d := m.Data()
+		if d == nil {
+			continue
+		}
+		chunk, subTrace, decodeErr := t.decodeNodeElements(d)
+		if decodeErr != nil {
+			out.err = fmt.Errorf("stream query on node %s: %w", ns.Node(), decodeErr)
+			return out
+		}
+		out.responded = true
+		out.elements = append(out.elements, chunk...)
+		if subTrace != nil {
+			out.subTrace = subTrace
+		}
+	}
+}
+
+// decodeNodeElements converts a single node chunk into []*streamv1.Element,
 // accepting either the proto *streamv1.QueryResponse (flag-off / tracing / a data
 // node that has not rolled onto the vec path) or the native columnar frame
 // ([]byte, only when the raw wire mode is on). Both feed the SAME
 // sortableElements/comparableElement k-way merge + seen-dedup + distributedLimit
 // downstream, so mixed proto/frame bodies in one broadcast (rolling deploy) merge
 // correctly.
-func (t *distributedPlan) decodeNodeElements(d any, span *query.Span) ([]*streamv1.Element, error) {
+func (t *distributedPlan) decodeNodeElements(d any) ([]*streamv1.Element, *commonv1.Trace, error) {
 	switch payload := d.(type) {
 	case *streamv1.QueryResponse:
-		if span != nil {
-			span.AddSubTrace(payload.Trace)
-		}
-		return payload.Elements, nil
+		return payload.Elements, payload.Trace, nil
 	case []byte:
 		if !data.StreamWireModeRaw() {
-			return nil, fmt.Errorf("unexpected raw stream frame body while wire mode is off")
+			return nil, nil, fmt.Errorf("unexpected raw stream frame body while wire mode is off")
 		}
 		batch, decodeErr := streamframe.Decode(payload)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("decode stream result frame: %w", decodeErr)
+			return nil, nil, fmt.Errorf("decode stream result frame: %w", decodeErr)
 		}
 		elements, buildErr := vstream.BuildElementsFromBatch(batch, vstream.ProjectionFromBatchSchema(batch))
 		if buildErr != nil {
-			return nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
+			return nil, nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
 		}
-		return elements, nil
+		return elements, nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected stream query response type %T", d)
+		return nil, nil, fmt.Errorf("unexpected stream query response type %T", d)
 	}
 }
 
