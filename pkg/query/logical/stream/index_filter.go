@@ -277,6 +277,11 @@ func newAnd(size int) *andNode {
 	}
 }
 
+// merge combines branch posting lists using posting.Intersect.
+// Load-bearing invariant: when an operand is empty, posting.Intersect returns it
+// unchanged (e.g. an AND whose first branch matched nothing yields DummyPostingList).
+// The resulting list may alias an operand; callers and downstream merges must
+// never mutate it in place directly.
 func (an *andNode) merge(list ...posting.List) (posting.List, error) {
 	var result posting.List
 	for _, l := range list {
@@ -287,7 +292,9 @@ func (an *andNode) merge(list ...posting.List) (posting.List, error) {
 			result = l
 			continue
 		}
-		if err := result.Intersect(l); err != nil {
+		var err error
+		result, err = posting.Intersect(result, l)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -345,7 +352,9 @@ func (on *orNode) merge(list ...posting.List) (posting.List, error) {
 			result = l
 			continue
 		}
-		if err := result.Union(l); err != nil {
+		var err error
+		result, err = posting.Union(result, l)
+		if err != nil {
 			return nil, err
 		}
 	}
@@ -418,7 +427,7 @@ func (n *not) Execute(searcher index.GetSearcher, seriesID common.SeriesID, tr *
 	if err != nil {
 		return nil, nil, err
 	}
-	err = all.Difference(list)
+	all, err = posting.Difference(all, list)
 	if err != nil {
 		return nil, nil, err
 	}

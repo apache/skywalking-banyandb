@@ -26,6 +26,8 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	postingroaring "github.com/apache/skywalking-banyandb/pkg/index/posting/roaring"
 )
 
 func TestSearcherMatchPreservesPerInputMatchGroups(t *testing.T) {
@@ -92,4 +94,48 @@ func TestSearcherRejectsMalformedIdentifierWithoutPanic(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, iterator.Next())
 	require.ErrorIs(t, iterator.Close(), native.ErrCorrupt)
+}
+
+func TestSearcherEmptyQueryLeavesSharedPostingListEmpty(t *testing.T) {
+	owner, err := native.NewOwner(native.OwnerOptions{Lease: testLease{}})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, owner.Close()) }()
+
+	adapter := &Adapter{Owner: owner}
+	key := index.FieldKey{IndexRuleID: 20, SeriesID: 1, Analyzer: index.AnalyzerSimple}
+	doc := index.NewStringField(key, "alpha beta")
+	require.NoError(t, adapter.Batch(context.Background(), index.Batch{Documents: []index.Document{
+		{DocID: 1, Fields: []index.Field{doc}},
+	}}))
+
+	searcher, err := adapter.NewSearcher(context.Background(), SearcherOptions{MaxTerms: 32, MaxCandidates: 32})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, searcher.Close()) }()
+
+	require.True(t, postingroaring.DummyPostingList.IsEmpty(), "DummyPostingList must start empty")
+
+	t.Run("Match nonexistent term", func(t *testing.T) {
+		list, timestamps, err := searcher.Match(key, []string{"nonexistent"}, nil)
+		assertEmptyQueryAndSharedIntact(t, list, timestamps, err)
+	})
+
+	t.Run("MatchTerms nonexistent term", func(t *testing.T) {
+		field := index.NewStringField(key, "nonexistent")
+		list, timestamps, err := searcher.MatchTerms(field)
+		assertEmptyQueryAndSharedIntact(t, list, timestamps, err)
+	})
+
+	t.Run("Range non-matching bounds", func(t *testing.T) {
+		rangeOpts := index.NewStringRangeOpts("x_start", "x_end", true, true)
+		list, timestamps, err := searcher.Range(key, rangeOpts)
+		assertEmptyQueryAndSharedIntact(t, list, timestamps, err)
+	})
+}
+
+func assertEmptyQueryAndSharedIntact(t *testing.T, list, timestamps posting.List, err error) {
+	t.Helper()
+	require.NoError(t, err)
+	require.True(t, list.IsEmpty(), "result must be empty")
+	require.True(t, timestamps.IsEmpty(), "timestamps must be empty")
+	require.True(t, postingroaring.DummyPostingList.IsEmpty(), "DummyPostingList must remain empty")
 }
