@@ -16,6 +16,10 @@
 # under the License.
 #
 
+# The tools below are built with the Go toolchain named by go.mod's `go` directive (1.26.10).
+# CI caches bin/ keyed by this file, so change this file whenever that directive changes;
+# a tool built by an older Go cannot load packages that require the newer one.
+
 BUF_VERSION := v1.60.0
 PROTOC_GEN_GO_VERSION := v1.36.11
 PROTOC_GEN_GO_GRPC_VERSION := v1.5.1

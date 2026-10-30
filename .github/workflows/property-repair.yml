@@ -27,7 +27,7 @@ jobs:
 
   property-repair:
     name: Property Repair Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     timeout-minutes: 480
     steps:

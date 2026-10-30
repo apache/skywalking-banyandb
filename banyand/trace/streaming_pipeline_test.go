@@ -41,9 +41,10 @@ func (l *traceTinyLease) Charge(bytes uint64) error {
 	l.remaining -= bytes
 	return nil
 }
-func (*traceTinyLease) Limit() uint64  { return 1024 }
-func (l *traceTinyLease) Used() uint64 { return 1024 - l.remaining }
-func (*traceTinyLease) Owner() any     { return "trace-test" }
+func (l *traceTinyLease) Refund(bytes uint64) { l.remaining = min(l.remaining+bytes, 1024) }
+func (*traceTinyLease) Limit() uint64         { return 1024 }
+func (l *traceTinyLease) Used() uint64        { return 1024 - l.remaining }
+func (*traceTinyLease) Owner() any            { return "trace-test" }
 
 func TestStaticTraceBatchSourceReportsChargeFailure(t *testing.T) {
 	ctx := query.WithBudgetLease(context.Background(), &traceTinyLease{remaining: 1})

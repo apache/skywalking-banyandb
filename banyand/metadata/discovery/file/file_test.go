@@ -434,6 +434,51 @@ func startMockGRPCServer(t *testing.T) (net.Listener, *grpc.Server, *mockNodeQue
 	return listener, grpcServer, mockServer
 }
 
+func TestListNodeRefetchesBeforeStart(t *testing.T) {
+	ctx := context.Background()
+
+	listener, grpcServer, mockServer := startMockGRPCServer(t)
+	defer grpcServer.Stop()
+	defer listener.Close()
+
+	// Peer is unreachable on the first PreRun-style ListNode (schema registry init).
+	mockServer.setNode(nil)
+
+	address := listener.Addr().String()
+	configFile := createTempConfigFile(t, fmt.Sprintf(`
+nodes:
+  - name: prerun-node
+    grpc_address: %s
+`, address))
+	defer os.Remove(configFile)
+
+	svc, err := NewService(Config{
+		FilePath:             configFile,
+		GRPCTimeout:          testGRPCTimeout,
+		FetchInterval:        testFetchInterval,
+		RetryInitialInterval: 100 * time.Millisecond,
+		RetryMaxInterval:     1 * time.Second,
+		RetryMultiplier:      2.0,
+	})
+	require.NoError(t, err)
+	defer svc.Close()
+
+	// Do not Start — retryScheduler is not running, matching metadata PreRun.
+	nodes, listErr := svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
+	require.NoError(t, listErr)
+	require.Empty(t, nodes)
+	require.True(t, svc.RetryManager.IsInRetry(address), "failed fetch should park the address")
+
+	// Peer becomes reachable while PreRun is still retrying schema-registry init.
+	mockServer.setNode(newTestNode("prerun-node", address))
+
+	nodes, listErr = svc.ListNode(ctx, databasev1.Role_ROLE_UNSPECIFIED)
+	require.NoError(t, listErr)
+	require.Len(t, nodes, 1)
+	assert.Equal(t, "prerun-node", nodes[0].GetMetadata().GetName())
+	require.False(t, svc.RetryManager.IsInRetry(address), "successful pre-Start re-fetch must clear retry state")
+}
+
 func TestBackoffRetryMechanism(t *testing.T) {
 	ctx := context.Background()
 

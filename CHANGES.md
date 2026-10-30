@@ -2,6 +2,18 @@
 
 Release Notes.
 
+## 0.11.2
+
+### Bug Fixes
+
+- Upgrade the Go toolchain to 1.26.10 and golang.org/x/net to v0.60.0 (with x/crypto, x/sys, x/text, x/term, x/mod and x/sync) for the crypto/x509 and net/http security fixes (GO-2026-6809, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617). Plugins must be rebuilt with Go 1.26.
+- Stop rejecting queries by an estimated result window. Admission no longer returns `RESOURCE_EXHAUSTED` for a `limit`+`offset` above a window derived from the per-query memory assignment (1792 entries on a host without a memory limit), so clients that send `LIMIT 10000` such as OAP work without `--allowed-bytes`. The 100,000-entry absolute window, pool exhaustion, and execution-time charging are unchanged. Cap the sidx heap-merge preallocation sized by the request limit.
+- Fix stream queries failing with `query memory pool exhausted` although they return few rows (apache/skywalking#14165). The vectorized stream scan now decodes blocks on demand and refunds a block's query-budget charge when its cursor is released, the sorted merge refunds a batch once its last retained row is pruned, and the block scanner counts each block once against its quota.
+- Charge large tag and field values against the query allowance by their size instead of eight times their size, so a query that reads multi-MB values (for example OAP ai-agent session files stored as a `body` tag) no longer runs out of its allowance.
+- Without `--allowed-bytes` or a container memory limit, size the query memory pool from host memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled.
+- Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
+- Re-fetch file/DNS discovery nodes that are parked in the retry queue while discovery has not Start()-ed yet, so unbounded PreRun schema-registry retries can recover once peers become reachable without restarting liaison.
+
 ## 0.11.1
 
 ### Bug Fixes

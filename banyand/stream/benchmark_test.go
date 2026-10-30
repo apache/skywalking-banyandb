@@ -172,16 +172,25 @@ func generateData(p parameter) ([]*elements, []index.Documents, mockIndex) {
 }
 
 func openDatabase(b testing.TB, path string) storage.TSDB[*tsTable, option] {
+	return openDatabaseWithTTLDays(b, path, 1)
+}
+
+// openDatabaseWithTTLDays opens a database with one-day segments that live for ttlDays days.
+func openDatabaseWithTTLDays(b testing.TB, path string, ttlDays int) storage.TSDB[*tsTable, option] {
 	ir := storage.IntervalRule{
 		Unit: storage.DAY,
 		Num:  1,
+	}
+	ttl := storage.IntervalRule{
+		Unit: storage.DAY,
+		Num:  ttlDays,
 	}
 	opts := storage.TSDBOpts[*tsTable, option]{
 		ShardNum:        1,
 		Location:        path,
 		TSTableCreator:  newTSTable,
 		SegmentInterval: ir,
-		TTL:             ir,
+		TTL:             ttl,
 		Option: option{
 			mergePolicy: newDefaultMergePolicyForTesting(),
 			protector:   protector.Nop{},
@@ -192,7 +201,7 @@ func openDatabase(b testing.TB, path string) storage.TSDB[*tsTable, option] {
 	db, err := storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(p common.Position) common.Position {
 			p.Module = "stream"
-			p.Database = "benchmark"
+			p.Database = budgetStreamName
 			return p
 		}),
 		opts, nil, group,

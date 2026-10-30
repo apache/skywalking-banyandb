@@ -83,8 +83,8 @@ func InitMinIOContainer() error {
 	}
 
 	minioRes, err = minioPool.RunWithOptions(&dockertest.RunOptions{
-		Repository: "quay.io/minio/minio",
-		Tag:        "RELEASE.2025-04-08T15-41-24Z",
+		Repository: "pgsty/minio",
+		Tag:        "RELEASE.2026-08-04T00-00-00Z",
 		Cmd:        []string{"server", "/data"},
 		Name:       minioContainerName,
 		Env: []string{

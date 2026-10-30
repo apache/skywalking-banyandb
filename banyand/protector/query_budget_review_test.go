@@ -94,30 +94,22 @@ func TestQueryBudgetAdmitConcurrentHeldReservations(t *testing.T) {
 	}
 }
 
-func TestQueryBudgetWindowShrinksWithAvailableMemory(t *testing.T) {
+func TestQueryBudgetWindowIndependentOfAvailableMemory(t *testing.T) {
 	const limit = 256 << 20
 	pm := &budgetProtector{limit: limit, avail: limit}
 	budget := NewQueryBudget(pm)
-	release, initialErr := budget.Admit(context.Background(), 1000, 0, 20)
-	if initialErr != nil {
-		t.Fatal(initialErr)
+	// Leave only 2 MiB above headroom: a large window is still admitted because
+	// execution, not admission, charges the memory actually retained.
+	pm.avail = limit/10 + (2 << 20)
+	release, err := budget.Admit(context.Background(), 10000, 0, 20)
+	if err != nil {
+		t.Fatalf("large window must be admitted while memory remains: %v", err)
 	}
 	release()
-	// Leave only 2 MiB above headroom: 1 MiB overhead plus 256 estimated entries.
-	pm.avail = limit/10 + (2 << 20)
-	unexpectedRelease, pressureErr := budget.Admit(context.Background(), 1000, 0, 20)
-	if pressureErr == nil {
-		unexpectedRelease()
-		t.Fatal("large query was admitted despite a smaller dynamic window")
+	pm.avail = limit / 10
+	if _, err = budget.Admit(context.Background(), 100, 0, 20); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("expected exhaustion without available memory, got %v", err)
 	}
-	if !errors.Is(pressureErr, ErrQueryWindowPressure) {
-		t.Fatalf("expected window-pressure rejection, got %v", pressureErr)
-	}
-	smallRelease, smallErr := budget.Admit(context.Background(), 100, 0, 20)
-	if smallErr != nil {
-		t.Fatalf("small query should still fit: %v", smallErr)
-	}
-	smallRelease()
 }
 
 func TestQueryReservationDoubleReleaseAndChargeOverflow(t *testing.T) {

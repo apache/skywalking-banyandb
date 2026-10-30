@@ -33,7 +33,7 @@ concurrency:
 jobs:
   CheckDeadLinks:
     if: (github.event_name == 'schedule' && github.repository == 'apache/skywalking-banyandb') || (github.event_name != 'schedule')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -94,13 +94,13 @@ jobs:
   continuous-integration:
     name: Continuous Integration
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Markdown-only change — Go CI (ci.yml) skipped via paths-ignore; required check satisfied."
 
   push-banyandb-image:
     name: push-banyandb-image
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - run: echo "Markdown-only change — docker image build (publish-docker.yml) skipped via paths-ignore; required check satisfied."

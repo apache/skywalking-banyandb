@@ -28,6 +28,10 @@ func (lease *byteOnlyResultTestLease) Charge(bytes uint64) error {
 	return nil
 }
 
+func (lease *byteOnlyResultTestLease) Refund(bytes uint64) {
+	lease.used -= min(bytes, lease.used)
+}
+
 func (*byteOnlyResultTestLease) Limit() uint64      { return 1024 }
 func (lease *byteOnlyResultTestLease) Used() uint64 { return lease.used }
 func (lease *byteOnlyResultTestLease) Owner() any   { return lease }
@@ -55,4 +59,24 @@ func TestChargeResultWithoutAdmissionIsNoop(t *testing.T) {
 	if err := ChargeResult(context.Background(), ^uint64(0)); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestRefundReturnsChargedBytes(t *testing.T) {
+	lease := &byteOnlyResultTestLease{}
+	ctx := WithBudgetLease(context.Background(), lease)
+	if err := Charge(ctx, 40); err != nil {
+		t.Fatal(err)
+	}
+	Refund(ctx, 25)
+	if lease.Used() != 15 {
+		t.Fatalf("refund not applied: %d", lease.Used())
+	}
+	Refund(ctx, 100)
+	if lease.Used() != 0 {
+		t.Fatalf("refund went below zero: %d", lease.Used())
+	}
+}
+
+func TestRefundWithoutAdmissionIsNoop(_ *testing.T) {
+	Refund(context.Background(), ^uint64(0))
 }

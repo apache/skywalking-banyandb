@@ -23,8 +23,8 @@ import (
 )
 
 // EstimatedRetainedBytes estimates row references, column capacity and payloads
-// retained by a merge operator. Protobuf object overhead is estimated from wire
-// size; this is not an exact Go heap measurement. Shared payloads may be counted twice.
+// retained by a merge operator. Tag and field values are charged by payload size
+// plus a fixed object overhead; this is not an exact Go heap measurement. Shared payloads may be counted twice.
 func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 	if batch == nil {
 		return 0
@@ -70,7 +70,7 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			total = saturatingAdd(total, retainedColumnBytes(typed))
 			for _, value := range typed.Data() {
 				if value != nil {
-					total = saturatingAdd(total, estimatedProtoBytes(value))
+					total = saturatingAdd(total, estimatedTagValueBytes(value))
 				}
 			}
 		case ColumnTypeFieldValue:
@@ -78,7 +78,7 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			total = saturatingAdd(total, retainedColumnBytes(typed))
 			for _, value := range typed.Data() {
 				if value != nil {
-					total = saturatingAdd(total, estimatedProtoBytes(value))
+					total = saturatingAdd(total, estimatedFieldValueBytes(value))
 				}
 			}
 		default:
@@ -95,10 +95,49 @@ func retainedColumnBytes[T any](column *TypedColumn[T]) uint64 {
 	return saturatingAdd(uint64(unsafe.Sizeof(*column)), saturatingAdd(backing, validity))
 }
 
-func estimatedProtoBytes(message proto.Message) uint64 {
-	const objectExpansion = 8
-	const objectOverhead = 256
-	return saturatingAdd(saturatingMultiply(uint64(proto.Size(message)), objectExpansion), objectOverhead)
+// Per-value charges. They approximate the Go heap held by a decoded value: the
+// payload once, plus the fixed object overhead.
+const (
+	// valueOverhead covers the TagValue/FieldValue struct and its oneof wrapper.
+	valueOverhead uint64 = 64
+	// stringHeaderBytes is the size of one string header in a repeated string field.
+	stringHeaderBytes uint64 = 16
+	// int64Bytes is the size of one element in a repeated int64 field.
+	int64Bytes uint64 = 8
+)
+
+func estimatedTagValueBytes(value *modelv1.TagValue) uint64 {
+	switch v := value.GetValue().(type) {
+	case *modelv1.TagValue_Str:
+		return saturatingAdd(uint64(len(v.Str.GetValue())), valueOverhead)
+	case *modelv1.TagValue_BinaryData:
+		return saturatingAdd(uint64(len(v.BinaryData)), valueOverhead)
+	case *modelv1.TagValue_StrArray:
+		total := valueOverhead
+		for _, s := range v.StrArray.GetValue() {
+			total = saturatingAdd(total, saturatingAdd(uint64(len(s)), stringHeaderBytes))
+		}
+		return total
+	case *modelv1.TagValue_IntArray:
+		return saturatingAdd(saturatingMultiply(uint64(len(v.IntArray.GetValue())), int64Bytes), valueOverhead)
+	case *modelv1.TagValue_Int, *modelv1.TagValue_Null, *modelv1.TagValue_Timestamp, nil:
+		return valueOverhead
+	default:
+		return saturatingAdd(uint64(proto.Size(value)), valueOverhead)
+	}
+}
+
+func estimatedFieldValueBytes(value *modelv1.FieldValue) uint64 {
+	switch v := value.GetValue().(type) {
+	case *modelv1.FieldValue_Str:
+		return saturatingAdd(uint64(len(v.Str.GetValue())), valueOverhead)
+	case *modelv1.FieldValue_BinaryData:
+		return saturatingAdd(uint64(len(v.BinaryData)), valueOverhead)
+	case *modelv1.FieldValue_Int, *modelv1.FieldValue_Float, *modelv1.FieldValue_Null, nil:
+		return valueOverhead
+	default:
+		return saturatingAdd(uint64(proto.Size(value)), valueOverhead)
+	}
 }
 
 func saturatingAdd(left, right uint64) uint64 {

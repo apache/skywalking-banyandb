@@ -18,7 +18,7 @@ Run the vendor-update Make target across all projects:
 make vendor-update
 ```
 
-This runs `go get -u ./...` and `go mod tidy -compat=1.25` in each project directory (ui, banyand, bydbctl, mcp, fodc/agent, fodc/proxy, pkg, test).
+This runs `go get -u ./...` and `go mod tidy -compat=1.26` in each project directory (ui, banyand, bydbctl, mcp, fodc/agent, fodc/proxy, pkg, test).
 
 ## Update license dependencies
 

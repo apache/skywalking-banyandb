@@ -19,6 +19,7 @@ import (
 	"sync"
 	"testing"
 
+	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -99,9 +100,127 @@ func TestQueryBudgetFallbackIsFinite(t *testing.T) {
 	release()
 }
 
-func TestQueryBudgetAdmitRejectsWindowUnderPressure(t *testing.T) {
+func TestQueryBudgetFallbackPoolAdmitsLargeWindows(t *testing.T) {
+	for _, limit := range []uint32{1792, 1793, 10000, 100000} {
+		b := NewQueryBudget(&Nop{})
+		release, err := b.Admit(context.Background(), limit, 0, 20)
+		if err != nil {
+			t.Fatalf("limit %d must be admitted by the fallback pool: %v", limit, err)
+		}
+		release()
+		if b.Reserved() != 0 {
+			t.Fatalf("reservation leaked: %d", b.Reserved())
+		}
+	}
+	b := NewQueryBudget(nil)
+	release, err := b.Admit(context.Background(), 5000, 5000, 20)
+	if err != nil {
+		t.Fatalf("limit plus offset 10000 must be admitted: %v", err)
+	}
+	release()
+}
+
+func TestQueryBudgetAbsoluteWindowStillRejected(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	if _, err := b.Admit(context.Background(), 100001, 0, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want absolute window rejection, got %v", err)
+	}
+	if _, err := b.Admit(context.Background(), 60000, 40001, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want absolute window rejection for limit+offset, got %v", err)
+	}
+}
+
+func TestQueryBudgetExhaustedPoolStillRejected(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	var releases []func()
+	for {
+		release, err := b.Admit(context.Background(), 10000, 0, 20)
+		if err != nil {
+			if !errors.Is(err, ErrQueryResourceExhausted) {
+				t.Fatalf("want pool exhaustion, got %v", err)
+			}
+			break
+		}
+		releases = append(releases, release)
+		if len(releases) > 64 {
+			t.Fatal("pool never exhausted")
+		}
+	}
+	if len(releases) != int(queryMaxFraction) {
+		t.Fatalf("want %d admitted queries, got %d", queryMaxFraction, len(releases))
+	}
+	for _, release := range releases {
+		release()
+	}
+	if b.Reserved() != 0 {
+		t.Fatalf("reservation leaked: %d", b.Reserved())
+	}
+}
+
+func TestQueryReservationRefund(t *testing.T) {
 	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
-	if _, err := b.Admit(context.Background(), 100000, 0, 20); !errors.Is(err, ErrQueryWindowPressure) {
-		t.Fatalf("want dynamic window rejection, got %v", err)
+	ctx, release, err := b.AdmitContext(context.Background(), 10, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	lease, ok := querypkg.BudgetLeaseFromContext(ctx)
+	if !ok {
+		t.Fatal("no lease")
+	}
+	base := lease.Used()
+	if err = querypkg.Charge(ctx, 1000); err != nil {
+		t.Fatal(err)
+	}
+	querypkg.Refund(ctx, 400)
+	if lease.Used() != base+600 {
+		t.Fatalf("refund: used=%d, want %d", lease.Used(), base+600)
+	}
+	// A refunded allowance is chargeable again, and over-refunding clamps at zero.
+	if err = querypkg.Charge(ctx, 400); err != nil {
+		t.Fatal(err)
+	}
+	querypkg.Refund(ctx, 1<<40)
+	if lease.Used() != 0 {
+		t.Fatalf("over-refund: used=%d", lease.Used())
+	}
+	// Outside an admitted query a refund is a no-op.
+	querypkg.Refund(context.Background(), 10)
+}
+
+func TestQueryReservationRefundKeepsResultCounterAndIsConcurrent(t *testing.T) {
+	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
+	ctx, release, err := b.AdmitContext(context.Background(), 10, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	lease, _ := querypkg.BudgetLeaseFromContext(ctx)
+	reservation, ok := lease.(*QueryReservation)
+	if !ok {
+		t.Fatalf("unexpected lease type %T", lease)
+	}
+	if err = querypkg.ChargeResult(ctx, 100); err != nil {
+		t.Fatal(err)
+	}
+	results := reservation.results
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if chargeErr := querypkg.Charge(ctx, 10); chargeErr == nil {
+					querypkg.Refund(ctx, 10)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if reservation.results != results {
+		t.Fatalf("refund changed the result counter: %d -> %d", results, reservation.results)
+	}
+	if reservation.Used() != queryFixedOverhead+100 {
+		t.Fatalf("unexpected used after balanced charge/refund: %d", reservation.Used())
 	}
 }
