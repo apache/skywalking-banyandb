@@ -220,6 +220,8 @@ func expectedBudgetIDs(rows []budgetRow, byRank, desc bool) []string {
 // protector without a limit so the per-query allowance is the 8 MiB fallback.
 func admitBudgetLease(t *testing.T) (context.Context, *peakLease, func()) {
 	t.Helper()
+	// Pin the host to "unreadable" so the pool is the fixed 64 MiB on any machine.
+	t.Cleanup(protector.SetHostMemoryForTest(func() uint64 { return 0 }))
 	budget := protector.QueryBudgetFor(protector.Nop{})
 	admitted, release, err := budget.AdmitRequestContext(context.Background(), budgetLimit, 0, 20)
 	require.NoError(t, err)

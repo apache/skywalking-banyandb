@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/shirou/gopsutil/v3/mem"
+
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -29,7 +31,39 @@ const (
 	queryMaxFraction            = 8
 	queryHeadroomPercent        = 10
 	queryFallbackPool    uint64 = 64 << 20
+	// defaultAllowedPercent mirrors the default of the protector's --allowed-percent flag.
+	defaultAllowedPercent = 75
 )
+
+var (
+	hostMemoryOnce  sync.Once
+	hostMemoryCache uint64
+	// hostMemoryTotal returns the host's total memory in bytes, or 0 if unreadable.
+	// Tests replace it through SetHostMemoryForTest.
+	hostMemoryTotal = readHostMemory
+)
+
+// readHostMemory reads the host's total memory once and caches it.
+func readHostMemory() uint64 {
+	hostMemoryOnce.Do(func() {
+		if vm, err := mem.VirtualMemory(); err == nil && vm != nil {
+			hostMemoryCache = vm.Total
+		}
+	})
+	return hostMemoryCache
+}
+
+// SetHostMemoryForTest replaces the host memory reader used to size the default
+// query pool and returns a function restoring the previous reader.
+func SetHostMemoryForTest(total func() uint64) (restore func()) {
+	previous := hostMemoryTotal
+	hostMemoryTotal = total
+	return func() { hostMemoryTotal = previous }
+}
+
+// allowedPercentProvider is implemented by protectors that know their configured
+// --allowed-percent. It keeps the Memory interface unchanged.
+type allowedPercentProvider interface{ allowedPercentValue() int }
 
 var (
 	// ErrQueryTooLarge indicates that a request exceeds the configured hard limit.
@@ -359,11 +393,36 @@ func (b *QueryBudget) poolLimit() uint64 {
 		limit = b.protector.GetLimit()
 	}
 	if limit == 0 {
-		return queryFallbackPool
+		return b.hostPool()
 	}
 	pool := limit / queryPoolFraction
 	if pool == 0 {
 		return 1
+	}
+	return pool
+}
+
+// hostPool sizes the pool when the protector has no limit (no --allowed-bytes and no
+// valid cgroup limit) from host memory: total * allowed-percent / 100 / queryPoolFraction.
+// It keeps the fixed fallback when host memory cannot be read.
+func (b *QueryBudget) hostPool() uint64 {
+	total := hostMemoryTotal()
+	if total == 0 {
+		return queryFallbackPool
+	}
+	percent := defaultAllowedPercent
+	if provider, ok := b.protector.(allowedPercentProvider); ok {
+		if configured := provider.allowedPercentValue(); configured > 0 && configured <= 100 {
+			percent = configured
+		}
+	}
+	hostLimit := total / 100 * uint64(percent)
+	if total <= ^uint64(0)/100 {
+		hostLimit = total * uint64(percent) / 100
+	}
+	pool := hostLimit / queryPoolFraction
+	if pool == 0 {
+		return queryFallbackPool
 	}
 	return pool
 }

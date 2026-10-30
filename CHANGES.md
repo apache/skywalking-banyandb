@@ -10,6 +10,7 @@ Release Notes.
 - Stop rejecting queries by an estimated result window. Admission no longer returns `RESOURCE_EXHAUSTED` for a `limit`+`offset` above a window derived from the per-query memory assignment (1792 entries on a host without a memory limit), so clients that send `LIMIT 10000` such as OAP work without `--allowed-bytes`. The 100,000-entry absolute window, pool exhaustion, and execution-time charging are unchanged. Cap the sidx heap-merge preallocation sized by the request limit.
 - Fix stream queries failing with `query memory pool exhausted` although they return few rows (apache/skywalking#14165). The vectorized stream scan now decodes blocks on demand and refunds a block's query-budget charge when its cursor is released, the sorted merge refunds a batch once its last retained row is pruned, and the block scanner counts each block once against its quota.
 - Charge large tag and field values against the query allowance by their size instead of eight times their size, so a query that reads multi-MB values (for example OAP ai-agent session files stored as a `body` tag) no longer runs out of its allowance.
+- Without `--allowed-bytes` or a container memory limit, size the query memory pool from host memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled.
 
 ## 0.11.1
 

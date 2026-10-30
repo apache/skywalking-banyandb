@@ -96,6 +96,8 @@ type memory struct {
 	queryBudgetOnce  sync.Once
 }
 
+func (m *memory) allowedPercentValue() int { return m.allowedPercent }
+
 // QueryBudget returns the process-local query reservation pool for this protector.
 func (m *memory) QueryBudget() *QueryBudget {
 	m.queryBudgetOnce.Do(func() { m.queryBudget = NewQueryBudget(m) })

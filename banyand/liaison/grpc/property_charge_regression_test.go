@@ -29,6 +29,8 @@ import (
 // Liaison roles do not enable the memory protector, so property list-all uses the
 // 64 MiB fallback pool (8 MiB max query). OAP UI-template bootstrap must fit.
 func TestPropertySourceChargeFitsFallbackScanBudget(t *testing.T) {
+	// Pin the host to "unreadable" so the pool is the fixed 64 MiB on any machine.
+	t.Cleanup(protector.SetHostMemoryForTest(func() uint64 { return 0 }))
 	budget := protector.NewQueryBudget(nil)
 	ctx, release, err := budget.AdmitScanContext(context.Background())
 	if err != nil {
