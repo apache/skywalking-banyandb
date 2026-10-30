@@ -17,9 +17,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/bits"
 	"reflect"
 	"sync"
 	"sync/atomic"
+
+	"github.com/shirou/gopsutil/v3/mem"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -31,6 +34,8 @@ const (
 	queryMaxFraction            = 8
 	queryHeadroomPercent        = 10
 	queryFallbackPool    uint64 = 64 << 20
+	// defaultAllowedPercent mirrors the default of the protector's --allowed-percent flag.
+	defaultAllowedPercent = 75
 )
 
 var (
@@ -434,13 +439,69 @@ func (b *QueryBudget) availableSnapshot(refresh bool) uint64 {
 	return minUint64(pool, uint64(available)-headroom)
 }
 
+// allowedPercentProvider is implemented by the protector to report its --allowed-percent setting.
+type allowedPercentProvider interface{ allowedPercentValue() int }
+
+// hostMemory caches the host's total memory, which is read once per process.
+var hostMemory struct {
+	read  func() uint64
+	total uint64
+	done  bool
+	sync.Mutex
+}
+
+// readHostMemoryTotal returns the host's total memory, or zero when it cannot be read.
+func readHostMemoryTotal() uint64 {
+	stat, err := mem.VirtualMemory()
+	if err != nil || stat == nil {
+		return 0
+	}
+	return stat.Total
+}
+
+func hostMemoryTotal() uint64 {
+	hostMemory.Lock()
+	defer hostMemory.Unlock()
+	if !hostMemory.done {
+		read := hostMemory.read
+		if read == nil {
+			read = readHostMemoryTotal
+		}
+		hostMemory.total, hostMemory.done = read(), true
+	}
+	return hostMemory.total
+}
+
+// unlimitedQueryLimit is the memory the query budget may use when the protector has no limit:
+// the host's total memory times the protector's allowed percentage, or zero when the host memory is unknown.
+func (b *QueryBudget) unlimitedQueryLimit() uint64 {
+	total := hostMemoryTotal()
+	if total == 0 {
+		return 0
+	}
+	percent := defaultAllowedPercent
+	if provider, ok := b.protector.(allowedPercentProvider); ok {
+		if configured := provider.allowedPercentValue(); configured > 0 && configured <= 100 {
+			percent = configured
+		}
+	}
+	high, low := bits.Mul64(total, uint64(percent))
+	quotient, _ := bits.Div64(high, low, 100) // high < 100 because percent <= 100
+	return quotient
+}
+
 func (b *QueryBudget) poolLimit() uint64 {
 	limit := uint64(0)
 	if b.protector != nil {
 		limit = b.protector.GetLimit()
 	}
 	if limit == 0 {
-		return queryFallbackPool
+		// The protector is disabled: no --allowed-bytes and no container memory limit. The pool is then sized from
+		// the host's memory, so a large machine is not held to a fixed 64 MiB. Only the query budget uses this
+		// figure; the protector itself stays disabled.
+		if limit = b.unlimitedQueryLimit(); limit == 0 {
+			return queryFallbackPool
+		}
 	}
 	pool := limit / queryPoolFraction
 	if pool == 0 {

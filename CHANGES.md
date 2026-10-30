@@ -107,6 +107,7 @@ Release Notes.
 - Return a trace's complete span set when its spans straddle a storage segment boundary (segments are per-day in local time, and each span lands in the segment matching its own timestamp) and the query's time range covers only one side of that boundary. After resolving the qualifying trace IDs from the segments the query range overlaps, fetching those traces' spans now also reopens any segment within one hour of the query range (`traceCompletionWindow`), so the neighboring day's spans are no longer silently dropped. Applies to both ORDER BY and trace-ID trace queries; trace selection, ordering, and limit/offset are unaffected.
 - Fix multi-group Measure aggregations failing with `partial N schema mismatch` when the groups' schemas differ. A projected non-key tag that a group doesn't define is now null-filled before the liaison reduces the partials.
 - Charge large tag and field values by their size instead of eight times it, so queries that read multi-MB values (for example SkyWalking OAP ai-agent session files stored as a `body` tag) no longer exhaust their memory allowance with `query memory pool exhausted`.
+- Without `--allowed-bytes` or a container memory limit, size the query memory pool from the host's memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled: write backpressure, merge budgets and the protector's state are unchanged.
 
 ### Document
 
