@@ -34,8 +34,23 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
-// defaultScanHeartbeatInterval is how long a scan may produce no chunk before a heartbeat is sent.
-const defaultScanHeartbeatInterval = 2 * time.Second
+const (
+	// defaultScanHeartbeatInterval is how long a scan may produce no chunk before a heartbeat is sent when the
+	// liaison did not announce its idle timeout.
+	defaultScanHeartbeatInterval = 2 * time.Second
+	// minScanHeartbeatInterval keeps a very short idle timeout from turning into a busy heartbeat loop.
+	minScanHeartbeatInterval = 50 * time.Millisecond
+	// scanHeartbeatsPerIdleTimeout is how many heartbeats fit in the liaison's idle timeout.
+	scanHeartbeatsPerIdleTimeout = 5
+)
+
+// scanHeartbeatInterval derives the heartbeat period from the idle timeout the liaison announced in its request.
+func scanHeartbeatInterval(idleTimeoutMs uint32) time.Duration {
+	if idleTimeoutMs == 0 {
+		return defaultScanHeartbeatInterval
+	}
+	return max(time.Duration(idleTimeoutMs)*time.Millisecond/scanHeartbeatsPerIdleTimeout, minScanHeartbeatInterval)
+}
 
 // SubscribeStream implements queue.Server. At most one stream listener serves a topic.
 func (s *server) SubscribeStream(topic bus.Topic, listener bus.StreamListener) error {
@@ -136,7 +151,7 @@ func (s *server) Scan(req *clusterv1.ScanRequest, stream clusterv1.Service_ScanS
 		stream:    stream,
 		topic:     topic,
 		messageID: req.GetMessageId(),
-		interval:  s.scanHeartbeatInterval,
+		interval:  scanHeartbeatInterval(req.GetIdleTimeoutMs()),
 		lastSent:  start,
 	}
 	stopHeartbeat := sink.startHeartbeat(queryCtx)
