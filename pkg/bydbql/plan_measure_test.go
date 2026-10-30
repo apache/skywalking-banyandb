@@ -175,7 +175,6 @@ func TestTypedMeasureNamesFailBeforeExecution(t *testing.T) {
 		"SELECT __ql.clock::TAG, time AS clock FROM g.m",
 		"SELECT missing FROM g.m",
 		"SELECT host AS node FROM g.m WHERE node = 'a'",
-		"SELECT host FROM g.m WHERE time >= now() OR host = 'a'",
 		"SELECT host, SUM(v) AS total FROM MEASURE m IN g",
 		"SELECT host FROM g.m LIMIT -1",
 		"SELECT host FROM g.m WHERE time = 1",
@@ -311,6 +310,12 @@ func TestTypedMeasureTimeAliasOrdering(t *testing.T) {
 	for _, query := range []string{
 		"SELECT host AS node FROM g.m ORDER BY node",
 		"SELECT host AS node FROM g.m ORDER BY host",
+	} {
+		sorted := typedExecution(t, query)
+		require.NotNil(t, sorted.Plan.Sort)
+		require.Nil(t, sorted.Request.OrderBy)
+	}
+	for _, query := range []string{
 		"SELECT host AS node, v::FIELD AS node FROM g.m ORDER BY node",
 	} {
 		statement, err := bydbql.Prepare(query)

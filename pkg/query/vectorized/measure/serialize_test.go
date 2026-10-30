@@ -23,6 +23,7 @@ import (
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -167,5 +168,32 @@ func TestSerializeBatchToProto_ReusesDestinationSlice(t *testing.T) {
 	out := serializeBatchToProto(b, dst[:0])
 	if cap(out) != beforeCap {
 		t.Fatalf("cap must be reused: want %d, got %d", beforeCap, cap(out))
+	}
+}
+
+func TestSerializeDecimalAndNull(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleField, Name: "total", Type: vectorized.ColumnTypeDecimal, Scale: 10}})
+	batch := vectorized.NewRecordBatch(schema, 2)
+	column := batch.Columns[0].(*vectorized.TypedColumn[decimal.Int128])
+	column.Append(decimal.FromInt64(-12))
+	column.AppendNull()
+	batch.Len = 2
+	rows := serializeBatchToProto(batch, nil)
+	if got := rows[0].DataPoint.Fields[0].Value.GetStr().GetValue(); got != "-0.0000000012" {
+		t.Fatalf("decimal value: %q", got)
+	}
+	if _, ok := rows[1].DataPoint.Fields[0].Value.Value.(*modelv1.FieldValue_Null); !ok {
+		t.Fatalf("expected null decimal")
+	}
+}
+
+func TestDecimalSerializationReservationIncludesText(t *testing.T) {
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{{Role: vectorized.RoleField, Name: "total", Type: vectorized.ColumnTypeDecimal, Scale: 10}})
+	batch := vectorized.NewRecordBatch(schema, 1)
+	batch.Columns[0].(*vectorized.TypedColumn[decimal.Int128]).Append(decimal.FromInt64(1))
+	batch.Len = 1
+	memory, wire, covered, err := serializationPreflight(batch)
+	if err != nil || !covered || memory <= 40 || wire <= 40 {
+		t.Fatalf("decimal preflight: memory=%d wire=%d covered=%v err=%v", memory, wire, covered, err)
 	}
 }

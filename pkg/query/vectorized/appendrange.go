@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 )
 
 // AppendActiveRows appends every active row of src (its Selection when present,
@@ -79,6 +80,14 @@ func AppendColumnRange(dst, src Column, srcPos, n int) error {
 func appendTypedRange(dst, src Column, srcPos, n int) error {
 	startLen := dst.Len()
 	switch d := dst.(type) {
+	case *TypedColumn[decimal.Int128]:
+		sCol, ok := src.(*TypedColumn[decimal.Int128])
+		if !ok {
+			return fmt.Errorf("AppendColumnRange: dst decimal vs src %s", src.Type())
+		}
+		for k := range n {
+			d.Append(sCol.Data()[srcPos+k])
+		}
 	case *TypedColumn[int64]:
 		sCol, ok := src.(*TypedColumn[int64])
 		if !ok {

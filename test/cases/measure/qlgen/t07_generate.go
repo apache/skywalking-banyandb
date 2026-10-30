@@ -105,6 +105,15 @@ func generateT07(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario, erro
 	}, "t07.typed_keys")
 	add("hidden_group_key", t07Query{Columns: []t07Column{{Function: "COUNT", Target: "v", Alias: "c"}}, GroupBy: []string{"zone"}},
 		"t07.typed_keys", "t07.hidden_slots")
+	distinctColumns := []t07Column{
+		{Function: "COUNT", Target: "zone", Alias: "unique_zones", Distinct: true},
+		{Function: "COUNT", Target: "host", Alias: "unique_hosts", Distinct: true},
+		{Function: "SUM", Target: "v", Alias: "total"},
+	}
+	add("count_distinct_scalar", t07Query{Columns: distinctColumns}, "count_distinct.scalar", "count_distinct.null_empty", "count_distinct.multiple")
+	add("count_distinct_grouped", t07Query{
+		Columns: append([]t07Column{{Target: "host", Alias: "node"}, {Target: "zone"}}, distinctColumns...), GroupBy: []string{"host", "zone"},
+	}, "count_distinct.grouped", "count_distinct.multiple", "count_distinct.multikey")
 	add("count_tags", t07Query{Columns: []t07Column{
 		{Function: "COUNT", Target: "host", Alias: "hosts"},
 		{Function: "COUNT", Target: "zone", Alias: "zones"},
@@ -140,6 +149,16 @@ func generateT07(b *suiteBuilder) ([]AggregateFixture, []AggregateScenario, erro
 	if b.err != nil {
 		return nil, nil, b.err
 	}
+	composition, compositionErr := generateQG2Composition(b)
+	if compositionErr != nil {
+		return nil, nil, compositionErr
+	}
+	scenarios = append(scenarios, composition...)
+	decimalScenarios, decimalErr := generateQG3Decimal(b)
+	if decimalErr != nil {
+		return nil, nil, decimalErr
+	}
+	scenarios = append(scenarios, decimalScenarios...)
 	return readiness, scenarios, nil
 }
 
@@ -148,25 +167,74 @@ func generateT07Rejections(b *suiteBuilder) []Case {
 	prefix := "SELECT "
 	source := " FROM " + FixtureGroup + "." + T07FixtureName
 	for index, shape := range []struct{ projection, suffix string }{
-		{"COUNT(DISTINCT v) AS c", ""},
+		{"SUM(DISTINCT v) AS c", ""},
+		{"SUM(SUM(v)) AS s", ""},
+		{strings.Repeat("(", 63) + "SUM(v)" + strings.Repeat(")", 63) + " AS s", ""},
+		{"COALESCE(SUM(v), " + strings.Repeat("0, ", 4096) + "0) AS s", ""},
+		{"SUM(v) + v AS s", ""},
 		{"host, SUM(v) AS s", ""},
 		{"zone, SUM(v) AS s", " GROUP BY host"},
 		{"SUM(v) AS same, AVG(f) AS same", ""},
 		{"SUM(zone) AS s", ""},
 		{"COUNT(absent) AS c", ""},
-		{"SUM(v) AS s", " GROUP BY TIME_BUCKET('2s')"},
+		{"SUM(v) AS s", " GROUP BY TIME_BUCKET('0s')"},
 	} {
 		b.reject(fmt.Sprintf("t07_invalid_shape_%d", index), prefix+shape.projection+source+shape.suffix, "t07.invalid_shape", codes.InvalidArgument)
 		b.cases[len(b.cases)-1].Ticket = "T07"
 		b.cases[len(b.cases)-1].NoScan = true
 	}
+	for index, expression := range []string{
+		"SUM(COALESCE(v, 0) + 9223372036854775807)",
+		"SUM(COALESCE(v, 9223372036854775807))",
+	} {
+		q := t07Query{Fixture: T07FixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 6000}
+		query, err := renderT07(q)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		query = strings.Replace(query, "SUM(v) AS result", expression+" AS result", 1)
+		code := codes.Unknown
+		if index == 0 {
+			code = codes.InvalidArgument
+		}
+		b.cases = append(b.cases, Case{Name: fmt.Sprintf("qg2_overflow_%d", index), Ticket: "T07", Query: query, WantCode: code, Features: []string{"t08.integer_overflow"}})
+	}
+	for index, expression := range []string{
+		"SUM(DECIMAL_FROM_SCALED(v + 9223372036854775807, 10))",
+		"SUM(v)",
+	} {
+		q := t07Query{Fixture: T07DecimalFixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 10000}
+		query, err := renderT07(q)
+		if err != nil {
+			b.err = err
+			return nil
+		}
+		query = strings.Replace(query, "SUM(v) AS result", expression+" AS result", 1)
+		code := codes.Unknown
+		if index == 0 {
+			code = codes.InvalidArgument
+		}
+		b.cases = append(b.cases, Case{Name: fmt.Sprintf("qg3_overflow_%d", index), Ticket: "T07", Query: query, WantCode: code, Features: []string{"t08.integer_overflow"}})
+	}
+	q := t07Query{Fixture: T07DecimalFixtureName, Columns: []t07Column{{Function: "SUM", Target: "v", Alias: "result"}}, Begin: -1, End: 13000}
+	query, err := renderT07(q)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	query = strings.Replace(query, "SUM(v) AS result", "SUM(DECIMAL_FROM_SCALED(v, 39)) AS result", 1)
+	b.cases = append(b.cases, Case{
+		Name: "qg3_invalid_scale", Ticket: "T07", Query: query, WantCode: codes.InvalidArgument,
+		Features: []string{"t07.invalid_shape"}, NoScan: true,
+	})
 	cases := b.cases[start:]
 	b.cases = b.cases[:start]
 	return cases
 }
 
 func validateAggregateScenarios(readiness []AggregateFixture, scenarios []AggregateScenario) error {
-	if len(readiness) != 2 || readiness[0].Name != T07FixtureName || readiness[1].Name != T07GroupsFixtureName {
+	if len(readiness) != 3 || readiness[0].Name != T07FixtureName || readiness[1].Name != T07GroupsFixtureName || readiness[2].Name != T07DecimalFixtureName {
 		return fmt.Errorf("generated T07 suite lacks its independent fixture visibility witnesses")
 	}
 	for _, fixture := range readiness {

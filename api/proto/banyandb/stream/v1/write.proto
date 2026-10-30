@@ -21,6 +21,7 @@ package banyandb.stream.v1;
 
 import "banyandb/common/v1/common.proto";
 import "banyandb/model/v1/common.proto";
+import "banyandb/model/v1/write.proto";
 import "google/protobuf/timestamp.proto";
 import "validate/validate.proto";
 
@@ -66,6 +67,12 @@ message WriteResponse {
   string status = 2;
   // the metadata from request when request fails
   common.v1.Metadata metadata = 3;
+  // status_code is the typed form of status. New clients should read it.
+  model.v1.Status status_code = 4;
+  // retry_after_ms, when non-zero, asks the client to pause sending for that
+  // long. It rides on an acknowledgement and does not change that
+  // acknowledgement's status.
+  uint32 retry_after_ms = 5;
 }
 
 message InternalWriteRequest {

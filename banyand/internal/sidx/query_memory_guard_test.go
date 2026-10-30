@@ -30,9 +30,10 @@ func (l *tinySIDXLease) Charge(bytes uint64) error {
 	l.remaining -= bytes
 	return nil
 }
-func (*tinySIDXLease) Limit() uint64  { return 1024 }
-func (l *tinySIDXLease) Used() uint64 { return 1024 - l.remaining }
-func (*tinySIDXLease) Owner() any     { return "sidx-test" }
+func (l *tinySIDXLease) Refund(bytes uint64) { l.remaining = min(l.remaining+bytes, 1024) }
+func (*tinySIDXLease) Limit() uint64         { return 1024 }
+func (l *tinySIDXLease) Used() uint64        { return 1024 - l.remaining }
+func (*tinySIDXLease) Owner() any            { return "sidx-test" }
 
 func TestBuildCursorsForBatchSyncChargesBeforeBlockDecode(t *testing.T) {
 	s := &sidx{}

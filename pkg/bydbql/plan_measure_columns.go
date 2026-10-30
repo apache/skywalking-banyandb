@@ -30,10 +30,12 @@ import (
 )
 
 type measureColumns struct {
-	tags     map[string][]vectorized.ColumnDef
-	fields   map[string]vectorized.ColumnDef
-	tagSpecs map[string]*tagSpecWithFamily
-	ordered  []vectorized.ColumnDef
+	unambiguousTags map[measureColumnKey]bool
+	tags            map[string][]vectorized.ColumnDef
+	fields          map[string]vectorized.ColumnDef
+	tagSpecs        map[string]*tagSpecWithFamily
+	ordered         []vectorized.ColumnDef
+	intervals       []string
 }
 
 type measureColumnKey struct {
@@ -41,7 +43,7 @@ type measureColumnKey struct {
 	role         vectorized.ColumnRole
 }
 
-func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) error {
+func (m *MeasureTemplate) compileRaw(columns *measureColumns) error {
 	stmt := m.statement.template.Select
 	if stmt.Projection == nil || stmt.Projection.Empty {
 		return fmt.Errorf("projection must not be empty")
@@ -54,9 +56,9 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 			return fmt.Errorf("extended aggregate queries are not supported by typed raw execution")
 		}
 	}
-	columns, err := resolveMeasureColumns(stmt.From.In.Groups, schemas)
-	if err != nil {
-		return err
+	var err error
+	if containsQuotedMeasureLiteral(stmt.Projection, columns) {
+		return m.compileExpressions(columns)
 	}
 	var slots []ql.Slot
 	if stmt.Projection.All {
@@ -66,16 +68,13 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 	} else {
 		for _, column := range stmt.Projection.Columns {
 			if column.TypeSpec == nil && isBuiltinTime(column.Identifier) {
-				if column.Alias == nil {
-					continue
-				} // DataPoint.timestamp is always preserved.
-				alias, aliasErr := column.Alias.ToString(true)
-				if aliasErr != nil {
-					return aliasErr
+				slot, visible, slotErr := timestampOutputSlot(column, stmt.Distinct, ql.SlotID(len(slots)))
+				if slotErr != nil {
+					return slotErr
 				}
-				source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
-				output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
-				slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output})
+				if visible {
+					slots = append(slots, slot)
+				}
 				continue
 			}
 			name, nameErr := column.Identifier.ToString(column.TypeSpec != nil)
@@ -97,13 +96,8 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 			slots = append(slots, ql.Slot{ID: ql.SlotID(len(slots)), Source: source, Output: output, Nullable: true})
 		}
 	}
-	outputs := make(map[measureColumnKey]bool, len(slots))
-	for _, slot := range slots {
-		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
-		if outputs[key] {
-			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
-		}
-		outputs[key] = true
+	if err = validateRawOutputSlots(slots); err != nil {
+		return err
 	}
 	m.slots = slots
 	m.request = baseMeasureRequest(stmt)
@@ -128,7 +122,7 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 		m.request.TagProjection, m.request.FieldProjection = rawScanProjection([]ql.Slot{{Source: anchor}})
 	}
 	if stmt.Where != nil {
-		m.predicate, err = compileMeasureOr(stmt.Where.Expr, columns)
+		err = m.compileWhere(columns)
 		if err != nil {
 			return err
 		}
@@ -139,6 +133,9 @@ func (m *MeasureTemplate) compileRaw(schemas map[string]*databasev1.Measure) err
 // rawOrderBy resolves visible aliases before the legacy index-rule fallback.
 // General column sorting is owned by the complete ORDER BY capability.
 func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *measureColumns) (*modelv1.QueryOrder, error) {
+	if orderBy != nil && len(orderBy.Keys) > 0 {
+		return nil, nil
+	}
 	native := (&transformRun{}).convertSelectOrderBy(orderBy)
 	if orderBy == nil || orderBy.Tail.WithIdent == nil {
 		return native, nil
@@ -160,7 +157,7 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 	}
 	if resolved != nil {
 		if resolved.Source.Role != vectorized.RoleTimestamp {
-			return nil, fmt.Errorf("ORDER BY output %q requires column sorting", name)
+			return nil, nil
 		}
 		native.IndexRuleName = ""
 		return native, nil
@@ -170,10 +167,10 @@ func rawOrderBy(orderBy *GrammarSelectOrderByClause, slots []ql.Slot, columns *m
 		return native, nil
 	}
 	if len(columns.tags[name]) > 0 {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	if _, exists := columns.fields[name]; exists {
-		return nil, fmt.Errorf("ORDER BY source %q requires column sorting", name)
+		return nil, nil
 	}
 	return native, nil
 }
@@ -226,7 +223,24 @@ func resolveMeasureColumns(groups []string, schemas map[string]*databasev1.Measu
 			columns.ordered = append(columns.ordered, column)
 		}
 	}
+	columns.unambiguousTags = unambiguousMeasureTags(columns.ordered)
 	return columns, nil
+}
+
+func unambiguousMeasureTags(columns []vectorized.ColumnDef) map[measureColumnKey]bool {
+	names := make(map[string]int)
+	for _, source := range columns {
+		if source.Role == vectorized.RoleTag {
+			names[source.Name]++
+		}
+	}
+	tags := make(map[measureColumnKey]bool)
+	for _, source := range columns {
+		if source.Role == vectorized.RoleTag && names[source.Name] == 1 {
+			tags[columnIdentity(source)] = true
+		}
+	}
+	return tags
 }
 
 func (c *measureColumns) resolve(name string, typeSpec *string) (vectorized.ColumnDef, error) {
@@ -322,4 +336,42 @@ func measureFieldType(fieldType databasev1.FieldType) (vectorized.ColumnType, er
 	default:
 		return 0, fmt.Errorf("unsupported field type %s", fieldType)
 	}
+}
+
+func validateRawOutputSlots(slots []ql.Slot) error {
+	outputs := make(map[measureColumnKey]bool, len(slots))
+	for _, slot := range slots {
+		key := measureColumnKey{family: slot.Output.TagFamily, name: slot.Output.Name, role: slot.Output.Role}
+		if outputs[key] {
+			return fmt.Errorf("duplicate output name %q in container %q", key.name, key.family)
+		}
+		outputs[key] = true
+	}
+	return nil
+}
+
+func containsQuotedMeasureLiteral(projection *GrammarProjection, columns *measureColumns) bool {
+	for _, column := range projection.Columns {
+		if isQuotedMeasureLiteral(column, columns) {
+			return true
+		}
+	}
+	return false
+}
+
+func timestampOutputSlot(column *GrammarColumn, distinct bool, id ql.SlotID) (ql.Slot, bool, error) {
+	if column.Alias == nil && !distinct {
+		return ql.Slot{}, false, nil
+	}
+	alias := "time"
+	if column.Alias != nil {
+		var err error
+		alias, err = column.Alias.ToString(true)
+		if err != nil {
+			return ql.Slot{}, false, err
+		}
+	}
+	source := vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64}
+	output := vectorized.ColumnDef{Name: alias, TagFamily: "__ql", Role: vectorized.RoleTag, Type: vectorized.ColumnTypeInt64}
+	return ql.Slot{ID: id, Source: source, Output: output, Timestamp: true}, true, nil
 }

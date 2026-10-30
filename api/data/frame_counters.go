@@ -79,7 +79,7 @@ func TraceFrameDecodedCount() int64 { return traceFrameDecoded.Load() }
 // zero frames on a cluster that is in fact emitting them.
 func IncrFrameEncoded(t bus.Topic) {
 	switch t {
-	case TopicInternalMeasureQuery:
+	case TopicInternalMeasureQuery, TopicInternalMeasurePatternQuery:
 		measureFrameEncoded.Add(1)
 	case TopicStreamQuery:
 		streamFrameEncoded.Add(1)
