@@ -18,6 +18,7 @@
 package trace
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -852,12 +853,16 @@ func mustDecodeTagValueAndArray(valueType pbv1.ValueType, value []byte, valueArr
 			next int
 			err  error
 		)
-		for idx := 0; idx < len(value); idx = next {
-			end, next, err = encoding.UnmarshalVarArray(value, idx)
+		buf := value
+		if bytes.IndexByte(value, encoding.Escape) >= 0 {
+			buf = bytes.Clone(value)
+		}
+		for idx := 0; idx < len(buf); idx = next {
+			end, next, err = encoding.UnmarshalVarArray(buf, idx)
 			if err != nil {
 				logger.Panicf("UnmarshalVarArray failed: %v", err)
 			}
-			values = append(values, string(value[idx:end]))
+			values = append(values, string(buf[idx:end]))
 		}
 		return strArrTagValue(values)
 	case pbv1.ValueTypeTimestamp:
