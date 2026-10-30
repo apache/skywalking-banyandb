@@ -301,9 +301,9 @@ func TestQueryVectorized_LimitScanStaysWithinQueryBudget(t *testing.T) {
 			t.Logf("%s: allowance=%d total_block_bytes~%d peak_held=%d limit=%d", tc.name, allowance, total, peakHeld, lease.Limit())
 			perBlock := uint64(budgetRowsPerSeries * (budgetPayloadBytes + 64))
 			// The merge pins whole batches through the few rows it keeps: at worst one
-			// batch per kept row, each estimated at ~16x its payload (tag value and
-			// order key, 8x proto expansion).
-			perBatch := uint64(budgetRowsPerSeries * (16*budgetPayloadBytes + 1024))
+			// batch per kept row, each estimated at ~2x its payload (tag value and
+			// order key, each charged by size plus a fixed overhead).
+			perBatch := uint64(budgetRowsPerSeries * (2*budgetPayloadBytes + 1024))
 			bound := lease.lookup.Load() + budgetResultBatchSize*perBlock + (budgetLimit+2)*perBatch
 			require.LessOrEqual(t, peakHeld, bound, "the scan must hold a few blocks and the merge's retained rows, not the whole range")
 			require.Less(t, peakHeld, total/2, "held bytes must stay far below what the scan reads")
