@@ -157,8 +157,14 @@ func (pq *DedupPriorityQueue) ReplaceLowest(newLowest Element) {
 	// Pop and Push own the dedup bookkeeping: assigning over Items[0] would leave the
 	// replaced element tracked, so it could never be pushed again, and would leave the
 	// replacing element untracked, so a duplicate of it would be accepted.
-	heap.Pop(pq)
+	lowest := heap.Pop(pq)
+	size := pq.Len()
 	heap.Push(pq, newLowest)
+	if pq.Len() == size {
+		// The replacement was rejected as a duplicate; restore the evicted element so
+		// the queue does not silently shrink and the exported size contract holds.
+		heap.Push(pq, lowest)
+	}
 }
 
 // Values returns all items.
