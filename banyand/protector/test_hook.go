@@ -17,7 +17,10 @@
 
 package protector
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // The functions in this file are a test-only hook. In-process integration tests run several nodes in one process and
 // cannot reach each node's protector, so every protector created by NewMemory is recorded in creation order and a test
@@ -52,4 +55,66 @@ func ForceHighByIndex(i int, high bool) bool {
 	}
 	memoryRoster[i].forcedHigh.Store(high)
 	return true
+}
+
+// nextQueryPool is the query pool size the next protector created by NewMemory takes, or zero for none.
+var nextQueryPool atomic.Uint64
+
+// nextQueryPoolSkip is the number of protectors NewMemory creates before one takes nextQueryPool.
+var nextQueryPoolSkip atomic.Int64
+
+// SetNextQueryPool makes the next protector created by NewMemory size its query pool to poolBytes (so a query may
+// reserve at most an eighth of it) and treat all of that pool as available, whatever the process uses. An in-process
+// test calls it right before it starts the node whose queries it wants to run out of budget. It is intended for tests.
+func SetNextQueryPool(poolBytes uint64) { SetQueryPoolAfter(0, poolBytes) }
+
+// SetQueryPoolAfter is SetNextQueryPool for the protector NewMemory creates after skip others. A data node starts an
+// embedded schema server that creates its own protector first, so a test that wants the data node itself to run out of
+// budget skips that one. It is intended for tests.
+func SetQueryPoolAfter(skip int, poolBytes uint64) {
+	nextQueryPoolSkip.Store(int64(skip))
+	nextQueryPool.Store(poolBytes)
+}
+
+// pinnedPoolMemory is a protector whose limit is chosen by a test and which always reports that limit as available.
+type pinnedPoolMemory struct {
+	Memory
+	limit uint64
+}
+
+func (p pinnedPoolMemory) GetLimit() uint64      { return p.limit }
+func (p pinnedPoolMemory) AvailableBytes() int64 { return int64(p.limit) }
+
+// applyNextQueryPool gives m the pinned query budget requested by SetNextQueryPool, if any.
+func applyNextQueryPool(m *memory) {
+	if nextQueryPool.Load() == 0 {
+		return
+	}
+	if nextQueryPoolSkip.Add(-1) >= 0 {
+		return
+	}
+	poolBytes := nextQueryPool.Swap(0)
+	if poolBytes == 0 {
+		return
+	}
+	m.queryBudgetOnce.Do(func() {
+		m.queryBudget = NewQueryBudget(pinnedPoolMemory{Memory: m, limit: poolBytes * queryPoolFraction})
+	})
+}
+
+// SetHostMemoryForTest makes the query budget see totalBytes as the host's memory, whatever the machine has, and
+// returns a function that restores the previous reading. Zero stands for unreadable host memory, which gives the
+// fixed 64 MiB fallback pool (8 MiB per query). It is intended for tests.
+func SetHostMemoryForTest(totalBytes uint64) (restore func()) {
+	hostMemory.Lock()
+	previous := hostMemory.read
+	previousTotal, previousDone := hostMemory.total, hostMemory.done
+	hostMemory.read = func() uint64 { return totalBytes }
+	hostMemory.done = false
+	hostMemory.Unlock()
+	return func() {
+		hostMemory.Lock()
+		hostMemory.read, hostMemory.total, hostMemory.done = previous, previousTotal, previousDone
+		hostMemory.Unlock()
+	}
 }

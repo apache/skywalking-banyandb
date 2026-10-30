@@ -85,7 +85,7 @@ func runLiaisonMerge(t *testing.T, plan *distributedPlan, nodeResponses []any, o
 	t.Helper()
 	var see []sort.Iterator[*comparableElement]
 	for _, d := range nodeResponses {
-		elements, decErr := plan.decodeNodeElements(d, nil)
+		elements, _, decErr := plan.decodeNodeElements(d)
 		require.NoError(t, decErr)
 		see = append(see, newSortableElements(elements, plan.sortByTime, plan.sortTagSpec))
 	}
@@ -196,7 +196,7 @@ func TestLiaisonMerge_FrameDecodeProducesProjectedTags(t *testing.T) {
 	require.NoError(t, encErr)
 
 	plan := &distributedPlan{sortByTime: true}
-	elements, decErr := plan.decodeNodeElements(frame, nil)
+	elements, _, decErr := plan.decodeNodeElements(frame)
 	require.NoError(t, decErr)
 	require.Len(t, elements, 1)
 	require.Equal(t, hexElementID(7), elements[0].ElementId)

@@ -99,9 +99,10 @@ var _ = ginkgo.Describe("vec independent verification (standalone)", ginkgo.Orde
 		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
 		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 		config := setup.PropertyClusterConfig(dfWriter)
-		// Keep the query allowance independent of host cgroup configuration. A 1 GiB
-		// server allowance gives these aggregation fixtures a bounded 32 MiB query budget.
-		addr, _, closeFn := setup.ClosableStandalone(config, path, ports, "--allowed-bytes", "1GiB")
+		// Keep the allowance independent of host cgroups. The complete DISTINCT and
+		// sorting scans exceed a 32 MiB cumulative native allocation budget; 4 GiB
+		// gives this combined fixture suite a bounded 128 MiB per-query allowance.
+		addr, _, closeFn := setup.ClosableStandalone(config, path, ports, "--allowed-bytes", "4GiB")
 		stopFn = func() {
 			closeFn()
 			diskCleanupFn()

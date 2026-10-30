@@ -17,11 +17,11 @@
  * under the License.
  */
 
-import bcrypt from 'bcryptjs';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { request as undiciRequest } from 'undici';
 
 import type { Config } from '../config.js';
+import { verifyPassword } from '../lib/password.js';
 
 interface LoginBody {
   username: string;
@@ -71,24 +71,17 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     return reply.send({ banyanVersion, reachable, banyandbTarget: config.banyandbTarget });
   });
 
-  app.post<{ Body: LoginBody }>('/auth/login', async (request: FastifyRequest, reply: FastifyReply) => {
+  app.post<{ Body: LoginBody }>('/auth/login', { preHandler: [app.canopyAuth.rejectBearerOnly] }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { username, password } = request.body as LoginBody;
 
     if (!username || !password) {
       return reply.status(400).send({ error: 'bad_request', message: 'username and password are required' });
     }
 
-    // Find user (constant-time compare to prevent timing attacks)
-    const user = config.users.find(u => u.username === username);
-
-    // Always run bcrypt compare even if user not found (timing-safe)
-    const hashToCheck = user?.passwordHash ?? '$2b$10$invalidhashpaddingtomakeitconstanttimexxx';
-    let passwordOk = false;
-    try {
-      passwordOk = await bcrypt.compare(password, hashToCheck);
-    } catch {
-      passwordOk = false;
-    }
+    // An unknown user still runs one argon2id verification (against a dummy
+    // hash) so the response time does not reveal which usernames exist.
+    const user = app.canopyAuth.findUser(username);
+    const passwordOk = await verifyPassword(user?.passwordHash, password);
 
     if (!user || !passwordOk) {
       return reply.status(401).send({ error: 'invalid_credentials', message: 'Invalid username or password' });
@@ -100,23 +93,23 @@ export async function registerAuth(app: FastifyInstance, config: Config): Promis
     // surface as a 502 on the first /api/* call, not as a login failure.
     const banyanVersion = await fetchBanyanVersion(config.banyandbTarget);
 
-    request.session.user = user.username;
-    request.session.role = user.role;
-    request.session.banyanVersion = banyanVersion;
+    // Drop any session the client already holds so a login never reuses an id.
+    app.canopyAuth.store.destroy(request.cookies[app.canopyAuth.cookieName]);
+    const sessionId = app.canopyAuth.store.create(user.username, banyanVersion);
+    app.canopyAuth.setSessionCookie(reply, sessionId);
 
     return reply.send({ user: user.username, role: user.role, banyanVersion });
   });
 
-  app.post('/auth/logout', async (request: FastifyRequest, reply: FastifyReply) => {
-    request.session.delete();
+  app.post('/auth/logout', { preHandler: [app.canopyAuth.rejectBearerOnly] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    app.canopyAuth.store.destroy(request.cookies[app.canopyAuth.cookieName]);
+    app.canopyAuth.clearSessionCookie(reply);
     return reply.send({ ok: true });
   });
 
-  app.get('/auth/session', async (request: FastifyRequest, reply: FastifyReply) => {
-    const session = request.session;
-    if (!session?.user) {
-      return reply.status(401).send({ error: 'unauthenticated' });
-    }
-    return reply.send({ user: session.user, role: session.role, banyanVersion: session.banyanVersion ?? null });
+  app.get('/auth/session', { preHandler: [app.canopyAuth.requireBrowserSession] }, async (request: FastifyRequest, reply: FastifyReply) => {
+    const principal = request.principal;
+    const record = app.canopyAuth.store.touch(request.cookies[app.canopyAuth.cookieName]);
+    return reply.send({ user: principal?.username, role: principal?.role, banyanVersion: record?.banyanVersion ?? null });
   });
 }

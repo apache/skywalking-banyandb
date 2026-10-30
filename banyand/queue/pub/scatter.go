@@ -54,9 +54,6 @@ func (p *pub) Scatter(ctx context.Context, topic bus.Topic, message bus.Message,
 		opts.Prefetch = queue.DefaultScanPrefetch
 	}
 	if opts.IdleTimeout <= 0 {
-		opts.IdleTimeout = p.scanIdleTimeout
-	}
-	if opts.IdleTimeout <= 0 {
 		opts.IdleTimeout = defaultScanIdleTimeout
 	}
 	streams := make([]queue.NodeStream, 0, len(nodes))
@@ -93,6 +90,7 @@ func (p *pub) openScan(ctx context.Context, node string, topic bus.Topic, messag
 		SenderTier:    p.selfTier,
 		MaxChunkBytes: opts.MaxChunkBytes,
 		MaxChunkRows:  opts.MaxChunkRows,
+		IdleTimeoutMs: uint32(opts.IdleTimeout.Milliseconds()),
 	}
 	info := p.getNodeInfo(node)
 	operation := apidata.OperationOf(topic)
@@ -231,7 +229,7 @@ func (n *nodeStream) receive() {
 		}
 		idle.Reset(n.idleTimeout)
 		if resp.Error != "" {
-			n.termErr = fmt.Errorf("scan on node %s failed: %s", n.node, resp.Error)
+			n.termErr = fmt.Errorf("scan on node %s failed: %w", n.node, remoteError(resp.Status, resp.Error))
 			errReason = sendErrReasonServerRejected
 			close(n.ch)
 			return

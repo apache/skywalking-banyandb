@@ -460,6 +460,14 @@ func dumpHeapProfile(t *testing.T, path string) {
 // soak-specific defaults (no profiling, trace engine always).
 func startSoakCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error) {
 	t.Helper()
+	return startSoakClusterWith(t, cfg, clusterFlags(cfg), preloadTraceBenchSchema(cfg.ShardNum), schema.KindTrace)
+}
+
+// startSoakClusterWith starts the in-process cluster with the given node flags and preloads one schema kind.
+func startSoakClusterWith(
+	t *testing.T, cfg Config, flags []string, preload func(context.Context, schema.Registry) error, kind schema.Kind,
+) (benchCluster, time.Time, error) {
+	t.Helper()
 	savedWireModeRaw := data.MeasureWireModeRaw()
 	tmpDir, cleanup, spaceErr := test.NewSpace()
 	if spaceErr != nil {
@@ -467,7 +475,6 @@ func startSoakCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error)
 	}
 	dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
 	config := setup.PropertyClusterConfig(dfWriter)
-	flags := clusterFlags(cfg)
 	dataNodeCount := cfg.DataNodes
 	if dataNodeCount <= 0 {
 		dataNodeCount = 2
@@ -476,8 +483,8 @@ func startSoakCluster(t *testing.T, cfg Config) (benchCluster, time.Time, error)
 	for nodeIdx := 0; nodeIdx < dataNodeCount; nodeIdx++ {
 		closeDataNodes = append(closeDataNodes, setup.DataNode(config, flags...))
 	}
-	setup.PreloadSchemaViaProperty(config, preloadTraceBenchSchema(cfg.ShardNum))
-	config.AddLoadedKinds(schema.KindTrace)
+	setup.PreloadSchemaViaProperty(config, preload)
+	config.AddLoadedKinds(kind)
 	liaisonAddr, closeLiaison := setup.LiaisonNode(config, flags...)
 	conn, connErr := grpchelper.Conn(
 		liaisonAddr, 10*time.Second,

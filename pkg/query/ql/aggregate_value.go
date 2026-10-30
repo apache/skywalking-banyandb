@@ -21,22 +21,26 @@ import (
 	"fmt"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 type aggregateValue struct {
-	text string
-	raw  []byte
-	i64  int64
-	f64  float64
-	typ  vectorized.ColumnType
-	null bool
+	text      string
+	raw       []byte
+	decimal   decimal.Int128
+	i64       int64
+	f64       float64
+	typ       vectorized.ColumnType
+	null      bool
+	timestamp bool
 }
 
 type aggregateReader struct {
-	column vectorized.Column
-	def    vectorized.ColumnDef
-	index  int
+	column    vectorized.Column
+	def       vectorized.ColumnDef
+	index     int
+	timestamp bool
 }
 
 func aggregateScalarType(typ vectorized.ColumnType) bool {
@@ -209,6 +213,8 @@ func appendAggregateValue(column vectorized.Column, value aggregateValue) {
 		return
 	}
 	switch output := column.(type) {
+	case *vectorized.TypedColumn[decimal.Int128]:
+		output.Append(value.decimal)
 	case *vectorized.TypedColumn[int64]:
 		output.Append(value.i64)
 	case *vectorized.TypedColumn[float64]:
