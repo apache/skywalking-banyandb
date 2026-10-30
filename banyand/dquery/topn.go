@@ -32,6 +32,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
@@ -135,14 +136,14 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	}
 	fieldType, fieldTypeErr := t.getTopNFieldType(ctx, request.Groups[0], request.GetName())
 	if fieldTypeErr != nil {
-		resp = bus.NewMessage(now, common.NewError("failed to determine field type for topN query %s: %v", request.GetName(), fieldTypeErr))
+		resp = bus.NewMessage(now, protector.QueryFailure(fieldTypeErr, "failed to determine field type for topN query %s: %v", request.GetName(), fieldTypeErr))
 		return
 	}
 	agg := request.Agg
 	request.Agg = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
 	ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicTopNQuery, bus.NewMessageWithNodeSelectors(now, nodeSelectors, request.TimeRange, request))
 	if err != nil {
-		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), err))
+		resp = bus.NewMessage(now, protector.QueryFailure(err, "execute the query %s: %v", request.GetName(), err))
 		return
 	}
 	var allErr error
@@ -159,7 +160,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		span.Tagf("response_count", "%d", responseCount)
 	}
 	if allErr != nil {
-		resp = bus.NewMessage(now, common.NewError("execute the query %s: %v", request.GetName(), allErr))
+		resp = bus.NewMessage(now, protector.QueryFailure(allErr, "execute the query %s: %v", request.GetName(), allErr))
 		return
 	}
 	if len(lists) == 0 {

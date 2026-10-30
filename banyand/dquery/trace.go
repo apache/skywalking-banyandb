@@ -27,6 +27,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/iter"
@@ -66,12 +67,12 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 		}
 		ec, err := p.traceService.Trace(meta)
 		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to get execution context for trace %s: %v", meta.GetName(), err))
 			return
 		}
 		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to build schema for trace %s: %v", meta.GetName(), err))
 			return
 		}
 		schemas = append(schemas, s)
@@ -79,7 +80,7 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 
 	plan, err := logical_trace.DistributedAnalyze(queryCriteria, schemas)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for trace %s: %v", queryCriteria.Name, err))
 		return
 	}
 
@@ -139,14 +140,14 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	}))
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for trace %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "execute the query plan for trace %s: %v", queryCriteria.Name, err))
 		return
 	}
 
 	traces, err := BuildTracesFromResult(resultIterator, queryCriteria)
 	if err != nil {
 		p.log.Error().Err(err).Msg("fail to build traces from result")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build traces from result: %v", err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to build traces from result: %v", err))
 		return
 	}
 	resp = bus.NewMessage(bus.MessageID(now), &tracev1.InternalQueryResponse{InternalTraces: traces})

@@ -97,14 +97,14 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	}
 	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
 	if admissionErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(admissionErr, "query admission failed: %v", admissionErr))
 		return
 	}
 	defer release()
 	ctx = admittedCtx
 	defer func() {
 		if chargeErr := query.ChargeResponse(ctx, resp.Data()); chargeErr != nil {
-			resp = bus.NewMessage(resp.ID(), common.NewError("query response memory exhausted: %v", chargeErr))
+			resp = bus.NewMessage(resp.ID(), protector.QueryFailure(chargeErr, "query response memory exhausted: %v", chargeErr))
 		}
 	}()
 	if p.log.Debug().Enabled() {
@@ -116,32 +116,9 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.StreamExecutionContext
-	for i := range queryCriteria.Groups {
-		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
-		}
-		ec, err := p.streamService.Stream(meta)
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to get execution context for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		ecc = append(ecc, ec)
-		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
-		if err != nil {
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to build schema for stream %s: %v", meta.GetName(), err))
-			return
-		}
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
-	}
-
-	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
+	plan, err := p.buildStreamPlan(queryCriteria)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for stream %s: %v", queryCriteria.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "%v", err))
 		return
 	}
 
@@ -197,6 +174,37 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	return
 }
 
+// buildStreamPlan resolves the stream in every requested group and analyzes the request.
+// Its errors carry the message the client sees and wrap the cause, so a typed resource
+// failure keeps its identity.
+func (p *streamQueryProcessor) buildStreamPlan(queryCriteria *streamv1.QueryRequest) (logical.Plan, error) {
+	var metadata []*commonv1.Metadata
+	var schemas []logical.Schema
+	var ecc []executor.StreamExecutionContext
+	for i := range queryCriteria.Groups {
+		meta := &commonv1.Metadata{
+			Name:  queryCriteria.Name,
+			Group: queryCriteria.Groups[i],
+		}
+		ec, err := p.streamService.Stream(meta)
+		if err != nil {
+			return nil, fmt.Errorf("fail to get execution context for stream %s: %w", meta.GetName(), err)
+		}
+		ecc = append(ecc, ec)
+		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
+		if err != nil {
+			return nil, fmt.Errorf("fail to build schema for stream %s: %w", meta.GetName(), err)
+		}
+		schemas = append(schemas, s)
+		metadata = append(metadata, meta)
+	}
+	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
+	if err != nil {
+		return nil, fmt.Errorf("fail to analyze the query request for stream %s: %w", queryCriteria.GetName(), err)
+	}
+	return plan, nil
+}
+
 // tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
 // It returns (false, nil) when the plan is not vec-eligible, which the caller
 // treats as a hard error. On success it returns (true, resp) where resp is:
@@ -227,7 +235,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	batches, schema, execErr := vecExec.ExecuteVectorized(ctx)
 	if execErr != nil {
 		p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized query plan")
-		return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
+		return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(execErr,
+			"execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
 	}
 
 	criteria, hasFilter := logical_stream.VecTagFilter(plan)
@@ -249,7 +258,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 		frameBytes, encErr := streamframe.Encode(merged)
 		if encErr != nil {
 			p.log.Error().Err(encErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to encode the vectorized stream frame")
-			return true, bus.NewMessage(bus.MessageID(now), common.NewError("encode the vectorized stream frame for stream %s: %v", queryCriteria.GetName(), encErr))
+			return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(encErr,
+				"encode the vectorized stream frame for stream %s: %v", queryCriteria.GetName(), encErr))
 		}
 		return true, bus.NewMessage(bus.MessageID(now), frameBytes)
 	}
@@ -261,7 +271,8 @@ func (p *streamQueryProcessor) tryStreamVecDispatch(ctx context.Context, plan lo
 	elements, buildErr := vstream.BuildElementsFromBatch(merged, vstream.ProjectionFromBatchSchema(merged))
 	if buildErr != nil {
 		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream elements")
-		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+		return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(buildErr,
+			"materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
 	}
 	if offset, limit, ok := logical_stream.VecOffsetLimit(plan); ok {
 		elements = sliceStreamElements(elements, offset, limit)
@@ -301,13 +312,15 @@ func (p *streamQueryProcessor) stageStreamBatches(ctx context.Context, vecExec e
 	if hasFilter && !criteria.PreMerged {
 		if filterErr := filterStreamBatches(ctx, schema, vecExec.ProjectionTags(), criteria, batches); filterErr != nil {
 			p.log.Error().Err(filterErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to filter the vectorized stream batches")
-			return nil, true, bus.NewMessage(bus.MessageID(now), common.NewError("filter the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), filterErr))
+			return nil, true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(filterErr,
+				"filter the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), filterErr))
 		}
 	}
 	merged, mergeErr := mergeStreamBatches(schema, batches, criteria.HiddenTags, vecExec.HiddenOrderTag())
 	if mergeErr != nil {
 		p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream batches")
-		return nil, true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
+		return nil, true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(mergeErr,
+			"merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
 	}
 	return merged, false, bus.Message{}
 }
@@ -349,7 +362,8 @@ func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *l
 		executed = append(executed, batches...)
 		if execErr != nil {
 			p.log.Error().Err(execErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the vectorized stream group")
-			return true, bus.NewMessage(bus.MessageID(now), common.NewError("execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
+			return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(execErr,
+				"execute the vectorized query plan for stream %s: %v", queryCriteria.GetName(), execErr))
 		}
 		mergedBatch, stageErr, stageMsg := p.stageStreamBatches(ctx, group.Scan, schema, batches,
 			group.Criteria, group.HasFilter, queryCriteria, now)
@@ -361,17 +375,20 @@ func (p *streamQueryProcessor) tryVecMergeDispatch(ctx context.Context, merge *l
 	groups, alignErr := alignStreamGroupBatches(ctx, staged, merge.SortByTime)
 	if alignErr != nil {
 		p.log.Error().Err(alignErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to align the vectorized stream group batches")
-		return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), alignErr))
+		return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(alignErr,
+			"merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), alignErr))
 	}
 	mergedBatches, mergeErr := mergeAlignedStreamGroups(ctx, groups, merge.Desc, merge.Offset, merge.Limit)
 	if mergeErr != nil {
 		p.log.Error().Err(mergeErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to merge the vectorized stream group batches")
-		return true, bus.NewMessage(bus.MessageID(now), common.NewError("merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
+		return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(mergeErr,
+			"merge the vectorized stream batches for stream %s: %v", queryCriteria.GetName(), mergeErr))
 	}
 	elements, buildErr := buildAlignedStreamElements(groups, mergedBatches)
 	if buildErr != nil {
 		p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to materialize vectorized stream group elements")
-		return true, bus.NewMessage(bus.MessageID(now), common.NewError("materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
+		return true, bus.NewMessage(bus.MessageID(now), protector.QueryFailure(buildErr,
+			"materialize vectorized stream elements for stream %s: %v", queryCriteria.GetName(), buildErr))
 	}
 	succeeded = true
 	if elements == nil {
@@ -809,7 +826,7 @@ func (p *measureQueryProcessor) executeQuery(ctx context.Context, queryCriteria 
 
 	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "measure")
 	if buildErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(buildErr, "%v", buildErr))
 		return
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
@@ -977,7 +994,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 
 	mctx, buildErr := buildMeasureContext(p.measureService, p.log, queryCriteria, "internal-measure", patterns...)
 	if buildErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", buildErr))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(buildErr, "%v", buildErr))
 		return
 	}
 	if e := mctx.ml.Debug(); e.Enabled() {
@@ -992,7 +1009,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 	}
 	mIterator, planStr, execErr := executeMeasurePlan(ctx, queryCriteria, mctx, internalRequest.GetAggReturnPartial(), patterns...)
 	if execErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", execErr))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(execErr, "%v", execErr))
 		return
 	}
 	iteratorClosed := false
@@ -1039,7 +1056,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 				span.Error(emitErr)
 				span.Stop()
 			}
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(emitErr, "%v", emitErr))
 			return
 		}
 		rawBody, drainErr := emitter.EmitFrame(ctx)
@@ -1050,7 +1067,7 @@ func (p *measureInternalQueryProcessor) Rev(ctx context.Context, message bus.Mes
 				span.Error(emitErr)
 				span.Stop()
 			}
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("%v", emitErr))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(emitErr, "%v", emitErr))
 			return
 		}
 		if span != nil {
@@ -1133,14 +1150,14 @@ func (p *traceQueryProcessor) Rev(ctx context.Context, message bus.Message) (res
 	}
 	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
 	if admissionErr != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("query admission failed: %v", admissionErr))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(admissionErr, "query admission failed: %v", admissionErr))
 		return
 	}
 	defer release()
 	ctx = admittedCtx
 	defer func() {
 		if chargeErr := query.ChargeResponse(ctx, resp.Data()); chargeErr != nil {
-			resp = bus.NewMessage(resp.ID(), common.NewError("query response memory exhausted: %v", chargeErr))
+			resp = bus.NewMessage(resp.ID(), protector.QueryFailure(chargeErr, "query response memory exhausted: %v", chargeErr))
 		}
 	}()
 	if p.log.Debug().Enabled() {
@@ -1183,12 +1200,12 @@ func (p *traceQueryProcessor) setupTraceExecutionPlan(queryCriteria *tracev1.Que
 		}
 		ec, err := p.traceService.Trace(meta)
 		if err != nil {
-			return nil, common.NewError("fail to get execution context for trace %s: %v", meta.GetName(), err)
+			return nil, protector.QueryFailure(err, "fail to get execution context for trace %s: %v", meta.GetName(), err)
 		}
 
 		s, err := logical_trace.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
-			return nil, common.NewError("fail to build schema for trace %s: %v", meta.GetName(), err)
+			return nil, protector.QueryFailure(err, "fail to build schema for trace %s: %v", meta.GetName(), err)
 		}
 
 		// Validate tag name consistency
@@ -1516,7 +1533,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	plan, err := logical_trace.Analyze(queryCriteria, execPlan.metadata, execPlan.schemas, traceExecContexts,
 		execPlan.traceIDTagNames, execPlan.spanIDTagNames, execPlan.timestampTagNames)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for trace %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 	if p.log.Debug().Enabled() {
@@ -1533,7 +1550,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	resultIterator, err := te.Execute(ctx)
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to execute the trace query plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("execute the query plan for trace %s: %v", queryCriteria.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "execute the query plan for trace %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 
@@ -1545,7 +1562,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 		results, buildErr := p.buildFrameTraceResults(resultIterator, queryCriteria, execPlan)
 		if buildErr != nil {
 			p.log.Error().Err(buildErr).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("process trace results for trace %s: %v", queryCriteria.GetName(), buildErr))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(buildErr, "process trace results for trace %s: %v", queryCriteria.GetName(), buildErr))
 			return
 		}
 		resp = bus.NewMessage(bus.MessageID(now), logical_trace.EncodeTraceResultFrame(results))
@@ -1556,7 +1573,7 @@ func (p *traceQueryProcessor) executeQuery(ctx context.Context, queryCriteria *t
 	traces, err := p.processTraceResults(resultIterator, queryCriteria, execPlan)
 	if err != nil {
 		p.log.Error().Err(err).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to process trace results")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("process trace results for trace %s: %v", queryCriteria.GetName(), err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "process trace results for trace %s: %v", queryCriteria.GetName(), err))
 		return
 	}
 
