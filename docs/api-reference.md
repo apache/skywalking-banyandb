@@ -6554,6 +6554,8 @@ WriteResponse is the response contract for write
 | message_id | [uint64](#uint64) |  | the message_id from request. |
 | status | [string](#string) |  | status indicates the request processing result |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
+| status_code | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status_code is the typed form of status. New clients should read it. |
+| retry_after_ms | [uint32](#uint32) |  | retry_after_ms, when non-zero, asks the client to pause sending for that long. It rides on an acknowledgement and does not change that acknowledgement&#39;s status. |
 
 
 

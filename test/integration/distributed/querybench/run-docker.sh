@@ -105,15 +105,15 @@ DOCKER_ARGS+=(-e DQB_DATA_NODES="${DQB_DATA_NODES:-2}")
 DOCKER_ARGS+=(-e DQB_SPAN_BYTES="${DQB_SPAN_BYTES:-1024}")
 DOCKER_ARGS+=(-e DQB_QUERY_MEMORY_MIB="${DQB_QUERY_MEMORY_MIB:-256}")
 DOCKER_ARGS+=(-e DQB_SOAK="${DQB_SOAK:-0}")
-# Long-lived write soak (TestTraceWriteSoak, or TestStreamWriteSoak with DQB_WRITE_SOAK_ENGINE=stream).
+# Long-lived write soak (TestTraceWriteSoak, or TestStreamWriteSoak or TestMeasureWriteSoak with DQB_WRITE_SOAK_ENGINE=stream or measure).
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK_ENGINE="${DQB_WRITE_SOAK_ENGINE:-trace}")
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK="${DQB_WRITE_SOAK:-0}")
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK_WRITERS="${DQB_WRITE_SOAK_WRITERS:-4}")
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK_DURATION="${DQB_WRITE_SOAK_DURATION:-5m}")
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK_RATE="${DQB_WRITE_SOAK_RATE:-2000}")
 DOCKER_ARGS+=(-e DQB_WRITE_SOAK_LABEL="${DQB_WRITE_SOAK_LABEL:-run}")
-# The stream soak checks every element by default; the trace soak samples above 200000 traces.
-if [[ "${DQB_WRITE_SOAK_ENGINE:-trace}" == "stream" ]]; then
+# The stream and measure soaks check every row by default; the trace soak samples above 200000 traces.
+if [[ "${DQB_WRITE_SOAK_ENGINE:-trace}" == "stream" || "${DQB_WRITE_SOAK_ENGINE:-trace}" == "measure" ]]; then
   DOCKER_ARGS+=(-e DQB_WRITE_SOAK_FULLCHECK_MAX="${DQB_WRITE_SOAK_FULLCHECK_MAX:-100000000}")
 else
   DOCKER_ARGS+=(-e DQB_WRITE_SOAK_FULLCHECK_MAX="${DQB_WRITE_SOAK_FULLCHECK_MAX:-200000}")

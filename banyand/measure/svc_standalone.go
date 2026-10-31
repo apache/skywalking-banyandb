@@ -338,7 +338,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.diskMonitor.Start()
 
 	// For now, keep the original write throttling behavior based on high watermark
-	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
+	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm)
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err = s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)

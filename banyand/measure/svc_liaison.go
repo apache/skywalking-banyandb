@@ -200,7 +200,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	topNResultPipeline := queue.Local()
 	measureDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasurePartSync, s.option.tire2Client, s.dataNodeSelector)
 	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline, val.(common.Node).NodeID)
-	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client)
+	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client, s.pm)
 	if err := s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener); err != nil {
 		return err
 	}
