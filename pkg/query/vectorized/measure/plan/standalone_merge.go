@@ -117,15 +117,7 @@ func MergeStandaloneBatches(ctx context.Context, groups []*BatchResult, schema *
 			}
 		}
 	}
-	sortIdx, err := resolveDistributedSortColumn(schema, spec)
-	if err != nil {
-		return nil, err
-	}
-	iters, err := buildDistributedRowSourceIters(sources, schema, spec.Desc, sortIdx)
-	if err != nil {
-		return nil, err
-	}
-	batches, err := runDistributedRowMerge(iters, schema, spec, cfg.BatchSize)
+	batches, err := mergeBatchSources(sources, schema, nil, spec)
 	if err != nil {
 		return nil, fmt.Errorf("merge standalone batches: %w", err)
 	}

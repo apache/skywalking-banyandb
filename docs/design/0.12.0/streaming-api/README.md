@@ -652,7 +652,7 @@ closes early, and its sink passes Go values (a `[]model.TraceResult` chunk, not 
 standalone runs the same liaison code as a cluster without encoding.
 
 **Deadlines.** Today every node call carries a fixed whole-call deadline: 5 s for trace and stream
-(`defaultQueryTimeout` in their distributed plans) and 15 s for measure (`--dst-broadcast-timeout`).
+(`defaultQueryTimeout` in their distributed plans) and 15 s for measure (the removed `--dst-broadcast-timeout`).
 A long scan, such as a needle search over a large time range, cannot finish inside it. `Scan`
 replaces it with an idle deadline. A node stream lives as long as the caller's context; while a
 data node scans without output it sends a heartbeat; the liaison fails a node stream that sends

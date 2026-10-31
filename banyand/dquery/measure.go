@@ -42,6 +42,7 @@ import (
 type measureQueryProcessor struct {
 	measureService measure.Service
 	broadcaster    bus.Broadcaster
+	scatterer      bus.Scatterer
 	*queryService
 	*bus.UnImplementedHealthyListener
 }
@@ -86,12 +87,6 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	if loadErr != nil {
 		resp = bus.NewMessage(bus.MessageID(now), common.NewError("%s", loadErr.Error()))
 		return
-	}
-	// Operator-configured broadcast timeout overrides the plan's historical
-	// 15 s default. Setting it on vecCfg.BroadcastTimeout flows through
-	// vecplan.AnalyzeDistributed into DistributedPlan.broadcastTimeout().
-	if p.broadcastTimeout > 0 {
-		vecCfg.BroadcastTimeout = p.broadcastTimeout
 	}
 	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg, patterns...)
 	if err != nil {
@@ -155,7 +150,10 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	}
 
 	executionCtx := executor.WithDistributedExecutionContext(ctx, &distributedContext{
-		Broadcaster: p.broadcaster, timeRange: queryCriteria.TimeRange, nodeSelectors: nodeSelectors,
+		Broadcaster:   p.broadcaster,
+		Scatterer:     chunkCapScatterer{Scatterer: p.scatterer, maxBytes: uint64(p.maxChunkBytes), maxRows: p.maxChunkRowsMeasure},
+		timeRange:     queryCriteria.TimeRange,
+		nodeSelectors: nodeSelectors,
 	})
 	var mIterator executor.MIterator
 	batchPlan, supportsBatches := plan.(interface {

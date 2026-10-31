@@ -33,6 +33,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 	measuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	"github.com/apache/skywalking-banyandb/test/cases/measure/qlgen"
@@ -53,7 +54,7 @@ func registerGeneratedQLReuseScenarios(suite qlgen.Suite, base *time.Time) {
 						after := vmeasure.BatchExecutionStats()
 						inner.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 						inner.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-						inner.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+						gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
 						stats := liaisongrpc.BydbQLPlanCacheStats()
 						inner.Expect(stats.InFlight).To(gm.BeZero())
 						inner.Expect(stats.Waiters).To(gm.BeZero())

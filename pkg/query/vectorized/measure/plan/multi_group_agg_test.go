@@ -19,7 +19,6 @@ package plan
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sort"
@@ -70,9 +69,9 @@ type schemaEvolvedNodes struct {
 	projections map[string][]string
 }
 
-// Scatter implements executor.DistributedExecutionContext; the measure plan only broadcasts.
-func (n *schemaEvolvedNodes) Scatter(context.Context, bus.Topic, bus.Message, bus.ScatterOptions) ([]bus.NodeStream, error) {
-	return nil, errors.New("scatter is not used by the measure plan")
+// Scatter implements executor.DistributedExecutionContext; every scan is answered like a broadcast.
+func (n *schemaEvolvedNodes) Scatter(_ context.Context, topic bus.Topic, message bus.Message, _ bus.ScatterOptions) ([]bus.NodeStream, error) {
+	return scatterOfBroadcast(n.Broadcast, topic, message)
 }
 
 func (n *schemaEvolvedNodes) Broadcast(_ time.Duration, _ bus.Topic, message bus.Message) ([]bus.Future, error) {

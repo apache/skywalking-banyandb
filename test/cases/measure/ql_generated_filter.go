@@ -136,7 +136,7 @@ func verifyGeneratedFilterCall(base time.Time, c qlgen.Case, leaves uint64) {
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
 		gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "the oracle never issues native Query RPCs")
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
 		gm.Expect(filterAfter.LiveBytes).To(gm.Equal(filterBefore.LiveBytes))
 		gm.Expect(filterAfter.ReservedBytes - filterBefore.ReservedBytes).To(gm.Equal(filterAfter.ReleasedBytes - filterBefore.ReleasedBytes))
 		gm.Expect(ql.ExpressionExecutionStats().LiveBytes).To(gm.Equal(expressionBefore.LiveBytes))

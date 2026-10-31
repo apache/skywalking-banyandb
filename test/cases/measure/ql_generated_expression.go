@@ -104,7 +104,7 @@ func verifyGeneratedExpressionCall(base time.Time, c qlgen.Case) {
 		expressionAfter := ql.ExpressionExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
 		gm.Expect(expressionAfter.LiveBytes).To(gm.Equal(expressionBefore.LiveBytes))
 		gm.Expect(expressionAfter.ReservedBytes-expressionBefore.ReservedBytes).To(
 			gm.Equal(expressionAfter.ReleasedBytes-expressionBefore.ReleasedBytes), "all expression allocation reservations are released")

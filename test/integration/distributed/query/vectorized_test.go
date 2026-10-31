@@ -30,6 +30,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/banyand/dquery"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -69,144 +70,175 @@ import (
 // hidden-criteria-tag / trace queries that don't implement RawFrameSource
 // today) surfaces here as a hard error rather than a silent retry on
 // row — that is the loud-failure signal the runbook depends on.
-var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
-	var (
-		vectorizedConn    *grpc.ClientConn
-		dataNodeAddrs     []string
-		stopFn            func()
-		startHandledCount int64
-		startFrameEnc     int64
-		startFrameDec     int64
-		savedMeasureCtx   helpers.SharedContext
-		savedTopNCtx      helpers.SharedContext
-		savedWireModeRaw  bool
-		startPins         int64
-	)
-	ginkgo.BeforeAll(func() {
-		startPins = vectorized.OutstandingOwnerPins()
-		savedMeasureCtx = casesmeasure.SharedContext
-		savedTopNCtx = casestopn.SharedContext
-		// data.MeasureWireModeRaw is a per-process atomic — the vec
-		// cluster's PreRun flips it to true and the row baseline cluster
-		// (alive in the same test binary) would then start hitting the
-		// flag-on raw-frame guard for its own responses. Save the
-		// current value here and restore it in AfterAll so the row
-		// baseline keeps its proto-codec contract end-to-end.
-		savedWireModeRaw = data.MeasureWireModeRaw()
-		startHandledCount = vecplan.HandledCount()
-		startFrameEnc = data.MeasureFrameEncodedCount()
-		startFrameDec = data.MeasureFrameDecodedCount()
+func init() {
+	registerDistributedMeasureSuite("vec independent verification (distributed)", " (distributed)", false)
+	// The same tables on a cluster whose liaison asks the data nodes for chunks of one row or about 1 KiB, so every
+	// fixture is carried by many chunks per node.
+	registerDistributedMeasureSuite("vec independent verification (distributed, tiny scan chunks)", " (distributed, tiny chunks)", true)
+}
 
-		tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
-		gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
-		dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
-		config := setup.PropertyClusterConfig(dfWriter)
-		// Match the standalone fixture's host-independent allowance for complete
-		// DISTINCT and sorting scans: 4 GiB provides a bounded 128 MiB per query.
-		dataAddr0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
-		dataAddr1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
-		dataNodeAddrs = []string{dataAddr0, dataAddr1}
-		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
-		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--allowed-bytes", "4GiB")
-		stopFn = func() {
-			closerLiaisonNode()
-			closeDataNode0()
-			closeDataNode1()
-			tmpDirCleanup()
-		}
-		var connErr error
-		vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
-			grpc.WithTransportCredentials(insecure.NewCredentials()))
-		gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
-		ns := timestamp.NowMilli().UnixNano()
-		now := time.Unix(0, ns-ns%int64(time.Minute))
-		test_cases.Initialize(liaisonAddr, now)
-		sharedCtx := helpers.SharedContext{
-			Connection: vectorizedConn,
-			BaseTime:   now,
-		}
-		casesmeasure.SharedContext = sharedCtx
-		casestopn.SharedContext = sharedCtx
-	})
-	ginkgo.AfterAll(func() {
-		casesmeasure.SharedContext = savedMeasureCtx
-		casestopn.SharedContext = savedTopNCtx
-		// Restore the per-process wire-mode flag BEFORE tearing down so
-		// any subsequent test that targets the row baseline cluster (same
-		// process) sees the original proto codec contract.
-		data.SetMeasureWireModeRaw(savedWireModeRaw)
-		// Observability gate: vec dispatch must fire for at least one
-		// case in the table. If this drops to zero the vec subsystem is
-		// silently 0%-covered on the distributed cluster — either the
-		// eligibility gate or processor.go's dispatchMeasure regressed.
-		handledDelta := vecplan.HandledCount() - startHandledCount
-		ginkgo.GinkgoWriter.Printf(
-			"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
-		gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
-			"vec dispatch did not fire for any case on the distributed cluster")
-		// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
-		// still emits protobuf unless the data node is distributed and in raw wire
-		// mode, so assert the columnar frame itself carried traffic — otherwise a
-		// silent fallback to proto reads as full coverage.
-		frameEncDelta := data.MeasureFrameEncodedCount() - startFrameEnc
-		frameDecDelta := data.MeasureFrameDecodedCount() - startFrameDec
-		ginkgo.GinkgoWriter.Printf(
-			"vec measure wire (distributed): frames_encoded=%d frames_decoded=%d\n",
-			frameEncDelta, frameDecDelta,
+func registerDistributedMeasureSuite(describe, suffix string, tinyChunks bool) {
+	ginkgo.Describe(describe, ginkgo.Ordered, ginkgo.ContinueOnFailure, func() {
+		var (
+			vectorizedConn    *grpc.ClientConn
+			dataNodeAddrs     []string
+			stopFn            func()
+			startHandledCount int64
+			startFrameEnc     int64
+			startFrameDec     int64
+			startScans        int64
+			startChunks       int64
+			savedMeasureCtx   helpers.SharedContext
+			savedTopNCtx      helpers.SharedContext
+			savedWireModeRaw  bool
+			startPins         int64
 		)
-		gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was encoded on the distributed cluster; "+
-				"the data node fell back to protobuf")
-		gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
-			"no native columnar frame was decoded on the distributed cluster; "+
-				"the liaison never saw a frame body")
-		// Every query is done: the liaison and the data nodes must have released every pin they took.
-		gomega.Eventually(vectorized.OutstandingOwnerPins, 30*time.Second, 100*time.Millisecond).Should(gomega.Equal(startPins),
-			"owner pins outlived the queries")
-		if vectorizedConn != nil {
-			gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
+		ginkgo.BeforeAll(func() {
+			startPins = vectorized.OutstandingOwnerPins()
+			savedMeasureCtx = casesmeasure.SharedContext
+			savedTopNCtx = casestopn.SharedContext
+			// data.MeasureWireModeRaw is a per-process atomic — the vec
+			// cluster's PreRun flips it to true and the row baseline cluster
+			// (alive in the same test binary) would then start hitting the
+			// flag-on raw-frame guard for its own responses. Save the
+			// current value here and restore it in AfterAll so the row
+			// baseline keeps its proto-codec contract end-to-end.
+			savedWireModeRaw = data.MeasureWireModeRaw()
+			startHandledCount = vecplan.HandledCount()
+			startFrameEnc = data.MeasureFrameEncodedCount()
+			startFrameDec = data.MeasureFrameDecodedCount()
+			startScans = data.ScanStartedCount()
+			startChunks = data.ScanChunkCount()
+
+			tmpDir, tmpDirCleanup, tmpErr := test.NewSpace()
+			gomega.Expect(tmpErr).NotTo(gomega.HaveOccurred())
+			dfWriter := setup.NewDiscoveryFileWriter(tmpDir)
+			config := setup.PropertyClusterConfig(dfWriter)
+			// Match the standalone fixture's host-independent allowance for complete
+			// DISTINCT and sorting scans: 4 GiB provides a bounded 128 MiB per query.
+			dataAddr0, _, _, closeDataNode0 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
+			dataAddr1, _, _, closeDataNode1 := setup.DataNodeWithAddrAndDir(config, "--allowed-bytes", "4GiB")
+			dataNodeAddrs = []string{dataAddr0, dataAddr1}
+			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
+			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
+			if tinyChunks {
+				// The liaison created next asks the data nodes for chunks of one row or about 1 KiB.
+				dquery.SetNextChunkLimits(1, 1, 1, 1<<10)
+			}
+			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config, "--allowed-bytes", "4GiB")
+			stopFn = func() {
+				closerLiaisonNode()
+				closeDataNode0()
+				closeDataNode1()
+				tmpDirCleanup()
+			}
+			var connErr error
+			vectorizedConn, connErr = grpchelper.Conn(liaisonAddr, 10*time.Second,
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+			ns := timestamp.NowMilli().UnixNano()
+			now := time.Unix(0, ns-ns%int64(time.Minute))
+			test_cases.Initialize(liaisonAddr, now)
+			sharedCtx := helpers.SharedContext{
+				Connection: vectorizedConn,
+				BaseTime:   now,
+			}
+			casesmeasure.SharedContext = sharedCtx
+			casestopn.SharedContext = sharedCtx
+		})
+		ginkgo.AfterAll(func() {
+			casesmeasure.SharedContext = savedMeasureCtx
+			casestopn.SharedContext = savedTopNCtx
+			// Restore the per-process wire-mode flag BEFORE tearing down so
+			// any subsequent test that targets the row baseline cluster (same
+			// process) sees the original proto codec contract.
+			data.SetMeasureWireModeRaw(savedWireModeRaw)
+			// Observability gate: vec dispatch must fire for at least one
+			// case in the table. If this drops to zero the vec subsystem is
+			// silently 0%-covered on the distributed cluster — either the
+			// eligibility gate or processor.go's dispatchMeasure regressed.
+			handledDelta := vecplan.HandledCount() - startHandledCount
+			ginkgo.GinkgoWriter.Printf(
+				"vec dispatch (distributed): handled=%d (delta across the vec-distributed table)\n", handledDelta)
+			gomega.Expect(handledDelta).To(gomega.BeNumerically(">", int64(0)),
+				"vec dispatch did not fire for any case on the distributed cluster")
+			// HandledCount above only proves the vec COMPUTE path dispatched. A vec query
+			// still emits protobuf unless the data node is distributed and in raw wire
+			// mode, so assert the columnar frame itself carried traffic — otherwise a
+			// silent fallback to proto reads as full coverage.
+			frameEncDelta := data.MeasureFrameEncodedCount() - startFrameEnc
+			frameDecDelta := data.MeasureFrameDecodedCount() - startFrameDec
+			ginkgo.GinkgoWriter.Printf(
+				"vec measure wire (distributed): frames_encoded=%d frames_decoded=%d\n",
+				frameEncDelta, frameDecDelta,
+			)
+			gomega.Expect(frameEncDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was encoded on the distributed cluster; "+
+					"the data node fell back to protobuf")
+			gomega.Expect(frameDecDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no native columnar frame was decoded on the distributed cluster; "+
+					"the liaison never saw a frame body")
+			// The liaison reads measure results from the data nodes over Scan streams.
+			scanDelta := data.ScanStartedCount() - startScans
+			chunkDelta := data.ScanChunkCount() - startChunks
+			ginkgo.GinkgoWriter.Printf("measure scan (distributed): streams=%d chunks=%d\n", scanDelta, chunkDelta)
+			gomega.Expect(scanDelta).To(gomega.BeNumerically(">", int64(0)),
+				"no Scan stream reached a data node; the distributed measure query did not use the streaming transport")
+			gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", int64(0)), "the data nodes sent no chunk on their Scan streams")
+			if tinyChunks {
+				// With one-row chunks the fixtures that return several rows must be split.
+				gomega.Expect(chunkDelta).To(gomega.BeNumerically(">", scanDelta),
+					"tiny chunk caps did not split any node result into several chunks")
+			}
+			// Every query is done: the liaison and the data nodes must have released every pin they took.
+			gomega.Eventually(vectorized.OutstandingOwnerPins, 30*time.Second, 100*time.Millisecond).Should(gomega.Equal(startPins),
+				"owner pins outlived the queries")
+			if vectorizedConn != nil {
+				gomega.Expect(vectorizedConn.Close()).To(gomega.Succeed())
+			}
+			if stopFn != nil {
+				stopFn()
+			}
+		})
+
+		casesmeasure.RegisterTable("Vec" + suffix + ": scanning measures")
+		observeQLFixture := func(request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
+			body, marshalErr := proto.Marshal(request)
+			gomega.Expect(marshalErr).NotTo(gomega.HaveOccurred())
+			for nodeIndex, addr := range dataNodeAddrs {
+				conn, connErr := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+				gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
+				func() {
+					defer func() { gomega.Expect(conn.Close()).To(gomega.Succeed()) }()
+					gomega.Eventually(func(inner gomega.Gomega) {
+						ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+						defer cancel()
+						stream, streamErr := clusterv1.NewServiceClient(conn).Send(ctx)
+						inner.Expect(streamErr).NotTo(gomega.HaveOccurred())
+						// This RPC targets exactly one data node; no liaison or replica selection participates.
+						inner.Expect(stream.Send(&clusterv1.SendRequest{
+							Topic: data.TopicMeasureQuery.String(), MessageId: 1, Body: body, Group: "replicated_group",
+						})).To(gomega.Succeed())
+						inner.Expect(stream.CloseSend()).To(gomega.Succeed())
+						response, recvErr := stream.Recv()
+						inner.Expect(recvErr).NotTo(gomega.HaveOccurred())
+						inner.Expect(response.GetError()).To(gomega.BeEmpty())
+						got := &measurev1.QueryResponse{}
+						inner.Expect(proto.Unmarshal(response.GetBody(), got)).To(gomega.Succeed())
+						inner.Expect(measuredata.CompareQLResult(got, want, false)).To(gomega.Succeed())
+						for _, point := range got.GetDataPoints() {
+							inner.Expect(point.GetVersion()).To(gomega.Equal(int64(2)), "obsolete fixture version on data node %d", nodeIndex)
+						}
+					}, flags.EventuallyTimeout).Should(gomega.Succeed(), "fixture F on data node %d (%s)", nodeIndex, addr)
+				}()
+				ginkgo.GinkgoWriter.Printf("QL fixture F: data_node=%d address=%s rows=6 version=2 (direct node RPC)\n", nodeIndex, addr)
+			}
 		}
-		if stopFn != nil {
-			stopFn()
+		casesmeasure.RegisterQLTable("QL measure RPC verification"+suffix, observeQLFixture)
+		casesmeasure.RegisterQLBatchTable("QL shared batch execution"+suffix, observeQLFixture)
+		if !tinyChunks {
+			casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
+			casestopn.RegisterTable("Vec (distributed): TopN")
 		}
 	})
-
-	casesmeasure.RegisterTable("Vec (distributed): scanning measures")
-	observeQLFixture := func(request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
-		body, marshalErr := proto.Marshal(request)
-		gomega.Expect(marshalErr).NotTo(gomega.HaveOccurred())
-		for nodeIndex, addr := range dataNodeAddrs {
-			conn, connErr := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-			gomega.Expect(connErr).NotTo(gomega.HaveOccurred())
-			func() {
-				defer func() { gomega.Expect(conn.Close()).To(gomega.Succeed()) }()
-				gomega.Eventually(func(inner gomega.Gomega) {
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					stream, streamErr := clusterv1.NewServiceClient(conn).Send(ctx)
-					inner.Expect(streamErr).NotTo(gomega.HaveOccurred())
-					// This RPC targets exactly one data node; no liaison or replica selection participates.
-					inner.Expect(stream.Send(&clusterv1.SendRequest{
-						Topic: data.TopicMeasureQuery.String(), MessageId: 1, Body: body, Group: "replicated_group",
-					})).To(gomega.Succeed())
-					inner.Expect(stream.CloseSend()).To(gomega.Succeed())
-					response, recvErr := stream.Recv()
-					inner.Expect(recvErr).NotTo(gomega.HaveOccurred())
-					inner.Expect(response.GetError()).To(gomega.BeEmpty())
-					got := &measurev1.QueryResponse{}
-					inner.Expect(proto.Unmarshal(response.GetBody(), got)).To(gomega.Succeed())
-					inner.Expect(measuredata.CompareQLResult(got, want, false)).To(gomega.Succeed())
-					for _, point := range got.GetDataPoints() {
-						inner.Expect(point.GetVersion()).To(gomega.Equal(int64(2)), "obsolete fixture version on data node %d", nodeIndex)
-					}
-				}, flags.EventuallyTimeout).Should(gomega.Succeed(), "fixture F on data node %d (%s)", nodeIndex, addr)
-			}()
-			ginkgo.GinkgoWriter.Printf("QL fixture F: data_node=%d address=%s rows=6 version=2 (direct node RPC)\n", nodeIndex, addr)
-		}
-	}
-	casesmeasure.RegisterQLTable("QL measure RPC verification", observeQLFixture)
-	casesmeasure.RegisterQLBatchTable("QL shared batch execution", observeQLFixture)
-	casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
-	casestopn.RegisterTable("Vec (distributed): TopN")
-})
+}

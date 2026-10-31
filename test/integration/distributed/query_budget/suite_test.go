@@ -40,6 +40,7 @@ import (
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	measurebudget "github.com/apache/skywalking-banyandb/test/cases/measure/budget"
 	"github.com/apache/skywalking-banyandb/test/cases/stream/budget"
 	integration_distributed "github.com/apache/skywalking-banyandb/test/integration/distributed"
 )
@@ -49,44 +50,57 @@ func TestDistributedQueryBudget(t *testing.T) {
 	g.RunSpecs(t, "Distributed Stream Query Budget Suite", g.Label(integration_distributed.Labels...))
 }
 
-var _ = g.Describe("stream query budget (distributed)", func() {
-	var (
-		goods []gleak.Goroutine
-		conn  *grpc.ClientConn
-		stop  func()
-	)
-	g.BeforeEach(func() {
-		goods = gleak.Goroutines()
-		gm.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gm.Succeed())
-		dir, releaseSpace, err := test.NewSpace()
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-		config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(dir))
-		// Only the data node runs short of budget; the liaison keeps its default pool, so the failure
-		// is the data node's and has to cross the wire to reach the client.
-		// The data node starts an embedded schema server first, which creates a protector of its own; skip it.
-		protector.SetQueryPoolAfter(1, budget.QueryPoolBytes)
-		closeData := setup.DataNode(config)
-		setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)
-		config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
-		liaisonAddr, closeLiaison := setup.LiaisonNode(config)
-		stop = func() {
-			closeLiaison()
-			closeData()
-			releaseSpace()
-		}
-		conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-	})
-	g.AfterEach(func() {
-		gm.Expect(conn.Close()).To(gm.Succeed())
-		stop()
-		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	})
-
-	g.It("reports a query over the data node's memory allowance as RESOURCE_EXHAUSTED", func() {
-		ns := timestamp.NowMilli().UnixNano()
-		base := time.Unix(0, ns-ns%int64(time.Minute))
+func init() {
+	registerBudgetSuite("stream query budget (distributed)", budget.QueryPoolBytes, func(conn *grpc.ClientConn, base time.Time) {
 		budget.Write(conn, base)
 		budget.ExpectFitsAndExceeds(conn, base)
 	})
-})
+	registerBudgetSuite("measure query budget (distributed)", measurebudget.QueryPoolBytes, func(conn *grpc.ClientConn, base time.Time) {
+		measurebudget.Write(conn, base)
+		measurebudget.ExpectFitsAndExceeds(conn, base)
+	})
+}
+
+// registerBudgetSuite runs one budget case on a node whose query pool is pool bytes.
+func registerBudgetSuite(describe string, pool uint64, run func(*grpc.ClientConn, time.Time)) {
+	g.Describe(describe, func() {
+		var (
+			goods []gleak.Goroutine
+			conn  *grpc.ClientConn
+			stop  func()
+		)
+		g.BeforeEach(func() {
+			goods = gleak.Goroutines()
+			gm.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gm.Succeed())
+			dir, releaseSpace, err := test.NewSpace()
+			gm.Expect(err).NotTo(gm.HaveOccurred())
+			config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(dir))
+			// Only the data node runs short of budget; the liaison keeps its default pool, so the failure
+			// is the data node's and has to cross the wire to reach the client.
+			// The data node starts an embedded schema server first, which creates a protector of its own; skip it.
+			protector.SetQueryPoolAfter(1, pool)
+			closeData := setup.DataNode(config)
+			setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema)
+			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
+			liaisonAddr, closeLiaison := setup.LiaisonNode(config)
+			stop = func() {
+				closeLiaison()
+				closeData()
+				releaseSpace()
+			}
+			conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gm.Expect(err).NotTo(gm.HaveOccurred())
+		})
+		g.AfterEach(func() {
+			gm.Expect(conn.Close()).To(gm.Succeed())
+			stop()
+			gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		})
+
+		g.It("reports a query over the data node's memory allowance as RESOURCE_EXHAUSTED", func() {
+			ns := timestamp.NowMilli().UnixNano()
+			base := time.Unix(0, ns-ns%int64(time.Minute))
+			run(conn, base)
+		})
+	})
+}

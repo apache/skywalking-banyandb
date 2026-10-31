@@ -260,7 +260,7 @@ These flags configure how every node talks to the schema server.
 
 These flags configure the connections a liaison holds to the data nodes it queries and writes to. `<prefix>` is `data` or `liaison` depending on which peer set the client serves.
 
-- `--<prefix>-client-health-check-interval duration`: How often to re-check the nodes the client currently considers active, evicting any that no longer answer; `0` disables the periodic check (default: `10s`). The active set is otherwise only validated when a node is admitted and, after that, when a request happens to fail on it — so a node that dies stays routable until some query picks it and pays that query's full timeout to discover it. Keep this well below the distributed query timeouts (`--dst-broadcast-timeout`, default `15s`), since the interval bounds how long a dead node can keep absorbing queries.
+- `--<prefix>-client-health-check-interval duration`: How often to re-check the nodes the client currently considers active, evicting any that no longer answer; `0` disables the periodic check (default: `10s`). The active set is otherwise only validated when a node is admitted and, after that, when a request happens to fail on it — so a node that dies stays routable until some query picks it and pays that query's full timeout to discover it. Keep this well below the 15s idle deadline of a distributed query's node streams, since the interval bounds how long a dead node can keep absorbing queries.
 - `--<prefix>-client-tls`: Enable client TLS.
 - `--<prefix>-client-ca-cert string`: CA certificate file to verify the server.
 

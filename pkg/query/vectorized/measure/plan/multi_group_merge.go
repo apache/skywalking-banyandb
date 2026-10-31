@@ -220,7 +220,7 @@ func (m *MultiGroupMerge) MergeBatches(ctx context.Context, groups []*GroupBatch
 		reserved += keyBytes
 		// Keep the shared merger's transient batch guard in addition to retained output.
 		var mergeErr error
-		output, mergeErr = mergeBatchSources(sources, merged, spec)
+		output, mergeErr = mergeBatchSources(sources, merged, nil, spec)
 		if mergeErr != nil {
 			return fail(fmt.Errorf("vec multi-group merge: %w", mergeErr))
 		}

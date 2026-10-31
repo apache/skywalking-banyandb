@@ -26,6 +26,7 @@ import (
 	ql "github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	measuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	"github.com/apache/skywalking-banyandb/test/cases/measure/qlgen"
 )
@@ -42,7 +43,7 @@ func verifyGeneratedLegacyHavingCall(base time.Time, c qlgen.Case) {
 		gm.Expect(after.QLBatchExecutions-before.QLBatchExecutions).To(gm.Equal(uint64(1)),
 			"legacy QueryRPC owns one native QL batch boundary without typed residual operators")
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
 		gm.Expect(ql.FilterExecutionStats().LiveBytes).To(gm.Equal(filterBefore.LiveBytes))
 		gm.Expect(ql.HavingExecutionStats().LiveBytes).To(gm.Equal(havingBefore.LiveBytes))
 		gm.Expect(ql.FilterExecutionStats().Executions).To(gm.Equal(filterBefore.Executions))

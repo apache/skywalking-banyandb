@@ -40,7 +40,7 @@ type BatchResult struct {
 	traceFinalizer func() *commonv1.Trace
 	iteratorSpan   *query.Span
 	tracedIterator *batchTraceIterator
-	receiveRelease func()
+	onClose        []func()
 	source         vectorized.PullOperator
 	schema         *vectorized.BatchSchema
 	plan           *DistributedPlan
@@ -104,10 +104,11 @@ func (r *BatchResult) Close() error {
 		r.tracker.Release(r.reserved)
 	}
 	r.reserved = 0
-	if r.receiveRelease != nil {
-		r.receiveRelease()
-		r.receiveRelease = nil
+	// The scans end after the source stops reading them, and before the trace is finalized.
+	for _, closer := range r.onClose {
+		closer()
 	}
+	r.onClose = nil
 	if r.tracedIterator != nil {
 		if !r.tracedIterator.closing {
 			if err != nil {
