@@ -24,6 +24,7 @@ import (
 	"io"
 	"math"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -68,10 +69,13 @@ func (o *reservedOwner) Release() {
 type scanSet struct {
 	tracker    *vectorized.MemoryTracker
 	cancel     context.CancelFunc
+	summaryCtx context.Context
 	workspaces map[int]int64
+	decodeNS   []time.Duration
 	sources    []*chunkSource
 	scans      []*scanTrace
 	batchSize  int
+	traced     bool
 	closed     bool
 }
 
@@ -82,8 +86,11 @@ type scanTrace struct {
 	sources []*chunkSource
 }
 
-func newScanSet(tracker *vectorized.MemoryTracker, cancel context.CancelFunc, batchSize int) *scanSet {
-	return &scanSet{tracker: tracker, cancel: cancel, batchSize: batchSize, workspaces: make(map[int]int64)}
+func newScanSet(ctx context.Context, tracker *vectorized.MemoryTracker, cancel context.CancelFunc, batchSize int) *scanSet {
+	return &scanSet{
+		tracker: tracker, cancel: cancel, batchSize: batchSize, workspaces: make(map[int]int64),
+		traced: query.GetTracer(ctx) != nil, summaryCtx: ctx,
+	}
 }
 
 // close cancels the scans, closes the node streams and returns what the set reserved. It is safe to call more than
@@ -100,6 +107,8 @@ func (s *scanSet) close() {
 	for _, scan := range s.scans {
 		scan.finish()
 	}
+	// Like the per-node sub-traces, the decode costs of a traced query stay bounded: past the cap they are summarized.
+	emitDecodeFrameSummarySpan(s.summaryCtx, s.decodeNS)
 	for group, amount := range s.workspaces {
 		s.tracker.Release(amount)
 		delete(s.workspaces, group)
@@ -250,7 +259,11 @@ func (s *scanSet) decode(group int, body []byte) (*vectorized.RecordBatch, error
 	if reserveErr := s.tracker.Reserve(amount); reserveErr != nil {
 		return nil, reserveErr
 	}
+	decodeStart := time.Now()
 	batch, decodeErr := frame.Decode(body)
+	if s.traced {
+		s.decodeNS = append(s.decodeNS, time.Since(decodeStart))
+	}
 	if decodeErr != nil {
 		s.tracker.Release(amount)
 		return nil, fmt.Errorf("decode frame: %w", decodeErr)

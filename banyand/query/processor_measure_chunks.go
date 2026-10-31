@@ -116,6 +116,14 @@ func (p *measureInternalQueryProcessor) executeMeasureStream(ctx context.Context
 	if buildErr != nil {
 		return measureStreamFailure(buildErr)
 	}
+	return p.streamMeasure(ctx, id, internalRequest, patterns, mctx, sink, n)
+}
+
+// streamMeasure plans and runs the query over the built context and sends its frames to the sink.
+func (p *measureInternalQueryProcessor) streamMeasure(ctx context.Context, id bus.MessageID, internalRequest *measurev1.InternalQueryRequest,
+	patterns []model.IndexedPattern, mctx *measureExecutionContext, sink bus.Sink, n time.Time,
+) error {
+	queryCriteria := internalRequest.GetRequest()
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
@@ -130,11 +138,19 @@ func (p *measureInternalQueryProcessor) executeMeasureStream(ctx context.Context
 		}
 		return measureStreamFailure(execErr)
 	}
-	defer func() {
+	// The pipeline is closed before the trace is built: closing ends the operator spans and records their tags, and
+	// the unary path closes it first as well. Closing twice is safe, so every return path may rely on the defer.
+	iteratorClosed := false
+	closeIterator := func() {
+		if iteratorClosed {
+			return
+		}
+		iteratorClosed = true
 		if closeErr := mIterator.Close(); closeErr != nil {
 			mctx.ml.Error().Err(closeErr).Dur("latency", time.Since(n)).RawJSON("req", logger.Proto(queryCriteria)).Msg("fail to close the query plan")
 		}
-	}()
+	}
+	defer closeIterator()
 	emitter, ok := mIterator.(vmeasure.FrameStreamEmitter)
 	if !ok {
 		emitErr := fmt.Errorf("measure stream query requires a FrameStreamEmitter iterator; got %T", mIterator)
@@ -158,10 +174,10 @@ func (p *measureInternalQueryProcessor) executeMeasureStream(ctx context.Context
 		span.Tag(tracelabels.TagRespKind, "raw-frame")
 	}
 	runErr := emitter.EmitFrames(ctx, frameLimits, func(body []byte) error { return chunker.add(ctx, body) })
+	closeIterator()
 	if runErr == nil {
 		runErr = chunker.finish(ctx, func() *measurev1.InternalQueryResponse {
 			span.Tagf(tracelabels.TagBytesOut, "%d", chunker.bytes)
-			span.Tagf(tracelabels.TagRespCount, "%d", chunker.frames)
 			span.Stop()
 			return &measurev1.InternalQueryResponse{Trace: tracer.ToProto()}
 		})

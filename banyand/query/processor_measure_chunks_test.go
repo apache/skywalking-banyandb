@@ -22,10 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -144,3 +146,56 @@ type tinyPoolMemory struct{ protector.Memory }
 
 func (*tinyPoolMemory) GetLimit() uint64      { return 4 << 20 }
 func (*tinyPoolMemory) AvailableBytes() int64 { return 4 << 20 }
+
+func findSpan(spans []*commonv1.Span, name string) *commonv1.Span {
+	for _, span := range spans {
+		if span.GetMessage() == name {
+			return span
+		}
+		if child := findSpan(span.GetChildren(), name); child != nil {
+			return child
+		}
+	}
+	return nil
+}
+
+func spanTag(span *commonv1.Span, key string) string {
+	for _, tag := range span.GetTags() {
+		if tag.GetKey() == key {
+			return tag.GetValue()
+		}
+	}
+	return ""
+}
+
+// TestMeasureStreamTraceEndsTheOperatorSpansBeforeItIsSent pins that the data node closes its pipeline before it
+// builds the trace of the last chunk: closing is what ends the operator spans and records their tags.
+func TestMeasureStreamTraceEndsTheOperatorSpansBeforeItIsSent(t *testing.T) {
+	previous := data.MeasureWireModeRaw()
+	data.SetMeasureWireModeRaw(true)
+	t.Cleanup(func() { data.SetMeasureWireModeRaw(previous) })
+	group, _ := mgOracleGroups()
+	mctx := mgContext(t, group)
+	mctx.ml = logger.GetLogger("test")
+	req := mgRequest(modelv1.Sort_SORT_ASC, "", 0, 1)
+	req.Groups = []string{mgGroupA}
+	req.TagProjection.TagFamilies[0].Tags = []string{mgTagSvc}
+	req.Trace = true
+	p := &measureInternalQueryProcessor{queryService: &queryService{nodeID: "node-1", log: logger.GetLogger("test")}}
+	sink := &payloadSink{}
+	err := p.streamMeasure(t.Context(), 1, &measurev1.InternalQueryRequest{Request: req}, nil, mctx, sink, time.Now())
+	require.NoError(t, err)
+	require.NotEmpty(t, sink.payloads)
+	last, ok := sink.payloads[len(sink.payloads)-1].(*measurev1.InternalQueryResponse)
+	require.True(t, ok, "a traced query ends with the response that carries the trace")
+	require.NotEmpty(t, last.GetRawFrameBody())
+	root := findSpan(last.GetTrace().GetSpans(), "data-node-1")
+	require.NotNil(t, root)
+	require.NotNil(t, root.GetEndTime())
+	for _, name := range []string{"scan", "limit"} {
+		span := findSpan(root.GetChildren(), name)
+		require.NotNil(t, span, "operator span %s", name)
+		require.NotNil(t, span.GetEndTime(), "operator span %s must be ended before the trace is sent", name)
+	}
+	require.Equal(t, "1", spanTag(findSpan(root.GetChildren(), "limit"), "rows_out"))
+}

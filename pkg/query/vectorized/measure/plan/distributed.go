@@ -512,7 +512,7 @@ func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResu
 	dctx := executor.FromDistributedExecutionContext(ctx)
 	queryRequest.TimeRange = dctx.TimeRange()
 	scanCtx, cancel := context.WithCancel(ctx)
-	set := newScanSet(tracker, cancel, p.cfg.BatchSize)
+	set := newScanSet(ctx, tracker, cancel, p.cfg.BatchSize)
 	defer func() {
 		if err != nil {
 			set.close()
@@ -622,7 +622,8 @@ func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, re
 			return vmeasure.NewPartialReducer(nil, keyTagFamily, keyTagNames, true, aggSpecs, p.cfg.BatchSize, tracker)
 		})
 	}
-	reduceSpan, _ := startTraceSpan(ctx, "reduce-raw-frames")
+	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
+	set.summaryCtx = reduceSpanCtx
 	reducer := newReducer()
 	defer reducer.Close()
 	var frames int
@@ -692,7 +693,8 @@ func (p *DistributedPlan) failReduce(span *query.Span, err error) error {
 func (p *DistributedPlan) executeBucketStream(ctx context.Context, set *scanSet, req *measurev1.QueryRequest,
 	template func() *vmeasure.PartialReducer,
 ) (*BatchResult, error) {
-	reduceSpan, _ := startTraceSpan(ctx, "reduce-raw-frames")
+	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
+	set.summaryCtx = reduceSpanCtx
 	source, err := newBucketReduceSource(ctx, set, template)
 	if err != nil {
 		return nil, p.failReduce(reduceSpan, fmt.Errorf("vec distributed plan: reduce raw frames: %w", err))
@@ -835,7 +837,7 @@ func (p *DistributedPlan) mergeRows(ctx context.Context, set *scanSet, req *meas
 	resultSchema *vectorized.BatchSchema,
 ) (*BatchResult, error) {
 	mergeSpan, mergeSpanCtx := startTraceSpan(ctx, "merge-distributed-rows")
-	_ = mergeSpanCtx
+	set.summaryCtx = mergeSpanCtx
 	addTraceTagf(mergeSpan, tracelabels.TagSourcesIn, "%d", len(inputs))
 	merger, mergeErr := newRowMerger(ctx, inputs, schema, reshape, spec)
 	if mergeErr != nil {
