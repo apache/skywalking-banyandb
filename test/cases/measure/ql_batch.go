@@ -125,6 +125,39 @@ fields:
 	})
 }
 
+// RegisterMultiGroupAggTable verifies that one GROUP BY key from two groups is summed across them.
+// Only the distributed suite registers it: standalone still returns one row per group (#14069).
+func RegisterMultiGroupAggTable(description string) bool {
+	return g.Describe(description, g.Label("measure-ql"), func() {
+		g.It("multi-group-aggregate-same-shard-and-key", func() {
+			gm.Expect(vectorized.QueryMetricsEnabled).To(gm.BeTrue(), "requires -tags=querymetrics")
+			// Both groups have two shards and host is the entity, so host m lands on the same shard id
+			// with the same group key in each group; replica dedup must not merge them.
+			sumBase := SharedContext.BaseTime.Add(-30 * time.Second)
+			measuredata.Write(SharedContext.Connection, "qlb_fixture", "replicated_group", "qlb_fixture_sum.json", sumBase.Add(2*time.Second), time.Second)
+			measuredata.Write(SharedContext.Connection, "qlb_fixture", "sw_metric", "qlb_fixture_sum_other.json", sumBase.Add(2*time.Second), time.Second)
+			aggregate := qlBatchAggregateRequest(&measurev1.QueryRequest{
+				Name:      "qlb_fixture",
+				Groups:    []string{"replicated_group", "sw_metric"},
+				TimeRange: helpers.TimeRange(helpers.Args{Offset: -31 * time.Second, Duration: 7 * time.Second}, SharedContext),
+			})
+			expected := &measurev1.QueryResponse{}
+			helpers.UnmarshalYAML([]byte(`dataPoints:
+- tagFamilies: [{name: default, tags: [{key: host, value: {str: {value: m}}}]}]
+  fields: [{name: v, value: {int: {value: 23}}}]
+`), expected)
+			gm.Eventually(func(inner gm.Gomega) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				response, err := measurev1.NewMeasureServiceClient(SharedContext.Connection).Query(ctx, aggregate)
+				inner.Expect(err).NotTo(gm.HaveOccurred())
+				inner.Expect(measuredata.CompareQLResult(response, expected, false)).To(gm.Succeed())
+			}, flags.EventuallyTimeout).Should(gm.Succeed())
+			verifyQLBatchCallers(qlBatchAggregateText(sumBase, "replicated_group, sw_metric"), aggregate, expected)
+		})
+	})
+}
+
 func verifyQLBatchCallers(text string, request *measurev1.QueryRequest, want *measurev1.QueryResponse) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
