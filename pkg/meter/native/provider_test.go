@@ -44,11 +44,12 @@ func TestScopeLabelTagsAlignWithValues(t *testing.T) {
 		GrpcAddress: "127.0.0.1:17876",
 		HTTPAddress: "127.0.0.1:17877",
 	}
+	st := newScopeTags(scope)
 	// node_type, node_id, grpc_address and http_address precede the scope labels.
 	const scopeTagsBegin = 4
 	for range 100 {
-		tags, _ := buildTags(scope, nil)
-		tagValues := buildTagValues(nodeInfo, scope)
+		tags, _ := buildTags(st, nil)
+		tagValues := buildTagValues(nodeInfo, st)
 		require.Len(t, tagValues, len(tags))
 		actual := make(meter.LabelPairs, len(tags)-scopeTagsBegin)
 		for i := scopeTagsBegin; i < len(tags); i++ {
