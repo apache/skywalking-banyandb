@@ -19,6 +19,7 @@ package plan
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sort"
@@ -26,7 +27,6 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	itersort "github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
@@ -62,16 +62,15 @@ type seenSIDKey struct {
 // column without going through TagIndex lookup. The merger prefers the
 // explicit index when >= 0; otherwise it resolves from the names.
 type distributedRowsSpec struct {
-	// Interrupt, when set, is polled while merging; a non-nil result aborts the merge with it.
 	Interrupt      func() error
 	Tracker        *vectorized.MemoryTracker
+	ChargeSeen     func(bytes uint64) error
 	OrderByFamily  string
 	OrderByTagName string
 	BatchSize      int
 	OrderByColIdx  int
 	Desc           bool
 	IndexMode      bool
-	BorrowOutput   bool
 }
 
 // distributedRowKey keys the per-window dedup map. Two rows with the same
@@ -253,114 +252,64 @@ func (s *distributedRowSourceIter) Val() *distributedRowItem { return s.cur }
 // returned output is consumed.
 func (s *distributedRowSourceIter) Close() error { return nil }
 
-// mergeDistributedRows is the liaison-side non-aggregation row merger. It
-// k-way heap-merges per-source frame batches by timestamp, dedups (sid, ts)
-// inside each equal-sort-field window keeping the highest-version row, and
-// streams output batches via a BatchPool. Output columns reference source
-// columns by value (typed scalars) or by reference (passthrough slice / proto
-// pointer cells), preserving the BatchSourceFromBatchResult zero-copy
-// contract.
+// mergeDistributedRows merges frames that are already in memory with the row merge the liaison runs over its data
+// node streams. Output columns reference source columns by value (typed scalars) or by reference (passthrough
+// slice / proto pointer cells), preserving the BatchSourceFromBatchResult zero-copy contract.
 //
-// Memory bound: peak in-flight ref count is one sort-group's worth of rows
-// plus one output batch — not total input rows. Each output batch reserves
-// bytes from spec.Tracker on the boundary between build and append, so the
-// tracker bounds the in-transit working set rather than under-counting the
-// flat-sort scratch the previous shape allocated up-front.
+// Memory bound: peak in-flight ref count is one sort-group's worth of rows plus one output batch — not total
+// input rows. Each output batch reserves bytes from spec.Tracker on the boundary between build and append, so the
+// tracker bounds the in-transit working set.
 func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectorized.RecordBatch, error) {
 	sources, schema, decodeErr := decodeDistributedRowSources(frames)
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
-	// The output batches pin whatever the sources borrow (see appendRowToCurrent), so the
-	// sources' own references can go once the merge returns.
-	defer releaseSources(sources)
 	if schema == nil {
 		return nil, nil
 	}
 	if schema.SeriesIDIndex() < 0 || schema.TimestampIndex() < 0 || schema.VersionIndex() < 0 {
+		releaseSources(sources)
 		return nil, fmt.Errorf("row merge requires series-id, timestamp, and version columns")
 	}
-	batchSize := spec.BatchSize
-	if batchSize <= 0 {
-		batchSize = vectorized.DefaultBatchSize
-	}
-
-	sortColIdx, sortErr := resolveDistributedSortColumn(schema, spec)
-	if sortErr != nil {
-		return nil, sortErr
-	}
-	iters, buildErr := buildDistributedRowSourceIters(sources, schema, spec.Desc, sortColIdx)
-	if buildErr != nil {
-		return nil, buildErr
-	}
-	return runDistributedRowMerge(iters, schema, spec, batchSize)
+	return mergeBatchSources(context.Background(), sources, schema, sameLayoutReshape(schema), spec)
 }
 
-// runDistributedRowMerge drives the k-way heap over iters and emits output
-// batches. Extracted so both the single-group path (mergeDistributedRows) and
-// the multi-group path (mergeDistributedRowsMulti) share the same merge loop
-// without duplication.
-func runDistributedRowMerge(
-	iters []itersort.Iterator[*distributedRowItem],
-	schema *vectorized.BatchSchema,
-	spec distributedRowsSpec,
-	batchSize int,
-) (merged []*vectorized.RecordBatch, retErr error) {
-	merger := itersort.NewItemIter(iters, spec.Desc)
+// mergeBatchSources runs the row merge over sources whose batches share the layout of schema, whether they were
+// decoded from frames or come straight from a local plan, and collects its output. It takes ownership of sources:
+// the output batches pin whatever the sources borrow, so the sources' own references are released when the merge
+// returns.
+func mergeBatchSources(ctx context.Context, sources []decodedBatchSource, schema *vectorized.BatchSchema,
+	reshape func(*vectorized.RecordBatch) (*vectorized.RecordBatch, error), spec distributedRowsSpec,
+) ([]*vectorized.RecordBatch, error) {
+	if len(sources) == 0 {
+		return nil, nil
+	}
+	inputs := make([]rowStreamInput, 0, len(sources))
+	for _, src := range sources {
+		inputs = append(inputs, rowStreamInput{src: &sliceBatchSource{}, first: src.batch, source: src.source, group: src.group})
+	}
+	merger, err := newRowMerger(ctx, inputs, schema, reshape, spec)
+	if err != nil {
+		return nil, err
+	}
+	return drainRowMerger(ctx, merger)
+}
+
+// drainRowMerger collects every output batch of the merge and closes it.
+func drainRowMerger(ctx context.Context, merger *rowMerger) ([]*vectorized.RecordBatch, error) {
 	defer func() { _ = merger.Close() }()
-
-	pool := vectorized.NewBatchPool(schema, batchSize)
-	rowWidth := estimateRowWidth(schema)
-
-	emitter := &distributedRowEmitter{
-		pool:         pool,
-		schema:       schema,
-		batchSize:    batchSize,
-		tracker:      spec.Tracker,
-		rowWidth:     rowWidth,
-		seenSID:      make(map[seenSIDKey]struct{}),
-		indexMode:    spec.IndexMode,
-		borrowOutput: spec.BorrowOutput,
-		window:       make(map[distributedRowKey]*distributedRowItem),
-		noDedup:      schema.SeriesIDIndex() < 0 || schema.VersionIndex() < 0,
-	}
-	defer func() {
-		if retErr != nil {
-			// The batches built so far pin their sources' frames; nobody will consume them.
-			releaseBatches(emitter.output)
-			if emitter.current != nil {
-				emitter.current.ReleaseOwners()
-			}
+	var out []*vectorized.RecordBatch
+	for {
+		batch, err := merger.NextBatch(ctx)
+		if err != nil {
+			releaseBatches(out)
+			return nil, err
 		}
-	}()
-
-	for rows := 0; merger.Next(); rows++ {
-		if spec.Interrupt != nil && rows%interruptCheckRows == 0 {
-			if interruptErr := spec.Interrupt(); interruptErr != nil {
-				return nil, interruptErr
-			}
+		if batch == nil {
+			return out, nil
 		}
-		item := merger.Val()
-		// A null sort cell encodes as a nil key, so "no window open" is tracked explicitly: a
-		// nil windowKey alone would merge a null row's window into the next non-null row's.
-		if emitter.windowOpen && !bytes.Equal(item.sortField, emitter.windowKey) {
-			if err := emitter.flushWindow(); err != nil {
-				return nil, err
-			}
-		}
-		if !emitter.windowOpen {
-			emitter.windowKey = item.sortField
-			emitter.windowOpen = true
-		}
-		emitter.accept(item)
+		out = append(out, batch)
 	}
-	if err := emitter.flushWindow(); err != nil {
-		return nil, err
-	}
-	if err := emitter.finalizeBatch(); err != nil {
-		return nil, err
-	}
-	return emitter.output, nil
 }
 
 // interruptCheckRows is how many merged rows pass between checks of distributedRowsSpec.Interrupt.
@@ -464,29 +413,6 @@ type decodedBatchSource struct {
 	group  int
 }
 
-// buildDistributedRowSourceIters wires one iterator per non-empty decoded
-// source. The k-way merger consumes these directly. desc is forwarded so each
-// per-source iterator sorts its own row indices in the same direction the
-// heap expects (largest-first for desc, smallest-first for asc). sortColIdx
-// selects the comparator: < 0 means time-sort (Phase 1.5), >= 0 means the
-// OrderBy column at that index in the merged-batch schema (Phase 2).
-func buildDistributedRowSourceIters(
-	sources []decodedBatchSource,
-	schema *vectorized.BatchSchema,
-	desc bool,
-	sortColIdx int,
-) ([]itersort.Iterator[*distributedRowItem], error) {
-	iters := make([]itersort.Iterator[*distributedRowItem], 0, len(sources))
-	for _, src := range sources {
-		iter, buildErr := newDistributedRowSourceIter(src.batch, schema, src.source, src.group, desc, sortColIdx)
-		if buildErr != nil {
-			return nil, buildErr
-		}
-		iters = append(iters, iter)
-	}
-	return iters, nil
-}
-
 // resolveDistributedSortColumn returns the column index used by the heap
 // merger for the equal-sort-field window. Explicit spec.OrderByColIdx (>= 0)
 // wins for tests that bypass schema lookup. Otherwise an OrderBy resolution
@@ -514,22 +440,20 @@ func resolveDistributedSortColumn(schema *vectorized.BatchSchema, spec distribut
 // dedup map, the current in-progress output batch, the cross-window seenSID
 // guard for index-mode queries, and the returned batch list.
 type distributedRowEmitter struct {
-	pool                      *vectorized.BatchPool
-	schema                    *vectorized.BatchSchema
-	tracker                   *vectorized.MemoryTracker
-	seenSID                   map[seenSIDKey]struct{}
-	window                    map[distributedRowKey]*distributedRowItem
-	current                   *vectorized.RecordBatch
-	pending                   *vectorized.RecordBatch
-	windowKey                 []byte
-	output                    []*vectorized.RecordBatch
-	batchSize                 int
-	rowWidth                  int64
-	pendingStart, pendingRows int
-	indexMode                 bool
-	borrowOutput              bool
-	windowOpen                bool
-	noDedup                   bool
+	chargeSeen func(bytes uint64) error
+	schema     *vectorized.BatchSchema
+	tracker    *vectorized.MemoryTracker
+	seenSID    map[seenSIDKey]struct{}
+	window     map[distributedRowKey]*distributedRowItem
+	current    *vectorized.RecordBatch
+	pool       *vectorized.BatchPool
+	windowKey  []byte
+	output     []*vectorized.RecordBatch
+	batchSize  int
+	rowWidth   int64
+	indexMode  bool
+	windowOpen bool
+	noDedup    bool
 }
 
 // accept adds an incoming row to the current sort-group dedup map. The window
@@ -580,6 +504,11 @@ func (e *distributedRowEmitter) flushWindow() error {
 			if _, dup := e.seenSID[sidKey]; dup {
 				continue
 			}
+			if e.chargeSeen != nil {
+				if err := e.chargeSeen(seenSIDEntryBytes); err != nil {
+					return fmt.Errorf("index-mode series dedup state: %w", err)
+				}
+			}
 			e.seenSID[sidKey] = struct{}{}
 		}
 		if err := e.appendRowToCurrent(row); err != nil {
@@ -598,12 +527,6 @@ func (e *distributedRowEmitter) flushWindow() error {
 // reservation so the tracker bounds in-transit batches without
 // double-counting once they reach the caller).
 func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) error {
-	if e.borrowOutput && e.current == nil {
-		handled, err := e.appendBorrowedRow(row)
-		if handled || err != nil {
-			return err
-		}
-	}
 	if e.current == nil {
 		e.current = e.pool.Get()
 	}
@@ -631,9 +554,6 @@ func (e *distributedRowEmitter) appendRowToCurrent(row *distributedRowItem) erro
 // to the output, and releases the reservation. Net effect: while the merger
 // holds an in-progress batch we have one batch worth of bytes reserved.
 func (e *distributedRowEmitter) finalizeBatch() error {
-	if e.pendingRows > 0 {
-		return e.finalizeBorrowedRun()
-	}
 	if e.current == nil || e.current.Len == 0 {
 		if e.current != nil {
 			e.pool.Put(e.current)
@@ -864,11 +784,10 @@ func schemaColKey(cd vectorized.ColumnDef) string {
 	return fmt.Sprintf("%d\x01%s\x02%s", int(cd.Role), cd.TagFamily, cd.Name)
 }
 
-// mergeDistributedRowsMulti is the multi-group variant of mergeDistributedRows.
-// It accepts pre-computed per-group frame bodies (each tagged with a group
-// index) and a pre-built merged BatchSchema. Each frame is decoded into the
-// merged schema via null-fill for missing columns, then the standard k-way
-// heap merger runs over all decoded batches.
+// mergeDistributedRowsMulti is the multi-group variant of mergeDistributedRows. It accepts pre-computed per-group
+// frame bodies (each tagged with a group index) and a pre-built merged BatchSchema. Each frame is decoded into the
+// merged schema via null-fill for missing columns, then the standard k-way heap merger runs over all decoded
+// batches.
 func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorized.BatchSchema, spec distributedRowsSpec) ([]*vectorized.RecordBatch, error) {
 	if mergedSchema == nil {
 		return nil, nil
@@ -880,32 +799,7 @@ func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorize
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
-	return mergeBatchSources(sources, mergedSchema, spec)
-}
-
-// mergeBatchSources runs the k-way heap merger over sources whose batches are
-// already shaped as mergedSchema, whether they were decoded from frames or come
-// straight from a local plan. It takes ownership of sources: the output batches
-// pin whatever the sources borrow (see appendRowToCurrent), so the sources' own
-// references are released when the merge returns.
-func mergeBatchSources(sources []decodedBatchSource, mergedSchema *vectorized.BatchSchema, spec distributedRowsSpec) ([]*vectorized.RecordBatch, error) {
-	defer releaseSources(sources)
-	if len(sources) == 0 {
-		return nil, nil
-	}
-	batchSize := spec.BatchSize
-	if batchSize <= 0 {
-		batchSize = vectorized.DefaultBatchSize
-	}
-	sortColIdx, sortErr := resolveDistributedSortColumn(mergedSchema, spec)
-	if sortErr != nil {
-		return nil, sortErr
-	}
-	iters, buildErr := buildDistributedRowSourceIters(sources, mergedSchema, spec.Desc, sortColIdx)
-	if buildErr != nil {
-		return nil, buildErr
-	}
-	return runDistributedRowMerge(iters, mergedSchema, spec, batchSize)
+	return mergeBatchSources(context.Background(), sources, mergedSchema, nil, spec)
 }
 
 // activeDistributedRows returns the in-order list of active row indices for a
@@ -924,4 +818,26 @@ func activeDistributedRows(batch *vectorized.RecordBatch) []int {
 		rows[i] = int(rowIdx)
 	}
 	return rows
+}
+
+// sameLayoutReshape checks that a source batch has the column layout of schema, which may differ from the batch's
+// own only in the type of a tag or field column that was promoted to a passthrough column. The emitter coerces the
+// cells of such a column when it copies them, so the batch needs no change.
+func sameLayoutReshape(schema *vectorized.BatchSchema) func(*vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+	return func(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+		if len(b.Schema.Columns) != len(schema.Columns) {
+			return nil, fmt.Errorf("chunk schema column count %d != %d", len(b.Schema.Columns), len(schema.Columns))
+		}
+		for i, def := range schema.Columns {
+			got := b.Schema.Columns[i]
+			if got.Name != def.Name || got.TagFamily != def.TagFamily || got.Role != def.Role {
+				return nil, fmt.Errorf("chunk column %d layout mismatch: want %q.%q role=%v, got %q.%q role=%v",
+					i, def.TagFamily, def.Name, def.Role, got.TagFamily, got.Name, got.Role)
+			}
+			if got.Type != def.Type && def.Type != vectorized.ColumnTypeTagValue && def.Type != vectorized.ColumnTypeFieldValue {
+				return nil, fmt.Errorf("chunk column %d (%q) type %v diverges from the stream's %v", i, def.Name, got.Type, def.Type)
+			}
+		}
+		return b, nil
+	}
 }

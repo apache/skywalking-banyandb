@@ -42,7 +42,7 @@ func verifyGeneratedLegacyHavingCall(base time.Time, c qlgen.Case) {
 		gm.Expect(after.QLBatchExecutions-before.QLBatchExecutions).To(gm.Equal(uint64(1)),
 			"legacy QueryRPC owns one native QL batch boundary without typed residual operators")
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(ql.FilterExecutionStats().LiveBytes).To(gm.Equal(filterBefore.LiveBytes))
 		gm.Expect(ql.HavingExecutionStats().LiveBytes).To(gm.Equal(havingBefore.LiveBytes))
 		gm.Expect(ql.FilterExecutionStats().Executions).To(gm.Equal(filterBefore.Executions))

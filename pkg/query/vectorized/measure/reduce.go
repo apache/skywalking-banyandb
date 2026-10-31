@@ -169,103 +169,190 @@ func ReducePartialBatchesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
-	if layoutErr := checkPartialLayouts(partials, target, keyTagFamily, keyTagNames); layoutErr != nil {
-		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", layoutErr)
-	}
-	var refSchema *vectorized.BatchSchema
-	for _, b := range partials {
-		if b == nil || b.Len == 0 {
-			continue
-		}
-		refSchema = b.Schema
-		break
-	}
-	if refSchema == nil {
-		return nil, AggValuePathTyped, nil
-	}
-	if target != nil {
-		refSchema = target
-	}
-	keyIndices, indicesErr := resolveKeyIndices(refSchema, keyTagFamily, keyTagNames, bucketed)
-	if indicesErr != nil {
-		return nil, AggValuePathUnresolved, indicesErr
-	}
-	specs, path, specsErr := bindAggReduceSpecs(refSchema, aggSpecs)
-	if specsErr != nil {
-		return nil, AggValuePathUnresolved, specsErr
-	}
-	op := NewBatchAggregation(refSchema, keyIndices, specs, AggModeReduce, batchSize, tracker, aggEntrySize)
-	defer op.Close()
-	if initErr := op.Init(context.Background()); initErr != nil {
-		return nil, path, fmt.Errorf("ReducePartialBatches: init: %w", initErr)
-	}
-	// scratch is allocated lazily -- only the first partial that actually
-	// needs chunking pays for it -- and then reused for every later chunk
-	// and every later partial, so the overwhelming common case (every
-	// partial fits in one chunk) never allocates it at all.
-	var scratch, wideScratch *vectorized.RecordBatch
+	reducer := NewPartialReducer(target, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
+	defer reducer.Close()
 	for i, b := range partials {
-		if b == nil || b.Len == 0 {
-			continue
-		}
-		if target != nil && !slices.Equal(b.Schema.Columns, target.Columns) {
-			if wideScratch == nil {
-				// Reserve the target-width chunk before allocating it; the
-				// received frames were only charged at their own width.
-				reserved, reserveErr := reserveReshapeChunk(tracker, target, batchSize)
-				if reserveErr != nil {
-					return nil, path, fmt.Errorf("ReducePartialBatches: reshape partial %d: %w", i, reserveErr)
-				}
-				defer tracker.Release(reserved)
-				wideScratch = vectorized.NewRecordBatch(target, batchSize)
-			}
-			if consumeErr := consumeReshaped(op, wideScratch, b, batchSize); consumeErr != nil {
-				return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
-			}
-			continue
-		}
-		if compatErr := schemaCompatible(refSchema, b.Schema); compatErr != nil {
-			return nil, path, fmt.Errorf("ReducePartialBatches: partial %d schema mismatch: %w", i, compatErr)
-		}
-		if b.ActiveLen() <= batchSize {
-			// Fast path, unchanged from before chunking existed: a partial
-			// that already fits in one chunk is consumed directly, with no
-			// copy and no scratch batch involved.
-			if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
-				return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
-			}
-			continue
-		}
-		if scratch == nil {
-			scratch = vectorized.NewRecordBatch(refSchema, batchSize)
-		}
-		if consumeErr := vectorized.ConsumeChunked(op, scratch, b, batchSize); consumeErr != nil {
-			return nil, path, fmt.Errorf("ReducePartialBatches: consume partial %d: %w", i, consumeErr)
+		if consumeErr := reducer.consume(b, i); consumeErr != nil {
+			return nil, reducer.path, consumeErr
 		}
 	}
-	if finalErr := op.Finalize(context.Background()); finalErr != nil {
-		return nil, path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
+	return reducer.Finish()
+}
+
+// PartialReducer is ReducePartialBatchesToSchema as an operator that takes its partials one at a time, so a
+// caller that receives them as a stream holds the reduced groups instead of every partial. The first non-empty
+// partial defines the partial layout unless a target is given. The reducer copies what it keeps, so a partial
+// can be released as soon as Consume returns.
+type PartialReducer struct {
+	refSchema    *vectorized.BatchSchema
+	op           *BatchAggregation
+	scratch      *vectorized.RecordBatch
+	wideScratch  *vectorized.RecordBatch
+	tracker      *vectorized.MemoryTracker
+	target       *vectorized.BatchSchema
+	path         AggValuePath
+	keyTagFamily string
+	keyTagNames  []string
+	aggSpecs     []AggReduceSpec
+	reserved     int64
+	partials     int
+	batchSize    int
+	bucketed     bool
+}
+
+// NewPartialReducer returns a reducer with the parameters of ReducePartialBatchesToSchema.
+func NewPartialReducer(
+	target *vectorized.BatchSchema,
+	keyTagFamily string,
+	keyTagNames []string,
+	bucketed bool,
+	aggSpecs []AggReduceSpec,
+	batchSize int,
+	tracker *vectorized.MemoryTracker,
+) *PartialReducer {
+	return &PartialReducer{
+		target: target, keyTagFamily: keyTagFamily, keyTagNames: keyTagNames, bucketed: bucketed,
+		aggSpecs: aggSpecs, batchSize: batchSize, tracker: tracker, path: AggValuePathTyped,
+	}
+}
+
+// Consume folds one partial into the reduction. Empty partials are skipped.
+func (r *PartialReducer) Consume(b *vectorized.RecordBatch) error {
+	return r.consume(b, r.partials)
+}
+
+func (r *PartialReducer) consume(b *vectorized.RecordBatch, idx int) error {
+	r.partials++
+	if b == nil || b.Len == 0 {
+		return nil
+	}
+	if layoutErr := checkPartialLayouts([]*vectorized.RecordBatch{b}, r.target, r.keyTagFamily, r.keyTagNames); layoutErr != nil {
+		r.path = AggValuePathUnresolved
+		return fmt.Errorf("ReducePartialBatches: %w", layoutErr)
+	}
+	if r.op == nil {
+		if initErr := r.open(b); initErr != nil {
+			return initErr
+		}
+	}
+	op, refSchema, batchSize, target := r.op, r.refSchema, r.batchSize, r.target
+	if target != nil && !slices.Equal(b.Schema.Columns, target.Columns) {
+		if r.wideScratch == nil {
+			// Reserve the target-width chunk before allocating it; the
+			// received frames were only charged at their own width.
+			reserved, reserveErr := reserveReshapeChunk(r.tracker, target, batchSize)
+			if reserveErr != nil {
+				return fmt.Errorf("ReducePartialBatches: reshape partial %d: %w", idx, reserveErr)
+			}
+			r.reserved += reserved
+			r.wideScratch = vectorized.NewRecordBatch(target, batchSize)
+		}
+		if consumeErr := consumeReshaped(op, r.wideScratch, b, batchSize); consumeErr != nil {
+			return fmt.Errorf("ReducePartialBatches: consume partial %d: %w", idx, consumeErr)
+		}
+		return nil
+	}
+	if compatErr := schemaCompatible(refSchema, b.Schema); compatErr != nil {
+		return fmt.Errorf("ReducePartialBatches: partial %d schema mismatch: %w", idx, compatErr)
+	}
+	if b.ActiveLen() <= batchSize {
+		// A partial that already fits in one chunk is consumed directly, with no
+		// copy and no scratch batch involved.
+		if consumeErr := op.Consume(context.Background(), b); consumeErr != nil {
+			return fmt.Errorf("ReducePartialBatches: consume partial %d: %w", idx, consumeErr)
+		}
+		return nil
+	}
+	if r.scratch == nil {
+		r.scratch = vectorized.NewRecordBatch(refSchema, batchSize)
+	}
+	if consumeErr := vectorized.ConsumeChunked(op, r.scratch, b, batchSize); consumeErr != nil {
+		return fmt.Errorf("ReducePartialBatches: consume partial %d: %w", idx, consumeErr)
+	}
+	return nil
+}
+
+// open binds the keys and the aggregates on the layout of the first non-empty partial.
+func (r *PartialReducer) open(first *vectorized.RecordBatch) error {
+	r.refSchema = first.Schema
+	if r.target != nil {
+		r.refSchema = r.target
+	}
+	keyIndices, indicesErr := resolveKeyIndices(r.refSchema, r.keyTagFamily, r.keyTagNames, r.bucketed)
+	if indicesErr != nil {
+		r.path = AggValuePathUnresolved
+		return indicesErr
+	}
+	specs, path, specsErr := bindAggReduceSpecs(r.refSchema, r.aggSpecs)
+	if specsErr != nil {
+		r.path = AggValuePathUnresolved
+		return specsErr
+	}
+	r.path = path
+	r.op = NewBatchAggregation(r.refSchema, keyIndices, specs, AggModeReduce, r.batchSize, r.tracker, aggEntrySize)
+	if initErr := r.op.Init(context.Background()); initErr != nil {
+		return fmt.Errorf("ReducePartialBatches: init: %w", initErr)
+	}
+	return nil
+}
+
+// OutputSchema returns the schema of the reduced batches, or nil before the first non-empty partial.
+func (r *PartialReducer) OutputSchema() *vectorized.BatchSchema {
+	if r.op == nil {
+		return nil
+	}
+	return r.op.OutputSchema()
+}
+
+// Groups returns how many groups the reducer holds.
+func (r *PartialReducer) Groups() int {
+	if r.op == nil {
+		return 0
+	}
+	return len(r.op.insertion)
+}
+
+// Finish returns the reduced batches in group-insertion order, bucket-ascending for a bucketed reduction, and the
+// AggValuePath that describes how the value column was resolved. The reducer is spent afterwards.
+func (r *PartialReducer) Finish() ([]*vectorized.RecordBatch, AggValuePath, error) {
+	if r.op == nil {
+		return nil, r.path, nil
+	}
+	if finalErr := r.op.Finalize(context.Background()); finalErr != nil {
+		return nil, r.path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
 	}
 	// Each partial arrives already bucket-ascending (design §7.2 streams
-	// per node), but op consumes partials frame by frame, so insertion
+	// per node), but the reducer consumes partials one by one, so insertion
 	// order is only piecewise ascending — e.g. node A's [2000, 3000]
 	// followed by node B's [1000, 2000] inserts as [2000, 3000, 1000].
 	// Sort once before draining so the merged result is globally
 	// bucket-ascending, which iteratorFromBatches's offset/limit pagination
 	// (design §7.5) requires to page correctly. A no-op when unbucketed.
-	op.SortInsertionByBucket()
+	r.op.SortInsertionByBucket()
 	var out []*vectorized.RecordBatch
 	for {
-		nb, nextErr := op.NextBatch(context.Background())
+		nb, nextErr := r.op.NextBatch(context.Background())
 		if nextErr != nil {
-			return nil, path, fmt.Errorf("ReducePartialBatches: next: %w", nextErr)
+			return nil, r.path, fmt.Errorf("ReducePartialBatches: next: %w", nextErr)
 		}
 		if nb == nil {
 			break
 		}
 		out = append(out, nb)
 	}
-	return out, path, nil
+	return out, r.path, nil
+}
+
+// Close releases the reducer's aggregation state and the memory it reserved. It is safe to call more than once.
+func (r *PartialReducer) Close() {
+	if r.op != nil {
+		_ = r.op.Close()
+		r.op = nil
+	}
+	if r.reserved > 0 {
+		r.tracker.Release(r.reserved)
+		r.reserved = 0
+	}
 }
 
 // resolveKeyIndices binds the bucket column (when bucketed) and

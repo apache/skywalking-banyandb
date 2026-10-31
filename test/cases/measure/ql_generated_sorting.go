@@ -219,7 +219,7 @@ func assertGeneratedSortingCleanup(before vmeasure.BatchExecutionCounters, memor
 	gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 	gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
 	gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "readiness and correctness use only BydbQL Query")
-	gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore))
+	expectLiveReservedBytes(memoryBefore)
 	gm.Expect(sorted.LiveBytes).To(gm.Equal(sortBefore.LiveBytes))
 	gm.Expect(sorted.ReservedBytes - sortBefore.ReservedBytes).To(gm.Equal(sorted.ReleasedBytes - sortBefore.ReleasedBytes))
 	gm.Expect(sorted.SourcePins).To(gm.Equal(sortBefore.SourcePins))

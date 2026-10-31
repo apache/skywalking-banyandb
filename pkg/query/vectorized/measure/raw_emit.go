@@ -525,6 +525,13 @@ func buildPassthroughBatchFromDataPoints(idps []*measurev1.InternalDataPoint) (*
 // frame format is the natural follow-up; until then, scans that materialize
 // array-typed tags on the cluster wire are unsupported.
 func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBatch, error) {
+	return convertForFrame(b, true)
+}
+
+// convertForFrame is convertPassthroughForFrame with the narrowing of passthrough columns optional. A stream of
+// frames must not narrow: the wire type of a column would follow the cells of each frame (an all-null frame stays
+// passthrough, the next one narrows to string), and the receiver needs one layout for the whole stream.
+func convertForFrame(b *vectorized.RecordBatch, narrow bool) (*vectorized.RecordBatch, error) {
 	if !needsFrameConversion(b.Schema) {
 		return b, nil
 	}
@@ -534,6 +541,11 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 		col := b.Columns[i]
 		switch def.Type {
 		case vectorized.ColumnTypeTagValue:
+			if !narrow {
+				newDefs = append(newDefs, def)
+				newCols = append(newCols, col)
+				continue
+			}
 			newDef, newCol, err := convertTagValueColumn(def, col, b.Len)
 			if err != nil {
 				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)
@@ -541,6 +553,11 @@ func convertPassthroughForFrame(b *vectorized.RecordBatch) (*vectorized.RecordBa
 			newDefs = append(newDefs, newDef)
 			newCols = append(newCols, newCol)
 		case vectorized.ColumnTypeFieldValue:
+			if !narrow {
+				newDefs = append(newDefs, def)
+				newCols = append(newCols, col)
+				continue
+			}
 			newDef, newCol, err := convertFieldValueColumn(def, col, b.Len)
 			if err != nil {
 				return nil, fmt.Errorf("column %d (%q): %w", i, def.Name, err)

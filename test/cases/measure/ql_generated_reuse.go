@@ -53,7 +53,7 @@ func registerGeneratedQLReuseScenarios(suite qlgen.Suite, base *time.Time) {
 						after := vmeasure.BatchExecutionStats()
 						inner.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 						inner.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-						inner.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+						expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 						stats := liaisongrpc.BydbQLPlanCacheStats()
 						inner.Expect(stats.InFlight).To(gm.BeZero())
 						inner.Expect(stats.Waiters).To(gm.BeZero())

@@ -145,7 +145,7 @@ func verifyQLBatchCallers(text string, request *measurev1.QueryRequest, want *me
 	gm.Eventually(func(inner gm.Gomega) {
 		inner.Expect(vmeasure.BatchExecutionStats().LiveResults).To(gm.Equal(before.LiveResults))
 		inner.Expect(vectorized.OutstandingOwnerPins()).To(gm.Equal(owners))
-		inner.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(reservations))
+		expectLiveReservedBytes(reservations)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 

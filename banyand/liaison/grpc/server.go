@@ -181,6 +181,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	traceSVC := &traceService{
 		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
