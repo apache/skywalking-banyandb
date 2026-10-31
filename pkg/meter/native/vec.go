@@ -23,7 +23,6 @@ import (
 	"time"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -38,16 +37,16 @@ type metricWithLabelValues struct {
 
 type metricVec struct {
 	nodeInfo    NodeInfo
-	scope       meter.Scope
+	tags        scopeTags
 	metrics     map[string]metricWithLabelValues
 	measureName string
 	mutex       sync.Mutex
 }
 
-func newMetricVec(measureName string, scope meter.Scope, nodeInfo NodeInfo) *metricVec {
+func newMetricVec(measureName string, tags scopeTags, nodeInfo NodeInfo) *metricVec {
 	n := &metricVec{
 		nodeInfo:    nodeInfo,
-		scope:       scope,
+		tags:        tags,
 		measureName: measureName,
 		metrics:     map[string]metricWithLabelValues{},
 	}
@@ -57,7 +56,7 @@ func newMetricVec(measureName string, scope meter.Scope, nodeInfo NodeInfo) *met
 func (n *metricVec) Inc(delta float64, labelValues ...string) {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	tagValues := buildTagValues(n.nodeInfo, n.scope, labelValues...)
+	tagValues := buildTagValues(n.nodeInfo, n.tags, labelValues...)
 	hash := seriesHash(tagValues)
 	key := string(hash)
 	v, exist := n.metrics[key]
@@ -73,7 +72,7 @@ func (n *metricVec) Inc(delta float64, labelValues ...string) {
 func (n *metricVec) Delete(labelValues ...string) bool {
 	n.mutex.Lock()
 	defer n.mutex.Unlock()
-	key := string(seriesHash(buildTagValues(n.nodeInfo, n.scope, labelValues...)))
+	key := string(seriesHash(buildTagValues(n.nodeInfo, n.tags, labelValues...)))
 	delete(n.metrics, key)
 	return true
 }
