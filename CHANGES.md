@@ -106,6 +106,8 @@ Release Notes.
 - Fix multi-group Measure aggregations failing with `partial N schema mismatch` when the groups' schemas differ. A projected non-key tag that a group doesn't define is now null-filled before the liaison reduces the partials.
 - Charge large tag and field values by their size instead of eight times it, so queries that read multi-MB values (for example SkyWalking OAP ai-agent session files stored as a `body` tag) no longer exhaust their memory allowance with `query memory pool exhausted`.
 - Without `--allowed-bytes` or a container memory limit, size the query memory pool from the host's memory (75% of it, divided by 4, each query getting an eighth) instead of a fixed 64 MiB. The memory protector itself stays disabled: write backpressure, merge budgets and the protector's state are unchanged.
+- Fix native observability writing a scope label's value under another label's tag name: the tag family and the written tag values were both built by ranging over the scope's label map, in independently randomized orders.
+- Fix native observability writing a scope label's value under another label's tag name: the tag family and the written tag values were both built by ranging over the scope's label map, in independently randomized orders. The label order is now resolved once per provider and instrument instead of on every metric update. Measures that already exist in the `_monitoring` group keep the tag order they were created with (`CreateMeasure` returns `ErrGRPCAlreadyExists` on upgrade), so they keep the old misalignment until they are recreated.
 
 ### Document
 

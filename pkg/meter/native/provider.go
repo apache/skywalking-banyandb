@@ -21,6 +21,8 @@ package native
 import (
 	"context"
 	"errors"
+	"maps"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -65,6 +67,7 @@ type pendingMeasure struct {
 type provider struct {
 	metadata        metadata.Repo
 	scope           meter.Scope
+	scopeTags       scopeTags
 	nodeInfo        NodeInfo
 	pendingMeasures []pendingMeasure
 	mu              sync.Mutex
@@ -74,9 +77,10 @@ type provider struct {
 // NewProvider returns a native metrics Provider.
 func NewProvider(scope meter.Scope, metadata metadata.Repo, nodeInfo NodeInfo) meter.Provider {
 	return &provider{
-		scope:    scope,
-		metadata: metadata,
-		nodeInfo: nodeInfo,
+		scope:     scope,
+		scopeTags: newScopeTags(scope),
+		metadata:  metadata,
+		nodeInfo:  nodeInfo,
 	}
 }
 
@@ -108,7 +112,7 @@ func InitSchema(ctx context.Context, p meter.Provider) {
 func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 	p.registerOrDefer(name, labelNames)
 	return &Counter{
-		newMetricVec(name, p.scope, p.nodeInfo),
+		newMetricVec(name, p.scopeTags, p.nodeInfo),
 	}
 }
 
@@ -116,7 +120,7 @@ func (p *provider) Counter(name string, labelNames ...string) meter.Counter {
 func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 	p.registerOrDefer(name, labelNames)
 	return &Gauge{
-		newMetricVec(name, p.scope, p.nodeInfo),
+		newMetricVec(name, p.scopeTags, p.nodeInfo),
 	}
 }
 
@@ -124,7 +128,7 @@ func (p *provider) Gauge(name string, labelNames ...string) meter.Gauge {
 func (p *provider) Histogram(name string, _ meter.Buckets, labelNames ...string) meter.Histogram {
 	p.registerOrDefer(name, labelNames)
 	return &Histogram{
-		newMetricVec(name, p.scope, p.nodeInfo),
+		newMetricVec(name, p.scopeTags, p.nodeInfo),
 	}
 }
 
@@ -170,7 +174,7 @@ func (p *provider) createNativeObservabilityGroup(ctx context.Context) error {
 
 //nolint:unparam
 func (p *provider) createMeasure(ctx context.Context, metric string, labels ...string) (string, error) {
-	tags, entityTags := buildTags(p.scope, labels)
+	tags, entityTags := buildTags(p.scopeTags, labels)
 	_, err := p.metadata.MeasureRegistry().CreateMeasure(ctx, &databasev1.Measure{
 		Metadata: &commonv1.Metadata{
 			Name:  metric,
@@ -197,7 +201,27 @@ func (p *provider) createMeasure(ctx context.Context, metric string, labels ...s
 	return metric, err
 }
 
-func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []string) {
+// scopeTags holds a scope's labels in one stable order, resolved once:
+// buildTags and buildTagValues zip positionally, so ranging over the label
+// map directly writes a value under another label's name. The label set of a
+// scope is immutable (ConstLabels returns a new scope), so the order can be
+// resolved once per provider/instrument instead of on every observation.
+type scopeTags struct {
+	names  []string
+	values []string
+}
+
+func newScopeTags(scope meter.Scope) scopeTags {
+	labels := scope.GetLabels()
+	names := slices.Sorted(maps.Keys(labels))
+	values := make([]string, len(names))
+	for i, name := range names {
+		values[i] = labels[name]
+	}
+	return scopeTags{names: names, values: values}
+}
+
+func buildTags(st scopeTags, labels []string) ([]*databasev1.TagSpec, []string) {
 	var tags []*databasev1.TagSpec
 	var entityTags []string
 	addTags := func(labels ...string) {
@@ -214,14 +238,12 @@ func buildTags(scope meter.Scope, labels []string) ([]*databasev1.TagSpec, []str
 	addTags(tagNodeID)
 	addTags(tagGRPCAddress)
 	addTags(tagHTTPAddress)
-	for label := range scope.GetLabels() {
-		addTags(label)
-	}
+	addTags(st.names...)
 	addTags(labels...)
 	return tags, entityTags
 }
 
-func buildTagValues(nodeInfo NodeInfo, scope meter.Scope, labelValues ...string) []*modelv1.TagValue {
+func buildTagValues(nodeInfo NodeInfo, tags scopeTags, labelValues ...string) []*modelv1.TagValue {
 	var tagValues []*modelv1.TagValue
 	addTagValues := func(labelValues ...string) {
 		for _, value := range labelValues {
@@ -239,9 +261,7 @@ func buildTagValues(nodeInfo NodeInfo, scope meter.Scope, labelValues ...string)
 	addTagValues(nodeInfo.NodeID)
 	addTagValues(nodeInfo.GrpcAddress)
 	addTagValues(nodeInfo.HTTPAddress)
-	for _, labelValue := range scope.GetLabels() {
-		addTagValues(labelValue)
-	}
+	addTagValues(tags.values...)
 	addTagValues(labelValues...)
 	return tagValues
 }
