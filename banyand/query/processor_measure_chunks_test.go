@@ -29,8 +29,10 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
@@ -198,4 +200,103 @@ func TestMeasureStreamTraceEndsTheOperatorSpansBeforeItIsSent(t *testing.T) {
 		require.NotNil(t, span.GetEndTime(), "operator span %s must be ended before the trace is sent", name)
 	}
 	require.Equal(t, "1", spanTag(findSpan(root.GetChildren(), "limit"), "rows_out"))
+}
+
+// mgService serves one fake group to the data-node processor.
+type mgService struct {
+	measure.Service
+	group *mgGroup
+}
+
+func (s *mgService) Measure(*commonv1.Metadata) (measure.Measure, error) {
+	return mgMeasureOf{s.group}, nil
+}
+
+type mgMeasureOf struct{ *mgGroup }
+
+func (mgMeasureOf) GetIndexRules() []*databasev1.IndexRule { return nil }
+
+// bigPoolMemory is a protector with ample memory for the query pool.
+type bigPoolMemory struct{ protector.Memory }
+
+func (*bigPoolMemory) GetLimit() uint64      { return 8 << 30 }
+func (*bigPoolMemory) AvailableBytes() int64 { return 8 << 30 }
+
+// TestMeasureRevStreamReturnsEverythingItAdmittedAndCharged runs the data-node scan many times over every way a query
+// can end and checks that the query pool is back to zero after each: a leak would drain the pool until a small query
+// is refused.
+func TestMeasureRevStreamReturnsEverythingItAdmittedAndCharged(t *testing.T) {
+	previous := data.MeasureWireModeRaw()
+	data.SetMeasureWireModeRaw(true)
+	t.Cleanup(func() { data.SetMeasureWireModeRaw(previous) })
+	rows := func(n int) [][]mgRow {
+		batches := make([][]mgRow, 0, n)
+		for i := range n {
+			batches = append(batches, []mgRow{{
+				ts: int64(10 + i), sid: uint64(i + 1), version: 1, value: int64(i),
+				tags: map[string]string{mgTagSvc: fmt.Sprintf("s%d", i), mgTagRegion: "r"},
+			}})
+		}
+		return batches
+	}
+	type scenario struct {
+		cancelAfter int
+		pullErrAt   int
+		limit       uint32
+		batches     int
+		wantErr     bool
+		runs        int
+	}
+	scenarios := map[string]scenario{
+		"completed":    {batches: 20, limit: 100000, runs: 200},
+		"limit":        {batches: 20, limit: 1, runs: 50},
+		"empty":        {batches: 0, limit: 100000, runs: 50},
+		"cancel":       {batches: 20, limit: 100000, cancelAfter: 2, wantErr: true, runs: 50},
+		"storage fail": {batches: 20, limit: 100000, pullErrAt: 3, wantErr: true, runs: 50},
+	}
+	for name, sc := range scenarios {
+		t.Run(name, func(t *testing.T) {
+			budget := protector.NewQueryBudget(&bigPoolMemory{})
+			p := &measureInternalQueryProcessor{
+				measureService: &mgService{},
+				queryService:   &queryService{nodeID: "node-1", log: logger.GetLogger("test"), queryBudget: budget},
+			}
+			for run := range sc.runs {
+				group := &mgGroup{schema: mgMeasure(mgGroupA, mgTagSvc, mgTagRegion), batches: rows(sc.batches), pullErrAt: sc.pullErrAt}
+				p.measureService = &mgService{group: group}
+				req := mgRequest(modelv1.Sort_SORT_ASC, "", 0, sc.limit)
+				req.Groups = []string{mgGroupA}
+				req.TagProjection.TagFamilies[0].Tags = []string{mgTagSvc}
+				req.Criteria = nil
+				ctx, cancel := context.WithCancel(t.Context())
+				sink := &cancelSink{cancel: cancel, after: sc.cancelAfter}
+				err := p.RevStream(ctx, bus.NewMessage(1, &measurev1.InternalQueryRequest{Request: req}), sink)
+				cancel()
+				if sc.wantErr {
+					require.Error(t, err, "run %d", run)
+				} else {
+					require.NoError(t, err, "run %d", run)
+				}
+				require.Zero(t, budget.Reserved(), "run %d left query pool reservations behind", run)
+			}
+		})
+	}
+}
+
+// cancelSink cancels the query after a number of chunks.
+type cancelSink struct {
+	cancel context.CancelFunc
+	after  int
+	seen   int
+}
+
+func (s *cancelSink) Send(ctx context.Context, _ bus.Message) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.seen++
+	if s.after > 0 && s.seen >= s.after {
+		s.cancel()
+	}
+	return nil
 }
