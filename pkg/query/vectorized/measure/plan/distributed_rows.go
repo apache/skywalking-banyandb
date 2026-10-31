@@ -62,17 +62,15 @@ type seenSIDKey struct {
 // column without going through TagIndex lookup. The merger prefers the
 // explicit index when >= 0; otherwise it resolves from the names.
 type distributedRowsSpec struct {
-	// Interrupt, when set, is polled while merging; a non-nil result aborts the merge with it.
 	Interrupt      func() error
 	Tracker        *vectorized.MemoryTracker
+	ChargeSeen     func(bytes uint64) error
 	OrderByFamily  string
 	OrderByTagName string
 	BatchSize      int
 	OrderByColIdx  int
-	// ChargeSeen, when set, is called with the bytes of each (group, series ID) the index-mode seen-set takes in.
-	ChargeSeen func(bytes uint64) error
-	Desc       bool
-	IndexMode  bool
+	Desc           bool
+	IndexMode      bool
 }
 
 // distributedRowKey keys the per-window dedup map. Two rows with the same
@@ -273,14 +271,14 @@ func mergeDistributedRows(frames [][]byte, spec distributedRowsSpec) ([]*vectori
 		releaseSources(sources)
 		return nil, fmt.Errorf("row merge requires series-id, timestamp, and version columns")
 	}
-	return mergeBatchSources(sources, schema, sameLayoutReshape(schema), spec)
+	return mergeBatchSources(context.Background(), sources, schema, sameLayoutReshape(schema), spec)
 }
 
 // mergeBatchSources runs the row merge over sources whose batches share the layout of schema, whether they were
 // decoded from frames or come straight from a local plan, and collects its output. It takes ownership of sources:
 // the output batches pin whatever the sources borrow, so the sources' own references are released when the merge
 // returns.
-func mergeBatchSources(sources []decodedBatchSource, schema *vectorized.BatchSchema,
+func mergeBatchSources(ctx context.Context, sources []decodedBatchSource, schema *vectorized.BatchSchema,
 	reshape func(*vectorized.RecordBatch) (*vectorized.RecordBatch, error), spec distributedRowsSpec,
 ) ([]*vectorized.RecordBatch, error) {
 	if len(sources) == 0 {
@@ -290,11 +288,11 @@ func mergeBatchSources(sources []decodedBatchSource, schema *vectorized.BatchSch
 	for _, src := range sources {
 		inputs = append(inputs, rowStreamInput{src: &sliceBatchSource{}, first: src.batch, source: src.source, group: src.group})
 	}
-	merger, err := newRowMerger(context.Background(), inputs, schema, reshape, spec)
+	merger, err := newRowMerger(ctx, inputs, schema, reshape, spec)
 	if err != nil {
 		return nil, err
 	}
-	return drainRowMerger(context.Background(), merger)
+	return drainRowMerger(ctx, merger)
 }
 
 // drainRowMerger collects every output batch of the merge and closes it.
@@ -442,17 +440,17 @@ func resolveDistributedSortColumn(schema *vectorized.BatchSchema, spec distribut
 // dedup map, the current in-progress output batch, the cross-window seenSID
 // guard for index-mode queries, and the returned batch list.
 type distributedRowEmitter struct {
-	pool       *vectorized.BatchPool
+	chargeSeen func(bytes uint64) error
 	schema     *vectorized.BatchSchema
 	tracker    *vectorized.MemoryTracker
 	seenSID    map[seenSIDKey]struct{}
 	window     map[distributedRowKey]*distributedRowItem
 	current    *vectorized.RecordBatch
+	pool       *vectorized.BatchPool
 	windowKey  []byte
 	output     []*vectorized.RecordBatch
 	batchSize  int
 	rowWidth   int64
-	chargeSeen func(bytes uint64) error
 	indexMode  bool
 	windowOpen bool
 	noDedup    bool
@@ -801,7 +799,7 @@ func mergeDistributedRowsMulti(groupFrames []groupFrame, mergedSchema *vectorize
 	if decodeErr != nil {
 		return nil, decodeErr
 	}
-	return mergeBatchSources(sources, mergedSchema, nil, spec)
+	return mergeBatchSources(context.Background(), sources, mergedSchema, nil, spec)
 }
 
 // activeDistributedRows returns the in-order list of active row indices for a

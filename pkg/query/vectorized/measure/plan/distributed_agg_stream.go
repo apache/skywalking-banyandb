@@ -34,18 +34,18 @@ import (
 // groups of the buckets still open are held, however long the time range is.
 type bucketReduceSource struct {
 	ctx        context.Context
-	set        *scanSet
-	reducers   map[int64]*vmeasure.PartialReducer
+	err        error
 	outSchema  *vectorized.BatchSchema
+	reducers   map[int64]*vmeasure.PartialReducer
 	template   func() *vmeasure.PartialReducer
+	set        *scanSet
 	marks      []int64
 	order      []int64
 	ready      []*vectorized.RecordBatch
 	ended      []bool
-	err        error
-	closed     bool
 	buckets    int
 	bucketsOut int
+	closed     bool
 }
 
 // newBucketReduceSource reads the first chunk of every node, which gives the layout of the partials.
@@ -79,6 +79,7 @@ func (s *bucketReduceSource) pull(ctx context.Context, i int) error {
 		return nil
 	}
 	defer batch.ReleaseOwners()
+	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 	return s.ingest(i, batch)
 }
 
@@ -206,6 +207,7 @@ func (s *bucketReduceSource) NextBatch(ctx context.Context) (*vectorized.RecordB
 			if len(s.order) == 0 {
 				return nil, nil
 			}
+			// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 			s.err = s.release(true)
 			continue
 		}
@@ -213,6 +215,7 @@ func (s *bucketReduceSource) NextBatch(ctx context.Context) (*vectorized.RecordB
 			s.err = err
 			continue
 		}
+		// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 		s.err = s.release(false)
 	}
 }

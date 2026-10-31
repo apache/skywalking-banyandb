@@ -175,9 +175,11 @@ func TestBucketWatermarkEmitsABucketOnceEveryNodeHasPassedIt(t *testing.T) {
 	}}
 	rows, served := runBucketed(t, bucketedPlan(t, false), cluster)
 	require.Equal(t, []bucketPartial{
-		{bucket: 1000, svc: "x", sum: 11}, {bucket: 1000, svc: "y", sum: 2},
+		{bucket: 1000, svc: "x", sum: 11},
+		{bucket: 1000, svc: "y", sum: 2},
 		{bucket: 2000, svc: "x", sum: 23},
-		{bucket: 3000, svc: "x", sum: 5}, {bucket: 3000, svc: "y", sum: 7},
+		{bucket: 3000, svc: "x", sum: 5},
+		{bucket: 3000, svc: "y", sum: 7},
 	}, rows)
 	require.Equal(t, []int{2, 2}, served, "the first bucket is out once both nodes have sent a later bucket, before they end")
 	require.Equal(t, pins, vectorized.OutstandingOwnerPins())

@@ -38,8 +38,8 @@ import (
 
 // payloadSink records the payloads of the chunks it receives.
 type payloadSink struct {
-	failAt   int
 	payloads []any
+	failAt   int
 }
 
 func (s *payloadSink) Send(ctx context.Context, chunk bus.Message) error {

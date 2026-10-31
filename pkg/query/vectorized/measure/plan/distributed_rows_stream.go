@@ -163,15 +163,15 @@ func (l *lazyRowIter) Close() error {
 type rowMerger struct {
 	ctx     context.Context
 	merger  itersort.Iterator[*distributedRowItem]
-	iters   []*lazyRowIter
+	err     error
 	emitter *distributedRowEmitter
 	retired *retiredBatches
-	spec    distributedRowsSpec
 	schema  *vectorized.BatchSchema
+	iters   []*lazyRowIter
+	spec    distributedRowsSpec
 	rows    int
 	done    bool
 	closed  bool
-	err     error
 }
 
 // newRowMerger builds the merge over inputs, whose batches have the layout of schema once reshape has run. It

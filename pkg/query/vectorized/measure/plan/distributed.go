@@ -636,6 +636,7 @@ func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, re
 				break
 			}
 			frames++
+			// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 			consumeErr := reducer.Consume(batch)
 			batch.ReleaseOwners()
 			if consumeErr != nil {
@@ -643,6 +644,7 @@ func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, re
 			}
 		}
 	}
+	// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
 	batches, aggValuePath, reduceErr := reducer.Finish()
 	if reduceErr != nil {
 		addTraceTag(reduceSpan, tracelabels.TagAggValuePath, string(aggValuePath))

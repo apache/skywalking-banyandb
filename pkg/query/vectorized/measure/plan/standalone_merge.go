@@ -117,7 +117,7 @@ func MergeStandaloneBatches(ctx context.Context, groups []*BatchResult, schema *
 			}
 		}
 	}
-	batches, err := mergeBatchSources(sources, schema, nil, spec)
+	batches, err := mergeBatchSources(ctx, sources, schema, nil, spec)
 	if err != nil {
 		return nil, fmt.Errorf("merge standalone batches: %w", err)
 	}

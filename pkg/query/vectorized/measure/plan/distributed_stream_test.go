@@ -101,8 +101,10 @@ func TestRowMergerPullsNodeChunksOnlyAsFarAsTheOutputNeeds(t *testing.T) {
 		rest = append(rest, batch)
 	}
 	assertRowsEqual(t, collectDistributedRows(rest), []rowMergeOutput{
-		{ts: 20, ver: 1, sid: 1, value: 2}, {ts: 30, ver: 1, sid: 1, value: 3},
-		{ts: 35, ver: 1, sid: 2, value: 6}, {ts: 40, ver: 1, sid: 1, value: 4},
+		{ts: 20, ver: 1, sid: 1, value: 2},
+		{ts: 30, ver: 1, sid: 1, value: 3},
+		{ts: 35, ver: 1, sid: 2, value: 6},
+		{ts: 40, ver: 1, sid: 1, value: 4},
 	})
 	releaseBatches(rest)
 	require.NoError(t, merger.Close())

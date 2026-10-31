@@ -47,13 +47,6 @@ func (patternTraceContext) GetIndexRules() []*databasev1.IndexRule {
 	return []*databasev1.IndexRule{{Metadata: &commonv1.Metadata{Name: "service", Id: 7}, Tags: []string{"service_id"}, Type: databasev1.IndexRule_TYPE_INVERTED}}
 }
 
-type patternRejectedFuture struct {
-	bus.Future
-	err error
-}
-
-func (f patternRejectedFuture) Get() (bus.Message, error) { return bus.Message{}, f.err }
-
 type patternMixedWorkers struct {
 	body  []byte
 	topic bus.Topic

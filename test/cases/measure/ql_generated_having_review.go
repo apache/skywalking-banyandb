@@ -31,7 +31,6 @@ import (
 	ql "github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
-	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	measuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
 	"github.com/apache/skywalking-banyandb/test/cases/measure/qlgen"
 )
@@ -107,7 +106,7 @@ func verifyGeneratedHavingReviewCall(base time.Time, c qlgen.Case) {
 	gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 	gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "only QL query RPCs are used")
 	gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-	gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
+	expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 	for _, pair := range [][2]ql.FilterStats{{filterBefore, ql.FilterExecutionStats()}, {havingBefore, ql.HavingExecutionStats()}} {
 		gm.Expect(pair[1].LiveBytes).To(gm.Equal(pair[0].LiveBytes))
 		gm.Expect(pair[1].ReservedBytes - pair[0].ReservedBytes).To(gm.Equal(pair[1].ReleasedBytes - pair[0].ReleasedBytes))

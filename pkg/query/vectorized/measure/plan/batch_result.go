@@ -36,16 +36,16 @@ import (
 // must retain owners and copy descriptors before another adapter can recycle them. Close is idempotent.
 // Native execution remains eager: this handle does not imply streaming fanout.
 type BatchResult struct {
-	Trace          *commonv1.Trace
-	traceFinalizer func() *commonv1.Trace
-	iteratorSpan   *query.Span
-	tracedIterator *batchTraceIterator
-	onClose        []func()
 	source         vectorized.PullOperator
 	schema         *vectorized.BatchSchema
+	iteratorSpan   *query.Span
+	tracedIterator *batchTraceIterator
+	traceFinalizer func() *commonv1.Trace
+	Trace          *commonv1.Trace
 	plan           *DistributedPlan
 	request        *measurev1.QueryRequest
 	tracker        *vectorized.MemoryTracker
+	onClose        []func()
 	batchSize      int
 	reserved       int64
 	closed         bool

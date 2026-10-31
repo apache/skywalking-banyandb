@@ -129,7 +129,7 @@ func verifyGeneratedNativeAggregateCall(base time.Time, c qlgen.Case, branches u
 		after := vmeasure.BatchExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-		gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
+		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(ql.AggregateExecutionStats().LiveBytes).To(gm.Equal(localBefore.LiveBytes))
 		gm.Expect(ql.NativeAggregateExecutionStats().LiveBytes).To(gm.Equal(nativeBefore.LiveBytes))
 		if c.NoScan {

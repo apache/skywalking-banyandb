@@ -124,7 +124,7 @@ func verifyGeneratedGroupingCall(base time.Time, c qlgen.Case, branches uint64, 
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
 		gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "fixture visibility and cases use only the QL endpoint")
-		gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
+		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		for _, pair := range [][2]ql.ExpressionStats{
 			{groupBefore, ql.GroupExpressionExecutionStats()}, {expressionBefore, ql.ExpressionExecutionStats()},
 		} {

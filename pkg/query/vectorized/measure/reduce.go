@@ -184,19 +184,19 @@ func ReducePartialBatchesToSchema(
 // partial defines the partial layout unless a target is given. The reducer copies what it keeps, so a partial
 // can be released as soon as Consume returns.
 type PartialReducer struct {
-	target       *vectorized.BatchSchema
-	tracker      *vectorized.MemoryTracker
+	refSchema    *vectorized.BatchSchema
 	op           *BatchAggregation
 	scratch      *vectorized.RecordBatch
 	wideScratch  *vectorized.RecordBatch
+	tracker      *vectorized.MemoryTracker
+	target       *vectorized.BatchSchema
 	path         AggValuePath
 	keyTagFamily string
 	keyTagNames  []string
 	aggSpecs     []AggReduceSpec
-	refSchema    *vectorized.BatchSchema
-	batchSize    int
-	partials     int
 	reserved     int64
+	partials     int
+	batchSize    int
 	bucketed     bool
 }
 

@@ -152,7 +152,7 @@ func RegisterGeneratedQLTable(description string) bool {
 						after := vmeasure.BatchExecutionStats()
 						gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 						gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-						gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(memoryBefore.LiveReservedBytes))
+						expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 						if testCase.NoScan {
 							gm.Expect(after.NativeLeafCalls).To(gm.Equal(before.NativeLeafCalls), "Empty, LIMIT 0 and binding errors must skip native scans")
 						}
