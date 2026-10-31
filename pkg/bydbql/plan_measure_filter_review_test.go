@@ -120,12 +120,12 @@ func TestMeasureExpressionAndWhereArrayBindingsKeepHiddenInputsPrivate(t *testin
 			require.Equal(t, want, selected.Args[index+1].Literal.Int64)
 		}
 		membership, excluded := execution.Plan.Filter.Args[0], execution.Plan.Filter.Args[1]
-		require.Len(t, membership.Args, len(input.hosts)+1)
-		require.Len(t, excluded.Args, len(input.excluded)+1)
-		for index, want := range input.hosts {
-			require.Equal(t, ql.ExpressionString, membership.Args[index+1].Type)
-			require.Equal(t, want, membership.Args[index+1].Literal.String)
+		if len(input.hosts) == 0 {
+			require.Len(t, membership.Args, 1)
+		} else {
+			require.Equal(t, input.hosts, execution.Request.Criteria.GetCondition().GetValue().GetStrArray().GetValue())
 		}
+		require.Len(t, excluded.Args, len(input.excluded)+1)
 		for index, want := range input.excluded {
 			require.Equal(t, ql.ExpressionInt, excluded.Args[index+1].Type)
 			require.Equal(t, want, excluded.Args[index+1].Literal.Int64)

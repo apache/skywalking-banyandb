@@ -56,7 +56,9 @@ type ExpressionScalar struct {
 // Op is literal, column, cast, case, simple_case, coalesce, +, -, *, /, %,
 // negate, positive, =, !=, <, <=, >, >=, and, or, not, is_null, is_not_null,
 // in, not_in, contains or not_contains. Cast Type names the target. CASE arguments are condition/value
-// pairs followed by ELSE; simple_case prepends the comparison value.
+// pairs followed by ELSE; simple_case prepends the comparison value. IN and
+// NOT IN accept compact literal STRING arrays in RHS arguments; their elements
+// are membership values, while the left operand remains scalar.
 type Expression struct {
 	Op      string
 	Args    []*Expression

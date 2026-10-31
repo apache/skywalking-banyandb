@@ -189,7 +189,7 @@ func resolveExpressionComparison(expression *Expression) error {
 	if len(expression.Args) < minimum || (minimum == 2 && len(expression.Args) != 2) {
 		return expressionError("invalid %s arguments", expression.Op)
 	}
-	typ, err := commonExpressionType(expression.Args)
+	typ, err := commonExpressionTypeWithMembership(expression.Args, minimum == 1)
 	if err != nil {
 		return err
 	}
@@ -199,7 +199,12 @@ func resolveExpressionComparison(expression *Expression) error {
 	if typ == ExpressionBool && expression.Op != "=" && expression.Op != "!=" && expression.Op != "in" && expression.Op != "not_in" {
 		return expressionError("ordered BOOLEAN comparison is unsupported")
 	}
-	coerceExpressionArgs(expression.Args, typ)
+	for index, arg := range expression.Args {
+		if minimum == 1 && index > 0 && arg.Op == "literal" && arg.Type == ExpressionStringArray {
+			continue
+		}
+		coerceExpressionArgs(expression.Args[index:index+1], typ)
+	}
 	expression.Type = ExpressionBool
 	return nil
 }
@@ -319,24 +324,35 @@ func resolveExpressionCoalesce(expression *Expression) error {
 }
 
 func commonExpressionType(args []*Expression) (ExpressionType, error) {
+	return commonExpressionTypeWithMembership(args, false)
+}
+
+func commonExpressionTypeWithMembership(args []*Expression, membership bool) (ExpressionType, error) {
 	typ := ExpressionNull
-	for _, arg := range args {
-		if arg.Type == ExpressionNull || arg.Type == typ {
+	for index, arg := range args {
+		argumentType := arg.Type
+		if membership && index > 0 && arg.Op == "literal" && argumentType == ExpressionStringArray {
+			if len(arg.Literal.Strings) == 0 && !arg.Literal.Null {
+				continue
+			}
+			argumentType = ExpressionString
+		}
+		if argumentType == ExpressionNull || argumentType == typ {
 			continue
 		}
 		if typ == ExpressionNull {
-			typ = arg.Type
+			typ = argumentType
 			continue
 		}
-		if (typ == ExpressionDecimal && arg.Type == ExpressionInt) || (typ == ExpressionInt && arg.Type == ExpressionDecimal) {
+		if (typ == ExpressionDecimal && argumentType == ExpressionInt) || (typ == ExpressionInt && argumentType == ExpressionDecimal) {
 			typ = ExpressionDecimal
 			continue
 		}
-		if (typ == ExpressionInt && arg.Type == ExpressionFloat) || (typ == ExpressionFloat && arg.Type == ExpressionInt) {
+		if (typ == ExpressionInt && argumentType == ExpressionFloat) || (typ == ExpressionFloat && argumentType == ExpressionInt) {
 			typ = ExpressionFloat
 			continue
 		}
-		return ExpressionNull, expressionError("incompatible expression types %d and %d", typ, arg.Type)
+		return ExpressionNull, expressionError("incompatible expression types %d and %d", typ, argumentType)
 	}
 	return typ, nil
 }

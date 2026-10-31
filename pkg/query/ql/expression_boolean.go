@@ -293,14 +293,43 @@ func (n *expressionNode) membership(not bool, typ ExpressionType) func(context.C
 				if left.isNull(row) || n.value.bools[row] != not {
 					continue
 				}
-				if right.isNull(row) {
+				switch {
+				case right.isNull(row):
 					n.value.nulls[row] = true
-				} else if compare(left, right, row) {
+				case right.typ == ExpressionStringArray:
+					matched, matchErr := containsExpressionMember(ctx, right.literal.Strings, left.stringAt(row))
+					if matchErr != nil {
+						return nil, matchErr
+					}
+					if matched {
+						n.value.nulls[row] = false
+						n.value.bools[row] = !not
+					}
+				case compare(left, right, row):
 					n.value.nulls[row] = false
 					n.value.bools[row] = !not
 				}
 			}
 		}
 		return &n.value, nil
+	}
+}
+
+func (n *expressionNode) compareExpression(expr *Expression, compact bool) func(context.Context, *vectorized.RecordBatch, []uint16) (*expressionVector, error) {
+	comparisonType := expr.Args[0].Type
+	// Integers retain their type when resolved alongside exact decimals.
+	for _, arg := range expr.Args[1:] {
+		if arg.Type == ExpressionDecimal {
+			comparisonType = ExpressionDecimal
+			break
+		}
+	}
+	switch {
+	case compact:
+		return n.stringMembership(expr.Args[1:], expr.Op == "not_in")
+	case expr.Op == "in" || expr.Op == "not_in":
+		return n.membership(expr.Op == "not_in", comparisonType)
+	default:
+		return n.comparison(expr.Op, comparisonType)
 	}
 }

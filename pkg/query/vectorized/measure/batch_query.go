@@ -32,6 +32,8 @@ import (
 type BatchQueryRequest struct {
 	Request  *measurev1.QueryRequest
 	Patterns []model.IndexedPattern
+	// SeriesOrder permits the local source to visit complete series for an order-independent QL aggregate.
+	SeriesOrder bool
 }
 
 // BatchExecutionCounters records activation of the two real batch callers.

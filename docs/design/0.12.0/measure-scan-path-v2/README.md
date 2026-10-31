@@ -134,6 +134,37 @@ The soak ran 5,488 queries in 70 s with every scan resource returning to baselin
 
 ---
 
+### 2.4 QL count scans and reusable decoded storage
+
+A local QL plan may consume complete series when `RawPlan.CanScanSeries` proves
+that row order cannot affect its result. The initial proof covers COUNT and
+COUNT DISTINCT, nonfallible row expressions, and grouped counts only when the
+existing final ORDER BY covers every grouping key. Hidden aggregate calls are
+checked too. SUM/AVG, MIN/MAX, time buckets, outer DISTINCT, and incomplete group
+ordering retain their existing scan order.
+
+The liaison carries this proof in the in-process `BatchQueryRequest.SeriesOrder`
+flag. Local dispatch accepts it only for a complete, single-group raw input,
+without native ordering, pagination, aggregation or partial output. It selects
+the existing series-order scan; it does not sort source rows in memory. The flag
+is not serialized. Distributed queries, multi-group queries and index-mode
+requests keep their current dispatch path. Within each series, existing segment
+merging and newest-version deduplication still apply.
+
+Series scans with a shared tracker can reuse query-owned decoded storage slots.
+Each slot retains its conservative reservation while idle. Reuse transfers actual
+timestamp/version, column, decoder and byte-arena backing to the next cursor;
+it does not refund or recycle cumulative admission credit. A slot must cover the
+next block's row and uncompressed-byte bounds independently. If no idle slot fits,
+allocating another slot requires another reservation. Duplicate source
+projections use ordinary decoding to avoid undercounting copied payloads.
+
+A slot becomes idle only after the cursor's final borrowing batch releases it.
+The existing tracked `measure-blockCursor` pool accounts for held cursors.
+Closing the scan releases idle slots; slots pinned by outstanding batches remain
+charged until those batches release. Per-active-block native/node reservations,
+shared query limits and monotonic admission lease semantics remain in force.
+
 ## 3. Relationship to batch v2
 
 | This design uses from batch v2 | This design gives batch v2 |
