@@ -21,7 +21,9 @@ import (
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -438,6 +440,11 @@ func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
 	exhausted := QueryFailure(fmt.Errorf("scan: %w", ErrQueryResourceExhausted), "execute %s: %v", "plan", ErrQueryResourceExhausted)
 	if exhausted.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
 		t.Fatalf("status %v", exhausted.Status())
+	}
+	for _, limit := range []error{vectorized.ErrMemoryBudgetExceeded, native.ErrQueryLimit} {
+		if got := QueryFailure(fmt.Errorf("scan: %w", limit), "execute plan: %v", limit).Status(); got != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+			t.Fatalf("%v: status %v, want RESOURCE_EXHAUSTED", limit, got)
+		}
 	}
 	failure := QueryFailure(errors.New("boom"), "execute %s: %v", "plan", "boom")
 	if failure.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
