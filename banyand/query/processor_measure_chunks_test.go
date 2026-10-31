@@ -242,10 +242,10 @@ func TestMeasureRevStreamReturnsEverythingItAdmittedAndCharged(t *testing.T) {
 	type scenario struct {
 		cancelAfter int
 		pullErrAt   int
-		limit       uint32
 		batches     int
-		wantErr     bool
 		runs        int
+		limit       uint32
+		wantErr     bool
 	}
 	scenarios := map[string]scenario{
 		"completed":    {batches: 20, limit: 100000, runs: 200},
