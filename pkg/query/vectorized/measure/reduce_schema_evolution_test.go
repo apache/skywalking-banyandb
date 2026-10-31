@@ -421,3 +421,25 @@ func TestReduceRawFramesToSchema_ScopesReplicaDedupByGroup(t *testing.T) {
 		t.Fatalf("one group: sum = %s, want 5", got)
 	}
 }
+
+func TestReduceToSchema_RejectsScopesThatDontMatchTheFrames(t *testing.T) {
+	schema := evolvedRawSchema(vectorized.ColumnTypeString)
+	fromA := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 5}}, AggSum)
+	fromB := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 18}}, AggSum)
+	spec := []AggReduceSpec{{OutputName: "value", Func: AggSum}}
+	tracker := vectorized.NewMemoryTracker(1 << 30)
+	// A short or misaligned scopes slice would apply the wrong group's scope, so it must fail loudly.
+	for _, scopes := range [][]int64{{0}, {0, 1, 1}} {
+		if _, _, err := ReduceRawFramesToSchema([][]byte{fromA, fromB}, nil, scopes, "default", []string{"svc"}, false, spec, 1024, tracker); err == nil {
+			t.Fatalf("ReduceRawFramesToSchema with %d scopes for 2 frames: want an error", len(scopes))
+		}
+	}
+	a, decodeErr := frame.Decode(fromA)
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	defer a.ReleaseOwners()
+	if _, _, err := ReducePartialBatchesToSchema([]*vectorized.RecordBatch{a}, nil, []int64{0, 1}, "default", []string{"svc"}, false, spec, 1024, tracker); err == nil {
+		t.Fatal("ReducePartialBatchesToSchema with 2 scopes for 1 partial: want an error")
+	}
+}

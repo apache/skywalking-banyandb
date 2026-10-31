@@ -105,9 +105,9 @@ func ReduceRawFrames(
 // target before reducing (see checkPartialLayouts), so target, not whichever
 // partials happen to arrive, decides the reduced layout. A nil target
 // requires every partial to share one layout, like ReduceRawFrames.
-// scopes, when set, holds each frame's replica-dedup scope (its storage
-// group, see BatchAggregation.SetDedupScope); nil puts every frame in one
-// scope.
+// scopes, when set, holds one replica-dedup scope per frame, in the same
+// order as frames (its storage group, see BatchAggregation.SetDedupScope);
+// len(scopes) must equal len(frames). nil puts every frame in one scope.
 func ReduceRawFramesToSchema(
 	frames [][]byte,
 	target *vectorized.BatchSchema,
@@ -119,6 +119,9 @@ func ReduceRawFramesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
+	if scopes != nil && len(scopes) != len(frames) {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReduceRawFrames: %d scopes for %d frames", len(scopes), len(frames))
+	}
 	decoded := make([]*vectorized.RecordBatch, 0, len(frames))
 	// A columnar partial borrows its frame; the reduce copies the keys and values it keeps
 	// (the aggregation inserts by copy), so the partials can go once it returns.
@@ -166,8 +169,9 @@ func ReducePartialBatches(
 
 // ReducePartialBatchesToSchema is ReducePartialBatches with every
 // non-empty partial first reshaped onto target (see checkPartialLayouts). A nil
-// target keeps ReducePartialBatches' behavior. scopes, when set, holds each
-// partial's replica-dedup scope; nil puts every partial in one scope.
+// target keeps ReducePartialBatches' behavior. scopes, when set, holds one
+// replica-dedup scope per partial, in the same order as partials;
+// len(scopes) must equal len(partials). nil puts every partial in one scope.
 func ReducePartialBatchesToSchema(
 	partials []*vectorized.RecordBatch,
 	target *vectorized.BatchSchema,
@@ -179,6 +183,9 @@ func ReducePartialBatchesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
+	if scopes != nil && len(scopes) != len(partials) {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %d scopes for %d partials", len(scopes), len(partials))
+	}
 	if layoutErr := checkPartialLayouts(partials, target, keyTagFamily, keyTagNames); layoutErr != nil {
 		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", layoutErr)
 	}
