@@ -283,3 +283,32 @@ func TestNilSafety(t *testing.T) {
 		releaseElements(es)
 	})
 }
+
+func TestUnmarshalTag_StrArr_Idempotency(t *testing.T) {
+	// Raw escaped vararray bytes encoding ["a|b", "c"] -> "a\|b|c|"
+	raw := []byte("a\\|b|c|")
+
+	// 1st decode
+	dest1, err := unmarshalTag(nil, raw, pbv1.ValueTypeStrArr)
+	require.NoError(t, err)
+	require.Len(t, dest1, 2)
+	assert.Equal(t, []byte("a|b"), dest1[0])
+	assert.Equal(t, []byte("c"), dest1[1])
+
+	// 2nd decode on the same buffer must yield identical values (idempotency)
+	dest2, err := unmarshalTag(nil, raw, pbv1.ValueTypeStrArr)
+	require.NoError(t, err)
+	assert.Equal(t, dest1, dest2, "subsequent decode must yield identical values")
+}
+
+func TestUnmarshalTag_StrArr_Immutability(t *testing.T) {
+	// Raw escaped vararray bytes encoding ["a|b", "c"] -> "a\|b|c|"
+	raw := []byte("a\\|b|c|")
+	snapshot := append([]byte(nil), raw...)
+
+	_, err := unmarshalTag(nil, raw, pbv1.ValueTypeStrArr)
+	require.NoError(t, err)
+
+	// Source buffer must remain byte-identical (immutability)
+	assert.Equal(t, snapshot, raw, "input buffer must remain byte-identical after decoding")
+}
