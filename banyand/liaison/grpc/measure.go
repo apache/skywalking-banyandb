@@ -66,11 +66,13 @@ type measureService struct {
 	pipeline           queue.Client
 	broadcaster        queue.Client
 	*discoveryService
-	l               *logger.Logger
-	metrics         *metrics
-	queryBudget     *protector.QueryBudget
-	writeTimeout    time.Duration
-	maxWaitDuration time.Duration
+	l                     *logger.Logger
+	metrics               *metrics
+	queryBudget           *protector.QueryBudget
+	writeTimeout          time.Duration
+	maxWaitDuration       time.Duration
+	maxBatchQueries       int
+	batchQueryConcurrency int
 }
 
 func (ms *measureService) setLogger(log *logger.Logger) {
@@ -396,6 +398,81 @@ func (ms *measureService) handleWriteCleanup(publisher queue.BatchPublisher, suc
 }
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
+
+type measureQueryExecutor func(ctx context.Context, req *measurev1.QueryRequest) (*measurev1.QueryResponse, error)
+
+type indexedMeasureResponse struct {
+	index int
+	resp  *measurev1.QueryResponse
+	err   error
+}
+
+func (ms *measureService) BatchQuery(ctx context.Context, req *measurev1.BatchQueryRequest) (*measurev1.BatchQueryResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "batch query request is nil")
+	}
+	queries := req.GetQueries()
+	batchQueryCount := len(queries)
+	maxBatch := ms.maxBatchQueries
+	if maxBatch <= 0 {
+		maxBatch = 64
+	}
+	if batchQueryCount > maxBatch {
+		return nil, status.Errorf(
+			codes.InvalidArgument,
+			"batch size %d exceeds configured limit %d",
+			batchQueryCount, maxBatch,
+		)
+	}
+
+	concurrency := ms.batchQueryConcurrency
+	if concurrency <= 0 {
+		concurrency = 16
+	}
+
+	batchResultsCh := make(chan indexedMeasureResponse, batchQueryCount)
+	executor := func(c context.Context, q *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
+		return ms.query(c, q, false)
+	}
+
+	for start := 0; start < batchQueryCount; start += concurrency {
+		end := min(start+concurrency, batchQueryCount)
+		measureSubBatch := queries[start:end]
+		ms.dispatchMeasureSubBatch(ctx, measureSubBatch, start, batchResultsCh, executor)
+	}
+
+	responses := ms.collectBatchResponses(batchResultsCh, batchQueryCount)
+	return &measurev1.BatchQueryResponse{Responses: responses}, nil
+}
+
+func (ms *measureService) dispatchMeasureSubBatch(
+	ctx context.Context,
+	subBatch []*measurev1.QueryRequest,
+	offset int,
+	batchResultsCh chan<- indexedMeasureResponse,
+	execute measureQueryExecutor,
+) {
+	for localIdx, q := range subBatch {
+		globalIdx := offset + localIdx
+		go func(targetIdx int, query *measurev1.QueryRequest) {
+			resp, err := execute(ctx, query)
+			batchResultsCh <- indexedMeasureResponse{index: targetIdx, resp: resp, err: err}
+		}(globalIdx, q)
+	}
+}
+
+func (ms *measureService) collectBatchResponses(batchResultsCh <-chan indexedMeasureResponse, total int) []*measurev1.QueryResponse {
+	responses := make([]*measurev1.QueryResponse, total)
+	for i := 0; i < total; i++ {
+		res := <-batchResultsCh
+		if res.err != nil {
+			responses[res.index] = &measurev1.QueryResponse{}
+			continue
+		}
+		responses[res.index] = res.resp
+	}
+	return responses
+}
 
 func (ms *measureService) Query(ctx context.Context, req *measurev1.QueryRequest) (*measurev1.QueryResponse, error) {
 	return ms.query(ctx, req, false)

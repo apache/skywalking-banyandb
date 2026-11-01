@@ -41,6 +41,8 @@
     - [Status](#banyandb-model-v1-Status)
   
 - [banyandb/measure/v1/query.proto](#banyandb_measure_v1_query-proto)
+    - [BatchQueryRequest](#banyandb-measure-v1-BatchQueryRequest)
+    - [BatchQueryResponse](#banyandb-measure-v1-BatchQueryResponse)
     - [DataPoint](#banyandb-measure-v1-DataPoint)
     - [DataPoint.Field](#banyandb-measure-v1-DataPoint-Field)
     - [InternalDataPoint](#banyandb-measure-v1-InternalDataPoint)
@@ -1070,6 +1072,36 @@ Status is the response status for write
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/measure/v1/query.proto
+
+
+
+<a name="banyandb-measure-v1-BatchQueryRequest"></a>
+
+### BatchQueryRequest
+BatchQueryRequest is the request contract for batch queries.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| queries | [QueryRequest](#banyandb-measure-v1-QueryRequest) | repeated | queries contains the sub-queries to execute. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-BatchQueryResponse"></a>
+
+### BatchQueryResponse
+BatchQueryResponse is the response contract for batch queries.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| responses | [QueryResponse](#banyandb-measure-v1-QueryResponse) | repeated | responses contains the results corresponding to the sub-queries 1-to-1. |
+
+
+
 
 
 
@@ -6621,6 +6653,7 @@ WriteResponse is the response contract for write
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | Query | [QueryRequest](#banyandb-measure-v1-QueryRequest) | [QueryResponse](#banyandb-measure-v1-QueryResponse) |  |
+| BatchQuery | [BatchQueryRequest](#banyandb-measure-v1-BatchQueryRequest) | [BatchQueryResponse](#banyandb-measure-v1-BatchQueryResponse) |  |
 | InternalQuery | [InternalQueryRequest](#banyandb-measure-v1-InternalQueryRequest) | [InternalQueryResponse](#banyandb-measure-v1-InternalQueryResponse) | InternalQuery is used for internal distributed query between liaison and data nodes. Returns InternalQueryResponse with shard information for proper deduplication. |
 | Write | [WriteRequest](#banyandb-measure-v1-WriteRequest) stream | [WriteResponse](#banyandb-measure-v1-WriteResponse) stream |  |
 | TopN | [TopNRequest](#banyandb-measure-v1-TopNRequest) | [TopNResponse](#banyandb-measure-v1-TopNResponse) |  |

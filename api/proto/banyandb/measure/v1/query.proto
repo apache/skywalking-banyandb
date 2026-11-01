@@ -187,3 +187,19 @@ message QueryRequest {
   // means "don't gate". A group not listed in the map is not gated.
   map<string, int64> group_mod_revisions = 50;
 }
+
+// BatchQueryRequest is the request contract for batch queries.
+message BatchQueryRequest {
+  // queries contains the sub-queries to execute.
+  repeated QueryRequest queries = 1 [(validate.rules).repeated = {
+    min_items: 1
+    max_items: 64
+  }];
+}
+
+// BatchQueryResponse is the response contract for batch queries.
+message BatchQueryResponse {
+  // responses contains the results corresponding to the sub-queries 1-to-1.
+  repeated QueryResponse responses = 1;
+}
+

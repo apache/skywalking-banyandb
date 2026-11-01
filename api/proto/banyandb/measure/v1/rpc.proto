@@ -46,6 +46,13 @@ service MeasureService {
     };
   }
 
+  rpc BatchQuery(BatchQueryRequest) returns (BatchQueryResponse) {
+    option (google.api.http) = {
+      post: "/v1/measure/batch-query"
+      body: "*"
+    };
+  }
+
   // InternalQuery is used for internal distributed query between liaison and data nodes.
   // Returns InternalQueryResponse with shard information for proper deduplication.
   rpc InternalQuery(InternalQueryRequest) returns (InternalQueryResponse);
