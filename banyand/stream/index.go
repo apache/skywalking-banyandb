@@ -122,19 +122,14 @@ func (e *elementIndex) Search(ctx context.Context, seriesList []uint64, filter i
 		if pl == nil || pl.IsEmpty() {
 			continue
 		}
-		if result == nil {
-			result = pl
-		} else {
-			if err := result.Union(pl); err != nil {
-				return nil, nil, err
-			}
+		if result, err = posting.Union(result, pl); err != nil {
+			return nil, nil, err
 		}
-		if resultTS == nil {
-			resultTS = plTS
-		} else {
-			if err := resultTS.Union(plTS); err != nil {
-				return nil, nil, err
-			}
+		if plTS == nil || plTS.IsEmpty() {
+			continue
+		}
+		if resultTS, err = posting.Union(resultTS, plTS); err != nil {
+			return nil, nil, err
 		}
 	}
 	return result, resultTS, nil
