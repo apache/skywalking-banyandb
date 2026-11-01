@@ -209,6 +209,59 @@ func TestDedupPriorityQueue_PopCleanup(t *testing.T) {
 	}
 }
 
+func TestDedupPriorityQueue_ReplaceLowestCleanup(t *testing.T) {
+	pq := NewPriorityQueue(func(a, b interface{}) int {
+		return a.(*testHashableElement).val - b.(*testHashableElement).val
+	}, false)
+
+	lowest := &testHashableElement{id: "lowest", val: 10}
+	heap.Push(pq, lowest)
+	heap.Push(pq, &testHashableElement{id: "kept", val: 20})
+
+	// The replaced element leaves the queue, so it must become untracked as Pop does.
+	replacement := &testHashableElement{id: "replacement", val: 30}
+	pq.ReplaceLowest(replacement)
+
+	heap.Push(pq, lowest)
+	if pq.Len() != 3 {
+		t.Errorf("Expected a replaced element to be pushable again, got %d elements", pq.Len())
+	}
+
+	// The replacing element stays in the queue, so it must become tracked as Push does.
+	heap.Push(pq, &testHashableElement{id: "replacement", val: 40})
+	if pq.Len() != 3 {
+		t.Errorf("Expected the replacing element to stay deduplicated, got %d elements", pq.Len())
+	}
+	for _, e := range pq.Items {
+		if e.(*testHashableElement).val == 40 {
+			t.Errorf("Expected the content-duplicate of the replacement to be rejected")
+		}
+	}
+	if r := replacement.GetIndex(); r < 0 || r >= pq.Len() || pq.Items[r] != replacement {
+		t.Errorf("Expected the replacing element to point at its slot, got index %d of %d", r, pq.Len())
+	}
+}
+
+func TestDedupPriorityQueue_ReplaceLowestPreservesSize(t *testing.T) {
+	pq := NewPriorityQueue(func(a, b interface{}) int {
+		return a.(*testHashableElement).val - b.(*testHashableElement).val
+	}, false)
+
+	a := &testHashableElement{id: "a", val: 10}
+	b := &testHashableElement{id: "b", val: 20}
+	heap.Push(pq, a)
+	heap.Push(pq, b)
+
+	// A replacement rejected as a content duplicate must not evict the lowest silently.
+	pq.ReplaceLowest(&testHashableElement{id: "b", val: 25})
+	if pq.Len() != 2 {
+		t.Errorf("Expected the queue size to be preserved when the replacement is rejected, got %d elements", pq.Len())
+	}
+	if pq.Items[0] != a {
+		t.Errorf("Expected the evicted lowest to be restored at the root, got %v", pq.Items[0])
+	}
+}
+
 func TestDedupPriorityQueue_MixedElementTypes(t *testing.T) {
 	// Create a priority queue that can handle both Element and HashableElement
 	pq := NewPriorityQueue(func(a, b interface{}) int {
