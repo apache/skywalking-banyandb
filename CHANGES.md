@@ -55,6 +55,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Fix DictionaryFilter.ContainsAll mutating cached filter arrays during UnmarshalVarArray causing false-negative block skips, and harden trace query and sidx element decoding against in-place unescaping.
 - Guard shared empty posting list against in-place mutations in query filters without adding allocations to the empty-search path.
 - Fix unintroduced merged and flushed parts leaking open file descriptors and orphaned directories on shutdown in measure and stream.
 - Stop rejecting stream, trace and property queries whose limit + offset exceeds 1792 when no memory limit is configured. Admission estimated 4 KiB per requested row before reading data, so OAP's default LIMIT 10000 failed with RESOURCE_EXHAUSTED even on tiny datasets; memory is still bounded by the 100,000-row window ceiling, the preallocation caps and the charges for data actually read.
