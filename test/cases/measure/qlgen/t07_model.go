@@ -40,6 +40,7 @@ type t07Column struct {
 	Function string
 	Target   string
 	Alias    string
+	Distinct bool
 }
 
 type t07Query struct {
@@ -60,7 +61,11 @@ func (c t07Column) name() string {
 		return c.Alias
 	}
 	if c.Function != "" {
-		return strings.ToUpper(c.Function) + "(" + c.Target + ")"
+		target := c.Target
+		if c.Distinct {
+			target = "DISTINCT " + target
+		}
+		return strings.ToUpper(c.Function) + "(" + target + ")"
 	}
 	_, name, qualified := strings.Cut(c.Target, ".")
 	if qualified {
@@ -74,6 +79,9 @@ func renderT07(q t07Query) (string, error) {
 	for _, column := range q.Columns {
 		expression := column.Target
 		if column.Function != "" {
+			if column.Distinct {
+				expression = "DISTINCT " + expression
+			}
 			expression = column.Function + "(" + expression + ")"
 		} else if column.Target == "v" || column.Target == "f" {
 			expression += "::FIELD"

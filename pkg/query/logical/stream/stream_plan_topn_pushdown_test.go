@@ -240,3 +240,36 @@ func pushdownActiveRows(batch *vectorized.RecordBatch) []int {
 	}
 	return rows
 }
+
+// TestOpenVectorizedYieldsTheCollectedBatchesOneAtATime pins OpenVectorized to
+// ExecuteVectorized: the iterator returns the same non-empty batches in the same
+// order, ends with nil, and Close is idempotent.
+func TestOpenVectorizedYieldsTheCollectedBatchesOneAtATime(t *testing.T) {
+	collected, schema, err := newPushdownFilteredPlan(t).ExecuteVectorized(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, collected)
+
+	it, openSchema, err := newPushdownFilteredPlan(t).OpenVectorized(context.Background())
+	require.NoError(t, err)
+	require.NotNil(t, openSchema)
+	var ids, wantIDs []uint64
+	for _, batch := range collected {
+		for _, rowIdx := range pushdownActiveRows(batch) {
+			wantIDs = append(wantIDs, vstream.ColumnToElementID(batch.Columns[schema.ElementIDIndex()].(*vectorized.TypedColumn[int64]).Data()[rowIdx]))
+		}
+	}
+	for {
+		batch, nextErr := it.NextBatch(context.Background())
+		require.NoError(t, nextErr)
+		if batch == nil {
+			break
+		}
+		require.NotZero(t, batch.ActiveLen())
+		for _, rowIdx := range pushdownActiveRows(batch) {
+			ids = append(ids, vstream.ColumnToElementID(batch.Columns[openSchema.ElementIDIndex()].(*vectorized.TypedColumn[int64]).Data()[rowIdx]))
+		}
+	}
+	require.Equal(t, wantIDs, ids)
+	require.NoError(t, it.Close())
+	require.NoError(t, it.Close())
+}

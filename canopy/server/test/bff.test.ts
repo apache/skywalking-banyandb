@@ -19,12 +19,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Fastify, { FastifyInstance } from 'fastify';
-import secureSession from '@fastify/secure-session';
+import { registerSession } from '../src/plugins/session.js';
 import { registerAuth } from '../src/routes/auth.js';
 import { registerProxy } from '../src/plugins/proxy.js';
 import { registerStatic } from '../src/plugins/static.js';
 import type { Config } from '../src/config.js';
 import bcrypt from 'bcryptjs';
+import { argon2id } from 'hash-wasm';
+import { randomBytes } from 'node:crypto';
+import { hashSecret } from '../src/lib/tokens.js';
 import { getGlobalDispatcher, MockAgent, setGlobalDispatcher } from 'undici';
 
 // Mock DNS so SSRF check passes for test hostnames (no real DNS in unit tests)
@@ -55,10 +58,16 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
     upstreamTimeoutMs: 5000,
     upstreamUsername: undefined,
     upstreamPassword: undefined,
-    users: [
-      { username: 'admin', passwordHash: adminHash, role: 'admin' },
-      { username: 'reader', passwordHash: readonlyHash, role: 'readonly' },
-    ],
+    auth: {
+      backend: 'local',
+      local: {
+        users: [
+          { username: 'admin', passwordHash: adminHash, role: 'admin' },
+          { username: 'reader', passwordHash: readonlyHash, role: 'readonly' },
+        ],
+      },
+      session: { cookieName: 'canopy_sid', ttlMinutes: 60, cookieSecure: false },
+    },
     devNoAuth: false,
     blockRfc1918: false,
     basePath: '/',
@@ -67,11 +76,7 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
   };
 
   const app = Fastify({ logger: false });
-  await app.register(secureSession, {
-    secret: config.sessionSecret,
-    salt: 'canopy-sess-salt',
-    cookie: { path: '/', httpOnly: true, sameSite: 'strict', secure: false },
-  });
+  await registerSession(app, config);
   await registerAuth(app, config);
   await registerProxy(app, config);
   return app;
@@ -165,6 +170,35 @@ describe('Auth routes', () => {
     const logout = await app.inject({ method: 'POST', url: '/auth/logout', headers: { cookie } });
     expect(logout.statusCode).toBe(200);
     expect(JSON.parse(logout.body)).toMatchObject({ ok: true });
+  });
+
+  it('POST /auth/logout revokes the session server-side', async () => {
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    await app.inject({ method: 'POST', url: '/auth/logout', headers: { cookie } });
+
+    const res = await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie } });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('a new login revokes the session the client already held', async () => {
+    const first = await loginAs(app, 'admin', 'adminpass');
+    const secondRes = await app.inject({
+      method: 'POST', url: '/auth/login', headers: { cookie: first }, payload: { username: 'admin', password: 'adminpass' },
+    });
+    expect(secondRes.statusCode).toBe(200);
+    const second = (Array.isArray(secondRes.headers['set-cookie']) ? secondRes.headers['set-cookie'][0] : secondRes.headers['set-cookie']) as string;
+
+    expect((await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: first } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie: second } })).statusCode).toBe(200);
+  });
+
+  it('every login is refused when no users are configured', async () => {
+    const empty = await buildTestApp({
+      auth: { backend: 'local', local: { users: [] }, session: { cookieName: 'canopy_sid', ttlMinutes: 60, cookieSecure: false } },
+    });
+    const res = await empty.inject({ method: 'POST', url: '/auth/login', payload: { username: 'admin', password: 'admin' } });
+    expect(res.statusCode).toBe(401);
+    await empty.close();
   });
 });
 
@@ -529,5 +563,289 @@ describe('/monitoring proxy', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+async function argon2Hash(password: string): Promise<string> {
+  return argon2id({
+    password, salt: randomBytes(16), parallelism: 1, iterations: 1, memorySize: 8, hashLength: 16, outputType: 'encoded',
+  });
+}
+
+describe('argon2id login over HTTP', () => {
+  let app: FastifyInstance;
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
+
+  beforeEach(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    mockAgent.get('http://upstream-a.test:17913')
+      .intercept({ path: '/api/v1/common/api/version', method: 'GET' })
+      .reply(200, { version: { version: 'v' } }).persist();
+    app = await buildTestApp({
+      auth: {
+        backend: 'local',
+        local: { users: [{ username: 'vera', passwordHash: await argon2Hash('s3cret-pass'), role: 'readonly' }] },
+        session: { cookieName: 'canopy_sid', ttlMinutes: 60, cookieSecure: false },
+      },
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  });
+
+  it('logs in a viewer-mapped argon2id user as readonly', async () => {
+    const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'vera', password: 's3cret-pass' } });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ user: 'vera', role: 'readonly' });
+    expect(res.headers['set-cookie']).toBeTruthy();
+  });
+
+  it('rejects a wrong password with 401', async () => {
+    const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { username: 'vera', password: 'nope' } });
+    expect(res.statusCode).toBe(401);
+    expect(JSON.parse(res.body).error).toBe('invalid_credentials');
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+});
+
+describe('Proxy: sliding session cookie', () => {
+  let app: FastifyInstance;
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
+
+  beforeEach(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    const pool = mockAgent.get('http://upstream-a.test:17913');
+    pool.intercept({ path: '/api/v1/common/api/version', method: 'GET' }).reply(200, { version: { version: 'v' } });
+    pool.intercept({ path: '/api/v1/ok', method: 'GET' }).reply(201, 'body-data', { headers: { 'set-cookie': 'up=1' } });
+    app = await buildTestApp();
+  });
+
+  afterEach(async () => {
+    await app.close();
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  });
+
+  it('delivers the renewal Set-Cookie on a proxied response and keeps status/body', async () => {
+    const cookie = (await loginAs(app, 'admin', 'adminpass')).split(';')[0];
+    const res = await app.inject({ method: 'GET', url: '/api/v1/ok', headers: { cookie } });
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toBe('body-data');
+    const cookies = ([] as string[]).concat(res.headers['set-cookie'] as string | string[]);
+    expect(cookies.some(c => c.startsWith(`${cookie.split(';')[0]};`))).toBe(true);
+    expect(cookies.some(c => /Max-Age=3600/.test(c))).toBe(true);
+    expect(cookies).toContain('up=1');
+  });
+});
+
+describe('Proxy renewal cookie over HTTPS', () => {
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
+  let app: FastifyInstance;
+
+  beforeEach(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    mockAgent.get('http://upstream-a.test:17913')
+      .intercept({ path: '/api/v1/ok', method: 'GET' }).reply(200, 'ok').times(5);
+    const base = await buildTestApp();
+    await base.close();
+    const config: Config = {
+      port: 4001,
+      sessionSecret: TEST_SECRET,
+      banyandbTarget: 'http://upstream-a.test:17913',
+      monitorTarget: 'http://monitor.test:2121',
+      upstreamTimeoutMs: 5000,
+      auth: {
+        backend: 'local',
+        local: { users: [{ username: 'admin', passwordHash: '$2b$04$x', role: 'admin' }] },
+        session: { cookieName: 'canopy_sid', ttlMinutes: 60, cookieSecure: 'auto' },
+      },
+      devNoAuth: false, blockRfc1918: false, basePath: '/', baseHref: '/',
+    };
+    app = Fastify({ trustProxy: true });
+    await registerSession(app, config);
+    await registerAuth(app, config);
+    await registerProxy(app, config);
+  });
+
+  afterEach(async () => {
+    await app.close();
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  });
+
+  const renewal = (res: { headers: Record<string, unknown> }): string =>
+    ([] as string[]).concat(res.headers['set-cookie'] as string | string[]).find(c => c.startsWith('canopy_sid=')) ?? '';
+
+  it('keeps Secure on the renewed cookie for an HTTPS request and omits it over HTTP', async () => {
+    const cookie = `canopy_sid=${app.canopyAuth.store.create('admin', null)}`;
+
+    const https = await app.inject({ method: 'GET', url: '/api/v1/ok', headers: { cookie, 'x-forwarded-proto': 'https' } });
+    expect(renewal(https)).toContain('Secure');
+    expect(renewal(https)).toContain('HttpOnly');
+
+    const http = await app.inject({ method: 'GET', url: '/api/v1/ok', headers: { cookie } });
+    expect(renewal(http)).not.toBe('');
+    expect(renewal(http)).not.toContain('Secure');
+  });
+});
+
+describe('API tokens', () => {
+  const SECRET_A = 'alice-secret-value';
+  const SECRET_B = 'bob-secret-value';
+  let app: FastifyInstance;
+  let users: Config['auth']['local']['users'];
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
+  let logs: string[];
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+    mockAgent.get('http://upstream-a.test:17913')
+      .intercept({ path: /.*/, method: /.*/ }).reply(200, '{}', { headers: { 'content-type': 'application/json' } }).times(100);
+    users = [
+      { username: 'alice', passwordHash: '$2b$04$x', role: 'admin' },
+      { username: 'bob', passwordHash: '$2b$04$x', role: 'readonly' },
+      { username: 'carol', passwordHash: '$2b$04$x', role: 'admin' },
+    ];
+    const base = await buildTestApp();
+    await base.close();
+    const config: Config = {
+      port: 4001,
+      sessionSecret: TEST_SECRET,
+      banyandbTarget: 'http://upstream-a.test:17913',
+      monitorTarget: 'http://monitor.test:2121',
+      upstreamTimeoutMs: 5000,
+      auth: {
+        backend: 'local',
+        local: { users },
+        tokens: [
+          { id: 't1', username: 'alice', secretHash: hashSecret(SECRET_A) },
+          { id: 't2', username: 'bob', secretHash: hashSecret(SECRET_B) },
+        ],
+        session: { cookieName: 'canopy_sid', ttlMinutes: 60, cookieSecure: false },
+      },
+      devNoAuth: false, blockRfc1918: false, basePath: '/', baseHref: '/',
+    };
+    logs = [];
+    app = Fastify({ logger: { level: 'trace', stream: { write: (line: string) => { logs.push(line); } } } });
+    await registerSession(app, config);
+    await registerAuth(app, config);
+    await registerProxy(app, config);
+    // Cookie sessions for carol are created directly to test bearer-vs-cookie precedence.
+    app.get('/whoami', { preHandler: [app.canopyAuth.requireAuth] }, async request => ({ user: request.principal?.username, source: request.principal?.source }));
+  });
+
+  afterEach(async () => {
+    vi.useRealTimers();
+    await app.close();
+    setGlobalDispatcher(previousDispatcher);
+    await mockAgent.close();
+  });
+
+  const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
+
+  it('admin token: GET and POST are allowed; readonly token: POST is 403', async () => {
+    expect((await app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers: bearer(`hzn_t1_${SECRET_A}`) })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/stream/schema', headers: bearer(`hzn_t1_${SECRET_A}`), payload: {} })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers: bearer(`hzn_t2_${SECRET_B}`) })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/stream/schema', headers: bearer(`hzn_t2_${SECRET_B}`), payload: {} })).statusCode).toBe(403);
+  });
+
+  it('wrong secret, unknown id and malformed token yield the same 401', async () => {
+    const responses = await Promise.all([`hzn_t1_wrong`, `hzn_zz_${SECRET_A}`, 'hzn_malformed', 'garbage'].map(
+      token => app.inject({ method: 'GET', url: '/whoami', headers: bearer(token) })));
+    for (const res of responses) {
+      expect(res.statusCode).toBe(401);
+      expect(res.body).toBe(responses[0].body);
+    }
+  });
+
+  it('revokes a token when the user is removed after the cache window; a failed lookup is not cached', async () => {
+    const headers = bearer(`hzn_t1_${SECRET_A}`);
+    expect((await app.inject({ method: 'GET', url: '/whoami', headers })).statusCode).toBe(200);
+    const alice = users.shift()!;
+    vi.advanceTimersByTime(29_000);
+    expect((await app.inject({ method: 'GET', url: '/whoami', headers })).statusCode).toBe(200);
+    vi.advanceTimersByTime(2_000);
+    expect((await app.inject({ method: 'GET', url: '/whoami', headers })).statusCode).toBe(401);
+    users.unshift(alice);
+    expect((await app.inject({ method: 'GET', url: '/whoami', headers })).statusCode).toBe(200);
+  });
+
+  it('never creates a cookie session and is rejected by login/logout/session routes', async () => {
+    const headers = bearer(`hzn_t1_${SECRET_A}`);
+    const who = await app.inject({ method: 'GET', url: '/whoami', headers });
+    expect(who.headers['set-cookie']).toBeUndefined();
+    expect(JSON.parse(who.body)).toEqual({ user: 'alice', source: 'token' });
+    expect((await app.inject({ method: 'GET', url: '/auth/session', headers })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/auth/logout', headers })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'POST', url: '/auth/login', headers, payload: { username: 'alice', password: 'x' } })).statusCode).toBe(401);
+  });
+
+  it('prefers the bearer principal over a cookie for a different user', async () => {
+    const cookie = `canopy_sid=${app.canopyAuth.store.create('carol', null)}`;
+    const res = await app.inject({ method: 'GET', url: '/whoami', headers: { ...bearer(`hzn_t2_${SECRET_B}`), cookie } });
+    expect(JSON.parse(res.body)).toEqual({ user: 'bob', source: 'token' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('valid bearer plus a valid cookie still reaches the browser routes through the cookie', async () => {
+    const cookie = `canopy_sid=${app.canopyAuth.store.create('carol', null)}`;
+    const headers = { ...bearer(`hzn_t1_${SECRET_A}`), cookie };
+
+    const session = await app.inject({ method: 'GET', url: '/auth/session', headers });
+    expect(session.statusCode).toBe(200);
+    expect(JSON.parse(session.body).user).toBe('carol');
+
+    expect((await app.inject({ method: 'POST', url: '/auth/logout', headers })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/auth/session', headers: { cookie } })).statusCode).toBe(401);
+  });
+
+  it.each([['Bearer'], ['Bearer '], ['Bearer hzn_t1_wrong']])('rejects %j even with a valid session cookie', async authorization => {
+    const cookie = `canopy_sid=${app.canopyAuth.store.create('carol', null)}`;
+
+    expect((await app.inject({ method: 'GET', url: '/whoami', headers: { authorization, cookie } })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/auth/session', headers: { authorization, cookie } })).statusCode).toBe(401);
+  });
+
+  it('applies a changed role after the cache window and enforces it on the proxy', async () => {
+    const headers = bearer(`hzn_t1_${SECRET_A}`);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/stream/schema', headers, payload: {} })).statusCode).toBe(200);
+
+    users[0] = { ...users[0], role: 'readonly' };
+    vi.advanceTimersByTime(29_000);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/stream/schema', headers, payload: {} })).statusCode).toBe(200);
+
+    vi.advanceTimersByTime(2_000);
+    expect((await app.inject({ method: 'POST', url: '/api/v1/stream/schema', headers, payload: {} })).statusCode).toBe(403);
+    expect((await app.inject({ method: 'GET', url: '/api/v1/group/schema/lists', headers })).statusCode).toBe(200);
+  });
+
+  it('never logs token secrets', async () => {
+    await app.inject({ method: 'GET', url: '/whoami', headers: bearer(`hzn_t1_${SECRET_A}`) });
+    await app.inject({ method: 'GET', url: '/whoami', headers: bearer('hzn_t1_wrongsecretvalue') });
+    expect(logs.length).toBeGreaterThan(0);
+    const all = logs.join('\n');
+    expect(all).not.toContain(SECRET_A);
+    expect(all).not.toContain('wrongsecretvalue');
   });
 });

@@ -29,6 +29,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
@@ -108,7 +109,7 @@ func Dispatch(
 // DispatchBatches executes the native scan and reduction path without materializing DataPoints.
 func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata *commonv1.Metadata,
 	measureSchema *databasev1.Measure, logicalSchema logical.Schema, ec executor.MeasureExecutionContext,
-	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation bool,
+	cfg measure.VectorizedConfig, emitPartial, skipProjectionValidation bool, patterns ...native.TermSetRequest,
 ) (resultBatch *BatchResult, planStr string, err error) {
 	// emitPartial selects the BatchAggregation strategy when GroupBy/Agg is
 	// in the plan: false → AggModeAll (single-node final reduce); true →
@@ -126,6 +127,8 @@ func DispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata 
 		return nil, "", prepareErr
 	}
 	p, scan, opts, hidden := prepared.plan, prepared.scan, prepared.options, prepared.hidden
+	scan.Params.PatternRequests = patterns
+	opts.PatternRequests = patterns
 	// An empty entity set is an impossible selector, not a storage request
 	// without its required series. Index-mode queries do not use entity sets.
 	if !measureSchema.GetIndexMode() && len(opts.Entities) == 0 {

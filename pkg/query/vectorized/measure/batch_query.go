@@ -23,12 +23,16 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 // BatchQueryRequest selects the in-process batch result boundary for a native request.
 // It is never serialized or sent to a data node.
-type BatchQueryRequest struct{ Request *measurev1.QueryRequest }
+type BatchQueryRequest struct {
+	Request  *measurev1.QueryRequest
+	Patterns []model.IndexedPattern
+}
 
 // BatchExecutionCounters records activation of the two real batch callers.
 type BatchExecutionCounters struct {

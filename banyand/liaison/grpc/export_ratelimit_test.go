@@ -170,9 +170,9 @@ func assertChunkBytes(t *testing.T, got *relayedChunks, size int, rows uint64) {
 	}
 }
 
-// Two relays at one rate share it: each relays pieces of half the burst, together they take
-// the time the shared rate needs, both streams arrive whole and in order, and once both end
-// the rate is unlimited again with the full burst.
+// Two relays at one rate share it: while both are active, pieces use half the burst.
+// Together they take the time the shared rate needs, both streams arrive whole and in order,
+// and once both end the rate is unlimited again with the full burst.
 func TestExportRelay_TwoRelaysShareOneRate(t *testing.T) {
 	const bytesPerSecond, size = 128 << 10, 160 << 10
 	gate := make(chan struct{})
@@ -192,13 +192,15 @@ func TestExportRelay_TwoRelaysShareOneRate(t *testing.T) {
 	assertChunkBytes(t, got[0], size, 3)
 	assertChunkBytes(t, got[1], size, 5)
 	for i, g := range got {
-		for _, c := range g.chunks {
-			if len(c.GetContent()) > bytesPerSecond/2 {
-				t.Fatalf("relay %d sent a piece of %d bytes, want at most half the burst %d", i, len(c.GetContent()), bytesPerSecond/2)
-			}
+		// Once its peer finishes, the remaining relay can use the full burst, so
+		// scheduling determines whether its 160 KiB chunk needs two or three pieces.
+		if len(g.chunks) < 2 || len(g.chunks) > 3 {
+			t.Fatalf("relay %d sent %d pieces, want 2 or 3", i, len(g.chunks))
 		}
-		if len(g.chunks) != 3 {
-			t.Fatalf("relay %d sent %d pieces, want 3 (64 KiB, 64 KiB, 32 KiB)", i, len(g.chunks))
+		for _, c := range g.chunks {
+			if len(c.GetContent()) > bytesPerSecond {
+				t.Fatalf("relay %d sent a piece of %d bytes, want at most the burst %d", i, len(c.GetContent()), bytesPerSecond)
+			}
 		}
 	}
 	// 320 KiB at a shared 128 KiB/s from a full 128 KiB bucket: about 1.5s, not 0.25s per relay.

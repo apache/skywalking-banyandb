@@ -27,7 +27,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 	if o.output == nil {
 		capacity := min(vectorized.DefaultBatchSize, len(o.groups.keys))
 		// Every column is at most a 24-byte slice cell plus its null bitmap.
-		bytes := int64(capacity)*int64(len(o.outputs))*25 + int64(len(o.outputs))*128
+		bytes := int64(capacity)*int64(len(o.schema.Columns))*25 + int64(len(o.schema.Columns))*128
 		if err := o.reserve(bytes); err != nil {
 			return nil, err
 		}
@@ -43,7 +43,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 	// lend immutable key substrings and therefore require no payload allocation.
 	var valueBytes int64
 	for group := o.position; group < end; group++ {
-		decodeGroupValues(o.groups.keys[group], o.groupValues)
+		decodeGroupValues(o.groups.key(group), o.groupValues)
 		for _, output := range o.outputs {
 			if output.IsGroup && output.Column.Type == vectorized.ColumnTypeBytes {
 				bytes, allocationErr := groupAllocationBytes(int64(len(o.groupValues[output.Index].text)))
@@ -64,7 +64,7 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 				return nil, err
 			}
 		}
-		decodeGroupValues(o.groups.keys[group], o.groupValues)
+		decodeGroupValues(o.groups.key(group), o.groupValues)
 		for index, output := range o.outputs {
 			var value aggregateValue
 			if output.IsGroup {
@@ -74,6 +74,9 @@ func (o *aggregateOperator) emit(ctx context.Context) (*vectorized.RecordBatch, 
 				value = o.states[call.state].result(group, call.function)
 			}
 			appendAggregateValue(o.output.Columns[index], value)
+		}
+		if o.bucketIndex >= 0 {
+			appendAggregateValue(o.output.Columns[len(o.outputs)], o.groupValues[o.bucketIndex])
 		}
 	}
 	o.output.Len = end - o.position

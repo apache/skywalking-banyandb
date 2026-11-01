@@ -197,7 +197,7 @@ func TestDistributedBatchTraceConsumerFailure(t *testing.T) {
 }
 
 func TestDistributedTracedExecutionErrorPreservesStatus(t *testing.T) {
-	for _, failure := range []error{status.Error(codes.ResourceExhausted, "test budget"), context.Canceled, context.DeadlineExceeded} {
+	for _, failure := range []error{status.Error(codes.ResourceExhausted, "test budget"), context.Canceled, context.DeadlineExceeded, errors.New("invalid topic")} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			tracer, ctx := query.NewTracer(context.Background(), t.Name())
 			processor, request := newTraceMeasureProcessor(t, failure)

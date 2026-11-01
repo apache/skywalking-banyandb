@@ -32,6 +32,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -125,7 +126,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 
 	plan, err := logical_measure.TopNAnalyze(request, qc.sourceMeasureSchemas, qc.topNSchemas, qc.ecc)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for topn %s: %v", request.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for topn %s: %v", request.Name, err))
 		return
 	}
 
@@ -156,7 +157,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	mIterator, err := plan.(executor.MeasureExecutable).Execute(ctx)
 	if err != nil {
 		ml.Error().Err(err).RawJSON("req", logger.Proto(request)).Msg("fail to close the topn plan")
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to execute the topn plan for measure %s: %v", request.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to execute the topn plan for measure %s: %v", request.Name, err))
 		return
 	}
 	defer func() {
@@ -220,7 +221,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 		if aggErr != nil {
 			ml.Error().Err(aggErr).RawJSON("req", logger.Proto(request)).Msg("fail to aggregate topN results")
-			resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to aggregate topN results for measure %s: %v", request.Name, aggErr))
+			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(aggErr, "fail to aggregate topN results for measure %s: %v", request.Name, aggErr))
 			return
 		}
 		resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: lists})

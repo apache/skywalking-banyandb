@@ -1,0 +1,26 @@
+{"level":"info","time":"2026-10-27T13:39:43Z","message":"honoring GOMAXPROCS=\"2\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/verification/qg3bench
+cpu: AMD EPYC 7B13
+BenchmarkQG3RPC
+
+██████╗  █████╗ ███╗   ██╗██╗   ██╗ █████╗ ███╗   ██╗██████╗ ██████╗ 
+██╔══██╗██╔══██╗████╗  ██║╚██╗ ██╔╝██╔══██╗████╗  ██║██╔══██╗██╔══██╗
+██████╔╝███████║██╔██╗ ██║ ╚████╔╝ ███████║██╔██╗ ██║██║  ██║██████╔╝
+██╔══██╗██╔══██║██║╚██╗██║  ╚██╔╝  ██╔══██║██║╚██╗██║██║  ██║██╔══██╗
+██████╔╝██║  ██║██║ ╚████║   ██║   ██║  ██║██║ ╚████║██████╔╝██████╔╝
+╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═════╝ 
+[90m2026-10-27T13:39:44Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg3bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"1"}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T12:00:00Z"},"dataPointSpec":{"fieldNames":["value"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"1","metadata":{"group":"qg3bench","name":"m"}}
+[90m2026-10-27T13:39:44Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg3bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"2"}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T12:00:01Z"},"dataPointSpec":{"fieldNames":["value"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"2"}
+    paired_test.go:76: verified scalar_int cache_hit=true native_merge=false state_bytes=16 state_capacity=16 tracked_process_peak=1940714 live_bytes=0
+    paired_test.go:76: verified scalar_decimal cache_hit=true native_merge=false state_bytes=32 state_capacity=32 tracked_process_peak=1961210 live_bytes=0
+    paired_test.go:76: verified group_int cache_hit=true native_merge=false state_bytes=128 state_capacity=128 tracked_process_peak=2141374 live_bytes=0
+    paired_test.go:76: verified group_decimal cache_hit=true native_merge=false state_bytes=256 state_capacity=256 tracked_process_peak=2172094 live_bytes=0
+    paired_test.go:106: SAMPLE rows=64 round=2 case=group_int n=1000 ns/op=565969 cpu-ns/op=811185 bytes/op=144527 allocs/op=1436
+    paired_test.go:106: SAMPLE rows=64 round=2 case=group_decimal n=1000 ns/op=652853 cpu-ns/op=909882 bytes/op=159367 allocs/op=1543
+    paired_test.go:106: SAMPLE rows=64 round=2 case=scalar_int n=1000 ns/op=530145 cpu-ns/op=719289 bytes/op=106186 allocs/op=1124
+    paired_test.go:106: SAMPLE rows=64 round=2 case=scalar_decimal n=1000 ns/op=539919 cpu-ns/op=730745 bytes/op=114478 allocs/op=1181
+BenchmarkQG3RPC-2   	       1	3115069426 ns/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/verification/qg3bench	3.148s

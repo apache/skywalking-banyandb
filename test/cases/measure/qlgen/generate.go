@@ -57,8 +57,50 @@ func Generate() (Suite, error) {
 		return Suite{}, nativeErr
 	}
 	nativeRejections := generateT08Rejections(b)
+	expressionReadiness, expressionScenarios, expressionRejections, expressionErr := generateT10(b)
+	if expressionErr != nil {
+		return Suite{}, expressionErr
+	}
+	filterReadiness, filterScenarios, filterRejections, filterErr := generateT12(b)
+	if filterErr != nil {
+		return Suite{}, filterErr
+	}
+	legacyReadiness, legacyScenarios, legacyErr := generateT12Legacy()
+	if legacyErr != nil {
+		return Suite{}, legacyErr
+	}
+	b.features["t12.legacy_schema_fixture"], b.features["t12.legacy_schema_compatibility"] = true, true
+	havingLegacy, havingLegacyErr := generateT14Legacy()
+	if havingLegacyErr != nil {
+		return Suite{}, havingLegacyErr
+	}
+	b.features["t14.legacy_membership"], b.features["t14.membership_duplicates"] = true, true
+	havingReadiness, havingScenarios, havingRejections, havingErr := generateT14(b)
+	if havingErr != nil {
+		return Suite{}, havingErr
+	}
+	havingReview, havingReviewErr := generateT14Review(b)
+	if havingReviewErr != nil {
+		return Suite{}, havingReviewErr
+	}
+	distinctReadiness, distinctScenarios, distinctRejections, distinctErr := generateT15(b)
+	if distinctErr != nil {
+		return Suite{}, distinctErr
+	}
+	groupingReadiness, groupingScenarios, groupingRejections, groupingErr := generateT16(b)
+	if groupingErr != nil {
+		return Suite{}, groupingErr
+	}
+	sortingReadiness, sortingScenarios, sortingRejections, sortingResources, sortingErr := generateT17(b)
+	if sortingErr != nil {
+		return Suite{}, sortingErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
+	}
+	patternReadiness, patternScenarios, patternErr := generatePatterns(b)
+	if patternErr != nil {
+		return Suite{}, patternErr
 	}
 	features := make([]Feature, 0, len(b.features))
 	for _, id := range slices.Sorted(maps.Keys(b.features)) {
@@ -77,7 +119,21 @@ func Generate() (Suite, error) {
 	if reuseReadinessErr != nil {
 		return Suite{}, reuseReadinessErr
 	}
+	parentChildReadiness, parentChildScenarios, parentChildErr := generateParentChild()
+	if parentChildErr != nil {
+		return Suite{}, parentChildErr
+	}
 	suite := Suite{
+		PatternReadiness: patternReadiness, PatternScenarios: patternScenarios,
+		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
+		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
+		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,
+		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,
+		HavingReviewScenarios: havingReview,
+		HavingLegacyScenarios: havingLegacy, HavingReadiness: havingReadiness, HavingScenarios: havingScenarios, HavingRejections: havingRejections,
+		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,
+		FilterReadiness: filterReadiness, FilterScenarios: filterScenarios, FilterRejections: filterRejections,
+		ExpressionReadiness: expressionReadiness, ExpressionScenarios: expressionScenarios, ExpressionRejections: expressionRejections,
 		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
 		NativeAggregateRejections: nativeRejections,
 		AggregateReadiness:        aggregateReadiness, AggregateScenarios: aggregateScenarios,

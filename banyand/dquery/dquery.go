@@ -46,8 +46,9 @@ const (
 	moduleName   = "distributed-query"
 	hotStageName = "hot"
 
-	defaultMaxChunkRowsTrace = 256
-	defaultMaxChunkBytes     = 4 << 20
+	defaultMaxChunkRowsTrace  = 256
+	defaultMaxChunkRowsStream = 4096
+	defaultMaxChunkBytes      = 4 << 20
 )
 
 var _ run.Service = (*queryService)(nil)
@@ -80,10 +81,13 @@ type queryService struct {
 	// lets the slow query complete instead of returning DeadlineExceeded
 	// mid-merge.
 	broadcastTimeout time.Duration
-	// maxChunkBytes caps the size of one scan chunk a data node sends.
+	// maxChunkBytes caps the size of one scan chunk a data node sends. The caps are constants; only a test hook
+	// changes them, for the next service.
 	maxChunkBytes run.Bytes
 	// maxChunkRowsTrace caps the traces in one trace scan chunk.
 	maxChunkRowsTrace uint32
+	// maxChunkRowsStream caps the elements in one stream scan chunk.
+	maxChunkRowsStream uint32
 }
 
 // NewService return a new query service.
@@ -91,15 +95,20 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster qu
 	streamSchemaSVC stream.Service, measureSchemaSVC measure.Service, traceSchemaSVC trace.Service,
 ) (Service, error) {
 	svc := &queryService{
-		metaService: metaService,
-		closer:      run.NewCloser(1),
-		pipeline:    pipeline,
-		omr:         omr,
+		metaService:        metaService,
+		closer:             run.NewCloser(1),
+		pipeline:           pipeline,
+		omr:                omr,
+		maxChunkBytes:      defaultMaxChunkBytes,
+		maxChunkRowsTrace:  defaultMaxChunkRowsTrace,
+		maxChunkRowsStream: defaultMaxChunkRowsStream,
 	}
+	applyNextChunkLimits(svc)
 	svc.sqp = &streamQueryProcessor{
 		queryService:  svc,
 		streamService: streamSchemaSVC,
 		broadcaster:   broadcaster,
+		scatterer:     broadcaster,
 	}
 	svc.mqp = &measureQueryProcessor{
 		queryService:   svc,
@@ -128,21 +137,10 @@ func (q *queryService) FlagSet() *run.FlagSet {
 	fs.DurationVar(&q.slowQuery, "dst-slow-query", 5*time.Second, "distributed slow query threshold, 0 means no slow query log")
 	fs.DurationVar(&q.broadcastTimeout, "dst-broadcast-timeout", 15*time.Second,
 		"per-broadcast wait when fanning a measure query out to data nodes; raise it for clusters that legitimately scan large non-paginated result sets")
-	q.maxChunkBytes = defaultMaxChunkBytes
-	fs.Uint32Var(&q.maxChunkRowsTrace, "stream-query-max-chunk-rows-trace", defaultMaxChunkRowsTrace,
-		"the maximum number of traces in one chunk a data node sends for a trace query")
-	fs.Var(&q.maxChunkBytes, "stream-query-max-chunk-bytes",
-		"the approximate maximum encoded size of one chunk a data node sends for a query")
 	return fs
 }
 
 func (q *queryService) Validate() error {
-	if q.maxChunkRowsTrace == 0 {
-		return errors.New("stream-query-max-chunk-rows-trace must be positive")
-	}
-	if q.maxChunkBytes == 0 {
-		return errors.New("stream-query-max-chunk-bytes must be positive")
-	}
 	return nil
 }
 

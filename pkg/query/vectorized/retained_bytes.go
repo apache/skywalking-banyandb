@@ -20,11 +20,22 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
+)
+
+// Per-value charges for protobuf-typed columns. A value costs its payload once plus a fixed object overhead.
+const (
+	// valueObjectBytes covers the value struct and its oneof wrapper.
+	valueObjectBytes uint64 = 64
+	// stringHeaderBytes is the Go string header kept per string-array element.
+	stringHeaderBytes uint64 = 16
+	// intElementBytes is the size of one int64 array element.
+	intElementBytes uint64 = 8
 )
 
 // EstimatedRetainedBytes estimates row references, column capacity and payloads
-// retained by a merge operator. Protobuf object overhead is estimated from wire
-// size; this is not an exact Go heap measurement. Shared payloads may be counted twice.
+// retained by a merge operator. Protobuf values are charged their payload once plus
+// a fixed object overhead; this is not an exact Go heap measurement. Shared payloads may be counted twice.
 func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 	if batch == nil {
 		return 0
@@ -39,6 +50,8 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			continue
 		}
 		switch column.Type() {
+		case ColumnTypeDecimal:
+			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[decimal.Int128])))
 		case ColumnTypeInt64:
 			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[int64])))
 		case ColumnTypeFloat64:
@@ -75,7 +88,7 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			total = saturatingAdd(total, retainedColumnBytes(typed))
 			for _, value := range typed.Data() {
 				if value != nil {
-					total = saturatingAdd(total, estimatedProtoBytes(value))
+					total = saturatingAdd(total, estimatedTagValueBytes(value))
 				}
 			}
 		case ColumnTypeFieldValue:
@@ -83,7 +96,7 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 			total = saturatingAdd(total, retainedColumnBytes(typed))
 			for _, value := range typed.Data() {
 				if value != nil {
-					total = saturatingAdd(total, estimatedProtoBytes(value))
+					total = saturatingAdd(total, estimatedFieldValueBytes(value))
 				}
 			}
 		default:
@@ -100,10 +113,38 @@ func retainedColumnBytes[T any](column *TypedColumn[T]) uint64 {
 	return saturatingAdd(uint64(unsafe.Sizeof(*column)), saturatingAdd(backing, validity))
 }
 
-func estimatedProtoBytes(message proto.Message) uint64 {
-	const objectExpansion = 8
-	const objectOverhead = 256
-	return saturatingAdd(saturatingMultiply(uint64(proto.Size(message)), objectExpansion), objectOverhead)
+func estimatedTagValueBytes(value *modelv1.TagValue) uint64 {
+	switch kind := value.GetValue().(type) {
+	case *modelv1.TagValue_Str:
+		return saturatingAdd(uint64(len(kind.Str.GetValue())), valueObjectBytes)
+	case *modelv1.TagValue_BinaryData:
+		return saturatingAdd(uint64(len(kind.BinaryData)), valueObjectBytes)
+	case *modelv1.TagValue_StrArray:
+		total := valueObjectBytes
+		for _, element := range kind.StrArray.GetValue() {
+			total = saturatingAdd(total, saturatingAdd(uint64(len(element)), stringHeaderBytes))
+		}
+		return total
+	case *modelv1.TagValue_IntArray:
+		return saturatingAdd(saturatingMultiply(uint64(len(kind.IntArray.GetValue())), intElementBytes), valueObjectBytes)
+	case *modelv1.TagValue_Int, *modelv1.TagValue_Null, *modelv1.TagValue_Timestamp:
+		return valueObjectBytes
+	default:
+		return saturatingAdd(uint64(proto.Size(value)), valueObjectBytes)
+	}
+}
+
+func estimatedFieldValueBytes(value *modelv1.FieldValue) uint64 {
+	switch kind := value.GetValue().(type) {
+	case *modelv1.FieldValue_Str:
+		return saturatingAdd(uint64(len(kind.Str.GetValue())), valueObjectBytes)
+	case *modelv1.FieldValue_BinaryData:
+		return saturatingAdd(uint64(len(kind.BinaryData)), valueObjectBytes)
+	case *modelv1.FieldValue_Int, *modelv1.FieldValue_Float, *modelv1.FieldValue_Null:
+		return valueObjectBytes
+	default:
+		return saturatingAdd(uint64(proto.Size(value)), valueObjectBytes)
+	}
 }
 
 func saturatingAdd(left, right uint64) uint64 {

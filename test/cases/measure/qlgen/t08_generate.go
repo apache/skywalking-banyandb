@@ -155,6 +155,23 @@ func generateT08(b *suiteBuilder) ([]AggregateFixture, []NativeAggregateScenario
 	if b.err != nil {
 		return nil, nil, b.err
 	}
+	// Preserve the independent native SUM oracle and replace its null result
+	// with the explicit COALESCE fallback after native finalization.
+	for _, original := range scenarios {
+		if original.Name != "t08_float_sum" {
+			continue
+		}
+		scenario := NativeAggregateScenario{Name: "qg2_native_float_coalesce", Kind: original.Kind, Branches: original.Branches}
+		for _, originalCase := range original.Cases {
+			c := originalCase
+			c.Name = strings.Replace(c.Name, original.Name, scenario.Name, 1)
+			c.Query = strings.Replace(c.Query, "SUM(f) AS result", "COALESCE(SUM(f), 0.0) AS result", 1)
+			c.WantJSON = []byte(strings.ReplaceAll(string(c.WantJSON), `{"null":0}`, `{"float":{"value":0}}`))
+			scenario.Cases = append(scenario.Cases, c)
+		}
+		scenarios = append(scenarios, scenario)
+		break
+	}
 	return readiness, scenarios, nil
 }
 

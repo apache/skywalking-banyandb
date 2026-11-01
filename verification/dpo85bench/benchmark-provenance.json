@@ -1,0 +1,21 @@
+{
+  "measured_at": "2026-10-28T12:32:24Z",
+  "baseline_commit": "b54a9fc76e74baa1c0ecbf75513a082c32649a72",
+  "toolchain": "go version go1.26.10 linux/amd64",
+  "image": "sha256:09c665d7ce2302ef883da73a11f72161ee18a66336dfb7d03f52fd817875d877 [\"banyandb-distributed-querybench@sha256:09c665d7ce2302ef883da73a11f72161ee18a66336dfb7d03f52fd817875d877\"]",
+  "cpus": "0,1",
+  "memory_gib": 4,
+  "additional_swap_gib": 0,
+  "native_query_allowance_gib": 3,
+  "rounds": 3,
+  "iterations_per_arm": 100,
+  "source_status": "Candidate snapshot before review fixes; these timings are not measurements of the corrected source.",
+  "local_snapshot_files": {
+    "candidate.test": "e8c4344d81ba4a6789e0372d9dec2ba5bb809b81754198b10ffb9d4762db4c10",
+    "baseline.test": "60e84c7cae90e16a4cdda5eb053d9a6f6bac12b7ec7b178ed73736f49804e26d",
+    "candidate-files.tar.gz": "52d52b4015b10f3bfbff2539bc5ebf17c2326256a18d7370b1430d4e8846c636",
+    "candidate-files.sha256": "3ad411708ed1cca9b17dbfedd1da30b28424cfd00c6a7d085a638f1640161ae4"
+  },
+  "measured_harness_sha256": "f18c39a73e23a88e27115b780eafc177d552c4f27e1af2fcc6aa6279af0973d4",
+  "samples_sha256": "619ce45f73e69a70ac0c417072fe8fae499965113a646a3d9bfe499e6c718afe"
+}

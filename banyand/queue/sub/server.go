@@ -105,7 +105,6 @@ type server struct {
 	host                  string
 	keyFile               string
 	chunkBufferTimeout    time.Duration
-	scanHeartbeatInterval time.Duration
 	maxRecvMsgSize        run.Bytes
 	listenersLock         sync.RWMutex
 	routeTableProviderMu  sync.RWMutex
@@ -140,7 +139,6 @@ func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string
 		maxChunkBufferSize:    10,
 		chunkBufferTimeout:    5 * time.Second,
 		maxChunkGapSize:       5,
-		scanHeartbeatInterval: defaultScanHeartbeatInterval,
 	}
 	return srv
 }
@@ -210,15 +208,10 @@ func (s *server) FlagSet() *run.FlagSet {
 	fs.Uint32Var(&s.maxChunkBufferSize, prefixFlag("max-chunk-buffer-size"), s.maxChunkBufferSize, "maximum chunks to buffer for reordering")
 	fs.DurationVar(&s.chunkBufferTimeout, prefixFlag("chunk-buffer-timeout"), s.chunkBufferTimeout, "maximum time to wait for missing chunks")
 	fs.Uint32Var(&s.maxChunkGapSize, prefixFlag("max-chunk-gap-size"), s.maxChunkGapSize, "maximum gap in chunk sequence")
-	fs.DurationVar(&s.scanHeartbeatInterval, prefixFlag("scan-heartbeat-interval"), s.scanHeartbeatInterval,
-		"send a heartbeat on a scan stream that has sent no chunk for this long")
 	return fs
 }
 
 func (s *server) Validate() error {
-	if s.scanHeartbeatInterval <= 0 {
-		return errors.Errorf("the scan heartbeat interval must be positive, got %s", s.scanHeartbeatInterval)
-	}
 	if s.port == 0 {
 		s.port = 17912
 	}

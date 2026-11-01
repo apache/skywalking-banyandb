@@ -137,9 +137,10 @@ func (l *trackerTestLease) Charge(bytes uint64) error {
 	return nil
 }
 
-func (l *trackerTestLease) Limit() uint64 { return l.limit }
-func (l *trackerTestLease) Used() uint64  { return l.used }
-func (l *trackerTestLease) Owner() any    { return l }
+func (l *trackerTestLease) Refund(bytes uint64) { l.used -= min(bytes, l.used) }
+func (l *trackerTestLease) Limit() uint64       { return l.limit }
+func (l *trackerTestLease) Used() uint64        { return l.used }
+func (l *trackerTestLease) Owner() any          { return l }
 
 var errTrackerTestLeaseBudget = errors.New("test lease budget exhausted")
 

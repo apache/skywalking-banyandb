@@ -138,6 +138,13 @@ async function forwardRequest(
     if (lower === 'transfer-encoding' || lower === 'connection') continue;
     if (v !== undefined) forwardHeaders[k] = v as string | string[];
   }
+  // reply.raw bypasses Fastify's deferred cookie flush, so append the session
+  // renewal cookie here; it is never part of what is forwarded upstream.
+  const renewal = request.server.canopyAuth.renewalCookie(request);
+  if (renewal) {
+    const upstreamCookies = forwardHeaders['set-cookie'];
+    forwardHeaders['set-cookie'] = [...(upstreamCookies === undefined ? [] : [upstreamCookies].flat()), renewal];
+  }
   reply.raw.writeHead(upstreamRes.statusCode, forwardHeaders);
   // Tear down the client socket if the upstream stream errors after headers are
   // sent (e.g. upstream connection drops mid-body). Without this listener the
@@ -153,11 +160,7 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
   const upstreamAuth = buildUpstreamAuth(config);
 
   // Auth middleware for all proxy routes
-  async function requireAuth(request: FastifyRequest, reply: FastifyReply) {
-    if (!request.session?.user) {
-      await reply.status(401).send({ error: 'unauthenticated', message: 'Login required' });
-    }
-  }
+  const requireAuth = app.canopyAuth.requireAuth;
 
   // /api/* — strip Canopy's mount prefix, then preserve the remaining path verbatim.
   app.all('/api/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {

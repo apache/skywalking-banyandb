@@ -1,0 +1,1536 @@
+{
+  "samples": [
+    {
+      "source": "baseline-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 413583.0,
+        "cpu-ns/op": 628620.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97270.0,
+        "allocs/op": 701.0
+      },
+      "log": "1000-0-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 461923.0,
+        "cpu-ns/op": 644510.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1224996.0,
+        "B/op": 98137.0,
+        "allocs/op": 707.0
+      },
+      "log": "1000-0-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 5019705.0,
+        "cpu-ns/op": 6474850.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1079977.0,
+        "allocs/op": 19884.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 5106786.0,
+        "cpu-ns/op": 6686670.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1083778.0,
+        "allocs/op": 19872.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 636077.0,
+        "cpu-ns/op": 888780.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1704200.0,
+        "B/op": 127941.0,
+        "allocs/op": 1249.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 5400739.0,
+        "cpu-ns/op": 6874980.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 991847.0,
+        "allocs/op": 19362.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 5119325.0,
+        "cpu-ns/op": 6559240.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 992477.0,
+        "allocs/op": 19362.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 342259.0,
+        "cpu-ns/op": 482560.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 34765.0,
+        "allocs/op": 553.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 511988.0,
+        "cpu-ns/op": 758550.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97248.0,
+        "allocs/op": 700.0
+      },
+      "log": "1000-0-features.log"
+    },
+    {
+      "source": "baseline-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 429293.0,
+        "cpu-ns/op": 655980.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97661.0,
+        "allocs/op": 706.0
+      },
+      "log": "1000-1-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 495481.0,
+        "cpu-ns/op": 731360.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1224864.0,
+        "B/op": 99774.0,
+        "allocs/op": 716.0
+      },
+      "log": "1000-1-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 4840398.0,
+        "cpu-ns/op": 6209070.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1083305.0,
+        "allocs/op": 19885.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 535974.0,
+        "cpu-ns/op": 770790.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1704200.0,
+        "B/op": 127997.0,
+        "allocs/op": 1250.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 4251147.0,
+        "cpu-ns/op": 5382240.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 991841.0,
+        "allocs/op": 19358.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 4291615.0,
+        "cpu-ns/op": 5485290.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 991360.0,
+        "allocs/op": 19358.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 318640.0,
+        "cpu-ns/op": 461540.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 35261.0,
+        "allocs/op": 554.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 382728.0,
+        "cpu-ns/op": 583780.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97277.0,
+        "allocs/op": 700.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 4544490.0,
+        "cpu-ns/op": 5856660.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1077683.0,
+        "allocs/op": 19870.0
+      },
+      "log": "1000-1-features.log"
+    },
+    {
+      "source": "baseline-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 381728.0,
+        "cpu-ns/op": 574690.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97799.0,
+        "allocs/op": 700.0
+      },
+      "log": "1000-2-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 444856.0,
+        "cpu-ns/op": 647070.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 97732.0,
+        "allocs/op": 702.0
+      },
+      "log": "1000-2-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 591819.0,
+        "cpu-ns/op": 796510.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1704200.0,
+        "B/op": 133355.0,
+        "allocs/op": 1252.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 4445939.0,
+        "cpu-ns/op": 5651450.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 995159.0,
+        "allocs/op": 19376.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 4441635.0,
+        "cpu-ns/op": 5697350.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 1094184.0,
+        "B/op": 990944.0,
+        "allocs/op": 19361.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 350433.0,
+        "cpu-ns/op": 492580.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 35356.0,
+        "allocs/op": 555.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 453329.0,
+        "cpu-ns/op": 617060.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232542.0,
+        "B/op": 96646.0,
+        "allocs/op": 695.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 4643117.0,
+        "cpu-ns/op": 6037130.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1080985.0,
+        "allocs/op": 19870.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 4505400.0,
+        "cpu-ns/op": 5751220.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 2784724.0,
+        "B/op": 1079428.0,
+        "allocs/op": 19869.0
+      },
+      "log": "1000-2-features.log"
+    },
+    {
+      "source": "baseline-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 356233.0,
+        "cpu-ns/op": 602060.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 104400.0,
+        "allocs/op": 816.0
+      },
+      "log": "10000-0-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 334978.0,
+        "cpu-ns/op": 572040.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 105927.0,
+        "allocs/op": 821.0
+      },
+      "log": "10000-0-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 34648956.0,
+        "cpu-ns/op": 37611310.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998945.0,
+        "B/op": 8079500.0,
+        "allocs/op": 165990.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 35751445.0,
+        "cpu-ns/op": 39160510.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998945.0,
+        "B/op": 8110450.0,
+        "allocs/op": 167327.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 505375.0,
+        "cpu-ns/op": 791590.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1712916.0,
+        "B/op": 152958.0,
+        "allocs/op": 1457.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 34316845.0,
+        "cpu-ns/op": 37322750.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308405.0,
+        "B/op": 8008977.0,
+        "allocs/op": 167039.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 34957191.0,
+        "cpu-ns/op": 37998470.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308405.0,
+        "B/op": 8007926.0,
+        "allocs/op": 167042.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 280016.0,
+        "cpu-ns/op": 518330.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 53096.0,
+        "allocs/op": 691.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 0,
+      "metrics": {
+        "ns/op": 342571.0,
+        "cpu-ns/op": 602380.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 116350.0,
+        "allocs/op": 851.0
+      },
+      "log": "10000-0-features.log"
+    },
+    {
+      "source": "baseline-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 484315.0,
+        "cpu-ns/op": 786920.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1519899.0,
+        "B/op": 129558.0,
+        "allocs/op": 936.0
+      },
+      "log": "10000-1-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 357685.0,
+        "cpu-ns/op": 592910.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 105642.0,
+        "allocs/op": 821.0
+      },
+      "log": "10000-1-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 34524116.0,
+        "cpu-ns/op": 37533170.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998945.0,
+        "B/op": 8073303.0,
+        "allocs/op": 165980.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 561644.0,
+        "cpu-ns/op": 834900.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1712916.0,
+        "B/op": 142773.0,
+        "allocs/op": 1423.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 35143628.0,
+        "cpu-ns/op": 38220490.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308405.0,
+        "B/op": 8007697.0,
+        "allocs/op": 166815.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 35116623.0,
+        "cpu-ns/op": 38292520.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308405.0,
+        "B/op": 8006943.0,
+        "allocs/op": 167039.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 266217.0,
+        "cpu-ns/op": 509670.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 54340.0,
+        "allocs/op": 702.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 315286.0,
+        "cpu-ns/op": 574320.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 115775.0,
+        "allocs/op": 848.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 1,
+      "metrics": {
+        "ns/op": 34581258.0,
+        "cpu-ns/op": 37735000.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998945.0,
+        "B/op": 8102702.0,
+        "allocs/op": 167556.0
+      },
+      "log": "10000-1-features.log"
+    },
+    {
+      "source": "baseline-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 386260.0,
+        "cpu-ns/op": 627950.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 105713.0,
+        "allocs/op": 821.0
+      },
+      "log": "10000-2-baseline-exact.log"
+    },
+    {
+      "source": "candidate-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 389249.0,
+        "cpu-ns/op": 650270.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 105173.0,
+        "allocs/op": 818.0
+      },
+      "log": "10000-2-candidate-exact.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 475776.0,
+        "cpu-ns/op": 720770.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 1712916.0,
+        "B/op": 143241.0,
+        "allocs/op": 1428.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 34154565.0,
+        "cpu-ns/op": 37060450.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308422.0,
+        "B/op": 7979461.0,
+        "allocs/op": 165478.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 34068993.0,
+        "cpu-ns/op": 37013340.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 10308422.0,
+        "B/op": 8007287.0,
+        "allocs/op": 166762.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN_no_match",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 257424.0,
+        "cpu-ns/op": 490400.0,
+        "native-rows/op": 0.0,
+        "peak-tracked-B": 14880.0,
+        "B/op": 54273.0,
+        "allocs/op": 702.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "exact_control",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 328733.0,
+        "cpu-ns/op": 586870.0,
+        "native-rows/op": 2.0,
+        "peak-tracked-B": 1232554.0,
+        "B/op": 115431.0,
+        "allocs/op": 843.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 34648162.0,
+        "cpu-ns/op": 37748660.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998962.0,
+        "B/op": 8103256.0,
+        "allocs/op": 167559.0
+      },
+      "log": "10000-2-features.log"
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE",
+      "iterations": 100,
+      "round": 2,
+      "metrics": {
+        "ns/op": 34535002.0,
+        "cpu-ns/op": 37549920.0,
+        "native-rows/op": 16.0,
+        "peak-tracked-B": 11998962.0,
+        "B/op": 8103426.0,
+        "allocs/op": 167563.0
+      },
+      "log": "10000-2-features.log"
+    }
+  ],
+  "summary": [
+    {
+      "source": "baseline-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 413583.0,
+          "min": 381728.0,
+          "max": 429293.0
+        },
+        "cpu-ns/op": {
+          "median": 628620.0,
+          "min": 574690.0,
+          "max": 655980.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1232542.0,
+          "min": 1232542.0,
+          "max": 1232542.0
+        },
+        "B/op": {
+          "median": 97661.0,
+          "min": 97270.0,
+          "max": 97799.0
+        },
+        "allocs/op": {
+          "median": 701.0,
+          "min": 700.0,
+          "max": 706.0
+        }
+      }
+    },
+    {
+      "source": "baseline-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 386260.0,
+          "min": 356233.0,
+          "max": 484315.0
+        },
+        "cpu-ns/op": {
+          "median": 627950.0,
+          "min": 602060.0,
+          "max": 786920.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1232554.0,
+          "min": 1232554.0,
+          "max": 1519899.0
+        },
+        "B/op": {
+          "median": 105713.0,
+          "min": 104400.0,
+          "max": 129558.0
+        },
+        "allocs/op": {
+          "median": 821.0,
+          "min": 816.0,
+          "max": 936.0
+        }
+      }
+    },
+    {
+      "source": "candidate-exact",
+      "names": 1000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 461923.0,
+          "min": 444856.0,
+          "max": 495481.0
+        },
+        "cpu-ns/op": {
+          "median": 647070.0,
+          "min": 644510.0,
+          "max": 731360.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1224996.0,
+          "min": 1224864.0,
+          "max": 1232542.0
+        },
+        "B/op": {
+          "median": 98137.0,
+          "min": 97732.0,
+          "max": 99774.0
+        },
+        "allocs/op": {
+          "median": 707.0,
+          "min": 702.0,
+          "max": 716.0
+        }
+      }
+    },
+    {
+      "source": "candidate-exact",
+      "names": 10000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 357685.0,
+          "min": 334978.0,
+          "max": 389249.0
+        },
+        "cpu-ns/op": {
+          "median": 592910.0,
+          "min": 572040.0,
+          "max": 650270.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1232554.0,
+          "min": 1232554.0,
+          "max": 1232554.0
+        },
+        "B/op": {
+          "median": 105642.0,
+          "min": 105173.0,
+          "max": 105927.0
+        },
+        "allocs/op": {
+          "median": 821.0,
+          "min": 818.0,
+          "max": 821.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE",
+      "metrics": {
+        "ns/op": {
+          "median": 4840398.0,
+          "min": 4505400.0,
+          "max": 5106786.0
+        },
+        "cpu-ns/op": {
+          "median": 6209070.0,
+          "min": 5751220.0,
+          "max": 6686670.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 2784724.0,
+          "min": 2784724.0,
+          "max": 2784724.0
+        },
+        "B/op": {
+          "median": 1083305.0,
+          "min": 1079428.0,
+          "max": 1083778.0
+        },
+        "allocs/op": {
+          "median": 19872.0,
+          "min": 19869.0,
+          "max": 19885.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "ILIKE_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 4441635.0,
+          "min": 4291615.0,
+          "max": 5119325.0
+        },
+        "cpu-ns/op": {
+          "median": 5697350.0,
+          "min": 5485290.0,
+          "max": 6559240.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 1094184.0,
+          "min": 1094184.0,
+          "max": 1094184.0
+        },
+        "B/op": {
+          "median": 991360.0,
+          "min": 990944.0,
+          "max": 992477.0
+        },
+        "allocs/op": {
+          "median": 19361.0,
+          "min": 19358.0,
+          "max": 19362.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN",
+      "metrics": {
+        "ns/op": {
+          "median": 591819.0,
+          "min": 535974.0,
+          "max": 636077.0
+        },
+        "cpu-ns/op": {
+          "median": 796510.0,
+          "min": 770790.0,
+          "max": 888780.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 1704200.0,
+          "min": 1704200.0,
+          "max": 1704200.0
+        },
+        "B/op": {
+          "median": 127997.0,
+          "min": 127941.0,
+          "max": 133355.0
+        },
+        "allocs/op": {
+          "median": 1250.0,
+          "min": 1249.0,
+          "max": 1252.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "IN_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 342259.0,
+          "min": 318640.0,
+          "max": 350433.0
+        },
+        "cpu-ns/op": {
+          "median": 482560.0,
+          "min": 461540.0,
+          "max": 492580.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 14880.0,
+          "min": 14880.0,
+          "max": 14880.0
+        },
+        "B/op": {
+          "median": 35261.0,
+          "min": 34765.0,
+          "max": 35356.0
+        },
+        "allocs/op": {
+          "median": 554.0,
+          "min": 553.0,
+          "max": 555.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE",
+      "metrics": {
+        "ns/op": {
+          "median": 4643117.0,
+          "min": 4544490.0,
+          "max": 5019705.0
+        },
+        "cpu-ns/op": {
+          "median": 6037130.0,
+          "min": 5856660.0,
+          "max": 6474850.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 2784724.0,
+          "min": 2784724.0,
+          "max": 2784724.0
+        },
+        "B/op": {
+          "median": 1079977.0,
+          "min": 1077683.0,
+          "max": 1080985.0
+        },
+        "allocs/op": {
+          "median": 19870.0,
+          "min": 19870.0,
+          "max": 19884.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "LIKE_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 4445939.0,
+          "min": 4251147.0,
+          "max": 5400739.0
+        },
+        "cpu-ns/op": {
+          "median": 5651450.0,
+          "min": 5382240.0,
+          "max": 6874980.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 1094184.0,
+          "min": 1094184.0,
+          "max": 1094184.0
+        },
+        "B/op": {
+          "median": 991847.0,
+          "min": 991841.0,
+          "max": 995159.0
+        },
+        "allocs/op": {
+          "median": 19362.0,
+          "min": 19358.0,
+          "max": 19376.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 1000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 453329.0,
+          "min": 382728.0,
+          "max": 511988.0
+        },
+        "cpu-ns/op": {
+          "median": 617060.0,
+          "min": 583780.0,
+          "max": 758550.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1232542.0,
+          "min": 1232542.0,
+          "max": 1232542.0
+        },
+        "B/op": {
+          "median": 97248.0,
+          "min": 96646.0,
+          "max": 97277.0
+        },
+        "allocs/op": {
+          "median": 700.0,
+          "min": 695.0,
+          "max": 700.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE",
+      "metrics": {
+        "ns/op": {
+          "median": 34535002.0,
+          "min": 34524116.0,
+          "max": 35751445.0
+        },
+        "cpu-ns/op": {
+          "median": 37549920.0,
+          "min": 37533170.0,
+          "max": 39160510.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 11998945.0,
+          "min": 11998945.0,
+          "max": 11998962.0
+        },
+        "B/op": {
+          "median": 8103426.0,
+          "min": 8073303.0,
+          "max": 8110450.0
+        },
+        "allocs/op": {
+          "median": 167327.0,
+          "min": 165980.0,
+          "max": 167563.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "ILIKE_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 34957191.0,
+          "min": 34068993.0,
+          "max": 35116623.0
+        },
+        "cpu-ns/op": {
+          "median": 37998470.0,
+          "min": 37013340.0,
+          "max": 38292520.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 10308405.0,
+          "min": 10308405.0,
+          "max": 10308422.0
+        },
+        "B/op": {
+          "median": 8007287.0,
+          "min": 8006943.0,
+          "max": 8007926.0
+        },
+        "allocs/op": {
+          "median": 167039.0,
+          "min": 166762.0,
+          "max": 167042.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN",
+      "metrics": {
+        "ns/op": {
+          "median": 505375.0,
+          "min": 475776.0,
+          "max": 561644.0
+        },
+        "cpu-ns/op": {
+          "median": 791590.0,
+          "min": 720770.0,
+          "max": 834900.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 1712916.0,
+          "min": 1712916.0,
+          "max": 1712916.0
+        },
+        "B/op": {
+          "median": 143241.0,
+          "min": 142773.0,
+          "max": 152958.0
+        },
+        "allocs/op": {
+          "median": 1428.0,
+          "min": 1423.0,
+          "max": 1457.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "IN_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 266217.0,
+          "min": 257424.0,
+          "max": 280016.0
+        },
+        "cpu-ns/op": {
+          "median": 509670.0,
+          "min": 490400.0,
+          "max": 518330.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 14880.0,
+          "min": 14880.0,
+          "max": 14880.0
+        },
+        "B/op": {
+          "median": 54273.0,
+          "min": 53096.0,
+          "max": 54340.0
+        },
+        "allocs/op": {
+          "median": 702.0,
+          "min": 691.0,
+          "max": 702.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE",
+      "metrics": {
+        "ns/op": {
+          "median": 34648162.0,
+          "min": 34581258.0,
+          "max": 34648956.0
+        },
+        "cpu-ns/op": {
+          "median": 37735000.0,
+          "min": 37611310.0,
+          "max": 37748660.0
+        },
+        "native-rows/op": {
+          "median": 16.0,
+          "min": 16.0,
+          "max": 16.0
+        },
+        "peak-tracked-B": {
+          "median": 11998945.0,
+          "min": 11998945.0,
+          "max": 11998962.0
+        },
+        "B/op": {
+          "median": 8102702.0,
+          "min": 8079500.0,
+          "max": 8103256.0
+        },
+        "allocs/op": {
+          "median": 167556.0,
+          "min": 165990.0,
+          "max": 167559.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "LIKE_no_match",
+      "metrics": {
+        "ns/op": {
+          "median": 34316845.0,
+          "min": 34154565.0,
+          "max": 35143628.0
+        },
+        "cpu-ns/op": {
+          "median": 37322750.0,
+          "min": 37060450.0,
+          "max": 38220490.0
+        },
+        "native-rows/op": {
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0
+        },
+        "peak-tracked-B": {
+          "median": 10308405.0,
+          "min": 10308405.0,
+          "max": 10308422.0
+        },
+        "B/op": {
+          "median": 8007697.0,
+          "min": 7979461.0,
+          "max": 8008977.0
+        },
+        "allocs/op": {
+          "median": 166815.0,
+          "min": 165478.0,
+          "max": 167039.0
+        }
+      }
+    },
+    {
+      "source": "candidate-features",
+      "names": 10000,
+      "arm": "exact_control",
+      "metrics": {
+        "ns/op": {
+          "median": 328733.0,
+          "min": 315286.0,
+          "max": 342571.0
+        },
+        "cpu-ns/op": {
+          "median": 586870.0,
+          "min": 574320.0,
+          "max": 602380.0
+        },
+        "native-rows/op": {
+          "median": 2.0,
+          "min": 2.0,
+          "max": 2.0
+        },
+        "peak-tracked-B": {
+          "median": 1232554.0,
+          "min": 1232554.0,
+          "max": 1232554.0
+        },
+        "B/op": {
+          "median": 115775.0,
+          "min": 115431.0,
+          "max": 116350.0
+        },
+        "allocs/op": {
+          "median": 848.0,
+          "min": 843.0,
+          "max": 851.0
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{"level":"info","time":"2026-10-27T12:30:36Z","message":"honoring GOMAXPROCS=\"2\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/verification/qg2bench
+cpu: AMD EPYC 7B13
+BenchmarkQG2RPC
+
+██████╗  █████╗ ███╗   ██╗██╗   ██╗ █████╗ ███╗   ██╗██████╗ ██████╗ 
+██╔══██╗██╔══██╗████╗  ██║╚██╗ ██╔╝██╔══██╗████╗  ██║██╔══██╗██╔══██╗
+██████╔╝███████║██╔██╗ ██║ ╚████╔╝ ███████║██╔██╗ ██║██║  ██║██████╔╝
+██╔══██╗██╔══██║██║╚██╗██║  ╚██╔╝  ██╔══██║██║╚██╗██║██║  ██║██╔══██╗
+██████╔╝██║  ██║██║ ╚████║   ██║   ██║  ██║██║ ╚████║██████╔╝██████╔╝
+╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═════╝ 
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"1"}},{"int":{}},{"float":{"value":1}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:00Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"1","metadata":{"group":"qg2bench","name":"m"}}
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"2"}},{"int":{"value":"1"}},{"float":{"value":2}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:01Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"2"}
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"3"}},{"int":{"value":"2"}},{"float":{"value":3}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:02Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"3"}
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"4"}},{"int":{"value":"3"}},{"float":{"value":4}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:03Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"4"}
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"5"}},{"int":{"value":"4"}},{"float":{"value":5}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:04Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"5"}
+[90m2026-10-27T12:30:37Z[0m | ERROR | [1m../../banyand/liaison/grpc/measure.go:272[0m[36m >[0m [1mfailed to navigate to the write target[0m [36merror=[0m[31m[1m"finding the shard num by: group:\"qg2bench\"  name:\"m\": the object doesn't exist"[0m[0m [36mmodule=[0mLIAISON-GRPC [36mwritten=[0m{"dataPoint":{"fields":[{"int":{"value":"6"}},{"int":{"value":"5"}},{"float":{"value":6}}],"tagFamilies":[{"tags":[{"str":{"value":"r0"}}]}],"timestamp":"2026-10-27T11:00:05Z"},"dataPointSpec":{"fieldNames":["value","prior","fv"],"tagFamilySpec":[{"name":"default","tagNames":["rid"]}]},"messageId":"6"}
+    paired_test.go:69: verified float_sum cache_hit=true native_merge=true
+    paired_test.go:69: verified scalar_sum cache_hit=true native_merge=false
+    paired_test.go:69: verified group_sum cache_hit=true native_merge=false
+    paired_test.go:98: SAMPLE rows=8192 round=4 case=scalar_sum n=500 ns/op=1870923 cpu-ns/op=2319736 bytes/op=536380 allocs/op=1208
+    paired_test.go:98: SAMPLE rows=8192 round=4 case=group_sum n=500 ns/op=2815132 cpu-ns/op=3297478 bytes/op=578481 allocs/op=1519
+    paired_test.go:98: SAMPLE rows=8192 round=4 case=float_sum n=500 ns/op=661583 cpu-ns/op=959196 bytes/op=168366 allocs/op=1109
+BenchmarkQG2RPC-2   	       1	3697754601 ns/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/verification/qg2bench	3.720s

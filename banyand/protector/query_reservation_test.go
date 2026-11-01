@@ -132,14 +132,19 @@ func TestQueryReservationRejectsCanceledAndReleasedContext(t *testing.T) {
 	}
 }
 
-func TestQueryReservationRejectsWindowBeyondAssignment(t *testing.T) {
+func TestQueryReservationBorrowedWindowIsNotEstimated(t *testing.T) {
 	budget := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
 	ctx, release, err := budget.AdmitContext(context.Background(), 20, 0, 20)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
-	if _, _, err = budget.AdmitContext(ctx, 100000, 0, 20); !errors.Is(err, ErrQueryWindowPressure) {
-		t.Fatalf("want window pressure, got %v", err)
+	_, childRelease, childErr := budget.AdmitContext(ctx, 10000, 0, 20)
+	if childErr != nil {
+		t.Fatalf("re-admission with a large window must share the lease: %v", childErr)
+	}
+	childRelease()
+	if _, _, err = budget.AdmitContext(ctx, 100001, 0, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want ErrQueryTooLarge, got %v", err)
 	}
 }

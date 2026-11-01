@@ -22,7 +22,7 @@
 # when the run crosses their segment boundary). The stream group sw_records stays on the hot node:
 # it also gets OAP records derived from the mocker traces (older, still hot), and the events
 # report-events.sh sends through OAP guarantee current rows; OAP flushes in batches, so its row
-# count is only pinned as `gt 0`. OAP's own UI templates fill the property group
+# count is only pinned as `gt 0`. The UI template the setup creates through ui-management fills the property group
 # sw_property on the hot node: it resolves its stage like any group (hot, the default tier) and has
 # no segments, parts or time range, only shards with a document count. contains checks that these five rows are present (the
 # warm trace row is sw_trace, the warm measure row is sw_metricsMinute); extra rows are allowed.
