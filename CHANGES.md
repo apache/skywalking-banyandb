@@ -6,6 +6,8 @@ Release Notes.
 
 ### Features
 
+- Bound measure QL membership setup, skip proven-empty input, and reuse decoded buffers for eligible order-independent count scans.
+
 - Add indexed measure QL LIKE and ILIKE filters with ESCAPE, using whole-value string indexes and bounded native wildcard execution.
 - Compose scalar expressions inside and around measure QL aggregates, including computed aggregate inputs, HAVING and ordered results.
 - Add bounded exact decimal SUM through DECIMAL_FROM_SCALED, with exact comparisons and fixed-scale string results.

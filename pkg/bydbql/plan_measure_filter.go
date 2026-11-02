@@ -342,42 +342,12 @@ func necessaryFilterCriteria(expression *ql.Expression, tags map[measureColumnKe
 		return nil
 	}
 	condition := &modelv1.Condition{Name: source.Source.Name, Op: modelv1.Condition_BINARY_OP_EQ}
-	values := make([]*modelv1.TagValue, 0, len(expression.Args)-1)
-	for _, argument := range expression.Args[1:] {
-		if argument.Op != "literal" || argument.Type != source.Type {
-			return nil
-		}
-		if argument.Literal.Null {
-			continue
-		}
-		value := &modelv1.TagValue{}
-		if source.Type == ql.ExpressionInt {
-			value.Value = &modelv1.TagValue_Int{Int: &modelv1.Int{Value: argument.Literal.Int64}}
-		} else {
-			value.Value = &modelv1.TagValue_Str{Str: &modelv1.Str{Value: argument.Literal.String}}
-		}
-		values = append(values, value)
-	}
-	if len(values) == 0 {
+	condition.Value = necessaryFilterValue(expression, source.Type)
+	if condition.Value == nil {
 		return nil
 	}
-	if expression.Op == "=" {
-		condition.Value = values[0]
-	} else {
+	if expression.Op == "in" {
 		condition.Op = modelv1.Condition_BINARY_OP_IN
-		if source.Type == ql.ExpressionInt {
-			array := &modelv1.IntArray{Value: make([]int64, len(values))}
-			for index, value := range values {
-				array.Value[index] = value.GetInt().Value
-			}
-			condition.Value = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: array}}
-		} else {
-			array := &modelv1.StrArray{Value: make([]string, len(values))}
-			for index, value := range values {
-				array.Value[index] = value.GetStr().Value
-			}
-			condition.Value = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: array}}
-		}
 	}
 	return &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: condition}}
 }
@@ -404,6 +374,7 @@ func (m *MeasureTemplate) bindWhere(bound *BoundQuery, now time.Time, request *m
 		if err != nil {
 			return nil, err
 		}
+		plan.Empty = plan.Empty || filterRejectsAllRows(plan.Filter)
 
 		ranges = intersectTimeRanges(ranges, filterRanges)
 		request.Criteria = combineMeasureCriteria(request.Criteria, necessaryFilterCriteria(plan.Filter, m.filterTags), false)
