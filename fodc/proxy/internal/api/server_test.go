@@ -18,6 +18,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1197,4 +1198,14 @@ func TestHandleClusterLifecycle_StatusReportsUseProtoJSON(t *testing.T) {
 	_, hasReportJSON := second["report_json"]
 	assert.True(t, hasReportJSON, "empty report_json must still be emitted under EmitUnpopulated")
 	assert.Equal(t, "", second["report_json"])
+}
+
+// formatPrometheusText renders through the streaming writer so the existing
+// string-comparison tests keep exercising the production code path.
+func (s *Server) formatPrometheusText(list []*metrics.AggregatedMetric) string {
+	var buf bytes.Buffer
+	if err := s.writePrometheusText(&buf, list); err != nil {
+		panic(err)
+	}
+	return buf.String()
 }
