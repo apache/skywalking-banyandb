@@ -2696,6 +2696,8 @@
   }
 
   .lf-form { display: flex; flex-direction: column; gap: 15px; width: 100%; }
+  .lf-sso { display: flex; flex-direction: column; gap: 10px; width: 100%; margin-bottom: 15px; }
+  .lf-sso-btn { display: block; text-align: center; text-decoration: none; }
   .lf-formwrap .f-input { height: 40px; }
 
   /* input + eye button overlay */

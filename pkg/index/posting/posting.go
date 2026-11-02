@@ -78,3 +78,51 @@ type Iterator interface {
 
 	Close() error
 }
+
+// Union returns a ∪ b while treating empty operands as identity and protecting them
+// against in-place mutation. The result may alias an operand (e.g. returning b when a is empty);
+// callers must not assume the result is a private copy.
+func Union(a, b List) (List, error) {
+	if a == nil || a.IsEmpty() {
+		return b, nil
+	}
+	if b == nil || b.IsEmpty() {
+		return a, nil
+	}
+	if err := a.Union(b); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// Intersect returns a ∩ b while treating empty operands as identity and protecting them
+// against in-place mutation. The result may alias an operand (e.g. returning a when a is empty);
+// callers must not assume the result is a private copy.
+func Intersect(a, b List) (List, error) {
+	if a == nil || a.IsEmpty() {
+		return a, nil
+	}
+	if b == nil || b.IsEmpty() {
+		return b, nil
+	}
+	if err := a.Intersect(b); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// Difference returns a \ b while treating empty operands as identity and protecting them
+// against in-place mutation. The result may alias an operand (e.g. returning a when b is empty);
+// callers must not assume the result is a private copy.
+func Difference(a, b List) (List, error) {
+	if a == nil || a.IsEmpty() {
+		return a, nil
+	}
+	if b == nil || b.IsEmpty() {
+		return a, nil
+	}
+	if err := a.Difference(b); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
