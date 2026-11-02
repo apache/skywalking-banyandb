@@ -14,6 +14,11 @@ Release Notes.
 - Retry property schema registry initialization indefinitely, logging an error every 10 attempts.
 - Re-fetch file/DNS discovery nodes that are parked in the retry queue while discovery has not Start()-ed yet, so unbounded PreRun schema-registry retries can recover once peers become reachable without restarting liaison.
 
+### Chores
+
+- Bump the canopy and MCP npm dependencies to clear the open Dependabot CVEs: `fast-uri` 4.2.1, `fastify` 5.12.1, `js-yaml` 4.3.2, `hono` 4.13.7, `ip-address` 10.7.3, `proxy-addr` 2.0.8 and `brace-expansion` 5.0.12. The committed `canopy/LICENSE`, `mcp/LICENSE` and the dependency license texts are regenerated to match.
+- Drop the platform-pinned native build bindings from the Canopy web dependencies and declare the rolldown bindings as optional per-platform dependencies, so `npm ci` resolves a binding for the host platform instead of failing on a foreign one. Canopy now builds natively on macOS ARM64.
+
 ## 0.11.1
 
 ### Bug Fixes

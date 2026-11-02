@@ -41,7 +41,7 @@ describe('LoginPage', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     // Default: /auth/session returns 401 (unauthenticated)
-    global.fetch = vi.fn((url: RequestInfo | URL) => {
+    globalThis.fetch = vi.fn((url: RequestInfo | URL) => {
       const urlStr = String(url);
       if (urlStr.includes('/auth/session')) {
         return Promise.resolve(new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 }));
@@ -90,7 +90,7 @@ describe('LoginPage', () => {
       }
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
-    global.fetch = mockFetch as unknown as typeof fetch;
+    globalThis.fetch = mockFetch as unknown as typeof fetch;
 
     const user = userEvent.setup();
     renderLogin();
@@ -112,7 +112,7 @@ describe('LoginPage', () => {
   });
 
   it('shows error banner on 401 response', async () => {
-    global.fetch = vi.fn((url: RequestInfo | URL) => {
+    globalThis.fetch = vi.fn((url: RequestInfo | URL) => {
       const urlStr = String(url);
       if (urlStr.includes('/auth/session')) {
         return Promise.resolve(new Response(JSON.stringify({ error: 'unauthenticated' }), { status: 401 }));
