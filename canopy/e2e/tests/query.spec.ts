@@ -103,7 +103,7 @@ test.describe('query console visual regression @e2e @query @vrt', () => {
   const REGIONS = [
     { name: 'sidebar', clip: { x: 0, y: 0, width: 256, height: 720 } },
     { name: 'page-header', clip: { x: 256, y: 0, width: 1184, height: 110 } },
-    { name: 'empty-result', clip: { x: 624, y: 110, width: 816, height: 200 } },
+    { name: 'empty-result', clip: { x: 700, y: 110, width: 740, height: 200 } },
   ] as const;
 
   test('chrome regions match the committed baselines', async ({ consolePage, page }) => {

@@ -285,7 +285,7 @@ function DocCard({ entry, projection, groupName, propName, onEdit, onDelete }: D
         {!tags.length && (
           <div className="fr-row">
             <span className="fr-keycol" />
-            <span className="dim" style={{ fontStyle: 'italic', fontSize: 12.5 }}>{projection?.length ? 'no projected tags' : 'no tags'}</span>
+            <span className="dim" style={{ fontStyle: 'italic', fontSize: 13.5 }}>{projection?.length ? 'no projected tags' : 'no tags'}</span>
           </div>
         )}
       </div>

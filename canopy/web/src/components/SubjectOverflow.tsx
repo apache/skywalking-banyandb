@@ -122,11 +122,11 @@ export function SubjectOverflow({
                       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 10px', border: 'none', background: 'none', cursor: 'pointer', width: '100%', borderRadius: 6, color: 'inherit', textAlign: 'left' }}
                     >
                       {s.exists ? (
-                        <span className={'subj-chip is-' + (s.status ?? 'ok')} style={{ fontSize: 10.5 }}>
+                        <span className={'subj-chip is-' + (s.status ?? 'ok')} style={{ fontSize: 12 }}>
                           {s.name}
                         </span>
                       ) : (
-                        <span className="subj-chip is-danger" style={{ fontSize: 10.5 }}>
+                        <span className="subj-chip is-danger" style={{ fontSize: 12 }}>
                           <IconAlert size={10} /> {s.name}
                         </span>
                       )}
