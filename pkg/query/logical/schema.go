@@ -151,8 +151,11 @@ func (cs *CommonSchema) IndexRuleDefined(indexRuleName string) (bool, *databasev
 }
 
 // CreateRef create TagRef to the given tags.
-// The family name of the tag is actually not used
-// since the uniqueness of the tag names can be guaranteed across families.
+// The family name of the tag is actually not used, since tag names are
+// expected to be unique across families: api/validate.UniqueTagNames enforces
+// that on the registry's create and update paths. A schema registered before
+// that check still loads, so it may carry the same name in two families, in
+// which case this resolves to whichever entry the tag map retained.
 func (cs *CommonSchema) CreateRef(tags ...[]*Tag) ([][]*TagRef, error) {
 	tagRefs := make([][]*TagRef, 0, len(tags))
 	for _, tagInFamily := range tags {

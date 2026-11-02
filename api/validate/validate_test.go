@@ -299,3 +299,73 @@ func TestCheckShardingKeySubset(t *testing.T) {
 		})
 	}
 }
+
+// TestUniqueTagNamesRejectsDuplicateAcrossFamilies pins the resource-wide tag
+// name invariant. The query layer resolves a bare tag name against a flat map
+// (logical.CommonSchema.CreateRef, and BydbQL's allTags), so two families
+// sharing a name would make resolution depend on iteration order.
+func TestUniqueTagNamesRejectsDuplicateAcrossFamilies(t *testing.T) {
+	tagFamilies := []*databasev1.TagFamilySpec{
+		{Name: "default", Tags: []*databasev1.TagSpec{
+			{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING},
+		}},
+		{Name: "other", Tags: []*databasev1.TagSpec{
+			{Name: "svc", Type: databasev1.TagType_TAG_TYPE_INT},
+		}},
+	}
+	err := UniqueTagNames(tagFamilies)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `tag name "svc" is duplicated in tag families "default" and "other"`)
+}
+
+// TestUniqueTagNamesRejectsDuplicateWithinOneFamily falls out of the same flat
+// map and was likewise unchecked; it names the single family rather than
+// repeating it.
+func TestUniqueTagNamesRejectsDuplicateWithinOneFamily(t *testing.T) {
+	tagFamilies := []*databasev1.TagFamilySpec{
+		{Name: "default", Tags: []*databasev1.TagSpec{
+			{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "id", Type: databasev1.TagType_TAG_TYPE_INT},
+		}},
+	}
+	err := UniqueTagNames(tagFamilies)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `tag name "id" is duplicated in tag family "default"`)
+}
+
+// TestUniqueTagNamesAcceptsDistinctNames guards against over-reach: distinct
+// names across several families are the normal case.
+func TestUniqueTagNamesAcceptsDistinctNames(t *testing.T) {
+	tagFamilies := []*databasev1.TagFamilySpec{
+		{Name: "default", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+		{Name: "searchable", Tags: []*databasev1.TagSpec{{Name: "svc", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+	}
+	assert.NoError(t, UniqueTagNames(tagFamilies))
+}
+
+// TestMeasureAndStreamStillLoadDuplicateTagNames pins the split deliberately:
+// the shared validators are what the data nodes run when loading an
+// already-persisted schema (banyand/{measure,stream}/metadata.go's
+// OnAddOrUpdate, which logs and drops the resource on failure). A schema
+// registered before UniqueTagNames existed must keep loading, so only the
+// registry's create and update paths reject it.
+func TestMeasureAndStreamStillLoadDuplicateTagNames(t *testing.T) {
+	duplicated := []*databasev1.TagFamilySpec{
+		{Name: "default", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+		{Name: "searchable", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}},
+	}
+	measure := &databasev1.Measure{
+		Metadata:    &commonv1.Metadata{Name: "legacy_measure", Group: "group1"},
+		Entity:      &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: duplicated,
+	}
+	assert.NoError(t, Measure(measure))
+	stream := &databasev1.Stream{
+		Metadata:    &commonv1.Metadata{Name: "legacy_stream", Group: "group1"},
+		Entity:      &databasev1.Entity{TagNames: []string{"id"}},
+		TagFamilies: duplicated,
+	}
+	assert.NoError(t, Stream(stream))
+	assert.Error(t, UniqueTagNames(duplicated))
+}
