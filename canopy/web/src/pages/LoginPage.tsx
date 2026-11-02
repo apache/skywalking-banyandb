@@ -27,6 +27,19 @@ import { IconShield, IconViewer } from '../components/icons.js';
 type Role = 'admin' | 'readonly';
 type Status = 'idle' | 'connecting' | 'connected' | 'failed';
 
+interface SsoProvider {
+  id: string;
+  name: string;
+}
+
+// The sign-in options /api/meta reports; absent (an older server) means local username/password.
+interface AuthMeta {
+  backend?: 'local' | 'sso';
+  providers?: SsoProvider[];
+  ssoHealthy?: boolean;
+  breakGlass?: boolean;
+}
+
 interface FieldProps {
   label: string;
   required?: boolean;
@@ -108,6 +121,11 @@ export function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [banyanVersion, setBanyanVersion] = useState<string | null>(null);
   const [banyanReachable, setBanyanReachable] = useState<boolean | null>(null);
+  // Which sign-in options to offer is unknown until /api/meta answers; until then (and when it fails)
+  // no credential form is shown, so an SSO deployment never briefly offers the local form.
+  const [authMeta, setAuthMeta] = useState<AuthMeta>({});
+  const [metaStatus, setMetaStatus] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [metaAttempt, setMetaAttempt] = useState(0);
 
   // Probe the BFF's configured BanyanDB upstream on mount so the badge can
   // show the version and reachability before the user has typed anything.
@@ -115,17 +133,20 @@ export function LoginPage() {
   // and is no longer a per-session input.
   useEffect(() => {
     fetch(canopyPath('/api/meta'))
-      .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean }> : null)
+      .then(r => r.ok ? r.json() as Promise<{ banyanVersion: string | null; reachable?: boolean; auth?: AuthMeta }> : null)
       .then(d => {
-        if (!d) { setBanyanReachable(false); setBanyanVersion(null); return; }
+        if (!d) { setBanyanReachable(false); setBanyanVersion(null); setMetaStatus('failed'); return; }
         if (typeof d.reachable === 'boolean') setBanyanReachable(d.reachable);
+        // A server that reports no auth block is a local-auth server.
+        setAuthMeta(d.auth ?? { backend: 'local' });
+        setMetaStatus('ready');
         // Only show a version for the upstream we just probed. A failed probe
         // clears the version so the badge never shows a misleading
         // "BanyanDB · v0.10" while reachable=false.
         setBanyanVersion(d.reachable ? (d.banyanVersion ?? null) : null);
       })
-      .catch(() => { setBanyanReachable(false); setBanyanVersion(null); });
-  }, []);
+      .catch(() => { setBanyanReachable(false); setBanyanVersion(null); setMetaStatus('failed'); });
+  }, [metaAttempt]);
 
   const clearFieldError = (key: string) => {
     if (errors[key]) setErrors((prev) => { const next = { ...prev }; delete next[key]; return next; });
@@ -198,6 +219,12 @@ export function LoginPage() {
   // API fails" trap. banyanReachable === null means the probe is still in
   // flight; we let the user try (the pre-flight in submit() will catch it).
   const upstreamDown = banyanReachable === false;
+  const ssoBackend = authMeta.backend === 'sso';
+  const providers = authMeta.providers ?? [];
+  // With SSO the username/password form is the break-glass path: only offered while the
+  // identity provider is down and the server has break-glass enabled.
+  const metaReady = metaStatus === 'ready';
+  const showPasswordForm = metaReady && (!ssoBackend || (authMeta.breakGlass === true && authMeta.ssoHealthy === false));
 
   return (
     <div className="lf">
@@ -230,10 +257,53 @@ export function LoginPage() {
           )}
         </div>
         <div className="lf-formwrap">
+          {metaStatus === 'loading' && (
+            <div className="lf-banner" role="status">
+              <span className="lf-dot" />
+              <span>Loading sign-in options…</span>
+            </div>
+          )}
+          {metaStatus === 'failed' && (
+            <div className="lf-sso">
+              <div className="lf-banner err" role="alert">
+                <span className="lf-dot" />
+                <span>Could not load the sign-in options from the server.</span>
+              </div>
+              <button type="button" className="btn btn-primary" onClick={() => { setMetaStatus('loading'); setMetaAttempt((n) => n + 1); }}>
+                Retry
+              </button>
+            </div>
+          )}
+          {metaReady && ssoBackend && (
+            <div className="lf-sso">
+              {providers.map((provider) => (upstreamDown ? (
+                // Same guard as the password button: never start a login into an unreachable upstream.
+                <button key={provider.id} type="button" className="btn btn-primary lf-sso-btn is-disabled-by-upstream" disabled>
+                  Upstream unreachable
+                </button>
+              ) : (
+                <a
+                  key={provider.id}
+                  className="btn btn-primary lf-sso-btn"
+                  href={canopyPath(`/auth/sso/${encodeURIComponent(provider.id)}/start`)}
+                >
+                  {`Sign in with ${provider.name}`}
+                </a>
+              )))}
+              {ssoBackend && showPasswordForm && (
+                <div className="lf-banner err" role="status">
+                  <span className="lf-dot" />
+                  <span>Single sign-on is unavailable. Break-glass sign-in is enabled.</span>
+                </div>
+              )}
+            </div>
+          )}
+          {showPasswordForm && (
           <form
             className="lf-form"
             onSubmit={(e) => { e.preventDefault(); void submit(); }}
           >
+            {!ssoBackend && (
             <div className="f-field lf-roles">
               <label className="f-label">Sign in as</label>
               <div className="lf-seg" role="radiogroup" aria-label="Role">
@@ -258,6 +328,7 @@ export function LoginPage() {
                 })}
               </div>
             </div>
+            )}
             <Field
               label="Username"
               required
@@ -308,6 +379,7 @@ export function LoginPage() {
               )}
             </button>
           </form>
+          )}
         </div>
       </div>
     </div>
