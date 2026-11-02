@@ -28,6 +28,9 @@ import (
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/posting"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -156,6 +159,118 @@ func Test_partIter_nextBlock(t *testing.T) {
 			mp.mustFlush(fileSystem, partPath)
 			p = mustOpenFilePart(epoch, tmpDir, fileSystem)
 			verifyPart(p)
+		})
+	}
+}
+
+// testEqFilter mirrors logicalstream's eq node: it skips a block unless the
+// block's own tag filters report the value as possibly present.
+type testEqFilter struct {
+	name  string
+	value string
+}
+
+func (f testEqFilter) String() string { return "eq(" + f.name + ", " + f.value + ")" }
+
+func (testEqFilter) Execute(_ index.GetSearcher, _ common.SeriesID, _ *index.RangeOpts) (posting.List, posting.List, error) {
+	return nil, nil, nil
+}
+
+func (f testEqFilter) ShouldSkip(tagFamilyFilters index.FilterOp) (bool, error) {
+	return !tagFamilyFilters.Eq(f.name, f.value), nil
+}
+
+// buildMultiBlockMemPart writes three blocks: series 1 holds block "a" (ts 1-2)
+// then block "b" (ts 3-4), series 2 holds block "a2" (ts 5-6). Series 1 having
+// two blocks is what mustInitFromElements itself produces once a series exceeds
+// maxUncompressedBlockSize; writing the blocks directly keeps the fixture small.
+func buildMultiBlockMemPart() *memPart {
+	rowTagFamilies := func(value string, rows int) [][]tagValues {
+		row := []tagValues{{
+			tag: "singleTag",
+			values: []*tagValue{
+				{tag: "strTag", valueType: pbv1.ValueTypeStr, value: []byte(value)},
+			},
+		}}
+		out := make([][]tagValues, rows)
+		for i := range out {
+			out[i] = row
+		}
+		return out
+	}
+	mp := generateMemPart()
+	mp.reset()
+	bsw := generateBlockWriter()
+	bsw.MustInitForMemPart(mp)
+	bsw.MustWriteElements(1, []int64{1, 2}, []uint64{1, 2}, rowTagFamilies("a", 2))
+	bsw.MustWriteElements(1, []int64{3, 4}, []uint64{3, 4}, rowTagFamilies("b", 2))
+	bsw.MustWriteElements(2, []int64{5, 6}, []uint64{5, 6}, rowTagFamilies("a2", 2))
+	bsw.Flush(&mp.partMetadata, &mp.tagType)
+	releaseBlockWriter(bsw)
+	return mp
+}
+
+func Test_partIter_nextBlock_blockFilterSkipsOnlyCurrentBlock(t *testing.T) {
+	tests := []struct {
+		name       string
+		sids       []common.SeriesID
+		filter     testEqFilter
+		wantSeries []common.SeriesID
+		wantMinTS  []int64
+	}{
+		{
+			name:       "matching value lives in the second block of the series",
+			sids:       []common.SeriesID{1},
+			filter:     testEqFilter{name: "strTag", value: "b"},
+			wantSeries: []common.SeriesID{1},
+			wantMinTS:  []int64{3},
+		},
+		{
+			name:       "skip on the first series must not hide its second block from a later series query",
+			sids:       []common.SeriesID{1, 2},
+			filter:     testEqFilter{name: "strTag", value: "b"},
+			wantSeries: []common.SeriesID{1},
+			wantMinTS:  []int64{3},
+		},
+		{
+			name:       "value absent from every block skips all blocks",
+			sids:       []common.SeriesID{1, 2},
+			filter:     testEqFilter{name: "strTag", value: "nonexistent"},
+			wantSeries: nil,
+			wantMinTS:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			verifyPart := func(p *part) {
+				defer p.close()
+				bma := generateBlockMetadataArray()
+				defer releaseBlockMetadataArray(bma)
+				pi := partIter{}
+				pi.init(bma, p, tt.sids, 0, 10, tt.filter)
+
+				var gotSeries []common.SeriesID
+				var gotMinTS []int64
+				for pi.nextBlock() {
+					gotSeries = append(gotSeries, pi.curBlock.seriesID)
+					gotMinTS = append(gotMinTS, pi.curBlock.timestamps.min)
+				}
+				require.NoError(t, pi.error())
+				require.Equal(t, tt.wantSeries, gotSeries, "unexpected series of yielded blocks")
+				require.Equal(t, tt.wantMinTS, gotMinTS, "unexpected blocks yielded")
+			}
+
+			mp := buildMultiBlockMemPart()
+			verifyPart(openMemPart(mp))
+
+			tmpDir, defFn := test.Space(require.New(t))
+			defer defFn()
+			fileSystem := fs.NewLocalFileSystem()
+			partPath := partPath(tmpDir, 1)
+			mp.mustFlush(fileSystem, partPath)
+			releaseMemPart(mp)
+			verifyPart(mustOpenFilePart(1, tmpDir, fileSystem))
 		})
 	}
 }
