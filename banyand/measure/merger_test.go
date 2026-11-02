@@ -19,6 +19,7 @@ package measure
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -34,7 +35,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -1710,4 +1713,134 @@ func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Test_mergeParts_splitPreservesValues checks the retained tail after another input
+// block reuses the decoder. Row counts alone cannot detect corrupted payloads.
+func Test_mergeParts_splitPreservesValues(t *testing.T) {
+	// Several input parts ensure decoder buffers are reused after the first split.
+	const parts = 7
+	const rowsPerPart = 5000
+	root := t.TempDir()
+	fileSystem := fs.NewLocalFileSystem()
+	var inputs []*partWrapper
+	defer func() {
+		for _, input := range inputs {
+			input.decRef()
+		}
+	}()
+	intValue := func(timestamp int64) []byte {
+		if timestamp%11 == 0 {
+			return nil
+		}
+		return convert.Int64ToBytes(timestamp * 17)
+	}
+	for partIndex := 0; partIndex < parts; partIndex++ {
+		points := &dataPoints{}
+		rowCount := rowsPerPart
+		if partIndex == parts-1 {
+			rowCount = maxBlockLength
+		}
+		for row := 0; row < rowCount; row++ {
+			timestamp := int64(partIndex*rowsPerPart + row + 1)
+			points.seriesIDs = append(points.seriesIDs, 1)
+			points.timestamps = append(points.timestamps, timestamp)
+			points.versions = append(points.versions, timestamp)
+			points.tagFamilies = append(points.tagFamilies, []nameValues{{name: "tags", values: []*nameValue{
+				{name: "label", valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("tag-%08d", timestamp))},
+			}}})
+			points.fields = append(points.fields, nameValues{values: []*nameValue{
+				{name: "nullable", valueType: pbv1.ValueTypeInt64, value: intValue(timestamp)},
+				{name: "text", valueType: pbv1.ValueTypeStr, value: []byte(fmt.Sprintf("field-%08d", timestamp))},
+			}})
+		}
+		partID := uint64(partIndex + 1)
+		memoryPart := generateMemPart()
+		memoryPart.mustInitFromDataPoints(points)
+		memoryPart.mustFlush(fileSystem, partPath(root, partID))
+		inputs = append(inputs, newPartWrapper(nil, mustOpenFilePart(partID, root, fileSystem)))
+		releaseMemPart(memoryPart)
+	}
+	table := &tsTable{pm: protector.Nop{}}
+	merged, err := table.mergeParts(fileSystem, make(chan struct{}), inputs, parts+1, root)
+	require.NoError(t, err)
+	defer merged.decRef()
+	iterator := &partMergeIter{}
+	iterator.mustInitFromPart(merged.p)
+	reader := &blockReader{}
+	reader.init([]*partMergeIter{iterator})
+	decoder := generateColumnValuesDecoder()
+	defer releaseColumnValuesDecoder(decoder)
+	count := 0
+	blockCount := 0
+	for reader.nextBlockMetadata() {
+		reader.loadBlockData(decoder)
+		blockCount++
+		require.LessOrEqual(t, len(reader.block.timestamps), maxBlockLength)
+		require.Len(t, reader.block.field.columns, 2)
+		require.Len(t, reader.block.tagFamilies, 1)
+		require.Len(t, reader.block.tagFamilies[0].columns, 1)
+		require.Equal(t, "label", reader.block.tagFamilies[0].columns[0].name)
+		for row, timestamp := range reader.block.timestamps {
+			count++
+			require.Equal(t, int64(count), timestamp)
+			require.Equal(t, timestamp, reader.block.versions[row])
+			for _, field := range reader.block.field.columns {
+				switch field.name {
+				case "nullable":
+					require.Equal(t, intValue(timestamp), field.values[row], "nullable field at timestamp %d", timestamp)
+				case "text":
+					require.Equal(t, fmt.Sprintf("field-%08d", timestamp), string(field.values[row]), "string field at timestamp %d", timestamp)
+				default:
+					t.Fatalf("unexpected field %q", field.name)
+				}
+			}
+			require.Equal(t, fmt.Sprintf("tag-%08d", timestamp), string(reader.block.tagFamilies[0].columns[0].values[row]),
+				"tag at timestamp %d", timestamp)
+		}
+	}
+	require.NoError(t, reader.error())
+	require.Equal(t, (parts-1)*rowsPerPart+maxBlockLength, count)
+	require.Greater(t, blockCount, 1)
+}
+
+func Test_mergePartsThenSendIntroduction_cleansUpOnShutdown(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	inputID := uint64(5)
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(dpsTS1)
+	mp.mustFlush(fileSystem, partPath(tmpPath, inputID))
+	p := mustOpenFilePart(inputID, tmpPath, fileSystem)
+	p.partMetadata.ID = inputID
+	pw := newPartWrapper(nil, p)
+	releaseMemPart(mp)
+
+	tst := &tsTable{
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		l:          logger.GetLogger("measure-test"),
+		pm:         protector.Nop{},
+		loopCloser: run.NewCloser(0),
+	}
+	tst.loopCloser.CloseThenWait()
+
+	merged := map[uint64]struct{}{inputID: {}}
+	got, err := tst.mergePartsThenSendIntroduction(
+		snapshotCreatorMerger,
+		[]*partWrapper{pw},
+		merged,
+		make(chan *mergerIntroduction),
+		make(chan struct{}),
+		"file",
+	)
+	require.ErrorIs(t, err, errClosed)
+	require.Nil(t, got)
+
+	outputID := tst.curPartID
+	require.False(t, fileSystem.IsExist(partPath(tmpPath, outputID)),
+		"merged part directory should be removed when the introduction is refused")
+	require.True(t, fileSystem.IsExist(partPath(tmpPath, inputID)))
 }
