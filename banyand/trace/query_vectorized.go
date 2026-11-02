@@ -25,6 +25,7 @@ import (
 	"maps"
 	"slices"
 	"sort"
+	"time"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
@@ -35,6 +36,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 var errVectorizedTraceQueryMemoryBudgetExceeded = errors.New("vectorized trace query memory budget exceeded")
@@ -400,10 +402,31 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 	}
 }
 
+// traceCompletionWindow bounds how far outside a trace query's time range
+// Phase 2 (fetching all spans of an already-selected trace ID) looks for the
+// remaining spans of that trace. Segments are per-day (local time) and each
+// span is written to the segment matching its own timestamp (see
+// write_standalone.go), so a trace whose spans straddle a segment boundary
+// can have some spans fall just outside the segments Phase 1 selected.
+// Widening Phase 2's segment selection by this window on both sides recovers
+// those spans while keeping the extra segment lookup bounded; it never
+// changes which trace IDs are selected, only which segments are read to
+// complete the ones Phase 1 already picked.
+const traceCompletionWindow = time.Hour
+
 // buildConsistentVectorizedScanBatch keeps ordered SIDX selection and core
 // snapshot acquisition inside the same publication view. Once the core
 // snapshots have been acquired, their references keep the selected parts alive
 // and the publication fence can be released before data is decoded.
+//
+// When Phase 1 selects at least one trace ID, Phase 2 widens the tables it
+// scans to every segment overlapping the query range extended by
+// traceCompletionWindow on both sides (see widenTablesForTraceCompletion), so
+// a trace whose spans straddle a segment boundary is returned complete. tsdb
+// may be nil (e.g. in tests that do not exercise widening), in which case
+// Phase 2 scans exactly the tables it was given. The returned segments are
+// newly acquired references the caller owns and must release exactly once;
+// they are nil whenever no widening occurred.
 func (t *trace) buildConsistentVectorizedScanBatch(
 	ctx context.Context,
 	tables []*tsTable,
@@ -412,7 +435,9 @@ func (t *trace) buildConsistentVectorizedScanBatch(
 	req sidx.QueryRequest,
 	useSIDX bool,
 	maxTraceSize int,
-) (*scanBatch, error) {
+	tsdb storage.TSDB[*tsTable, option],
+	timeRange timestamp.TimeRange,
+) (*scanBatch, []storage.Segment[*tsTable, option], error) {
 	var releasePublicationView func()
 	if useSIDX {
 		releasePublicationView = acquireSnapshotPublicationView(tables)
@@ -421,9 +446,92 @@ func (t *trace) buildConsistentVectorizedScanBatch(
 
 	phase1Batch, phase1Err := t.buildVectorizedPhase1TraceBatch(ctx, qo, sidxInstances, req, useSIDX, maxTraceSize)
 	if phase1Err != nil {
-		return nil, phase1Err
+		return nil, nil, phase1Err
 	}
-	return t.buildVectorizedScanBatch(ctx, tables, qo, phase1Batch)
+
+	scanTables := tables
+	var extraSegments []storage.Segment[*tsTable, option]
+	if tsdb != nil && len(phase1Batch.traceIDsOrder) > 0 {
+		var widenErr error
+		scanTables, extraSegments, widenErr = widenTablesForTraceCompletion(tsdb, timeRange, tables)
+		if widenErr != nil {
+			return nil, nil, widenErr
+		}
+	}
+
+	batch, scanErr := t.buildVectorizedScanBatch(ctx, scanTables, qo, phase1Batch)
+	if scanErr != nil {
+		releaseTraceCompletionSegments(extraSegments)
+		return nil, nil, scanErr
+	}
+	return batch, extraSegments, nil
+}
+
+// widenTablesForTraceCompletion selects the segments overlapping
+// [timeRange.Start-traceCompletionWindow, timeRange.End+traceCompletionWindow]
+// that contribute tables not already present in tables (compared by pointer
+// identity, since SelectSegments returns the same *segment reopened rather
+// than a copy), appends those tables to the returned slice, and returns the
+// newly-acquired segment references the caller must release exactly once. A
+// candidate segment whose tables are all already known (typically the
+// already-selected segment itself, re-returned by the widened lookup) is
+// released immediately since it contributes nothing new. TTL-expired segments
+// are excluded the same way the original SelectSegments call excludes them.
+func widenTablesForTraceCompletion(
+	tsdb storage.TSDB[*tsTable, option],
+	timeRange timestamp.TimeRange,
+	tables []*tsTable,
+) ([]*tsTable, []storage.Segment[*tsTable, option], error) {
+	widened := timestamp.NewInclusiveTimeRange(
+		timeRange.Start.Add(-traceCompletionWindow),
+		timeRange.End.Add(traceCompletionWindow),
+	)
+	candidateSegments, err := tsdb.SelectSegments(widened, true)
+	if err != nil {
+		return tables, nil, err
+	}
+	if len(candidateSegments) == 0 {
+		return tables, nil, nil
+	}
+
+	known := make(map[*tsTable]struct{}, len(tables))
+	for _, table := range tables {
+		known[table] = struct{}{}
+	}
+
+	combined := tables
+	extraSegments := make([]storage.Segment[*tsTable, option], 0, len(candidateSegments))
+	for _, segment := range candidateSegments {
+		newTables, _ := segment.Tables()
+		added := false
+		for _, table := range newTables {
+			if _, exists := known[table]; exists {
+				continue
+			}
+			known[table] = struct{}{}
+			combined = append(combined, table)
+			added = true
+		}
+		if added {
+			extraSegments = append(extraSegments, segment)
+			continue
+		}
+		// Every table this segment owns is already covered by the original
+		// selection (typically because the widened range re-selected the same
+		// segment): this reference is redundant, so release it now rather
+		// than threading a no-op segment through the rest of the query.
+		segment.DecRef()
+	}
+	return combined, extraSegments, nil
+}
+
+// releaseTraceCompletionSegments releases every segment widenTablesForTraceCompletion
+// acquired. Used on Phase 2 scan failure, where the caller never gets a chance
+// to fold these segments into the result's own release path.
+func releaseTraceCompletionSegments(segments []storage.Segment[*tsTable, option]) {
+	for i := range segments {
+		segments[i].DecRef()
+	}
 }
 
 func acquireSnapshotPublicationView(tables []*tsTable) func() {
