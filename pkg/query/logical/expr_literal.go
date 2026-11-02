@@ -71,7 +71,7 @@ func (i *int64Literal) Compare(other LiteralExpr) (int, bool) {
 
 func (i *int64Literal) Contains(other LiteralExpr) bool {
 	if o, ok := other.(*int64Literal); ok {
-		return i == o
+		return o.int64 == i.int64
 	}
 	if o, ok := other.(*int64ArrLiteral); ok {
 		if len(o.arr) == 1 && o.arr[0] == i.int64 {
@@ -83,7 +83,7 @@ func (i *int64Literal) Contains(other LiteralExpr) bool {
 
 func (i *int64Literal) BelongTo(other LiteralExpr) bool {
 	if o, ok := other.(*int64Literal); ok {
-		return i == o
+		return o.int64 == i.int64
 	}
 	if o, ok := other.(*int64ArrLiteral); ok {
 		return slices.Contains(o.arr, i.int64)
@@ -247,7 +247,7 @@ func (s *strLiteral) Compare(other LiteralExpr) (int, bool) {
 
 func (s *strLiteral) Contains(other LiteralExpr) bool {
 	if o, ok := other.(*strLiteral); ok {
-		return s == o
+		return o.string == s.string
 	}
 	if o, ok := other.(*strArrLiteral); ok {
 		if len(o.arr) == 1 && o.arr[0] == s.string {
@@ -259,7 +259,7 @@ func (s *strLiteral) Contains(other LiteralExpr) bool {
 
 func (s *strLiteral) BelongTo(other LiteralExpr) bool {
 	if o, ok := other.(*strLiteral); ok {
-		return s == o
+		return o.string == s.string
 	}
 	if o, ok := other.(*strArrLiteral); ok {
 		return slices.Contains(o.arr, s.string)
