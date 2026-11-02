@@ -150,6 +150,11 @@ func TestVolumeSet_ChecksumOfAPieceInALaterVolume(t *testing.T) {
 	assert.Less(t, len(data), int(members[1].Size)+1)
 	_, err = s.ReadFile(f, f.Size)
 	require.ErrorIs(t, err, ErrChecksum)
+	// A copy of exactly the file size across the volumes: Close reports the bad piece.
+	cr, err := s.Open(f)
+	require.NoError(t, err)
+	_, _ = io.CopyN(io.Discard, cr, f.Size)
+	require.ErrorIs(t, cr.Close(), ErrChecksum)
 	_, err = s.Verify(context.Background())
 	require.ErrorIs(t, err, ErrChecksum)
 	assert.Contains(t, err.Error(), "volume 2")
@@ -218,7 +223,7 @@ func TestVolumeSet_ShardAcrossVolumes(t *testing.T) {
 	require.Len(t, layout.Parts, 2)
 	assert.Equal(t, id1+"/metadata.json", layout.Parts[0].Subs[0].Meta.Path)
 	assert.Equal(t, []string{id1 + "/primary.bin"}, entryPaths(layout.Parts[0].Subs[0].Files))
-	assert.Greater(t, len(layout.Parts[0].Subs[0].Files[0].pieces), 1, "the primary file crosses volumes")
+	assert.Greater(t, layout.Parts[0].Subs[0].Files[0].pieces, 1, "the primary file crosses volumes")
 	assert.Equal(t, []string{"18e29603bfcd2125.snp"}, entryPaths(layout.Snapshots))
 }
 

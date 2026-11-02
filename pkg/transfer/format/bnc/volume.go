@@ -155,6 +155,8 @@ func (v *VolumeWriter) start() error {
 	v.cur = NewWriter(sinkWriter{v.sink})
 	v.cur.buf = v.buf
 	v.cur.seq = v.plan.n
+	// The VolumeWriter checks every path across all volumes; the volume need not keep them.
+	v.cur.paths = nil
 	return nil
 }
 

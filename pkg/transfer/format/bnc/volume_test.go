@@ -117,14 +117,15 @@ func TestVolumeWriter_SplitsAFileAcrossVolumes(t *testing.T) {
 	sink := writeVolumes(t, MinFileSize, files, members)
 	require.Len(t, sink.files, 4)
 	set := checkVolumes(t, sink, files, members, MinFileSize)
-	pieces := set.Files()[0].pieces
-	require.Len(t, pieces, 4)
+	f := set.Files()[0]
+	require.Equal(t, 4, f.pieces)
 	var off int64
-	for i, p := range pieces {
-		assert.Equal(t, i, p.volume)
-		assert.Equal(t, off, p.entry.FileOffset)
-		assert.Equal(t, int64(200<<10), p.entry.FileSize)
-		off += p.entry.Size
+	for i := 0; i < f.pieces; i++ {
+		assert.Equal(t, i, f.volume+i)
+		e := set.entries[f.first+i]
+		assert.Equal(t, off, e.FileOffset)
+		assert.Equal(t, int64(200<<10), e.FileSize)
+		off += e.Size
 	}
 	for _, f := range sink.files[:3] {
 		assert.Len(t, f.data, MinFileSize, "a volume ending inside a file is full")
@@ -142,7 +143,7 @@ func TestVolumeWriter_FillsEveryVolume(t *testing.T) {
 	require.Len(t, first, 3)
 	assert.Equal(t, []string{"f000", "f001", "f002"}, []string{first[0].Path, first[1].Path, first[2].Path})
 	assert.False(t, first[2].ends(), "the large file starts in the volume the small ones left room in")
-	assert.Greater(t, len(set.Files()[6].pieces), 2, "a file can span three volumes")
+	assert.Greater(t, set.Files()[6].pieces, 2, "a file can span three volumes")
 }
 
 func TestVolumeWriter_NoLimit(t *testing.T) {
@@ -163,7 +164,7 @@ func TestVolumeWriter_EmptyFileAtTheEndOfAVolume(t *testing.T) {
 	set := checkVolumes(t, sink, files, members, MinFileSize)
 	last := set.Files()[1]
 	assert.Equal(t, int64(0), last.Size)
-	assert.Equal(t, 1, last.pieces[0].volume, "the empty file follows the end of the large one")
+	assert.Equal(t, 1, last.volume, "the empty file follows the end of the large one")
 }
 
 func TestVolumeWriter_RandomRoundTrip(t *testing.T) {
@@ -187,7 +188,7 @@ func TestVolumeWriter_RandomRoundTrip(t *testing.T) {
 		members := randomFiles(rng, files, sizes...)
 		set := checkVolumes(t, writeVolumes(t, limit, files, members), files, members, limit)
 		for _, f := range set.Files() {
-			if len(f.pieces) > 2 {
+			if f.pieces > 2 {
 				spanning++
 			}
 		}

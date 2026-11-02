@@ -18,7 +18,6 @@
 package bnc
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -37,19 +36,21 @@ const verifyBlock = 1 << 20
 // concurrently. Files are read through a VolumeSet, which joins the pieces of a file split
 // across volumes.
 type Container struct {
-	r       io.ReaderAt
-	closer  io.Closer
-	entries []Entry
-	tail    []byte
-	size    int64
-	seq     uint32
-	last    bool
+	r         io.ReaderAt
+	closer    io.Closer
+	entries   []Entry
+	size      int64
+	footerLen int64
+	trailer   [trailerSize]byte // as Open read it; it carries the footer CRC-32
+	seq       uint32
+	last      bool
 }
 
 // Open checks the structure of the container of size bytes in r with two ReadAt calls, without
 // reading the members: the trailer, the footer and its CRC-32, every footer bound, and every
-// member path. A truncated container is detected only when its tail no longer parses; the
-// size and CRC-32 a manifest records are the final word.
+// member path. A truncated container is detected only when its tail no longer parses, and a
+// container that opens is not proven complete: the size and CRC-32 a manifest records are the
+// final word (see the package documentation).
 func Open(r io.ReaderAt, size int64) (*Container, error) {
 	if size < trailerSize {
 		return nil, corruptf("%d bytes are too few for a container", size)
@@ -69,12 +70,10 @@ func Open(r io.ReaderAt, size int64) (*Container, error) {
 		return nil, corruptf("footer length %d does not fit a container of %d bytes", footerLen, size)
 	}
 	membersEnd := size - trailerSize - footerLen
-	tail := make([]byte, footerLen+trailerSize)
-	if err := readFullAt(r, tail[:footerLen], membersEnd); err != nil {
+	footer := make([]byte, footerLen)
+	if err := readFullAt(r, footer, membersEnd); err != nil {
 		return nil, err
 	}
-	copy(tail[footerLen:], trailer)
-	footer := tail[:footerLen]
 	if crc32.ChecksumIEEE(footer) != binary.LittleEndian.Uint32(trailer) {
 		return nil, corruptf("footer checksum mismatch")
 	}
@@ -82,7 +81,9 @@ func Open(r io.ReaderAt, size int64) (*Container, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Container{r: r, size: size, entries: entries, tail: tail, seq: seq, last: last}, nil
+	c := &Container{r: r, size: size, footerLen: footerLen, entries: entries, seq: seq, last: last}
+	copy(c.trailer[:], trailer)
+	return c, nil
 }
 
 // OpenFile opens and checks the container in the regular file at path, sizing it on the open
@@ -146,6 +147,11 @@ func (m *memberReader) Read(p []byte) (int, error) {
 	n, err := m.r.Read(p)
 	m.crc = crc32.Update(m.crc, crc32.IEEETable, p[:n])
 	m.left -= int64(n)
+	// The read that returns the last byte checks the CRC-32, so a reader that stops at exactly
+	// the member size (io.CopyN, a frame of the remaining bytes) still sees a mismatch.
+	if m.left == 0 && m.crc != m.want {
+		return n, fmt.Errorf("%w: %q", ErrChecksum, m.path)
+	}
 	if errors.Is(err, io.EOF) {
 		if m.left > 0 {
 			return n, corruptf("member %q ends %d bytes early", m.path, m.left)
@@ -159,12 +165,20 @@ func (m *memberReader) Read(p []byte) (int, error) {
 }
 
 // Verify reads the whole container once: it checks the CRC-32 of every member, checks that the
-// footer and trailer still hold what Open read, and returns the size and CRC-32 of the file. A
-// canceled ctx returns ctx.Err() unwrapped.
+// footer and trailer still hold what Open read, and returns the size and CRC-32 of the file,
+// which the caller compares with the manifest; success alone does not prove the container is
+// the expected one or complete. A canceled ctx returns ctx.Err() unwrapped.
 func (c *Container) Verify(ctx context.Context) (Summary, error) {
-	buf := make([]byte, min(verifyBlock, c.size))
-	var fileCRC, memberCRC uint32
-	membersEnd := c.size - int64(len(c.tail))
+	return c.verify(ctx, make([]byte, min(verifyBlock, c.size)))
+}
+
+// verify is Verify reading through buf. The footer is not kept after Open: it is checked
+// against the footer CRC-32 and the trailer Open read.
+func (c *Container) verify(ctx context.Context, buf []byte) (Summary, error) {
+	var fileCRC, memberCRC, footerCRC uint32
+	var trailer [trailerSize]byte
+	membersEnd := c.size - c.footerLen - trailerSize
+	trailerStart := c.size - trailerSize
 	next, left := c.nextMember(-1)
 	for pos := int64(0); pos < c.size; {
 		if err := ctx.Err(); err != nil {
@@ -177,11 +191,16 @@ func (c *Container) Verify(ctx context.Context) (Summary, error) {
 		fileCRC = crc32.Update(fileCRC, crc32.IEEETable, chunk)
 		for p := chunk; len(p) > 0; {
 			if pos >= membersEnd {
-				if !bytes.Equal(p, c.tail[pos-membersEnd:pos-membersEnd+int64(len(p))]) {
-					return Summary{}, corruptf("footer changed since the container was opened")
+				// The footer, then the trailer.
+				n := int64(len(p))
+				if pos < trailerStart {
+					n = min(n, trailerStart-pos)
+					footerCRC = crc32.Update(footerCRC, crc32.IEEETable, p[:n])
+				} else {
+					copy(trailer[pos-trailerStart:], p[:n])
 				}
-				pos += int64(len(p))
-				break
+				p, pos = p[n:], pos+n
+				continue
 			}
 			n := min(int64(len(p)), left)
 			memberCRC = crc32.Update(memberCRC, crc32.IEEETable, p[:n])
@@ -194,6 +213,9 @@ func (c *Container) Verify(ctx context.Context) (Summary, error) {
 				next, left = c.nextMember(next)
 			}
 		}
+	}
+	if trailer != c.trailer || footerCRC != binary.LittleEndian.Uint32(trailer[:4]) {
+		return Summary{}, corruptf("footer changed since the container was opened")
 	}
 	return Summary{Bytes: uint64(c.size), CRC32: fileCRC, Entries: uint32(len(c.entries))}, nil
 }

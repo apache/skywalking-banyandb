@@ -31,20 +31,22 @@ var errClosed = errors.New("bnc writer is closed")
 // Writer writes one container. Its first error sticks: every later call returns it, and a
 // closed Writer fails every call.
 type Writer struct {
-	w          io.Writer
-	err        error
-	paths      *pathSet
-	entries    []Entry
-	buf        []byte
-	off        int64
-	footerSize int // entry count and entries; headerSize(seq) comes on top
-	fileCRC    uint32
-	seq        uint32 // volume number written into the footer
+	w        io.Writer
+	err      error
+	paths    *pathSet // nil when a VolumeWriter checks the paths across its volumes
+	lastPath string   // the last member, which must end its file before another follows
+	entries  []byte   // the footer entries, encoded as they are added
+	buf      []byte
+	off      int64
+	count    int
+	fileCRC  uint32
+	seq      uint32 // volume number written into the footer
+	lastEnds bool
 }
 
 // NewWriter returns a Writer that writes a container to w.
 func NewWriter(w io.Writer) *Writer {
-	return &Writer{w: w, paths: newPathSet(), footerSize: uvarintLen(0), seq: 1}
+	return &Writer{w: w, paths: newPathSet(), seq: 1}
 }
 
 // Add copies exactly size bytes of r as member path, checking ctx before each block. It reads r
@@ -66,21 +68,23 @@ func (w *Writer) addPiece(ctx context.Context, path string, fileOffset, size, fi
 		return w.fail(fmt.Errorf("member %q has a negative size %d or offset %d", path, size, fileOffset))
 	}
 	// The rules Open applies to a volume; whether this member ends the volume is not known yet.
-	if err := checkPiece(path, uint64(fileOffset), uint64(size), uint64(fileSize), len(w.entries) == 0, true); err != nil {
+	if err := checkPiece(path, uint64(fileOffset), uint64(size), uint64(fileSize), w.count == 0, true); err != nil {
 		return w.fail(err)
 	}
-	if n := len(w.entries); n > 0 && !w.entries[n-1].ends() {
-		return w.fail(fmt.Errorf("member %q follows %q, which is unfinished", path, w.entries[n-1].Path))
+	if w.count > 0 && !w.lastEnds {
+		return w.fail(fmt.Errorf("member %q follows %q, which is unfinished", path, w.lastPath))
 	}
-	if len(w.entries) >= maxEntries {
+	if w.count >= maxEntries {
 		return w.fail(fmt.Errorf("a container holds at most %d members", maxEntries))
 	}
-	footerSize := w.footerSize + encodedEntrySize(path, fileOffset, fileSize) + uvarintLen(uint64(len(w.entries)+1)) - uvarintLen(uint64(len(w.entries)))
-	if footerSize+headerSize(w.seq) > maxFooterSize {
+	footerSize := headerSize(w.seq) + uvarintLen(uint64(w.count+1)) + len(w.entries) + encodedEntrySize(path, fileOffset, fileSize)
+	if footerSize > maxFooterSize {
 		return w.fail(fmt.Errorf("member %q would grow the footer beyond %d bytes", path, maxFooterSize))
 	}
-	if err := w.paths.add(path); err != nil {
-		return w.fail(err)
+	if w.paths != nil {
+		if err := w.paths.add(path); err != nil {
+			return w.fail(err)
+		}
 	}
 	if w.buf == nil {
 		w.buf = make([]byte, WriteSize)
@@ -112,8 +116,9 @@ func (w *Writer) addPiece(ctx context.Context, path string, fileOffset, size, fi
 	if copied != size {
 		return w.fail(fmt.Errorf("member %q has %d bytes, not its size %d", path, copied, size))
 	}
-	w.entries = append(w.entries, Entry{Path: path, Offset: w.off - size, Size: size, FileOffset: fileOffset, FileSize: fileSize, CRC32: crc})
-	w.footerSize = footerSize
+	w.entries = appendEntry(w.entries, Entry{Path: path, Size: size, FileOffset: fileOffset, FileSize: fileSize, CRC32: crc})
+	w.count++
+	w.lastPath, w.lastEnds = path, fileOffset+size == fileSize
 	return nil
 }
 
@@ -129,10 +134,10 @@ func (w *Writer) close(last bool) (Summary, error) {
 	if w.err != nil {
 		return Summary{}, w.err
 	}
-	if len(w.entries) == 0 {
+	if w.count == 0 {
 		return Summary{}, w.fail(errors.New("a container needs at least one member"))
 	}
-	footer := encodeFooter(w.seq, last, w.entries, headerSize(w.seq)+w.footerSize)
+	footer := encodeFooter(w.seq, last, w.count, w.entries)
 	trailer := make([]byte, 0, trailerSize)
 	trailer = binary.LittleEndian.AppendUint32(trailer, crc32.ChecksumIEEE(footer))
 	trailer = binary.LittleEndian.AppendUint32(trailer, uint32(len(footer)))
@@ -144,7 +149,7 @@ func (w *Writer) close(last bool) (Summary, error) {
 		return Summary{}, err
 	}
 	w.err = errClosed
-	return Summary{Bytes: uint64(w.off), CRC32: w.fileCRC, Entries: uint32(len(w.entries))}, nil
+	return Summary{Bytes: uint64(w.off), CRC32: w.fileCRC, Entries: uint32(w.count)}, nil
 }
 
 // write checksums p before handing it over: a Sink may reuse p once Write returns.

@@ -18,63 +18,57 @@
 package bnc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"slices"
+	"sync"
 )
 
-// File is one file of a VolumeSet, whole: its path, its size and the volume members that hold
-// its bytes in order.
+// File is one file of a VolumeSet, whole: its path and size, and where its pieces are.
 type File struct {
 	Path   string
-	pieces []filePiece
 	Size   int64
+	index  int // position in VolumeSet.files
+	first  int // the entry of its first piece in VolumeSet.entries; the others follow it
+	pieces int
+	volume int // the volume of its first piece; each further piece opens the next volume
 }
 
-type filePiece struct {
-	entry  Entry
-	volume int
-}
-
-// volume is one volume of a set: either opened by the caller, or a file opened only while it is
-// read, so that a set of many volumes holds at most one descriptor per reader.
+// volume is one volume of a set: either opened by the caller, or a file opened on demand, so
+// that a set of many volumes holds few descriptors.
 type volume struct {
-	c    *Container // the caller's open volume; nil for one opened on demand
-	path string
-	tail []byte // footer and trailer as first read; a reopened file must match them
-}
-
-func (v *volume) open() (*Container, func(), error) {
-	if v.c != nil {
-		return v.c, func() {}, nil
-	}
-	c, err := OpenFile(v.path)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !bytes.Equal(c.tail, v.tail) {
-		_ = c.Close()
-		return nil, nil, corruptf("volume %s changed since the set was opened", v.path)
-	}
-	return c, func() { _ = c.Close() }, nil
+	c         *Container // the caller's open volume; nil for one opened on demand
+	path      string
+	first     int // its entries are VolumeSet.entries[first:end]
+	end       int
+	size      int64
+	footerLen int64
+	trailer   [trailerSize]byte // as first read; it carries the footer CRC-32
+	seq       uint32
+	last      bool
 }
 
 // VolumeSet is the volumes of one container, joined in order: a file split across volumes
 // reads as one. Its methods may be called concurrently.
 type VolumeSet struct {
-	index   map[string]int
+	// idle is the last volume opened on demand, kept open while no reader uses it so that
+	// reading the files of one volume one after another opens it once.
+	idle    *Container
+	entries []Entry // the entries of every volume, in volume order
 	volumes []volume
 	files   []File
+	mu      sync.Mutex
+	idleVol int
+	idleUse int // readers of idle
 }
 
 // OpenVolumes reads the footers of the volume files at paths, given in volume order, and joins
-// them into a VolumeSet. It keeps no file open: a volume is opened again only while a file in it
-// is read or it is verified.
+// them into a VolumeSet. Volumes are opened again on demand to read files or verify; while no
+// file is read, the set keeps at most one of them open, which Close releases.
 func OpenVolumes(paths []string) (*VolumeSet, error) {
-	volumes := make([]volume, 0, len(paths))
 	containers := make([]*Container, 0, len(paths))
 	for _, p := range paths {
 		c, err := OpenFile(p)
@@ -84,82 +78,166 @@ func OpenVolumes(paths []string) (*VolumeSet, error) {
 		if err = c.Close(); err != nil {
 			return nil, err
 		}
-		volumes = append(volumes, volume{path: p, tail: c.tail})
 		containers = append(containers, c)
 	}
-	return joinVolumes(volumes, containers)
+	return joinVolumes(containers, func(i int) volume { return volume{path: paths[i]} })
 }
 
 // NewVolumeSet joins volumes the caller opened, given in volume order; Close closes them.
 func NewVolumeSet(containers []*Container) (*VolumeSet, error) {
-	volumes := make([]volume, 0, len(containers))
-	for _, c := range containers {
-		volumes = append(volumes, volume{c: c})
-	}
-	return joinVolumes(volumes, containers)
+	return joinVolumes(containers, func(i int) volume { return volume{c: containers[i]} })
 }
 
-// joinVolumes checks that the volumes, whose footers containers hold, make one container:
-// they are numbered 1, 2, … and only the last one says it is last, so a missing, repeated,
-// misplaced or trailing volume is ErrCorrupt; a file left unfinished at the end of a volume
-// continues, at the next byte, as the first member of the next one, and no other member
-// continues a file; and no path repeats or lies under another file across the volumes.
-func joinVolumes(volumes []volume, containers []*Container) (*VolumeSet, error) {
+// joinVolumes checks that the volumes make one container: they are numbered 1, 2, … and only
+// the last one says it is last, so a missing, repeated, misplaced or trailing volume is
+// ErrCorrupt; a file left unfinished at the end of a volume continues, at the next byte, as
+// the first member of the next one, and no other member continues a file; and no path
+// repeats or lies under another file across the volumes. Open already checked every path and
+// the piece rules within each volume.
+func joinVolumes(containers []*Container, newVolume func(i int) volume) (*VolumeSet, error) {
 	if len(containers) == 0 {
 		return nil, errors.New("a volume set needs at least one volume")
 	}
-	s := &VolumeSet{volumes: volumes, index: map[string]int{}}
-	paths := newPathSet()
+	// One array holds the entries of every volume, sized once.
+	total := 0
+	for _, c := range containers {
+		total += len(c.entries)
+	}
+	entries := make([]Entry, 0, total)
+	volumes := make([]volume, len(containers))
+	for i, c := range containers {
+		v := newVolume(i)
+		v.first, v.end = len(entries), len(entries)+len(c.entries)
+		v.size, v.footerLen, v.trailer, v.seq, v.last = c.size, c.footerLen, c.trailer, c.seq, c.last
+		volumes[i] = v
+		entries = append(entries, c.entries...)
+	}
+	s := &VolumeSet{volumes: volumes, entries: entries, files: make([]File, 0, total), idleVol: -1}
+	// Open checked the paths of each volume; only a set of several needs them checked across.
+	var paths *pathSet
+	if len(volumes) > 1 {
+		paths = newPathSet()
+	}
 	var open *File // a file left unfinished by the previous volume
-	for vi, c := range containers {
-		if c.seq != uint32(vi+1) {
-			return nil, corruptf("volume %d of the set is volume %d of its container", vi+1, c.seq)
+	for vi := range volumes {
+		v := &volumes[vi]
+		if v.seq != uint32(vi+1) {
+			return nil, corruptf("volume %d of the set is volume %d of its container", vi+1, v.seq)
 		}
-		if last := vi == len(containers)-1; c.last != last {
+		if last := vi == len(volumes)-1; v.last != last {
 			if last {
 				return nil, corruptf("the set ends at volume %d, which is not the last of its container", vi+1)
 			}
 			return nil, corruptf("volume %d is the last of its container, but more follow", vi+1)
 		}
-		for _, e := range c.entries {
-			piece := filePiece{entry: e, volume: vi}
+		for i := v.first; i < v.end; i++ {
+			e := entries[i]
 			if e.FileOffset > 0 {
-				// Open checked that only the first member of a volume continues a file.
-				if open == nil || open.Path != e.Path || open.Size != e.FileSize || filePiecesEnd(open) != e.FileOffset {
+				// Open checked that only the first member of a volume continues a file, so the
+				// piece before it, when a file is open, is the last of the previous volume.
+				if open == nil || open.Path != e.Path || open.Size != e.FileSize ||
+					entries[i-1].FileOffset+entries[i-1].Size != e.FileOffset {
 					return nil, corruptf("volume %d starts with %q at %d, which does not continue the previous volume", vi+1, e.Path, e.FileOffset)
 				}
-				open.pieces = append(open.pieces, piece)
+				open.pieces++
 			} else {
 				if open != nil {
 					return nil, corruptf("file %q is left unfinished at the end of volume %d", open.Path, vi)
 				}
-				if err := paths.add(e.Path); err != nil {
-					return nil, fmt.Errorf("%w: %w", ErrCorrupt, err)
+				if paths != nil {
+					if err := paths.insert(e.Path); err != nil {
+						return nil, fmt.Errorf("%w: %w", ErrCorrupt, err)
+					}
 				}
-				open = &File{Path: e.Path, Size: e.FileSize, pieces: []filePiece{piece}}
+				s.files = append(s.files, File{Path: e.Path, Size: e.FileSize, index: len(s.files), first: i, pieces: 1, volume: vi})
+				open = &s.files[len(s.files)-1]
 			}
 			if e.ends() {
-				s.index[open.Path] = len(s.files)
-				s.files = append(s.files, *open)
 				open = nil
 			}
 		}
 	}
-	// The last volume says it is last, and Open requires a last member to end its file only
-	// when it is not last; check the end explicitly all the same.
 	if open != nil {
 		return nil, corruptf("file %q is left unfinished at the end of the last volume", open.Path)
 	}
 	return s, nil
 }
 
-func filePiecesEnd(f *File) int64 {
-	last := f.pieces[len(f.pieces)-1].entry
-	return last.FileOffset + last.Size
+// acquire returns volume i ready to read and a function that releases it. A volume opened on
+// demand reuses the entries the set decoded: reopening only checks that the file still has the
+// size and the trailer, which carries the footer CRC-32, it had then.
+func (s *VolumeSet) acquire(i int) (*Container, func(), error) {
+	v := &s.volumes[i]
+	if v.c != nil {
+		return v.c, func() {}, nil
+	}
+	s.mu.Lock()
+	if s.idle != nil && s.idleVol == i {
+		s.idleUse++
+		c := s.idle
+		s.mu.Unlock()
+		return c, s.releaseIdle, nil
+	}
+	s.mu.Unlock()
+	c, err := s.reopen(i)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.idleUse == 0 {
+		// Nobody reads the idle volume: this one takes its place.
+		if s.idle != nil {
+			_ = s.idle.Close()
+		}
+		s.idle, s.idleVol, s.idleUse = c, i, 1
+		return c, s.releaseIdle, nil
+	}
+	return c, func() { _ = c.Close() }, nil
 }
 
-// Close closes the volumes the caller opened for NewVolumeSet and returns the first error. A set
-// from OpenVolumes holds no open file.
+func (s *VolumeSet) releaseIdle() {
+	s.mu.Lock()
+	s.idleUse--
+	s.mu.Unlock()
+}
+
+func (s *VolumeSet) reopen(i int) (*Container, error) {
+	v := &s.volumes[i]
+	f, err := os.Open(v.path)
+	if err != nil {
+		return nil, err
+	}
+	c, err := s.checkReopened(f, v)
+	if err != nil {
+		_ = f.Close()
+		return nil, err
+	}
+	return c, nil
+}
+
+func (s *VolumeSet) checkReopened(f *os.File, v *volume) (*Container, error) {
+	st, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	var trailer [trailerSize]byte
+	if st.Size() == v.size {
+		if err = readFullAt(f, trailer[:], v.size-trailerSize); err != nil {
+			return nil, err
+		}
+	}
+	if st.Size() != v.size || trailer != v.trailer {
+		return nil, corruptf("volume %s changed since the set was opened", v.path)
+	}
+	return &Container{
+		r: f, closer: f, entries: s.entries[v.first:v.end],
+		size: v.size, footerLen: v.footerLen, trailer: v.trailer, seq: v.seq, last: v.last,
+	}, nil
+}
+
+// Close closes the volumes the caller opened for NewVolumeSet and the volume kept open for
+// reading, and returns the first error.
 func (s *VolumeSet) Close() error {
 	var errs []error
 	for _, v := range s.volumes {
@@ -167,6 +245,12 @@ func (s *VolumeSet) Close() error {
 			errs = append(errs, v.c.Close())
 		}
 	}
+	s.mu.Lock()
+	if s.idle != nil {
+		errs = append(errs, s.idle.Close())
+		s.idle, s.idleVol = nil, -1
+	}
+	s.mu.Unlock()
 	return errors.Join(errs...)
 }
 
@@ -176,56 +260,76 @@ func (s *VolumeSet) Files() []File {
 }
 
 // Open returns a reader of the bytes of f, a file of s, across the volumes that hold it; each
-// volume is open only while its piece is read, and Close releases the current one. Reading to
-// the end returns ErrChecksum instead of io.EOF when a piece does not match its CRC-32.
+// volume is open only while its piece is read. The Read that returns the last byte of a piece
+// whose bytes do not match its CRC-32 returns ErrChecksum. Close releases the volume being read
+// and returns the first error any Read returned, so a caller whose copy helper drops a final
+// error, as io.CopyN and io.ReadFull do once they have all the bytes, still sees it: check the
+// error of Close before trusting the bytes.
 func (s *VolumeSet) Open(f File) (io.ReadCloser, error) {
-	i, ok := s.index[f.Path]
-	if !ok || s.files[i].Size != f.Size {
+	if f.index < 0 || f.index >= len(s.files) || s.files[f.index] != f {
 		return nil, fmt.Errorf("%q is not a file of this volume set", f.Path)
 	}
-	return &fileReader{set: s, pieces: s.files[i].pieces}, nil
+	return &fileReader{set: s, next: f.first, end: f.first + f.pieces, volume: f.volume}, nil
 }
 
 // fileReader reads the pieces of a file one after another, opening the volume of each in turn.
 type fileReader struct {
 	set     *VolumeSet
 	cur     io.Reader
+	err     error // the first error a Read returned, which Close returns
 	release func()
-	pieces  []filePiece
+	next    int // the entry of the next piece
+	end     int
+	volume  int // the volume of the next piece
 }
 
 func (r *fileReader) Read(p []byte) (int, error) {
 	for {
 		if r.cur == nil {
-			if len(r.pieces) == 0 {
+			if r.next == r.end {
 				return 0, io.EOF
 			}
-			piece := r.pieces[0]
-			c, release, err := r.set.volumes[piece.volume].open()
+			c, release, err := r.set.acquire(r.volume)
 			if err != nil {
-				return 0, err
+				return 0, r.fail(err)
 			}
-			r.cur, r.release, r.pieces = c.member(piece.entry), release, r.pieces[1:]
+			r.cur, r.release = c.member(r.set.entries[r.next]), release
+			r.next++
+			r.volume++
 		}
 		n, err := r.cur.Read(p)
 		if errors.Is(err, io.EOF) {
-			r.Close()
+			r.releaseVolume()
 			if n == 0 {
 				continue
 			}
 			err = nil
 		}
-		return n, err
+		if err != nil {
+			return n, r.fail(err)
+		}
+		return n, nil
 	}
 }
 
-// Close releases the volume being read.
-func (r *fileReader) Close() error {
+func (r *fileReader) fail(err error) error {
+	if r.err == nil {
+		r.err = err
+	}
+	return err
+}
+
+func (r *fileReader) releaseVolume() {
 	if r.release != nil {
 		r.release()
 	}
 	r.cur, r.release = nil, nil
-	return nil
+}
+
+// Close releases the volume being read and returns the first error a Read returned.
+func (r *fileReader) Close() error {
+	r.releaseVolume()
+	return r.err
 }
 
 // ReadFile reads a small file whole, such as the metadata.json of a part, refusing a file
@@ -253,15 +357,20 @@ func (s *VolumeSet) ReadFile(f File, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-// Verify verifies every volume in order, opening one at a time, and returns their summaries.
+// Verify verifies every volume in order, one at a time through one buffer, and returns their
+// summaries.
 func (s *VolumeSet) Verify(ctx context.Context) ([]Summary, error) {
 	sums := make([]Summary, 0, len(s.volumes))
+	var buf []byte
 	for i := range s.volumes {
-		c, release, err := s.volumes[i].open()
+		c, release, err := s.acquire(i)
 		if err != nil {
 			return nil, fmt.Errorf("volume %d: %w", i+1, err)
 		}
-		sum, err := c.Verify(ctx)
+		if n := int(min(verifyBlock, c.size)); len(buf) < n {
+			buf = make([]byte, n)
+		}
+		sum, err := c.verify(ctx, buf[:min(int64(len(buf)), c.size)])
 		release()
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {

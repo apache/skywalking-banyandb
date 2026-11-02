@@ -128,7 +128,7 @@ func checkFuzzEntries(t *testing.T, c *Container, entries []Entry, size int64) {
 		}
 		sum += e.Size
 	}
-	if sum+int64(len(c.tail)) != size {
+	if sum+c.footerLen+trailerSize != size {
 		t.Fatalf("entries do not cover the file")
 	}
 }

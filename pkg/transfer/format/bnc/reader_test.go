@@ -200,7 +200,7 @@ func TestOpen_Magic(t *testing.T) {
 func TestOpen_FooterChecksum(t *testing.T) {
 	b := smallContainer(t)
 	c := mustOpen(t, b)
-	footerStart := len(b) - len(c.tail)
+	footerStart := len(b) - int(c.footerLen) - trailerSize
 	for i := footerStart; i < len(b)-trailerSize; i++ {
 		mutated := bytes.Clone(b)
 		mutated[i] ^= 0x01
@@ -243,13 +243,27 @@ func TestMember_ChecksumMismatch(t *testing.T) {
 	entries := c.Entries()
 	r := c.member(entries[0])
 	buf := make([]byte, 5)
-	n, err := io.ReadFull(r, buf)
-	require.NoError(t, err, "the mismatch shows only after the last byte")
-	assert.Equal(t, 5, n)
-	_, err = r.Read(buf)
-	require.ErrorIs(t, err, ErrChecksum)
+	n, err := r.Read(buf)
+	assert.Equal(t, 5, n, "the bytes are returned with the error")
+	require.ErrorIs(t, err, ErrChecksum, "the read returning the last byte reports the mismatch")
 	require.ErrorIs(t, err, ErrCorrupt)
 	assert.Contains(t, err.Error(), `"a"`)
+	_, err = r.Read(buf)
+	require.ErrorIs(t, err, ErrChecksum, "and so does every later read")
+	// io.CopyN drops the error of the read that completes its count, so the reader of a file
+	// reports it again on Close.
+	s := setOf(t, b)
+	for i, f := range s.Files() {
+		r, openErr := s.Open(f)
+		require.NoError(t, openErr)
+		_, err = io.CopyN(io.Discard, r, f.Size)
+		require.NoError(t, err, "io.CopyN hides the mismatch")
+		if i == 0 {
+			require.ErrorIs(t, r.Close(), ErrChecksum, "Close reports it")
+		} else {
+			require.NoError(t, r.Close(), "a good file closes cleanly")
+		}
+	}
 	assert.Equal(t, []byte("second"), readMember(t, c, entries[1]))
 	_, err = c.Verify(context.Background())
 	require.ErrorIs(t, err, ErrChecksum)

@@ -99,26 +99,28 @@ func uvarintLen(v uint64) int {
 // headerSize is the footer bytes before the entry count: the volume number and the last flag.
 func headerSize(seq uint32) int { return uvarintLen(uint64(seq)) + 1 }
 
+// appendEntry appends the footer encoding of entry e to b.
+func appendEntry(b []byte, e Entry) []byte {
+	b = binary.AppendUvarint(b, uint64(len(e.Path)))
+	b = append(b, e.Path...)
+	b = binary.LittleEndian.AppendUint64(b, uint64(e.Size))
+	b = binary.LittleEndian.AppendUint32(b, e.CRC32)
+	b = binary.AppendUvarint(b, uint64(e.FileOffset))
+	return binary.AppendUvarint(b, uint64(e.FileSize))
+}
+
 // encodeFooter encodes the footer of volume seq of a container, last telling whether it is the
-// final volume, holding entries whose sizes the caller has checked.
-func encodeFooter(seq uint32, last bool, entries []Entry, size int) []byte {
-	b := make([]byte, 0, size)
+// final volume, holding count entries already encoded in entries.
+func encodeFooter(seq uint32, last bool, count int, entries []byte) []byte {
+	b := make([]byte, 0, headerSize(seq)+uvarintLen(uint64(count))+len(entries))
 	b = binary.AppendUvarint(b, uint64(seq))
 	if last {
 		b = append(b, 1)
 	} else {
 		b = append(b, 0)
 	}
-	b = binary.AppendUvarint(b, uint64(len(entries)))
-	for _, e := range entries {
-		b = binary.AppendUvarint(b, uint64(len(e.Path)))
-		b = append(b, e.Path...)
-		b = binary.LittleEndian.AppendUint64(b, uint64(e.Size))
-		b = binary.LittleEndian.AppendUint32(b, e.CRC32)
-		b = binary.AppendUvarint(b, uint64(e.FileOffset))
-		b = binary.AppendUvarint(b, uint64(e.FileSize))
-	}
-	return b
+	b = binary.AppendUvarint(b, uint64(count))
+	return append(b, entries...)
 }
 
 // decodeFooter decodes footer b of a container whose members take membersLen bytes: its volume
@@ -261,13 +263,15 @@ func validPath(p string) error {
 	if strings.HasPrefix(p, "/") || path.Clean(p) != p {
 		return fmt.Errorf("member path %q is not a clean relative path", p)
 	}
-	for _, c := range strings.Split(p, "/") {
+	for rest := p; rest != ""; {
+		c, tail, _ := strings.Cut(rest, "/")
 		if c == "." || c == ".." {
 			return fmt.Errorf("member path %q has a %q component", p, c)
 		}
 		if len(c) > maxComponentLen {
 			return fmt.Errorf("member path %q has a component longer than %d bytes", p, maxComponentLen)
 		}
+		rest = tail
 	}
 	return nil
 }
@@ -286,6 +290,11 @@ func (s *pathSet) add(p string) error {
 	if err := validPath(p); err != nil {
 		return err
 	}
+	return s.insert(p)
+}
+
+// insert records p, already a valid path, refusing a repeat and a path under or over another.
+func (s *pathSet) insert(p string) error {
 	if _, ok := s.files[p]; ok {
 		return fmt.Errorf("member path %q repeats", p)
 	}

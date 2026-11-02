@@ -167,7 +167,12 @@ func BenchmarkFile(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if _, err = io.CopyBuffer(io.Discard, struct{ io.Reader }{r}, buf); err != nil {
+				// io.Discard has ReadFrom, which would read in its own 8 KiB chunks: hide it so
+				// that buf sets the read size.
+				if _, err = io.CopyBuffer(struct{ io.Writer }{io.Discard}, r, buf); err != nil {
+					b.Fatal(err)
+				}
+				if err = r.Close(); err != nil {
 					b.Fatal(err)
 				}
 			}
