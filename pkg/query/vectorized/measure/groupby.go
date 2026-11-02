@@ -137,7 +137,10 @@ func (g *BatchGroupBy) OutputSchema() *vectorized.BatchSchema { return g.schema 
 // Consume reserves the worst-case bytes for new groups + per-row cost,
 // accumulates rows into per-group buckets, then refunds the unused reservation.
 func (g *BatchGroupBy) Consume(_ context.Context, b *vectorized.RecordBatch) error {
-	active := activeIndices(b)
+	active, activeErr := activeIndices(b)
+	if activeErr != nil {
+		return activeErr
+	}
 	n := int64(len(active))
 	if g.span != nil {
 		g.rowsIn += n

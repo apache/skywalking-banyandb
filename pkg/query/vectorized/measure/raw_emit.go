@@ -105,7 +105,9 @@ func DrainPipelineToFrame(ctx context.Context, p *vectorized.Pipeline, schema *v
 		if !schemasEqual(schema, b.Schema) {
 			return nil, fmt.Errorf("DrainPipelineToFrame: batch schema mismatch (planner bug)")
 		}
-		appendActive(out, b)
+		if appendErr := appendActive(out, b); appendErr != nil {
+			return nil, fmt.Errorf("DrainPipelineToFrame: %w", appendErr)
+		}
 	}
 	// Decode any TagValue / FieldValue passthrough columns into their
 	// typed equivalents before frame.Encode. Storage's vec adapter emits
@@ -560,14 +562,18 @@ func inferFieldValueWireType(fc *vectorized.TypedColumn[*modelv1.FieldValue], n 
 // already covers every supported TypedColumn instantiation (int64,
 // float64, string, []byte, []int64, []string, *TagValue, *FieldValue)
 // so this loop stays type-agnostic.
-func appendActive(dst, src *vectorized.RecordBatch) {
-	active := activeIndices(src)
+func appendActive(dst, src *vectorized.RecordBatch) error {
+	active, activeErr := activeIndices(src)
+	if activeErr != nil {
+		return activeErr
+	}
 	for _, rowIdx := range active {
 		for colIdx, srcCol := range src.Columns {
 			copyOneValue(dst.Columns[colIdx], srcCol, int(rowIdx))
 		}
 	}
 	dst.Len += len(active)
+	return nil
 }
 
 // ReduceFramesToInternalDataPoints is the liaison-side composition for

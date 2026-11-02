@@ -19,6 +19,8 @@ package measure
 
 import (
 	"context"
+	"fmt"
+	"math"
 
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
@@ -81,7 +83,10 @@ func (l *BatchLimit) Close() error {
 // Process rewrites b.Selection to keep only rows in [offset, offset+limit) of
 // the cumulative active stream.
 func (l *BatchLimit) Process(_ context.Context, b *vectorized.RecordBatch) error {
-	active := activeIndices(b)
+	active, activeErr := activeIndices(b)
+	if activeErr != nil {
+		return activeErr
+	}
 	if l.span != nil {
 		l.rowsIn += int64(len(active))
 	}
@@ -107,15 +112,41 @@ func (l *BatchLimit) Process(_ context.Context, b *vectorized.RecordBatch) error
 	return nil
 }
 
+// maxNilSelectionLen is the largest RecordBatch.Len a nil Selection can
+// represent as [0, Len): a materialized Selection is []uint16, and a uint16
+// covers exactly the values [0, math.MaxUint16], i.e. math.MaxUint16+1
+// (65,536) distinct row indices.
+const maxNilSelectionLen = math.MaxUint16 + 1
+
 // activeIndices returns the row indices of b that are currently active. If
 // Selection is nil it materializes [0, Len).
-func activeIndices(b *vectorized.RecordBatch) []uint16 {
+//
+// Past maxNilSelectionLen rows that materialization wraps: out[i] =
+// uint16(i) restarts at 0 partway through, silently folding early rows into
+// a duplicate of a later one and never visiting the rows past the wrap
+// (design/0.12.0/limit-after-aggregation §5). This is the exact defect that
+// document describes.
+//
+// Under correct operation this branch should never see a batch this large:
+// VectorizedConfig.Validate caps BatchSize at math.MaxUint16, and the
+// liaison-side reduce (ReducePartialBatches) copies an oversized decoded
+// partial into batchSize-sized chunks before it ever reaches Consume. This
+// check exists so that if either guarantee is ever violated -- a future
+// caller that forgets to chunk, for instance -- the failure is a loud,
+// immediate error instead of a silently wrong aggregate.
+func activeIndices(b *vectorized.RecordBatch) ([]uint16, error) {
 	if b.Selection != nil {
-		return b.Selection
+		return b.Selection, nil
+	}
+	if b.Len > maxNilSelectionLen {
+		return nil, fmt.Errorf(
+			"vectorized.measure: batch Len %d exceeds %d, the largest a nil Selection can materialize without a uint16 index wrapping",
+			b.Len, maxNilSelectionLen,
+		)
 	}
 	out := make([]uint16, b.Len)
 	for i := range out {
 		out[i] = uint16(i)
 	}
-	return out
+	return out, nil
 }

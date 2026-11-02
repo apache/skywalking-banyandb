@@ -155,7 +155,10 @@ func (t *BatchTop) Consume(_ context.Context, b *vectorized.RecordBatch) error {
 	if t.n <= 0 {
 		return nil
 	}
-	active := activeIndices(b)
+	active, activeErr := activeIndices(b)
+	if activeErr != nil {
+		return activeErr
+	}
 	for _, rowIdx := range active {
 		ri := int(rowIdx)
 		seq := t.inputCount

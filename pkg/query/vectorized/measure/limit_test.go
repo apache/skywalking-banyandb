@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -150,5 +151,48 @@ func TestBatchLimit_AcrossMultipleBatches_StateCarriesViaSeenCounter(t *testing.
 	}
 	if got := b2.ActiveLen(); got != 2 {
 		t.Fatalf("batch 2: tail kept rows want 2, got %d", got)
+	}
+}
+
+// TestActiveIndices_AtMaxNilSelectionLen_Passes pins the safe edge of design
+// §5's boundary: a uint16 fully covers [0, maxNilSelectionLen), so a nil
+// Selection at exactly that length must still materialize correctly, with
+// no error and no wrap.
+func TestActiveIndices_AtMaxNilSelectionLen_Passes(t *testing.T) {
+	b := &vectorized.RecordBatch{Len: maxNilSelectionLen}
+	active, err := activeIndices(b)
+	if err != nil {
+		t.Fatalf("Len == maxNilSelectionLen must not error, got %v", err)
+	}
+	if len(active) != maxNilSelectionLen {
+		t.Fatalf("len(active) = %d, want %d", len(active), maxNilSelectionLen)
+	}
+	if active[0] != 0 || active[len(active)-1] != math.MaxUint16 {
+		t.Fatalf("active must cover [0, MaxUint16] with no wrap, got first=%d last=%d", active[0], active[len(active)-1])
+	}
+}
+
+// TestActiveIndices_PastMaxNilSelectionLen_Errors is C3: past the boundary a
+// nil Selection can no longer be represented as []uint16 at all, so
+// activeIndices must fail loudly instead of silently wrapping.
+func TestActiveIndices_PastMaxNilSelectionLen_Errors(t *testing.T) {
+	b := &vectorized.RecordBatch{Len: maxNilSelectionLen + 1}
+	if _, err := activeIndices(b); err == nil {
+		t.Fatal("Len > maxNilSelectionLen with a nil Selection must error, not silently wrap")
+	}
+}
+
+// TestActiveIndices_NonNilSelection_NeverErrorsRegardlessOfLen pins that the
+// guard is specific to the nil-Selection materialization path: an existing
+// Selection is returned as-is, so Len is irrelevant to it.
+func TestActiveIndices_NonNilSelection_NeverErrorsRegardlessOfLen(t *testing.T) {
+	sel := []uint16{5, 9, 12}
+	b := &vectorized.RecordBatch{Len: maxNilSelectionLen + 1, Selection: sel}
+	active, err := activeIndices(b)
+	if err != nil {
+		t.Fatalf("non-nil Selection must never error, got %v", err)
+	}
+	if len(active) != len(sel) {
+		t.Fatalf("active = %v, want %v", active, sel)
 	}
 }
