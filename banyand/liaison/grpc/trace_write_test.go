@@ -136,3 +136,37 @@ func TestValidateWriteRequest_Trace_ZeroRevision_SkipsCheck(t *testing.T) {
 	assert.Equal(t, modelv1.Status_STATUS_SUCCEED, st)
 	assert.Empty(t, mock.replies)
 }
+
+// TestValidateWriteRequest_Trace_SchemaArrivesLate_ReturnsSucceed verifies that a
+// write naming a schema revision waits for the entity cache to learn that schema
+// instead of failing with STATUS_NOT_FOUND, even with no metadata-cache wait set.
+func TestValidateWriteRequest_Trace_SchemaArrivesLate_ReturnsSucceed(t *testing.T) {
+	withSchemaPresenceGrace(t, 500*time.Millisecond)
+	id := identity{group: "g", name: "t"}
+	er := newEmptyEntityRepo()
+	svc := newTestTraceService(er, 0)
+	mock := &mockBidiServer[tracev1.WriteRequest, tracev1.WriteResponse]{}
+
+	advanceTraceRevAfter(er, id, 100, 20*time.Millisecond)
+
+	meta := &commonv1.Metadata{Group: "g", Name: "t", ModRevision: 100}
+	st := svc.validateWriteRequest(validTraceWriteRequest(), meta, nil, mock)
+
+	assert.Equal(t, modelv1.Status_STATUS_SUCCEED, st)
+	assert.Empty(t, mock.replies)
+}
+
+// TestValidateWriteRequest_Trace_SchemaNeverArrives_ReturnsNotFound verifies that
+// the presence wait is bounded, and that a write without a revision is refused at
+// once, as before.
+func TestValidateWriteRequest_Trace_SchemaNeverArrives_ReturnsNotFound(t *testing.T) {
+	withSchemaPresenceGrace(t, 30*time.Millisecond)
+	svc := newTestTraceService(newEmptyEntityRepo(), 0)
+
+	for _, revision := range []int64{100, 0} {
+		mock := &mockBidiServer[tracev1.WriteRequest, tracev1.WriteResponse]{}
+		meta := &commonv1.Metadata{Group: "g", Name: "t", ModRevision: revision}
+		st := svc.validateWriteRequest(validTraceWriteRequest(), meta, nil, mock)
+		assert.Equal(t, modelv1.Status_STATUS_NOT_FOUND, st, "revision %d", revision)
+	}
+}

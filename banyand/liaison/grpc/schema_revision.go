@@ -111,6 +111,41 @@ func checkQueryGate(
 	return groupStatuses, false
 }
 
+// schemaPresenceGrace is the minimum time a write that carries a schema
+// revision waits for this liaison's entity cache to learn that schema before
+// it is refused with STATUS_NOT_FOUND. It matches barrierDefaultTimeout.
+var schemaPresenceGrace = barrierDefaultTimeout
+
+// awaitSchemaPresent polls present until it reports true or maxWait elapses.
+//
+// A write with ModRevision > 0 names a schema the registry has acknowledged,
+// but the entity cache is filled by a schema-event handler that can still be
+// pending when the client's barrier returns: the barrier's watermark advances
+// by each processed event's own revision, so an event processed out of
+// revision order can carry it past a revision whose handlers have not run.
+// Waiting here closes that window; a schema that never arrives still ends in
+// STATUS_NOT_FOUND once maxWait elapses.
+func awaitSchemaPresent(present func() bool, maxWait time.Duration) bool {
+	if present() {
+		return true
+	}
+	return awaitRevisionReached(func() int64 {
+		if present() {
+			return 1
+		}
+		return 0
+	}, 1, maxWait)
+}
+
+// schemaPresenceWait returns the bound for awaitSchemaPresent: the configured
+// metadata-cache wait, but never less than schemaPresenceGrace.
+func schemaPresenceWait(configured time.Duration) time.Duration {
+	if configured > schemaPresenceGrace {
+		return configured
+	}
+	return schemaPresenceGrace
+}
+
 // awaitRevisionReached polls getRevision until the returned value is >= target or maxWait elapses.
 // Returns true when the target revision was observed, false on timeout.
 // The initial check is performed before any sleep, so a cache that is already at target never
