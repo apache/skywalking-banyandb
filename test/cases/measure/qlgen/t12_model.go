@@ -52,6 +52,7 @@ type t12Query struct {
 	End          int64
 	SelectParams int
 	Offset       uint32
+	NoScan       bool
 	Legacy       bool
 }
 

@@ -637633,8 +637633,7 @@
             "input_rows": 6,
             "true_rows": 0,
             "false_rows": 6,
-            "unknown_rows": 0,
-            "complete": true
+            "unknown_rows": 0
           },
           "ticket": "T12",
           "name": "t12_constant_false_binding_0",
@@ -637645,15 +637644,15 @@
             "t12.three_valued",
             "t12.rebind"
           ],
-          "ordered": true
+          "ordered": true,
+          "no_scan": true
         },
         {
           "filter": {
             "input_rows": 5,
             "true_rows": 0,
             "false_rows": 5,
-            "unknown_rows": 0,
-            "complete": true
+            "unknown_rows": 0
           },
           "ticket": "T12",
           "name": "t12_constant_false_binding_1",
@@ -637664,15 +637663,15 @@
             "t12.three_valued",
             "t12.rebind"
           ],
-          "ordered": true
+          "ordered": true,
+          "no_scan": true
         },
         {
           "filter": {
             "input_rows": 0,
             "true_rows": 0,
             "false_rows": 0,
-            "unknown_rows": 0,
-            "complete": true
+            "unknown_rows": 0
           },
           "ticket": "T12",
           "name": "t12_constant_false_binding_2",
@@ -637683,7 +637682,8 @@
             "t12.three_valued",
             "t12.rebind"
           ],
-          "ordered": true
+          "ordered": true,
+          "no_scan": true
         }
       ]
     },
@@ -650559,8 +650559,7 @@
             "input_rows": 6,
             "true_rows": 0,
             "false_rows": 6,
-            "unknown_rows": 0,
-            "complete": true
+            "unknown_rows": 0
           },
           "ticket": "T12",
           "name": "t12_membership_parameter_binding_1",
@@ -650572,7 +650571,8 @@
             "t12.membership",
             "t12.empty_membership"
           ],
-          "ordered": true
+          "ordered": true,
+          "no_scan": true
         },
         {
           "filter": {
