@@ -70,7 +70,7 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 	// shard. Each invocation means segment.refCount was 0 immediately before
 	// the triggering CreateSegmentIfNotExist call.
 	var openShardCount atomic.Int32
-	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
+	db := openTestTSDBForRefTest(t, tmpPath, 1, &openShardCount)
 	defer db.Close()
 
 	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.UTC)
@@ -161,11 +161,11 @@ func TestSyncReceiver_SegmentRefOwnership(t *testing.T) {
 		"the dormant segment is reused without reload after Close")
 }
 
-func openTestTSDBForRefTest(t *testing.T, tmpPath string, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
+func openTestTSDBForRefTest(t *testing.T, tmpPath string, shardNum uint32, openShardCount *atomic.Int32) storage.TSDB[*tsTable, option] {
 	t.Helper()
 	ir := storage.IntervalRule{Unit: storage.DAY, Num: 1}
 	opts := storage.TSDBOpts[*tsTable, option]{
-		ShardNum: 1,
+		ShardNum: shardNum,
 		Location: filepath.Join(tmpPath, "tab"),
 		// Wrap newTSTable so we can count how many times loadShards opens a
 		// shard. Each call implies initTSTable ran, which means segment
@@ -221,7 +221,7 @@ func TestSyncChunkCallback_CreatePartHandler_StoresSegment(t *testing.T) {
 	defer cleanup()
 
 	var openShardCount atomic.Int32
-	db := openTestTSDBForRefTest(t, tmpPath, &openShardCount)
+	db := openTestTSDBForRefTest(t, tmpPath, 1, &openShardCount)
 	defer db.Close()
 
 	segTime := time.Date(2026, 4, 17, 0, 0, 0, 0, time.Local)
