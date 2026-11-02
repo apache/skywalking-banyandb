@@ -1,0 +1,137 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Lifecycle e2e on kind with DNS-based node discovery: every BanyanDB node
+# finds its peers through the SRV records of headless Services, the same way
+# the Helm chart wires a cluster. OAP is installed from the skywalking-helm
+# chart like the rover istio e2e. Run ../data-generator/gen.sh first: it
+# produces the cold data and renders kind.yaml with the absolute path that
+# mounts that data into the kind node.
+
+setup:
+  env: kind
+  file: kind.yaml
+  timeout: 25m
+  init-system-environment: ../../../script/env
+  kind:
+    import-images:
+      - apache/skywalking-banyandb:${TAG}-testing
+    expose-ports:
+      - namespace: default
+        resource: service/skywalking-oap
+        port: 12800
+      - namespace: default
+        resource: service/consumer
+        port: 9092
+  steps:
+    - name: set PATH
+      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+    - name: install yq
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh yq
+    - name: install swctl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
+    - name: install kubectl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh kubectl
+    - name: install helm
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh helm
+    - name: default the vectorized engine flags
+      # The CI engine axis exports these to switch the engine; envsubst has no
+      # default syntax, so fill in the compose defaults when they are unset.
+      command: |
+        export BANYANDB_MEASURE_VECTORIZED_FLAGS=${BANYANDB_MEASURE_VECTORIZED_FLAGS:---measure-vectorized-enabled=false}
+        export BANYANDB_TRACE_VECTORIZED_FLAGS=${BANYANDB_TRACE_VECTORIZED_FLAGS:---trace-vectorized-enabled=false}
+    - name: Deploy BanyanDB hot/warm/cold cluster
+      command: envsubst < test/e2e-v2/cases/lifecycle/dns-discovery/banyandb-cluster.yaml | kubectl apply -f -
+    - name: Deploy SkyWalking OAP with helm
+      # Same chart and pin as the rover istio e2e; the chart's own BanyanDB is
+      # disabled in skywalking-values.yaml and OAP targets the liaison Service.
+      command: |
+        helm install skywalking \
+          oci://ghcr.io/apache/skywalking-helm/skywalking-helm \
+          --version "0.0.0-${SW_KUBERNETES_COMMIT_SHA}" \
+          --timeout 15m \
+          --set fullnameOverride=skywalking \
+          --set oap.image.repository=ghcr.io/apache/skywalking/oap \
+          --set oap.image.tag=${SW_OAP_COMMIT} \
+          --set ui.image.repository=ghcr.io/apache/skywalking/ui \
+          --set ui.image.tag=${SW_OAP_COMMIT} \
+          -f test/e2e-v2/cases/lifecycle/dns-discovery/skywalking-values.yaml
+    - name: Deploy provider and consumer demo apps
+      command: envsubst < test/e2e-v2/cases/lifecycle/dns-discovery/provider-consumer.yaml | kubectl apply -f -
+    - name: Wait for all workloads to be ready
+      # Block here so the kind expose-ports port-forward (set up right after the
+      # setup steps, before the wait: conditions) targets already-running pods.
+      command: |
+        kubectl rollout status statefulset/data-hot --timeout=300s
+        kubectl rollout status statefulset/data-warm --timeout=300s
+        kubectl rollout status statefulset/data-cold --timeout=300s
+        kubectl rollout status statefulset/liaison --timeout=300s
+        kubectl rollout status deployment/skywalking-oap --timeout=600s
+        kubectl rollout status deployment/provider --timeout=600s
+        kubectl rollout status deployment/consumer --timeout=600s
+  wait:
+    - namespace: default
+      resource: pod
+      label-selector: app=banyandb-data
+      for: condition=Ready
+    - namespace: default
+      resource: pod
+      label-selector: app=banyandb-liaison
+      for: condition=Ready
+    - namespace: default
+      resource: deployment/skywalking-oap
+      for: condition=available
+    - namespace: default
+      resource: deployment/provider
+      for: condition=available
+    - namespace: default
+      resource: deployment/consumer
+      for: condition=available
+
+trigger:
+  action: http
+  interval: 5s
+  times: -1
+  url: http://${service_consumer_host}:${service_consumer_9092}/users
+  method: POST
+  body: '{"id":"123","name":"skywalking"}'
+  headers:
+    "Content-Type": "application/json"
+
+verify:
+  # verify with retry strategy
+  retry:
+    # max retry count
+    count: 20
+    # the interval between two retries, in millisecond.
+    interval: 10s
+  cases:
+    - includes:
+        - ../lifecycle-cases.yaml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - namespace: default
+        label-selector: app=banyandb-data
+        paths:
+          - /tmp/trace/
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/property/
+          - /tmp/schema-property/

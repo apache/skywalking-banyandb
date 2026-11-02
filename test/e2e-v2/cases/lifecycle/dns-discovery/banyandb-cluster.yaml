@@ -1,0 +1,380 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# BanyanDB hot/warm/cold cluster with DNS-based node discovery, the same
+# topology as ../file-discovery/docker-compose.yml. Every node lists the SRV
+# records of the four headless Services below and finds its peers from them,
+# mirroring the Helm chart: data nodes publish `grpc`, the liaison publishes
+# its data-facing `internal-grpc` port. publishNotReadyAddresses keeps a
+# booting pod in DNS before its readiness probe passes, exactly like production.
+#
+# Only hot keeps the meta role, so warm, cold and the liaison bootstrap their
+# schema registry by listing META nodes through discovery while their own
+# address is already published but not yet listening.
+#
+# The cold node is pre-loaded with the data produced by ../data-generator, which
+# kind.yaml mounts into the node at /lifecycle-data. Applied through envsubst so
+# ${BANYANDB_*_VECTORIZED_FLAGS} resolve; container args use $(POD_NAME), which
+# Kubernetes expands and envsubst leaves alone.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-hot
+  labels:
+    app: banyandb-data
+    role: hot
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: banyandb-data
+    role: hot
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-warm
+  labels:
+    app: banyandb-data
+    role: warm
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: banyandb-data
+    role: warm
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-cold
+  labels:
+    app: banyandb-data
+    role: cold
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: banyandb-data
+    role: cold
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: liaison-headless
+  labels:
+    app: banyandb-liaison
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: banyandb-liaison
+  ports:
+    - name: internal-grpc
+      port: 18912
+      targetPort: 18912
+---
+# Client-facing liaison endpoint used by OAP (SW_STORAGE_BANYANDB_TARGETS).
+apiVersion: v1
+kind: Service
+metadata:
+  name: liaison
+  labels:
+    app: banyandb-liaison
+spec:
+  selector:
+    app: banyandb-liaison
+  ports:
+    - name: grpc
+      port: 17912
+      targetPort: 17912
+    - name: http
+      port: 17913
+      targetPort: 17913
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: data-hot
+  labels:
+    app: banyandb-data
+    role: hot
+spec:
+  serviceName: data-hot
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-data
+      role: hot
+  template:
+    metadata:
+      labels:
+        app: banyandb-data
+        role: hot
+    spec:
+      containers:
+        - name: data
+          image: apache/skywalking-banyandb:${TAG}-testing
+          imagePullPolicy: IfNotPresent
+          args:
+            - data
+            - --node-discovery-mode=dns
+            - --node-discovery-dns-srv-addresses=_internal-grpc._tcp.liaison-headless.default.svc.cluster.local,_grpc._tcp.data-hot.default.svc.cluster.local,_grpc._tcp.data-warm.default.svc.cluster.local,_grpc._tcp.data-cold.default.svc.cluster.local
+            - --node-host-provider=flag
+            - --node-host=$(POD_NAME).data-hot.default
+            - --node-labels=type=hot
+            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
+            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: metrics, containerPort: 2121 }
+            - { name: prop-schema, containerPort: 17916 }
+            - { name: prop-gossip, containerPort: 17932 }
+          readinessProbe:
+            # /api/healthz reports SERVING only after pre-run completes and the
+            # node serves gRPC on 17912, so OAP (deployed after) never starts
+            # against a not-yet-listening BanyanDB and crashloops.
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: lifecycle-data
+              mountPath: /tmp/measure/data/sw_metadata
+              subPath: sw_metadata
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "2"
+            requests:
+              memory: 256Mi
+              cpu: "250m"
+      volumes:
+        - name: lifecycle-data
+          hostPath:
+            path: /lifecycle-data
+            type: Directory
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: data-warm
+  labels:
+    app: banyandb-data
+    role: warm
+spec:
+  serviceName: data-warm
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-data
+      role: warm
+  template:
+    metadata:
+      labels:
+        app: banyandb-data
+        role: warm
+    spec:
+      containers:
+        - name: data
+          image: apache/skywalking-banyandb:${TAG}-testing
+          imagePullPolicy: IfNotPresent
+          args:
+            - data
+            - --node-discovery-mode=dns
+            - --node-discovery-dns-srv-addresses=_internal-grpc._tcp.liaison-headless.default.svc.cluster.local,_grpc._tcp.data-hot.default.svc.cluster.local,_grpc._tcp.data-warm.default.svc.cluster.local,_grpc._tcp.data-cold.default.svc.cluster.local
+            - --node-host-provider=flag
+            - --node-host=$(POD_NAME).data-warm.default
+            - --node-labels=type=warm
+            - --has-meta-role=false
+            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
+            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: metrics, containerPort: 2121 }
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "2"
+            requests:
+              memory: 256Mi
+              cpu: "250m"
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: data-cold
+  labels:
+    app: banyandb-data
+    role: cold
+spec:
+  serviceName: data-cold
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-data
+      role: cold
+  template:
+    metadata:
+      labels:
+        app: banyandb-data
+        role: cold
+    spec:
+      containers:
+        - name: data
+          image: apache/skywalking-banyandb:${TAG}-testing
+          imagePullPolicy: IfNotPresent
+          args:
+            - data
+            - --node-discovery-mode=dns
+            - --node-discovery-dns-srv-addresses=_internal-grpc._tcp.liaison-headless.default.svc.cluster.local,_grpc._tcp.data-hot.default.svc.cluster.local,_grpc._tcp.data-warm.default.svc.cluster.local,_grpc._tcp.data-cold.default.svc.cluster.local
+            - --node-host-provider=flag
+            - --node-host=$(POD_NAME).data-cold.default
+            - --node-labels=type=cold
+            - --has-meta-role=false
+            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
+            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: metrics, containerPort: 2121 }
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            # Pre-generated cold data, the same directories the compose variant
+            # bind-mounts into data-cold1.
+            - name: lifecycle-data
+              mountPath: /tmp/measure
+              subPath: measure
+            - name: lifecycle-data
+              mountPath: /tmp/stream
+              subPath: stream
+            - name: lifecycle-data
+              mountPath: /tmp/property
+              subPath: property
+            - name: lifecycle-data
+              mountPath: /tmp/trace
+              subPath: trace
+          resources:
+            limits:
+              memory: 1536Mi
+              cpu: "2"
+            requests:
+              memory: 256Mi
+              cpu: "250m"
+      volumes:
+        - name: lifecycle-data
+          hostPath:
+            path: /lifecycle-data
+            type: Directory
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: liaison
+  labels:
+    app: banyandb-liaison
+spec:
+  serviceName: liaison-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: banyandb-liaison
+  template:
+    metadata:
+      labels:
+        app: banyandb-liaison
+    spec:
+      containers:
+        - name: liaison
+          image: apache/skywalking-banyandb:${TAG}-testing
+          imagePullPolicy: IfNotPresent
+          args:
+            - liaison
+            - --node-discovery-mode=dns
+            - --node-discovery-dns-srv-addresses=_internal-grpc._tcp.liaison-headless.default.svc.cluster.local,_grpc._tcp.data-hot.default.svc.cluster.local,_grpc._tcp.data-warm.default.svc.cluster.local,_grpc._tcp.data-cold.default.svc.cluster.local
+            - --node-host-provider=flag
+            - --node-host=$(POD_NAME).liaison-headless.default
+            - --data-node-selector=type=hot
+            - ${BANYANDB_MEASURE_VECTORIZED_FLAGS}
+            - ${BANYANDB_TRACE_VECTORIZED_FLAGS}
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - { name: grpc, containerPort: 17912 }
+            - { name: http, containerPort: 17913 }
+            - { name: internal-grpc, containerPort: 18912 }
+            - { name: metrics, containerPort: 2121 }
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 17913
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 60
+          resources:
+            limits:
+              memory: 1Gi
+              cpu: "2"
+            requests:
+              memory: 256Mi
+              cpu: "250m"

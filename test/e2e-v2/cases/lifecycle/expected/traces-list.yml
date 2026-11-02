@@ -13,15 +13,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Cold trace list for mock_a_service in the Trace V2 shape: every returned trace
+# must contain the Entry span of the queried endpoint carrying the queried tag.
 debuggingtrace: null
+retrievedtimerange:
+  {{- with .retrievedtimerange }}
+  starttime: {{ gt .starttime 0 }}
+  endtime: {{ gt .endtime 0 }}
+  {{- end }}
 traces:
 {{- contains (.traces | noDuplicates) }}
-- segmentid: {{ notEmpty .segmentid }}
-  endpointnames:
-    - /dubbox-case/case/dubbox-rest/404-test
-  duration: {{ ge .duration 0 }}
-  start: "{{ notEmpty .start}}"
-  iserror: false
-  traceids:
-    - {{ index .traceids 0 }}
+- spans:
+  {{- contains (.spans | noDuplicates) }}
+  - traceid: {{ notEmpty .traceid }}
+    segmentid: {{ notEmpty .segmentid }}
+    spanid: 0
+    parentspanid: -1
+    refs: []
+    servicecode: mock_a_service
+    serviceinstancename: mock_a_service_instance
+    starttime: {{ gt .starttime 0 }}
+    endtime: {{ gt .endtime 0 }}
+    endpointname: /dubbox-case/case/dubbox-rest/404-test
+    type: Entry
+    peer: ""
+    component: Tomcat
+    iserror: false
+    layer: Http
+    tags:
+      {{- contains .tags }}
+      - key: http.method
+        value: get
+      {{- end }}
+    logs: []
+    attachedevents: []
+  {{- end }}
 {{- end }}
