@@ -101,10 +101,101 @@ describe('auth config', () => {
     expect(config.auth.local.users).toEqual([]);
   });
 
-  it('refuses the sso backend until it is implemented', () => {
-    process.env.CANOPY_AUTH_BACKEND = 'sso';
+  describe('sso backend', () => {
+    const HASH = '$argon2id$v=19$m=8,t=1,p=1$c2FsdHNhbHQ$aGFzaGhhc2hoYXNoaGFzaA';
 
-    expect(() => loadConfig()).toThrow(/not yet supported/);
+    function writeAuth(auth: unknown): void {
+      const dir = mkdtempSync(join(tmpdir(), 'canopy-sso-'));
+      const file = join(dir, 'auth.json');
+      writeFileSync(file, JSON.stringify({ auth }));
+      process.env.CANOPY_AUTH_CONFIG = file;
+    }
+
+    const oidc = { id: 'google', type: 'oidc', issuer: 'https://accounts.google.com', clientId: 'cid' };
+
+    beforeEach(() => {
+      process.env.CANOPY_AUTH_SSO_GOOGLE_CLIENT_SECRET = 'from-env';
+    });
+
+    it('requires at least one provider', () => {
+      process.env.CANOPY_AUTH_BACKEND = 'sso';
+
+      expect(() => loadConfig()).toThrow(/auth\.sso\.providers/);
+    });
+
+    it('parses providers, role mapping and break-glass, reading the secret from the environment', () => {
+      writeAuth({
+        backend: 'sso',
+        sso: {
+          providers: [oidc, {
+            id: 'github',
+            type: 'oauth2',
+            clientId: 'gh',
+            clientSecretEnv: 'GH_SECRET',
+            authorizeUrl: 'https://github.com/login/oauth/authorize',
+            tokenUrl: 'https://github.com/login/oauth/access_token',
+            userinfoUrl: 'https://api.github.com/user',
+            emailsUrl: 'https://api.github.com/user/emails',
+          }],
+          roles: { defaultRoles: ['viewer'], roleByEmail: { 'Alice@X.com': 'admin' }, roleByDomain: { 'x.com': ['viewer'] } },
+        },
+        breakGlass: { enabled: true, users: [{ username: 'ops', passwordHash: HASH, role: 'admin' }] },
+      });
+      process.env.GH_SECRET = 'gh-secret';
+
+      const config = loadConfig();
+
+      expect(config.auth.backend).toBe('sso');
+      expect(config.auth.sso?.providers.map(p => [p.id, p.type, p.clientSecret])).toEqual([['google', 'oidc', 'from-env'], ['github', 'oauth2', 'gh-secret']]);
+      expect(config.auth.sso?.providers[0].scopes).toEqual(['openid', 'email', 'profile']);
+      expect(config.auth.sso?.roles).toEqual({ defaultRoles: ['readonly'], roleByEmail: { 'alice@x.com': ['admin'] }, roleByDomain: { 'x.com': ['readonly'] } });
+      expect(config.auth.breakGlass).toMatchObject({ enabled: true, users: [{ username: 'ops', role: 'admin' }] });
+    });
+
+    it('reads the client secret from a file', () => {
+      const secretFile = join(mkdtempSync(join(tmpdir(), 'canopy-secret-')), 'secret');
+      writeFileSync(secretFile, 'from-file\n');
+      delete process.env.CANOPY_AUTH_SSO_GOOGLE_CLIENT_SECRET;
+      writeAuth({ backend: 'sso', sso: { providers: [{ ...oidc, clientSecretFile: secretFile }] } });
+
+      expect(loadConfig().auth.sso?.providers[0].clientSecret).toBe('from-file');
+    });
+
+    it('refuses a client secret written in the config file', () => {
+      writeAuth({ backend: 'sso', sso: { providers: [{ ...oidc, clientSecret: 'clear' }] } });
+
+      expect(() => loadConfig()).toThrow(/clientSecret must not be set in the config file/);
+    });
+
+    it('refuses a provider whose client secret is not available', () => {
+      delete process.env.CANOPY_AUTH_SSO_GOOGLE_CLIENT_SECRET;
+      writeAuth({ backend: 'sso', sso: { providers: [oidc] } });
+
+      expect(() => loadConfig()).toThrow(/CANOPY_AUTH_SSO_GOOGLE_CLIENT_SECRET/);
+    });
+
+    it.each([
+      ['an oidc provider without an issuer', { id: 'google', type: 'oidc', clientId: 'cid' }, /issuer is required/],
+      ['an oauth2 provider without endpoints', { id: 'google', type: 'oauth2', clientId: 'cid' }, /authorizeUrl, tokenUrl and userinfoUrl/],
+      ['an unknown provider type', { ...oidc, type: 'saml' }, /type must be/],
+      ['an unsafe provider id', { ...oidc, id: 'a/b' }, /id must contain only/],
+    ])('rejects %s', (_name, provider, message) => {
+      writeAuth({ backend: 'sso', sso: { providers: [provider] } });
+
+      expect(() => loadConfig()).toThrow(message);
+    });
+
+    it('rejects an unknown role name in the role mapping', () => {
+      writeAuth({ backend: 'sso', sso: { providers: [oidc], roles: { roleByEmail: { 'a@x.com': 'root' } } } });
+
+      expect(() => loadConfig()).toThrow(/roleByEmail/);
+    });
+
+    it('rejects enabled break-glass without users', () => {
+      writeAuth({ backend: 'sso', sso: { providers: [oidc] }, breakGlass: { enabled: true, users: [] } });
+
+      expect(() => loadConfig()).toThrow(/breakGlass/);
+    });
   });
 
   it('rejects an unknown backend', () => {

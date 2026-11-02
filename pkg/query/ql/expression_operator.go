@@ -307,7 +307,12 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 	}
 	node := &expressionNode{op: o, value: expressionVector{typ: expr.Type, scale: expr.Scale}, index: -1}
 	o.nodes = append(o.nodes, node)
-	for _, arg := range expr.Args {
+	arguments := expr.Args
+	compactMembership := expressionStringMembership(expr)
+	if compactMembership {
+		arguments = arguments[:1]
+	}
+	for _, arg := range arguments {
 		child, err := o.compile(arg)
 		if err != nil {
 			return nil, err
@@ -337,19 +342,7 @@ func (o *expressionOperator) compile(expr *Expression) (*expressionNode, error) 
 	case "negate", "positive":
 		node.eval = node.unary(expr.Op)
 	case "=", "!=", "<", "<=", ">", ">=", "in", "not_in":
-		comparisonType := expr.Args[0].Type
-		// Integers retain their type when resolved alongside exact decimals.
-		for _, arg := range expr.Args[1:] {
-			if arg.Type == ExpressionDecimal {
-				comparisonType = ExpressionDecimal
-				break
-			}
-		}
-		if expr.Op == "in" || expr.Op == "not_in" {
-			node.eval = node.membership(expr.Op == "not_in", comparisonType)
-		} else {
-			node.eval = node.comparison(expr.Op, comparisonType)
-		}
+		node.eval = node.compareExpression(expr, compactMembership)
 	case "contains", "not_contains":
 		node.eval = node.contains(expr.Op == "not_contains", expr.Args[0].Type, expr.Args[1].Type)
 	case "and", "or":

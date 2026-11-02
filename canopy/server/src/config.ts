@@ -39,8 +39,60 @@ export interface SessionConfig {
   readonly cookieSecure: boolean | 'auto';
 }
 
+export type SsoProviderType = 'oidc' | 'oauth2';
+
+export interface SsoProviderConfig {
+  readonly id: string;
+  readonly name: string;
+  readonly type: SsoProviderType;
+  readonly clientId: string;
+  readonly clientSecret: string;
+  // OIDC providers are described by their issuer; endpoints come from its discovery document.
+  readonly issuer?: string;
+  // OAuth2 providers list their endpoints explicitly.
+  readonly authorizeUrl?: string;
+  readonly tokenUrl?: string;
+  readonly userinfoUrl?: string;
+  // Optional list-emails endpoint (GitHub's /user/emails) used when userinfo has no email.
+  readonly emailsUrl?: string;
+  readonly scopes: readonly string[];
+  // Overrides the callback URL derived from the request (needed when the public URL differs).
+  readonly redirectUri?: string;
+}
+
+/** Maps an SSO login to Canopy roles; role names go through mapRole. Keys of the two maps are lowercase. */
+export interface SsoRolesConfig {
+  readonly defaultRoles: readonly Role[];
+  readonly roleByEmail: Readonly<Record<string, readonly Role[]>>;
+  readonly roleByDomain: Readonly<Record<string, readonly Role[]>>;
+}
+
+export interface SsoConfig {
+  readonly providers: readonly SsoProviderConfig[];
+  readonly roles: SsoRolesConfig;
+  // Bound on every request to an identity provider (discovery, token, userinfo, health probe).
+  readonly timeoutMs: number;
+}
+
+export interface BreakGlassConfig {
+  readonly enabled: boolean;
+  readonly users: CanopyUser[];
+}
+
+/** The parts of the sso backend that are re-read at runtime: role mapping and break-glass accounts. */
+export interface AuthPolicy {
+  readonly roles: SsoRolesConfig;
+  readonly breakGlass: BreakGlassConfig | undefined;
+}
+
 export interface AuthConfig {
   readonly backend: AuthBackend;
+  // Re-reads the role mapping and break-glass accounts from the auth file; absent when they cannot change at runtime.
+  readonly reloadPolicy?: () => AuthPolicy;
+  // Present when backend is "sso".
+  readonly sso?: SsoConfig;
+  // Local accounts accepted with backend "sso" only while the identity provider is unhealthy.
+  readonly breakGlass?: BreakGlassConfig;
   readonly local: {
     readonly users: CanopyUser[];
     // Re-reads the configured user files; absent when users cannot change at runtime (dev no-auth).
@@ -164,6 +216,191 @@ function parseTokens(raw: unknown, source: string): TokenEntry[] {
   });
 }
 
+const SSO_DEFAULT_TIMEOUT_MS = 5000;
+const SSO_PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+function requireString(value: unknown, where: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`${where} must be a non-empty string`);
+  }
+  return value.trim();
+}
+
+function optionalUrl(value: unknown, where: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const text = requireString(value, where);
+  let parsed: URL;
+  try {
+    parsed = new URL(text);
+  } catch {
+    throw new Error(`${where} must be an absolute http(s) URL`);
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error(`${where} must be an absolute http(s) URL`);
+  }
+  return text;
+}
+
+// The client secret never lives in the config file: it comes from an environment variable
+// (clientSecretEnv, default CANOPY_AUTH_SSO_<ID>_CLIENT_SECRET) or a file (clientSecretFile).
+function resolveClientSecret(entry: Record<string, unknown>, id: string, where: string): string {
+  if (entry.clientSecret !== undefined) {
+    throw new Error(`${where}.clientSecret must not be set in the config file; use clientSecretEnv or clientSecretFile`);
+  }
+  if (entry.clientSecretEnv !== undefined && entry.clientSecretFile !== undefined) {
+    throw new Error(`${where}: set only one of clientSecretEnv and clientSecretFile`);
+  }
+  let secret: string | undefined;
+  if (entry.clientSecretFile !== undefined) {
+    const file = requireString(entry.clientSecretFile, `${where}.clientSecretFile`);
+    if (!existsSync(file)) {
+      throw new Error(`${where}.clientSecretFile not found: ${file}`);
+    }
+    secret = readFileSync(file, 'utf-8').trim();
+  } else {
+    const envName = entry.clientSecretEnv !== undefined
+      ? requireString(entry.clientSecretEnv, `${where}.clientSecretEnv`)
+      : `CANOPY_AUTH_SSO_${id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_CLIENT_SECRET`;
+    secret = process.env[envName]?.trim();
+    if (!secret) {
+      throw new Error(`${where}: client secret is not set; export ${envName} or set clientSecretFile`);
+    }
+  }
+  if (!secret) {
+    throw new Error(`${where}: the client secret is empty`);
+  }
+  return secret;
+}
+
+function parseSsoProviders(raw: unknown): SsoProviderConfig[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      'auth.backend "sso" needs auth.sso.providers (at least one provider in CANOPY_AUTH_CONFIG); ' +
+      'set CANOPY_AUTH_BACKEND=local (or CANOPY_USERS / auth.local.users) or set CANOPY_DEV_NOAUTH=true for development',
+    );
+  }
+  const seen = new Set<string>();
+  return raw.map((entry: unknown, index: number): SsoProviderConfig => {
+    const where = `auth.sso.providers[${index}]`;
+    if (!isRecord(entry)) {
+      throw new Error(`${where} must be a mapping`);
+    }
+    const id = requireString(entry.id, `${where}.id`);
+    if (!SSO_PROVIDER_ID.test(id)) {
+      throw new Error(`${where}.id must contain only letters, digits, "_" and "-"`);
+    }
+    if (seen.has(id)) {
+      throw new Error(`${where}: duplicate provider id "${id}"`);
+    }
+    seen.add(id);
+    const type = entry.type;
+    if (type !== 'oidc' && type !== 'oauth2') {
+      throw new Error(`${where}.type must be "oidc" or "oauth2" (got ${JSON.stringify(type)})`);
+    }
+    const clientId = requireString(entry.clientId, `${where}.clientId`);
+    const clientSecret = resolveClientSecret(entry, id, where);
+    const name = entry.name === undefined ? id : requireString(entry.name, `${where}.name`);
+    let scopes: string[];
+    if (entry.scopes === undefined) {
+      scopes = type === 'oidc' ? ['openid', 'email', 'profile'] : ['read:user', 'user:email'];
+    } else if (Array.isArray(entry.scopes) && entry.scopes.every(scope => typeof scope === 'string' && scope !== '')) {
+      scopes = entry.scopes as string[];
+    } else {
+      throw new Error(`${where}.scopes must be a list of strings`);
+    }
+    const base = { id, name, type: type as SsoProviderType, clientId, clientSecret, scopes, redirectUri: optionalUrl(entry.redirectUri, `${where}.redirectUri`) };
+    if (type === 'oidc') {
+      const issuer = optionalUrl(entry.issuer, `${where}.issuer`);
+      if (!issuer) {
+        throw new Error(`${where}.issuer is required for an oidc provider`);
+      }
+      if (!scopes.includes('openid')) {
+        throw new Error(`${where}.scopes must include "openid" for an oidc provider`);
+      }
+      return { ...base, issuer };
+    }
+    const authorizeUrl = optionalUrl(entry.authorizeUrl, `${where}.authorizeUrl`);
+    const tokenUrl = optionalUrl(entry.tokenUrl, `${where}.tokenUrl`);
+    const userinfoUrl = optionalUrl(entry.userinfoUrl, `${where}.userinfoUrl`);
+    if (!authorizeUrl || !tokenUrl || !userinfoUrl) {
+      throw new Error(`${where}: an oauth2 provider needs authorizeUrl, tokenUrl and userinfoUrl`);
+    }
+    return { ...base, authorizeUrl, tokenUrl, userinfoUrl, emailsUrl: optionalUrl(entry.emailsUrl, `${where}.emailsUrl`) };
+  });
+}
+
+function parseRoleNames(raw: unknown, where: string): Role[] {
+  const names = Array.isArray(raw) ? raw : [raw];
+  return names.map(name => {
+    const mapped = mapRole(name);
+    if (!mapped) {
+      throw new Error(`${where} must name roles from admin, readonly, viewer, maintainer, operator (got ${JSON.stringify(name)})`);
+    }
+    return mapped;
+  });
+}
+
+function parseRoleMap(raw: unknown, where: string): Record<string, Role[]> {
+  if (raw === undefined || raw === null) return {};
+  if (!isRecord(raw)) {
+    throw new Error(`${where} must be a mapping`);
+  }
+  const out: Record<string, Role[]> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    out[key.trim().toLowerCase()] = parseRoleNames(value, `${where}.${key}`);
+  }
+  return out;
+}
+
+function parseSsoRoles(rolesRaw: unknown): SsoRolesConfig {
+  if (rolesRaw !== undefined && !isRecord(rolesRaw)) {
+    throw new Error('auth.sso.roles must be a mapping');
+  }
+  const defaultRoles = rolesRaw?.defaultRoles === undefined || rolesRaw.defaultRoles === null
+    ? []
+    : parseRoleNames(rolesRaw.defaultRoles, 'auth.sso.roles.defaultRoles');
+  return {
+    defaultRoles,
+    roleByEmail: parseRoleMap(rolesRaw?.roleByEmail, 'auth.sso.roles.roleByEmail'),
+    roleByDomain: parseRoleMap(rolesRaw?.roleByDomain, 'auth.sso.roles.roleByDomain'),
+  };
+}
+
+function ssoSection(raw: unknown): Record<string, unknown> {
+  if (raw !== undefined && !isRecord(raw)) {
+    throw new Error('auth.sso must be a mapping');
+  }
+  return raw ?? {};
+}
+
+function parseSso(raw: unknown): SsoConfig {
+  const section = ssoSection(raw);
+  const providers = parseSsoProviders(section.providers);
+  const roles = parseSsoRoles(section.roles);
+  const timeoutRaw = section.timeoutMs;
+  const timeoutMs = timeoutRaw === undefined ? SSO_DEFAULT_TIMEOUT_MS : Number(timeoutRaw);
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error(`auth.sso.timeoutMs must be a positive whole number of milliseconds (got ${JSON.stringify(timeoutRaw)})`);
+  }
+  return { providers, roles, timeoutMs };
+}
+
+function parseBreakGlass(raw: unknown): BreakGlassConfig | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!isRecord(raw)) {
+    throw new Error('auth.breakGlass must be a mapping {enabled, users}');
+  }
+  if (raw.enabled !== undefined && typeof raw.enabled !== 'boolean') {
+    throw new Error('auth.breakGlass.enabled must be true or false');
+  }
+  const users = parseUsers(raw.users, 'auth.breakGlass.users');
+  const enabled = raw.enabled === true;
+  if (enabled && users.length === 0) {
+    throw new Error('auth.breakGlass.enabled needs at least one entry in auth.breakGlass.users');
+  }
+  return { enabled, users };
+}
+
 function parseBackend(value: unknown, source: string): AuthBackend | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined;
@@ -242,15 +479,12 @@ function loadAuth(devNoAuth: boolean): AuthConfig {
     ?? parseBackend(fileAuth.backend, 'auth.backend');
   // Existing deployments that only set CANOPY_USERS (or the dev switch) keep working as local.
   const backend: AuthBackend = explicitBackend ?? (aliasPath || devNoAuth ? 'local' : 'sso');
-  if (backend === 'sso') {
-    throw new Error(
-      'auth.backend "sso" is not yet supported; set CANOPY_AUTH_BACKEND=local (or CANOPY_USERS / auth.local.users) ' +
-      'or set CANOPY_DEV_NOAUTH=true for development',
-    );
-  }
+  const sso = backend === 'sso' ? parseSso(fileAuth.sso) : undefined;
+  // Break-glass only applies to the sso backend; with local auth every user is already a local account.
+  const breakGlass = backend === 'sso' ? parseBreakGlass(fileAuth.breakGlass) : undefined;
 
   if (!devNoAuth) {
-    for (const user of users) {
+    for (const user of [...users, ...(breakGlass?.users ?? [])]) {
       if (isBcryptHash(user.passwordHash)) {
         console.warn(`[CANOPY] WARNING: user "${user.username}" has a bcrypt password hash; rehash it with argon2id (see canopy/README.md).`);
       }
@@ -278,7 +512,14 @@ function loadAuth(devNoAuth: boolean): AuthConfig {
   const tokens = tokensFile ? parseTokens(readStructuredFile(tokensFile, 'auth.tokensFile'), 'auth.tokensFile') : [];
 
   const reload = devNoAuth ? undefined : () => readConfiguredUsers(authFile, aliasPath);
-  return { backend, local: { users, reload }, tokens, session: { cookieName, ttlMinutes, cookieSecure } };
+  // Role mapping and break-glass accounts are re-read like the users files; provider settings need a restart.
+  const reloadPolicy = backend === 'sso' && authFile
+    ? (): AuthPolicy => {
+      const section = readAuthSection(authFile);
+      return { roles: parseSsoRoles(ssoSection(section.sso).roles), breakGlass: parseBreakGlass(section.breakGlass) };
+    }
+    : undefined;
+  return { backend, sso, breakGlass, reloadPolicy, local: { users, reload }, tokens, session: { cookieName, ttlMinutes, cookieSecure } };
 }
 
 function resolveUpstreamPassword(): string | undefined {

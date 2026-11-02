@@ -67,13 +67,14 @@ func generateT12(b *suiteBuilder) ([]Case, []FilterScenario, []Case, error) {
 	for _, definition := range []struct {
 		expression *t10Expr
 		name       string
+		noScan     bool
 	}{
 		{name: "constant_null", expression: t10Literal(nil)},
 		{name: "constant_typed_null", expression: t10Cast(t10Literal(nil), "BOOLEAN")},
 		{name: "constant_true", expression: t10Literal(true)},
-		{name: "constant_false", expression: t10Literal(false)},
+		{name: "constant_false", expression: t10Literal(false), noScan: true},
 	} {
-		add(definition.name, t12Query{Columns: rid, Predicate: definition.expression, Legacy: true}, "t12.constant_predicate", "t12.three_valued")
+		add(definition.name, t12Query{Columns: rid, Predicate: definition.expression, Legacy: true, NoScan: definition.noScan}, "t12.constant_predicate", "t12.three_valued")
 	}
 	add("field_filter_F", t12Query{Columns: rid, Predicate: parameterPredicate, Params: []any{"1"}},
 		"catalog.B8", "t12.field_filter", "t12.hidden_input", "t12.parameter_cast")
@@ -144,8 +145,11 @@ func generateT12(b *suiteBuilder) ([]Case, []FilterScenario, []Case, error) {
 			if definition.name == "parameter_recovery" && ordinal == 0 {
 				features = []string{"t12.invalid_value"}
 			}
-			c, buildErr := buildT12Case(fmt.Sprintf("%s_binding_%d", scenario.Name, ordinal),
-				t12Query{Columns: rid, Predicate: predicate, Params: []any{value}, Begin: -1, End: 6000}, features...)
+			members, membership := value.([]int64)
+			noScan := definition.op == "IN" && membership && len(members) == 0
+			c, buildErr := buildT12Case(fmt.Sprintf("%s_binding_%d", scenario.Name, ordinal), t12Query{
+				Columns: rid, Predicate: predicate, Params: []any{value}, Begin: -1, End: 6000, NoScan: noScan,
+			}, features...)
 			if buildErr != nil {
 				return nil, nil, nil, buildErr
 			}
