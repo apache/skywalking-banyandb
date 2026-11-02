@@ -164,9 +164,17 @@ func (s *Scheduler) Close() {
 		delete(s.tasks, k)
 	}
 	s.Unlock()
+	// Close tasks concurrently so their shutdown graces overlap: Close is
+	// bounded by one actionSoftTimeout rather than one per task.
+	var wg sync.WaitGroup
 	for _, t := range tasks {
-		t.close()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t.close()
+		}()
 	}
+	wg.Wait()
 }
 
 // Metrics returns the metrics of all registered tasks.

@@ -331,3 +331,72 @@ func TestScheduler_CloseIsBoundedWhenActionIgnoresCtx(t *testing.T) {
 		}
 	}, 5*time.Second, 20*time.Millisecond, "Close must return once the shutdown grace passes")
 }
+
+// TestScheduler_CloseGracesOverlapAcrossTasks pins that Close cancels every
+// task before waiting, so the shutdown graces of actions that ignore ctx run
+// concurrently and Close is bounded by one actionSoftTimeout, not one per task.
+func TestScheduler_CloseGracesOverlapAcrossTasks(t *testing.T) {
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: "error"}))
+	log := logger.GetLogger("test")
+
+	mc := NewMockClock()
+	mc.Set(time.Now())
+	s := NewScheduler(log, mc)
+
+	names := []string{"ignores-ctx-a", "ignores-ctx-b"}
+	actionEntered := make(chan struct{}, len(names))
+	release := make(chan struct{})
+	defer close(release)
+	for _, name := range names {
+		err := s.Register(context.Background(), name, cron.Descriptor, "@every 1h",
+			func(_ context.Context, _ time.Time, _ *logger.Logger) bool {
+				actionEntered <- struct{}{}
+				<-release
+				return true
+			})
+		require.NoError(t, err)
+	}
+
+	taskClocks := make([]MockClock, 0, len(names))
+	s.RLock()
+	for _, name := range names {
+		taskClocks = append(taskClocks, s.tasks[name].clock.(MockClock))
+	}
+	s.RUnlock()
+
+	mc.Add(time.Hour)
+	for _, name := range names {
+		require.True(t, s.Trigger(name))
+	}
+	for range names {
+		select {
+		case <-actionEntered:
+		case <-time.After(2 * time.Second):
+			t.Fatal("actions did not enter within 2s of Trigger")
+		}
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	// Give every task time to observe the close and arm its shutdown grace.
+	select {
+	case <-closed:
+		t.Fatal("Close must give the actions a chance to observe cancellation")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	// Advance each task clock by exactly one grace period. A serial Close would
+	// arm the second task's grace only after the first expired, so the second
+	// clock advance would be missed and Close would hang.
+	for _, c := range taskClocks {
+		c.Add(actionSoftTimeout)
+	}
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close must return after a single shared shutdown grace")
+	}
+}
