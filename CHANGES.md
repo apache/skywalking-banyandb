@@ -10,7 +10,7 @@ Release Notes.
 
 ### Bug Fixes
 
-- Upgrade the Go toolchain to 1.26.10 and golang.org/x/net to v0.60.0 (with x/crypto, x/sys, x/text, x/term, x/mod and x/sync) for the crypto/x509 and net/http security fixes (GO-2026-6809, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617). Plugins must be rebuilt with Go 1.26.
+- Upgrade the Go toolchain to 1.26.10 and golang.org/x/net to v0.62.0 (with x/crypto, x/sys, x/text, x/term, x/mod and x/sync) for the crypto/x509 and net/http security fixes (GO-2026-6809, GO-2026-6610, GO-2026-6611, GO-2026-6612, GO-2026-6613, GO-2026-6617, GO-2026-6860, GO-2026-6866). Plugins must be rebuilt with Go 1.26.
 - Stop rejecting queries by an estimated result window. Admission no longer returns `RESOURCE_EXHAUSTED` for a `limit`+`offset` above a window derived from the per-query memory assignment (1792 entries on a host without a memory limit), so clients that send `LIMIT 10000` such as OAP work without `--allowed-bytes`. The 100,000-entry absolute window, pool exhaustion, and execution-time charging are unchanged. Cap the sidx heap-merge preallocation sized by the request limit.
 - Fix stream queries failing with `query memory pool exhausted` although they return few rows (apache/skywalking#14165). The vectorized stream scan now decodes blocks on demand and refunds a block's query-budget charge when its cursor is released, the sorted merge refunds a batch once its last retained row is pruned, and the block scanner counts each block once against its quota.
 - Charge large tag and field values against the query allowance by their size instead of eight times their size, so a query that reads multi-MB values (for example OAP ai-agent session files stored as a `body` tag) no longer runs out of its allowance.
@@ -42,6 +42,7 @@ Release Notes.
 
 - Bump the canopy and MCP npm dependencies to clear the open Dependabot CVEs: `fast-uri` 4.2.1, `fastify` 5.12.1, `js-yaml` 4.3.2, `hono` 4.13.7, `ip-address` 10.7.3, `proxy-addr` 2.0.8 and `brace-expansion` 5.0.12. The committed `canopy/LICENSE`, `mcp/LICENSE` and the dependency license texts are regenerated to match.
 - Drop the platform-pinned native build bindings from the Canopy web dependencies and declare the rolldown bindings as optional per-platform dependencies, so `npm ci` resolves a binding for the host platform instead of failing on a foreign one. Canopy now builds natively on macOS ARM64.
+- Bump the pinned skywalking-cli to a commit that builds against the current goapi. The previously pinned commit no longer compiles (`api.PprofTaskCreationRequest` is undefined), so the e2e harness failed to install swctl and every e2e case failed at setup.
 - Protect the `v0.11.x` release branch in `.asf.yaml` and turn off Dependabot's security-update pull requests.
 - Log the Top-K dump at error level, so it is visible under the default log level.
 
