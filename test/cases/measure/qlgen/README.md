@@ -936,3 +936,41 @@ fractional digits. The independent PostgreSQL oracle is recorded in
 Decimal results have at most 38 coefficient digits and scales from 0 to 18.
 The normal int64 row and count limits cannot produce a precision-38 overflow
 in an RPC fixture; arithmetic boundary tests cover that bound directly.
+
+### P1 directory-list and CASE capacity investigation
+
+`capacity_fixture.go` and `capacity_generate.go` define the neutral two-shard,
+zero-replica `qlperf.activity` fixture and independent Q1/A14 expected counts.
+Only `searchable.service_id` is indexed; `storage-only.entity_id` is the entity
+key. There are 10,240 rows and 4,096 active identities. Paged QL readiness checks
+every service before the fixed list and CASE cohort. Native timestamp bindings
+retain SQL placeholder order. Empty/NULL cases follow the typed measure-WHERE
+contract rather than the legacy value-list binder. Each membership scenario
+rebinds a nonempty list after its empty/NULL cases to check cached-plan reuse.
+
+The four `QL-P1` specs are an opt-in capacity qualification: set `P1_VERIFY=1`.
+Known admission boundaries remain failed qualifications, with every binding and
+both cache modes attempted. Ordinary suites do not register this investigation.
+The dedicated runner adds `P1_EXPECT_WORKERS=2` for distributed worker evidence.
+See the [historical capacity harness](https://github.com/hanahmily/skywalking-banyandb/blob/ae95292e9/verification/qlcapacitybench/README.md) for the commands, resource limits,
+measurement protocol and recorded outcome. Supported capability metadata records
+generated behavior contracts; it does not certify capacity under those limits.
+
+### P2 shard aggregate correctness
+
+Set `P2_VERIFY=1` and select `measure-ql && QL-P2` to register three opt-in
+specs over the P1 fixture with normal routing. Scalar and service-grouped cases
+cover `SUM(value::FIELD)`, `COUNT(DISTINCT entity_id)` and
+`COUNT(DISTINCT service_id)` separately and together. Each shape checks the
+whole active fixture, two selected services, and an absent-service empty input.
+The 24 cases run with cached and bypassed plans: 48 verification RPCs.
+Expected values are calculated directly from the P1 fixture rows, independently
+of query parsing, planning, and execution.
+
+Readiness reuses the 64 P1 pages and adds one service with four active entities,
+eight positive rows and two idle rows. With `P1_EXPECT_WORKERS=2`, its trace must
+show ten raw rows in total and more than two rows from each worker. Because only
+two fixture rows are idle, both workers must contribute positive rows, proving
+that a repeated service crosses the worker boundary. Readiness performs at least 65 RPCs and
+retries complete writes and checks until visible. This cohort measures
+correctness only; it does not run performance measurements.

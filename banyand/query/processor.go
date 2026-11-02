@@ -653,7 +653,7 @@ func executeMeasurePlan(
 func dispatchMeasure(ctx context.Context, queryCriteria *measurev1.QueryRequest, mctx *measureExecutionContext,
 	emitPartial bool, patterns ...model.IndexedPattern,
 ) (executor.MIterator, string, error) {
-	result, planStr, err := dispatchMeasureBatches(ctx, queryCriteria, mctx, emitPartial, patterns...)
+	result, planStr, err := dispatchMeasureBatches(ctx, queryCriteria, mctx, emitPartial, false, patterns...)
 	if err != nil {
 		return nil, planStr, err
 	}
@@ -665,7 +665,7 @@ func dispatchMeasureBatches(
 	ctx context.Context,
 	queryCriteria *measurev1.QueryRequest,
 	mctx *measureExecutionContext,
-	emitPartial bool, patterns ...model.IndexedPattern,
+	emitPartial, seriesOrder bool, patterns ...model.IndexedPattern,
 ) (*vecplan.BatchResult, string, error) {
 	vecs := make([]vecExecutionContext, len(mctx.ecc))
 	for groupIdx, ec := range mctx.ecc {
@@ -703,6 +703,10 @@ func dispatchMeasureBatches(
 		}
 	}
 	if len(mctx.ecc) == 1 {
+		if seriesOrder && !emitPartial && !vecs[0].GetSchema().GetIndexMode() {
+			return vecplan.DispatchSeriesBatches(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
+				mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), false, false, groupPatternRequests(resolved, 0)...)
+		}
 		return vecplan.DispatchBatches(ctx, queryCriteria, mctx.metadata[0], vecs[0].GetSchema(),
 			mctx.schemas[0], vecs[0], vecs[0].VectorizedConfig(), emitPartial, false, groupPatternRequests(resolved, 0)...)
 	}
@@ -765,7 +769,7 @@ func collectInternalDataPoints(mIterator executor.MIterator) []*measurev1.Intern
 
 func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	if batchRequest, batchOK := message.Data().(*vmeasure.BatchQueryRequest); batchOK {
-		return p.executeBatchQuery(ctx, batchRequest.Request, batchRequest.Patterns...)
+		return p.executeBatchQuery(ctx, batchRequest.Request, batchRequest.SeriesOrder, batchRequest.Patterns...)
 	}
 	queryCriteria, ok := message.Data().(*measurev1.QueryRequest)
 	n := time.Now()
@@ -778,7 +782,9 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	return
 }
 
-func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *measurev1.QueryRequest, patterns ...model.IndexedPattern) (resp bus.Message) {
+func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *measurev1.QueryRequest,
+	seriesOrder bool, patterns ...model.IndexedPattern,
+) (resp bus.Message) {
 	now := bus.MessageID(time.Now().UnixNano())
 	if req == nil || len(req.Groups) == 0 {
 		return bus.NewMessage(now, common.NewError("measure query requires a group"))
@@ -798,7 +804,7 @@ func (p *measureQueryProcessor) executeBatchQuery(ctx context.Context, req *meas
 		tracer, ctx = query.NewTracer(ctx, time.Now().Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
 	}
-	result, planStr, err := dispatchMeasureBatches(ctx, req, mctx, false, patterns...)
+	result, planStr, err := dispatchMeasureBatches(ctx, req, mctx, false, seriesOrder, patterns...)
 	if err != nil {
 		if span != nil {
 			span.Error(err)
