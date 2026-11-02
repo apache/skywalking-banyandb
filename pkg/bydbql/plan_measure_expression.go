@@ -374,8 +374,8 @@ func (m *measureExpression) bindOutputExpression(bound *BoundQuery, aggregate *q
 	return m.bindMembership(&value)
 }
 
-// appendBoundExpressionArgument shares positional IN expansion for SELECT and
-// WHERE bindings. Only RHS literal arrays expand; the left operand stays scalar.
+// appendBoundExpressionArgument shares positional IN binding for SELECT and
+// WHERE. String lists stay compact; numeric lists retain scalar coercion rules.
 func appendBoundExpressionArgument(expression *ql.Expression, index int, argument *ql.Expression) {
 	if index > 0 && (expression.Op == "in" || expression.Op == "not_in") && argument.Op == "literal" {
 		switch argument.Type {
@@ -385,8 +385,8 @@ func appendBoundExpressionArgument(expression *ql.Expression, index int, argumen
 			}
 			return
 		case ql.ExpressionStringArray:
-			for _, value := range argument.Literal.Strings {
-				expression.Args = append(expression.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionString, Literal: ql.ExpressionScalar{String: value}})
+			if len(argument.Literal.Strings) > 0 {
+				expression.Args = append(expression.Args, argument)
 			}
 			return
 		default:

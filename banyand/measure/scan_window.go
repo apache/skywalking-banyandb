@@ -160,6 +160,9 @@ type windowScan struct {
 // newWindowScan plans the scan over qr.data and takes ownership of its cursors.
 func newWindowScan(qr *queryResult) *windowScan {
 	s := &windowScan{qr: qr, desc: qr.orderByTimestampDesc(), load: decodeCursor}
+	if !qr.orderByTS && qr.budget != nil && qr.budget.shared != nil && len(qr.data) > 0 && uniqueDecodeProjection(qr.data[0]) {
+		qr.budget.reuse = &scanDecodeReuse{tracker: qr.budget.shared}
+	}
 	s.units = planUnits(qr, groupWindows(qr.data), s.desc)
 	for i := range qr.data {
 		qr.data[i] = nil
