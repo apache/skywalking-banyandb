@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -28,6 +29,10 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -313,4 +318,172 @@ func TestContains(t *testing.T) {
 			t.Errorf("contains(%v, %s) = %v, want %v", tt.slice, tt.s, got, tt.want)
 		}
 	}
+}
+
+type fakeSnapshotServer struct {
+	databasev1.UnimplementedSnapshotServiceServer
+	snapshots []*databasev1.Snapshot
+}
+
+func (f *fakeSnapshotServer) Snapshot(context.Context, *databasev1.SnapshotRequest) (*databasev1.SnapshotResponse, error) {
+	return &databasev1.SnapshotResponse{Snapshots: f.snapshots}, nil
+}
+
+// TestBackupActionCatalogResults runs the full backup flow (snapshot RPC, local
+// snapshot directories, file:// destination) and verifies that a catalog upload
+// failure is reported regardless of the catalogs backed up after it, while a
+// snapshot whose directory cannot be resolved is skipped without failing the run.
+func TestBackupActionCatalogResults(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("unreadable files cannot be simulated when running as root")
+	}
+	const snapshotName = "snp"
+	type catalogData struct {
+		catalog    commonv1.Catalog
+		unreadable bool
+	}
+	tests := []struct {
+		name         string
+		catalogs     []catalogData
+		wantErrs     []string
+		wantBacked   []string
+		extraUnknown bool
+	}{
+		{
+			name: "earlier catalog failure is not reset by a later success",
+			catalogs: []catalogData{
+				{catalog: commonv1.Catalog_CATALOG_STREAM, unreadable: true},
+				{catalog: commonv1.Catalog_CATALOG_MEASURE},
+			},
+			wantErrs:   []string{"stream"},
+			wantBacked: []string{"measure"},
+		},
+		{
+			name: "failures of several catalogs are all reported",
+			catalogs: []catalogData{
+				{catalog: commonv1.Catalog_CATALOG_STREAM, unreadable: true},
+				{catalog: commonv1.Catalog_CATALOG_MEASURE, unreadable: true},
+				{catalog: commonv1.Catalog_CATALOG_TRACE},
+			},
+			wantErrs:   []string{"stream", "measure"},
+			wantBacked: []string{"trace"},
+		},
+		{
+			name: "failure is reported when an unresolvable snapshot follows it",
+			catalogs: []catalogData{
+				{catalog: commonv1.Catalog_CATALOG_STREAM, unreadable: true},
+				{catalog: commonv1.Catalog_CATALOG_MEASURE},
+			},
+			extraUnknown: true,
+			wantErrs:     []string{"stream"},
+			wantBacked:   []string{"measure"},
+		},
+		{
+			name: "unresolvable last snapshot does not fail a successful run",
+			catalogs: []catalogData{
+				{catalog: commonv1.Catalog_CATALOG_STREAM},
+				{catalog: commonv1.Catalog_CATALOG_MEASURE},
+			},
+			extraUnknown: true,
+			wantBacked:   []string{"stream", "measure"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dataRoot := t.TempDir()
+			destRoot := t.TempDir()
+			server := &fakeSnapshotServer{}
+			for _, c := range tt.catalogs {
+				catalogName := snapshot.CatalogName(c.catalog)
+				dir := filepath.Join(snapshot.LocalDir(dataRoot, c.catalog), storage.SnapshotsDir, snapshotName)
+				if err := os.MkdirAll(dir, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				file := filepath.Join(dir, catalogName+".tm")
+				if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if c.unreadable {
+					if err := os.Chmod(file, 0o000); err != nil {
+						t.Fatal(err)
+					}
+				}
+				server.snapshots = append(server.snapshots, &databasev1.Snapshot{Catalog: c.catalog, Name: snapshotName})
+			}
+			if tt.extraUnknown {
+				server.snapshots = append(server.snapshots, &databasev1.Snapshot{Catalog: commonv1.Catalog_CATALOG_UNSPECIFIED, Name: snapshotName})
+			}
+			addr := startSnapshotServer(t, server)
+
+			err := backupAction(context.Background(), backupOptions{
+				gRPCAddr:          addr,
+				dest:              "file://" + destRoot,
+				timeStyle:         "daily",
+				streamRoot:        dataRoot,
+				measureRoot:       dataRoot,
+				propertyRoot:      dataRoot,
+				traceRoot:         dataRoot,
+				schemaRoot:        dataRoot,
+				uploadConcurrency: 2,
+			})
+
+			if len(tt.wantErrs) == 0 {
+				if err != nil {
+					t.Fatalf("backupAction() error = %v, want nil", err)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("backupAction() error = nil, want failures of %v", tt.wantErrs)
+				}
+				for _, catalogName := range tt.wantErrs {
+					if !strings.Contains(err.Error(), catalogName+".tm") {
+						t.Errorf("backupAction() error = %v, want it to report the %s catalog", err, catalogName)
+					}
+				}
+			}
+			backed := backedUpCatalogs(t, destRoot)
+			for _, catalogName := range tt.wantBacked {
+				if _, ok := backed[catalogName]; !ok {
+					t.Errorf("catalog %s not backed up; backed up files = %v", catalogName, backed)
+				}
+			}
+			if len(backed) != len(tt.wantBacked) {
+				t.Errorf("backed up catalogs = %v, want %v", backed, tt.wantBacked)
+			}
+		})
+	}
+}
+
+func startSnapshotServer(t *testing.T, server databasev1.SnapshotServiceServer) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := grpc.NewServer()
+	grpc_health_v1.RegisterHealthServer(s, health.NewServer())
+	databasev1.RegisterSnapshotServiceServer(s, server)
+	go func() {
+		_ = s.Serve(lis)
+	}()
+	t.Cleanup(s.Stop)
+	return lis.Addr().String()
+}
+
+// backedUpCatalogs maps each catalog found under the destination's <timeDir>/<catalog>/ to its uploaded files.
+func backedUpCatalogs(t *testing.T, destRoot string) map[string][]string {
+	t.Helper()
+	files, err := getAllFiles(destRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backed := make(map[string][]string)
+	for _, f := range files {
+		parts := strings.SplitN(f, "/", 3)
+		if len(parts) != 3 {
+			t.Fatalf("unexpected remote file layout: %s", f)
+		}
+		backed[parts[1]] = append(backed[parts[1]], parts[2])
+	}
+	return backed
 }
