@@ -19,9 +19,11 @@ package plan
 
 import (
 	"fmt"
+	"slices"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -252,4 +254,68 @@ func fieldTypeToColumnTypeMG(t databasev1.FieldType) (vectorized.ColumnType, err
 		return vectorized.ColumnTypeBytes, nil
 	}
 	return 0, fmt.Errorf("unsupported field type %v", t)
+}
+
+// multiGroupPartialSchema is the layout the liaison reduces multi-group
+// aggregation partials into. groupSchemas are the per-group node partial
+// layouts, in request-group order. The result keeps their shared non-tag
+// columns and unions their tag columns in the query's projection order, so
+// a projected tag stays in the response (null-filled) even when the groups
+// that define it return no rows. Tags outside the projection, such as an
+// implicitly projected GroupBy key, follow in first-seen order.
+func multiGroupPartialSchema(groupSchemas []*vectorized.BatchSchema, proj *modelv1.TagProjection) (*vectorized.BatchSchema, error) {
+	if len(groupSchemas) == 0 {
+		return nil, nil
+	}
+	var lead, rest, tags []vectorized.ColumnDef
+	pastLead := false
+	for _, def := range groupSchemas[0].Columns {
+		pastLead = pastLead || def.Role == vectorized.RoleTag || def.Role == vectorized.RoleField
+		switch {
+		case def.Role == vectorized.RoleTag:
+		case pastLead:
+			rest = append(rest, def)
+		default:
+			lead = append(lead, def)
+		}
+	}
+	nonTag := slices.Concat(lead, rest)
+	for groupIdx, s := range groupSchemas {
+		var groupNonTag []vectorized.ColumnDef
+		for _, def := range s.Columns {
+			if def.Role != vectorized.RoleTag {
+				groupNonTag = append(groupNonTag, def)
+				continue
+			}
+			i := slices.IndexFunc(tags, func(c vectorized.ColumnDef) bool { return c.TagFamily == def.TagFamily && c.Name == def.Name })
+			if i < 0 {
+				tags = append(tags, def)
+				continue
+			}
+			if tags[i].Type != def.Type {
+				return nil, fmt.Errorf("vec multi-group partials: group %d tag %s.%s is %v, another group has %v",
+					groupIdx, def.TagFamily, def.Name, def.Type, tags[i].Type)
+			}
+		}
+		if !slices.Equal(groupNonTag, nonTag) {
+			return nil, fmt.Errorf("vec multi-group partials: group %d partial columns %+v differ from %+v", groupIdx, groupNonTag, nonTag)
+		}
+	}
+	rank := make(map[string]int)
+	for _, family := range proj.GetTagFamilies() {
+		for _, name := range family.GetTags() {
+			key := nativeKeyMulti(family.GetName(), name)
+			if _, seen := rank[key]; !seen {
+				rank[key] = len(rank)
+			}
+		}
+	}
+	tagRank := func(def vectorized.ColumnDef) int {
+		if r, ok := rank[nativeKeyMulti(def.TagFamily, def.Name)]; ok {
+			return r
+		}
+		return len(rank)
+	}
+	slices.SortStableFunc(tags, func(a, b vectorized.ColumnDef) int { return tagRank(a) - tagRank(b) })
+	return vectorized.NewBatchSchema(slices.Concat(lead, tags, rest)), nil
 }

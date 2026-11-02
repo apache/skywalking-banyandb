@@ -18,6 +18,7 @@
 package plan
 
 import (
+	"slices"
 	"testing"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -294,5 +295,82 @@ func TestBuildMultiGroupBatchSchema_MetadataColumnsFirst(t *testing.T) {
 	}
 	if schema.Columns[3].Role != vectorized.RoleShardID {
 		t.Fatalf("col[3] must be shardID, got %v", schema.Columns[3].Role)
+	}
+}
+
+// partialLayout is a node agg partial layout: shard id, the given tags, then the value.
+func partialLayout(tags ...vectorized.ColumnDef) *vectorized.BatchSchema {
+	cols := []vectorized.ColumnDef{{Role: vectorized.RoleShardID, Name: "shard_id", Type: vectorized.ColumnTypeInt64}}
+	cols = append(cols, tags...)
+	cols = append(cols, vectorized.ColumnDef{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeInt64})
+	return vectorized.NewBatchSchema(cols)
+}
+
+func partialTag(name string, t vectorized.ColumnType) vectorized.ColumnDef {
+	return vectorized.ColumnDef{Role: vectorized.RoleTag, TagFamily: defaultName, Name: name, Type: t}
+}
+
+func layoutNames(s *vectorized.BatchSchema) []string {
+	names := make([]string, 0, len(s.Columns))
+	for _, def := range s.Columns {
+		names = append(names, def.Name)
+	}
+	return names
+}
+
+func TestMultiGroupPartialSchema_FollowsProjectionOrder(t *testing.T) {
+	svc := partialTag(tagSvc, vectorized.ColumnTypeString)
+	zone := partialTag("zone", vectorized.ColumnTypeTagValue)
+	region := partialTag("region", vectorized.ColumnTypeTagValue)
+	proj := &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{"zone", tagSvc, "region"}}}}
+	withZone, withRegion := partialLayout(svc, zone), partialLayout(svc, region)
+	want := []string{"shard_id", "zone", tagSvc, "region", fieldValue}
+	for name, groups := range map[string][]*vectorized.BatchSchema{
+		"zone-first":   {withZone, withRegion},
+		"region-first": {withRegion, withZone},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := multiGroupPartialSchema(groups, proj)
+			if err != nil {
+				t.Fatalf("multiGroupPartialSchema: %v", err)
+			}
+			if names := layoutNames(got); !slices.Equal(names, want) {
+				t.Fatalf("layout = %v, want %v", names, want)
+			}
+		})
+	}
+}
+
+func TestMultiGroupPartialSchema_UnprojectedTagsFollow(t *testing.T) {
+	// A GroupBy key the request didn't project is still in every partial.
+	key := partialTag("key", vectorized.ColumnTypeString)
+	zone := partialTag("zone", vectorized.ColumnTypeTagValue)
+	proj := &modelv1.TagProjection{TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: defaultName, Tags: []string{"zone"}}}}
+	got, err := multiGroupPartialSchema([]*vectorized.BatchSchema{partialLayout(key), partialLayout(key, zone)}, proj)
+	if err != nil {
+		t.Fatalf("multiGroupPartialSchema: %v", err)
+	}
+	if names, want := layoutNames(got), []string{"shard_id", "zone", "key", fieldValue}; !slices.Equal(names, want) {
+		t.Fatalf("layout = %v, want %v", names, want)
+	}
+}
+
+func TestMultiGroupPartialSchema_RejectsDivergentGroups(t *testing.T) {
+	svc := partialTag(tagSvc, vectorized.ColumnTypeString)
+	floatValue := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleShardID, Name: "shard_id", Type: vectorized.ColumnTypeInt64},
+		svc,
+		{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeFloat64},
+	})
+	cases := map[string][]*vectorized.BatchSchema{
+		"key tag type":    {partialLayout(svc), partialLayout(partialTag(tagSvc, vectorized.ColumnTypeInt64))},
+		"aggregate value": {partialLayout(svc), floatValue},
+	}
+	for name, groups := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := multiGroupPartialSchema(groups, nil); err == nil {
+				t.Fatal("expected an error")
+			}
+		})
 	}
 }
