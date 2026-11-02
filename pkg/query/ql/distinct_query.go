@@ -35,11 +35,11 @@ func DistinctStatistics(source vectorized.PullOperator) (AggregateStats, bool) {
 }
 
 func distinctSlotCount(plan *RawPlan) int {
-	if plan.Having != nil {
-		return len(plan.Having.Outputs)
-	}
 	if plan.Expressions != nil {
 		return len(plan.Expressions.Outputs)
+	}
+	if plan.Having != nil {
+		return len(plan.Having.Outputs)
 	}
 	if plan.Aggregate != nil {
 		return len(plan.Aggregate.Outputs)
@@ -48,12 +48,12 @@ func distinctSlotCount(plan *RawPlan) int {
 }
 
 func distinctSlot(plan *RawPlan, i int) Slot {
-	if plan.Having != nil {
-		return plan.Having.Outputs[i]
-	}
 	if plan.Expressions != nil {
 		output := plan.Expressions.Outputs[i]
 		return Slot{Source: output.Column, Output: output.Column, Timestamp: output.Expr.Type == ExpressionTimestamp}
+	}
+	if plan.Having != nil {
+		return plan.Having.Outputs[i]
 	}
 	if plan.Aggregate != nil {
 		output := plan.Aggregate.Outputs[i]

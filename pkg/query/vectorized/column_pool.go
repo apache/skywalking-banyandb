@@ -21,6 +21,7 @@ import (
 	"strconv"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 )
 
@@ -28,6 +29,7 @@ import (
 // instances that have been Reset; on Get the caller may need to grow the
 // backing slice if the prior capacity is smaller than the new request.
 var (
+	decimalColumnPool    = newTypedColumnPool[decimal.Int128]("vectorized.column.decimal")
 	int64ColumnPool      = newTypedColumnPool[int64]("vectorized.column.int64")
 	float64ColumnPool    = newTypedColumnPool[float64]("vectorized.column.float64")
 	stringColumnPool     = newTypedColumnPool[string]("vectorized.column.string")
@@ -89,6 +91,13 @@ func ColumnCapacityClass(capacity int) int {
 // reused. Capacity classes isolate native block slabs from ordinary operator batches.
 func AcquireColumn(t ColumnType, capacity int) Column {
 	switch t {
+	case ColumnTypeDecimal:
+		c := decimalColumnPool.Get(capacity)
+		c.typ = t
+		if cap(c.data) < capacity {
+			c.data = make([]decimal.Int128, 0, capacity)
+		}
+		return c
 	case ColumnTypeInt64:
 		c := int64ColumnPool.Get(capacity)
 		c.typ = t
@@ -158,6 +167,9 @@ func ReleaseColumn(c Column) {
 		return
 	}
 	switch col := c.(type) {
+	case *TypedColumn[decimal.Int128]:
+		col.Reset()
+		decimalColumnPool.Put(col)
 	case *TypedColumn[int64]:
 		col.Reset()
 		int64ColumnPool.Put(col)
@@ -197,6 +209,8 @@ func AcquireBoundedColumn(t ColumnType, capacity int) Column {
 	column := AcquireColumn(t, capacity)
 	limit := 2 * max(capacity, DefaultBatchSize)
 	switch col := column.(type) {
+	case *TypedColumn[decimal.Int128]:
+		boundColumnBacking(col, capacity, limit)
 	case *TypedColumn[int64]:
 		boundColumnBacking(col, capacity, limit)
 	case *TypedColumn[float64]:

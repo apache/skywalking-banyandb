@@ -320,7 +320,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.diskMonitor.Start()
 
 	// For now, keep the original write throttling behavior based on high watermark
-	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark))
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm)
 	err = s.pipeline.Subscribe(data.TopicStreamWrite, writeListener)
 	if err != nil {
 		return err

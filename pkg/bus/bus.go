@@ -362,3 +362,8 @@ func (b *Bus) Subscribe(topic Topic, listener MessageListener) error {
 // Close a Bus until all Messages are sent to Subscribers.
 func (b *Bus) Close() {
 }
+
+// NewMessageWithSelectorsAndGroup retains routing and admission identity for opaque requests.
+func NewMessageWithSelectorsAndGroup(id MessageID, selectors map[string][]string, timeRange *modelv1.TimeRange, group string, data interface{}) Message {
+	return Message{id: id, nodeSelectors: selectors, timeRange: timeRange, group: group, payload: data}
+}

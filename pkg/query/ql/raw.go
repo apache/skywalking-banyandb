@@ -23,6 +23,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -52,6 +53,7 @@ type RawPlan struct {
 	Limit           *uint32
 	Slots           []Slot
 	Ranges          []MillisRange
+	Patterns        []model.IndexedPattern
 	Offset          uint32
 	Residual        bool
 	Distinct        bool

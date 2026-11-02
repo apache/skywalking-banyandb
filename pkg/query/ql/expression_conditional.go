@@ -170,6 +170,12 @@ func (v *expressionVector) copyRows(source *expressionVector, mask []uint16) {
 		v.nulls[row] = source.isNull(row)
 	}
 	switch v.typ {
+	case ExpressionDecimal:
+		for _, row := range mask {
+			if !v.nulls[row] {
+				v.decimals[row] = source.decimalAt(int(row))
+			}
+		}
 	case ExpressionFloat:
 		for _, row := range mask {
 			if !v.nulls[row] {

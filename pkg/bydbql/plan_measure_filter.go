@@ -48,6 +48,12 @@ func (m *MeasureTemplate) compileWhere(columns *measureColumns) error {
 	if err != nil {
 		return err
 	}
+	if hasMeasurePattern(expression) {
+		expression, err = m.extractPatterns(expression, columns)
+		if err != nil || expression == nil {
+			return err
+		}
+	}
 	inputs := newMeasureExpressionInputs(m.slots)
 	recipe, err := compileMeasureExpression(expression, columns, inputs)
 	if err != nil {
@@ -252,25 +258,7 @@ func grammarLiteralExpression(value *GrammarValue) *ql.Expression {
 // envelopes while OR unions them, retaining the full predicate for correlation.
 func (m *measureExpression) bindFilter(bound *BoundQuery, now time.Time) (*ql.Expression, []ql.MillisRange, error) {
 	if m.temporal != nil {
-		comparison := *m.temporal
-		value := *comparison.Value
-		if value.Param {
-			parameter := bound.values[value.ParamIndex]
-			text := parameter.timeStr
-			if parameter.expression != nil {
-				switch parameter.expression.Type {
-				case ql.ExpressionString:
-					text = parameter.expression.Literal.String
-				case ql.ExpressionTimestamp:
-					text = time.Unix(0, parameter.expression.Literal.Int64).UTC().Format(time.RFC3339Nano)
-				default:
-					return nil, nil, fmt.Errorf("time comparison requires timestamp strings or timestamp parameters")
-				}
-			}
-			value.Param, value.String = false, &text
-		}
-		comparison.Value = &value
-		ranges, err := bindTimeComparison(&transformRun{}, now, &comparison)
+		ranges, err := bindTimeComparison(&transformRun{bound: bound.values}, now, m.temporal)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -354,42 +342,12 @@ func necessaryFilterCriteria(expression *ql.Expression, tags map[measureColumnKe
 		return nil
 	}
 	condition := &modelv1.Condition{Name: source.Source.Name, Op: modelv1.Condition_BINARY_OP_EQ}
-	values := make([]*modelv1.TagValue, 0, len(expression.Args)-1)
-	for _, argument := range expression.Args[1:] {
-		if argument.Op != "literal" || argument.Type != source.Type {
-			return nil
-		}
-		if argument.Literal.Null {
-			continue
-		}
-		value := &modelv1.TagValue{}
-		if source.Type == ql.ExpressionInt {
-			value.Value = &modelv1.TagValue_Int{Int: &modelv1.Int{Value: argument.Literal.Int64}}
-		} else {
-			value.Value = &modelv1.TagValue_Str{Str: &modelv1.Str{Value: argument.Literal.String}}
-		}
-		values = append(values, value)
-	}
-	if len(values) == 0 {
+	condition.Value = necessaryFilterValue(expression, source.Type)
+	if condition.Value == nil {
 		return nil
 	}
-	if expression.Op == "=" {
-		condition.Value = values[0]
-	} else {
+	if expression.Op == "in" {
 		condition.Op = modelv1.Condition_BINARY_OP_IN
-		if source.Type == ql.ExpressionInt {
-			array := &modelv1.IntArray{Value: make([]int64, len(values))}
-			for index, value := range values {
-				array.Value[index] = value.GetInt().Value
-			}
-			condition.Value = &modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: array}}
-		} else {
-			array := &modelv1.StrArray{Value: make([]string, len(values))}
-			for index, value := range values {
-				array.Value[index] = value.GetStr().Value
-			}
-			condition.Value = &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: array}}
-		}
 	}
 	return &modelv1.Criteria{Exp: &modelv1.Criteria_Condition{Condition: condition}}
 }
@@ -397,6 +355,9 @@ func necessaryFilterCriteria(expression *ql.Expression, tags map[measureColumnKe
 func (m *MeasureTemplate) bindWhere(bound *BoundQuery, now time.Time, request *measurev1.QueryRequest, plan *ql.RawPlan) ([]ql.MillisRange, error) {
 	ranges := allMeasureTime()
 	var err error
+	if err = m.bindPatterns(bound, plan); err != nil {
+		return nil, err
+	}
 	if m.predicate != nil {
 		ranges, request.Criteria, err = m.predicate.bind(&transformRun{bound: bound.values}, now)
 		if err != nil {
@@ -413,6 +374,7 @@ func (m *MeasureTemplate) bindWhere(bound *BoundQuery, now time.Time, request *m
 		if err != nil {
 			return nil, err
 		}
+		plan.Empty = plan.Empty || filterRejectsAllRows(plan.Filter)
 
 		ranges = intersectTimeRanges(ranges, filterRanges)
 		request.Criteria = combineMeasureCriteria(request.Criteria, necessaryFilterCriteria(plan.Filter, m.filterTags), false)

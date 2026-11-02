@@ -1,0 +1,81 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The verify cases of every storage's ai-agent e2e. The reads go through swctl's ai-agent commands, so the
+# CLI pinned in script/env is proven against this OAP too; the paths are from the repository root, the
+# expected files beside this file.
+cases:
+  # the sender's service and instance, under the AI_AGENT layer
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql service layer AI_AGENT
+    expected: expected/service.yml
+  - query: swctl --display yaml --base-url=http://${oap_host}:${oap_12800}/graphql instance list --service-name="e2e-ai-agent"
+    expected: expected/instance.yml
+  # the list page: one row per conversation, from the newest round's attributes
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list http://${oap_host}:${oap_12800}
+    expected: expected/conversations.yml
+  # query filters: limit, sender instance, a time window that holds only the first conversation
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list-limit http://${oap_host}:${oap_12800}
+    expected: expected/conversations-limit.yml
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list-instance http://${oap_host}:${oap_12800}
+    expected: expected/conversations-instance.yml
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list-window http://${oap_host}:${oap_12800}
+    expected: expected/conversations-window.yml
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list-filters http://${oap_host}:${oap_12800}
+    expected: expected/conversations-filters.yml
+  # every conversation's asz.view document equals the one the Sessionizer serves for the same files
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh views http://${oap_host}:${oap_12800} http://${aszview_host}:${aszview_8787}
+    expected: expected/views.yml
+  # The two reads Horizon's conversation page makes, before the later cases push extra rounds.
+  # The list as Horizon's conversation page queries it, every field its columns read: the head round's counts,
+  # changes with the lines they add and remove, model calls, subagents and Bash runs, what every scenario declares
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh list-horizon http://${oap_host}:${oap_12800}
+    expected: expected/list-horizon.yml
+  # the document as Horizon's conversation page fetches it, and what its header and changes panel read from it
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh view-horizon http://${oap_host}:${oap_12800}
+    expected: expected/view-horizon.yml
+  # the raw files of a conversation are the files the document names, digest for digest
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh raw-files http://${oap_host}:${oap_12800}
+    expected: expected/raw-files.yml
+  # a file whose digest does not match its body is never stored
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh reject http://${oap_host}:${oap_12800}
+    expected: expected/reject.yml
+  # one session landed, parsed and pushed in three stages folds to one verified document over three rounds
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh multi-round http://${oap_host}:${oap_12800}
+    expected: expected/multi-round.yml
+  # a landed file the Sessionizer's own runner would delete: the document names it once and folds the rest
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh lost-file http://${oap_host}:${oap_12800}
+    expected: expected/lost-file.yml
+  # a round pushed past a gap: the fold resumes at it, and the absent rounds and files are named once each
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh gap http://${oap_host}:${oap_12800}
+    expected: expected/gap.yml
+  # a file over maxFileBytes is rejected at ingest and never stored; one under it is
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh size http://${oap_host}:${oap_12800}
+    expected: expected/size.yml
+  # the workspace-changes conversation: the plugin's changes files landed beside the transcripts, every change record
+  # joins its step, and the export names the files
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh changes http://${oap_host}:${oap_12800}
+    expected: expected/changes.yml
+  # the provider-bodies conversation: the provider_body file landed beside the transcripts, every call names where its
+  # request and response landed, and the export names the file
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh provider-bodies http://${oap_host}:${oap_12800}
+    expected: expected/provider-bodies.yml
+  # the mcp-calls conversation: the plugin's execution files landed beside the transcripts, every record joins its step,
+  # and the calls to each MCP server and their time are kept per endpoint, one per server and tool
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh mcp http://${oap_host}:${oap_12800}
+    expected: expected/mcp.yml
+  # the runtime's token metric the Sessionizer derived, summed per minute over every session and sender, and over the
+  # run equal to what the scenarios declare; the service and the sender both
+  - query: bash test/e2e-v2/cases/ai-agent/verify.sh metrics http://${oap_host}:${oap_12800}
+    expected: expected/metrics.yml

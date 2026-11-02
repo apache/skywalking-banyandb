@@ -26,7 +26,8 @@ import (
 	"github.com/alecthomas/participle/v2/lexer"
 )
 
-// Keywords list - single source of truth for all BydbQL keywords.
+// bydbqlKeywords lists globally reserved words. Typed expression operators such
+// as LIKE, ILIKE and ESCAPE remain contextual so existing source names stay valid.
 var bydbqlKeywords = []string{
 	"SELECT", "SHOW", "TOP", "FROM", "STREAM", "MEASURE", "TRACE", "PROPERTY",
 	"IN", "ON", "STAGES", "TIME", "BETWEEN", "AND", "OR", "WHERE", "GROUP", "BY", "ORDER",

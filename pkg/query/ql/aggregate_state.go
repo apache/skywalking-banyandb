@@ -21,20 +21,23 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 type aggregateState struct {
-	distinct *aggregateGroups
-	count    []int64
-	sumInt   []int64
-	sumFloat []float64
-	minInt   []int64
-	maxInt   []int64
-	minFloat []float64
-	maxFloat []float64
-	source   vectorized.ColumnDef
-	needs    uint8
+	distinct   *aggregateGroups
+	count      []int64
+	sumInt     []int64
+	sumFloat   []float64
+	sumDecimal []decimal.Int128
+	minInt     []int64
+	maxInt     []int64
+	minFloat   []float64
+	maxFloat   []float64
+	source     vectorized.ColumnDef
+	needs      uint8
+	decimal    bool
 }
 
 const (
@@ -42,15 +45,19 @@ const (
 	aggregateNeedsFloatSum
 	aggregateNeedsMin
 	aggregateNeedsMax
+	aggregateNeedsDecimalSum
 )
 
 func (s *aggregateState) require(function AggregateFunction) {
 	switch function {
 	case AggregateCount, AggregateCountDistinct:
 	case AggregateSum:
-		if s.source.Type == vectorized.ColumnTypeInt64 {
+		switch {
+		case s.decimal:
+			s.needs |= aggregateNeedsDecimalSum
+		case s.source.Type == vectorized.ColumnTypeInt64:
 			s.needs |= aggregateNeedsIntSum
-		} else {
+		default:
 			s.needs |= aggregateNeedsFloatSum
 		}
 	case AggregateAvg:
@@ -64,9 +71,12 @@ func (s *aggregateState) require(function AggregateFunction) {
 
 func (s *aggregateState) lanes() int {
 	lanes := 1 // Exact non-null count also distinguishes an all-null group.
-	for mask := uint8(1); mask <= aggregateNeedsMax; mask <<= 1 {
+	for mask := uint8(1); mask <= aggregateNeedsDecimalSum; mask <<= 1 {
 		if s.needs&mask != 0 {
 			lanes++
+			if mask == aggregateNeedsDecimalSum {
+				lanes += 2 // Int128 stores two words and a sign, padded to 24 bytes.
+			}
 		}
 	}
 	return lanes
@@ -82,6 +92,11 @@ func (s *aggregateState) grow(capacity int) {
 	s.count = growAggregateLane(s.count, capacity)
 	if s.needs&aggregateNeedsIntSum != 0 {
 		s.sumInt = growAggregateLane(s.sumInt, capacity)
+	}
+	if s.needs&aggregateNeedsDecimalSum != 0 {
+		values := make([]decimal.Int128, capacity)
+		copy(values, s.sumDecimal)
+		s.sumDecimal = values
 	}
 	if s.needs&aggregateNeedsFloatSum != 0 {
 		s.sumFloat = growAggregateLane(s.sumFloat, capacity)
@@ -122,6 +137,13 @@ func (s *aggregateState) update(group int, value aggregateValue) error {
 	}
 	first := s.count[group] == 0
 	s.count[group]++
+	if s.needs&aggregateNeedsDecimalSum != 0 {
+		result, err := s.sumDecimal[group].AddInt64(value.i64)
+		if err != nil {
+			return fmt.Errorf("aggregate SUM(%s): %w", s.source.Name, err)
+		}
+		s.sumDecimal[group] = result
+	}
 	if s.needs&aggregateNeedsIntSum != 0 {
 		previous := s.sumInt[group]
 		if (value.i64 > 0 && previous > math.MaxInt64-value.i64) || (value.i64 < 0 && previous < math.MinInt64-value.i64) {
@@ -167,9 +189,12 @@ func (s *aggregateState) result(group int, function AggregateFunction) aggregate
 	case AggregateCount, AggregateCountDistinct:
 		value.typ, value.i64, value.null = vectorized.ColumnTypeInt64, s.count[group], false
 	case AggregateSum:
-		if s.source.Type == vectorized.ColumnTypeInt64 {
+		switch {
+		case s.decimal:
+			value.typ, value.decimal = vectorized.ColumnTypeDecimal, s.sumDecimal[group]
+		case s.source.Type == vectorized.ColumnTypeInt64:
 			value.i64 = s.sumInt[group]
-		} else {
+		default:
 			value.f64 = s.sumFloat[group]
 		}
 	case AggregateMin:

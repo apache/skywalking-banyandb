@@ -150,7 +150,6 @@ func TestMeasureHavingValidatesScopeAndClauseOrderBeforeDispatch(t *testing.T) {
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING missing>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(missing)>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(SUM(v))>3",
-		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v+1)>3",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v)",
 		"SELECT host, SUM(v) FROM g.m GROUP BY host HAVING SUM(v)='three'",
 		"SELECT host FROM g.m HAVING TRUE",
@@ -195,7 +194,7 @@ func TestMeasureHavingCachedBindingsAreIndependentAndOrdered(t *testing.T) {
 			require.NoError(t, bindErr)
 			require.Equal(t, index, execution.Plan.Filter.Args[1].Literal.Int64)
 			require.Equal(t, index+3, execution.Plan.Having.Predicate.Args[0].Args[1].Literal.Int64)
-			require.Len(t, execution.Plan.Having.Predicate.Args[1].Args, 3)
+			require.Equal(t, []string{"a", "b"}, execution.Plan.Having.Predicate.Args[1].Args[1].Literal.Strings)
 			require.EqualValues(t, index+1, *execution.Plan.Limit)
 			require.EqualValues(t, index, execution.Plan.Offset)
 			execution.Plan.Having.Predicate.Args[0].Args[1].Literal.Int64 = -999

@@ -106,7 +106,7 @@ type SortCursor struct {
 // exact term-set selection. all reports the "every ordinal" representation
 // the empty, unscoped selection uses instead of a bitmap.
 func sortCursorCandidates(
-	ctx context.Context, segment *memorySegment, request SortCursorRequest, wildcards []nativeice.DictionaryAutomaton,
+	ctx context.Context, segment *memorySegment, request SortCursorRequest, patterns compiledTermPatterns,
 ) (candidates *roaringpkg.Bitmap, all bool, err error) {
 	switch {
 	case request.Range != nil:
@@ -119,7 +119,7 @@ func sortCursorCandidates(
 		}
 		candidates, err = rangeCandidates(ctx, segment, rangeRequest)
 		return candidates, false, err
-	case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0:
+	case len(request.Selection.Terms) == 0 && len(request.Selection.Prefix) == 0 && len(request.Selection.Wildcard) == 0 && len(request.Selection.WildcardPatterns) == 0:
 		if request.Selection.Field != "" {
 			return nil, false, fmt.Errorf("sort cursor empty selection requires no field: %w", ErrQueryLimit)
 		}
@@ -136,7 +136,7 @@ func sortCursorCandidates(
 		// makes after time narrowing, like the original per-term selection already did.
 		selection := request.Selection
 		selection.MaxCandidates = 0
-		candidates, err = exactCandidates(ctx, segment, selection, wildcards)
+		candidates, err = exactCandidates(ctx, segment, selection, patterns)
 		return candidates, false, err
 	}
 }
@@ -152,16 +152,24 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 	if request.SortField == "" || request.PageSize <= 0 {
 		return nil, fmt.Errorf("sort cursor requires field and positive page size: %w", ErrQueryLimit)
 	}
+	if request.Range != nil && len(request.Selection.WildcardPatterns) != 0 {
+		return nil, fmt.Errorf("sort cursor cannot combine range and wildcard pattern selection: %w", ErrInvalidQuery)
+	}
 	cursor := &SortCursor{
 		view: v, ctx: ctx, sortField: request.SortField, desc: request.Desc,
 		pageSize: request.PageSize, timeRange: request.Selection.Scope.TimeRange,
 	}
-	if len(v.root.segments) == 0 {
+
+	if len(v.root.segments) == 0 && len(request.Selection.WildcardPatterns) == 0 {
 		return cursor, nil
 	}
-	selectionWildcards, wildcardErr := compileWildcardAutomata(request.Selection.Wildcard)
-	if wildcardErr != nil {
-		return nil, wildcardErr
+
+	selectionPatterns, patternErr := compileTermPatterns(ctx, request.Selection, nil)
+	if patternErr != nil {
+		return nil, patternErr
+	}
+	if len(v.root.segments) == 0 {
+		return cursor, nil
 	}
 	var total uint64
 	for index, current := range v.root.segments {
@@ -172,7 +180,7 @@ func (v *ReadView) NewSortCursor(ctx context.Context, request SortCursorRequest)
 		if !ok {
 			return nil, fmt.Errorf("sort cursor segment %d has type %T", index, current)
 		}
-		candidates, all, err := sortCursorCandidates(ctx, segment, request, selectionWildcards)
+		candidates, all, err := sortCursorCandidates(ctx, segment, request, selectionPatterns)
 		if err != nil {
 			return nil, err
 		}

@@ -32,7 +32,7 @@ func buildT12Case(name string, q t12Query, features ...string) (Case, error) {
 	}
 	c := Case{
 		Filter: &FilterExpectation{}, Name: name, Ticket: "T12", Query: query,
-		Features: features, Ordered: len(q.Aggregates) == 0, NoScan: q.Limit != nil && *q.Limit == 0,
+		Features: features, Ordered: len(q.Aggregates) == 0, NoScan: q.NoScan || q.Limit != nil && *q.Limit == 0,
 	}
 	selected := make([]fixtureRow, 0)
 	for _, row := range t12Rows() {

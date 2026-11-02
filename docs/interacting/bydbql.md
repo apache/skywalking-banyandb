@@ -213,6 +213,7 @@ Placeholders are accepted in *value* positions only. The complete list, with the
 | Measure WHERE expression | `WHERE value::FIELD > CAST(? AS DOUBLE)` | Same value types as SELECT expressions; see section 5.10 |
 | Scalar comparison value (`=`, `!=`, `>`, `>=`, `<`, `<=`) | `WHERE service_id = ?` | `str`, `int`, `null` |
 | `IN` / `NOT IN` value list | `IN (?, ?)`, `IN (?)`, `IN ('a', ?)` | `str`, `int`, `null`, `str_array`, `int_array` |
+| Measure pattern | `tag LIKE ?`, `tag ILIKE ?` | scalar `str`, `null`; section 5.15 |
 | `MATCH` value list | `MATCH(?)`, `MATCH(?, 'analyzer')` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `HAVING` / `NOT HAVING` values | `HAVING ?`, `HAVING (?)` | `str`, `int`, `null`, `str_array`, `int_array` |
 | `LIMIT` count | `LIMIT ?` | `int` only |
@@ -532,7 +533,7 @@ LIMIT 100;
 
 ## 5. BydbQL for Measures
 
-BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, time and field expressions in `WHERE`, and post-aggregation `HAVING`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.11.
+BydbQL for measures supports aggregation and grouping, raw SELECT expressions, aliases, time and field expressions in `WHERE`, and post-aggregation `HAVING`. It uses the existing measure query and response messages. The extensions and their current limits are described in sections 5.5–5.15.
 
 ### 5.1. Grammar
 
@@ -543,7 +544,7 @@ from_measure_clause ::= ("FROM MEASURE" identifier "IN" ["("] group_list_id [")"
 projection        ::= ["DISTINCT"] column_list | top_clause
 top_clause        ::= "TOP" count identifier ["ASC" | "DESC"] ["," column_list]
 column_list       ::= column ("," column)*
-column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] identifier_path ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
+column            ::= (("time" | identifier_path | agg_function "(" ["DISTINCT"] expression ")") ["::TAG" | "::FIELD"] | expression) ["AS" identifier_path]
 	/* expression syntax and current composition limits are in section 5.9 */
 stage_list        ::= identifier ("," identifier)*
 agg_function      ::= "SUM" | "MEAN" | "AVG" | "COUNT" | "MAX" | "MIN"
@@ -562,6 +563,8 @@ time_value        ::= string_literal | "?" | "now" "(" ")"
 interval_adjustment ::= ("+" | "-") "INTERVAL" string_literal
 time_condition    ::= "=" timestamp | ">" timestamp | "<" timestamp | ">=" timestamp | "<=" timestamp | "BETWEEN" timestamp "AND" timestamp
 binary_op         ::= "=" | "!=" | ">" | "<" | ">=" | "<=" | "IN" | "NOT IN" | "HAVING" | "NOT HAVING" | "CONTAINS" | "NOT CONTAINS" | "MATCH"
+pattern_predicate ::= identifier_path ["::TAG"] ("LIKE" | "ILIKE") (string_literal | "?" | "NULL") ["ESCAPE" string_literal]
+    /* positive WHERE conjuncts only; section 5.15 */
 order_expression  ::= sort_key ("," sort_key)* | "ASC" | "DESC"
 sort_key          ::= (expression | positive_select_ordinal) ["ASC" | "DESC"] ["NULLS" ("FIRST" | "LAST")]
 value             ::= string_literal | integer_literal | "NULL" | "?"
@@ -865,7 +868,7 @@ show lower planning time and allocations but no established RPC latency gain.
 
 ### 5.8. Extended measure aggregation
 
-Measure queries support multiple `COUNT`, `COUNT(DISTINCT ...)`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over named columns. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
+Measure queries support multiple `COUNT`, `COUNT(DISTINCT ...)`, `SUM`, `MIN`, `MAX`, `AVG`, and `MEAN` outputs over scalar expressions. Aggregation uses this extended behavior when the query has multiple aggregate calls, source shorthand, an alias, or a time/field expression in `WHERE`. Existing single-aggregate queries using `FROM MEASURE ... IN ...` without these extensions keep their native behavior, including legacy `MEAN`/`AVG` results and count-distinct restrictions.
 
 ```sql
 SELECT host AS node, COUNT(value) AS samples, SUM(value) AS total,
@@ -875,7 +878,9 @@ WHERE time >= ? AND time < ?
 GROUP BY host
 ```
 
-All aggregate calls use the complete, deduplicated input after the time, tag and field filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, their names are `COUNT(value)`, `SUM(value)`, and so on. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
+For example, `COALESCE(SUM(value), 0)` applies a scalar expression to the aggregate result, while `SUM(COALESCE(value, 0) + other_value)` evaluates its argument for each input row. `COUNT(DISTINCT value + 1)` counts distinct non-null computed values. These forms can be combined with grouping, HAVING, output aliases and ordering. Expression evaluation observes the usual null and overflow rules; nested aggregates such as `SUM(SUM(value))` are rejected. Expressions are limited to 64 levels of nesting and 4,096 nodes.
+
+All aggregate calls use the complete, deduplicated input after the time, tag and field filters. Repeated calls share work while retaining their separate output aliases. Aggregates appear as named fields in the existing response; without an alias, direct named-column calls use names such as `COUNT(value)` and `SUM(value)`; computed-argument aggregates and other expression projections use generated `expr_N` names. Output field names must be unique. Synthesized aggregate rows omit raw-row timestamps, SIDs, and versions.
 
 The extended aggregate rules are:
 
@@ -894,7 +899,7 @@ FROM MEASURE service_cpm IN metrics
 WHERE time >= ? AND time < ?
 ```
 
-Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.13. Aggregate arguments must still be named columns.
+Extended aggregate queries reject TOP and array grouping. Existing legacy native forms remain available. HAVING and ORDER BY support grouped keys and named aggregate calls, including calls absent from SELECT. Computed grouping, ordinal references and selectable TIME_BUCKET values are described in section 5.13. Aggregate arguments may be scalar expressions evaluated on each input row. Computed arguments use local aggregation over the complete raw input; eligible named-column aggregates may use native reduction. Nested aggregate calls and ungrouped source references in aggregate-result expressions are rejected.
 
 Extended count-distinct queries consume the complete deduplicated raw input; they do not sum potentially overlapping native distinct counts. Distinct state uses the shared query memory tracker and the existing compact grouping-key storage. NULLs are excluded, signed floating zeros compare equal, and NaN representations share a distinct key. Exhausting the budget fails the entire query with `ResourceExhausted`; disk spilling is not implemented. A small final LIMIT does not bound the input scan or the distinct state. Existing single-aggregate native queries retain their routing/stage restrictions and legacy pagination defaults.
 
@@ -908,7 +913,7 @@ ORDER BY unique_users DESC, service_id ASC
 LIMIT ? OFFSET ?
 ```
 
-The secondary key gives deterministic ordering for a fixed input. Separate page requests do not share a snapshot; retained-result sessions remain deferred. Aggregate arguments remain named columns: computed arguments such as `COUNT(DISTINCT CASE ... END)` are not supported.
+The secondary key gives deterministic ordering for a fixed input. Separate page requests do not share a snapshot; retained-result sessions remain deferred. Computed scalar arguments are also supported by `COUNT(DISTINCT ...)`.
 
 #### Native aggregate execution
 
@@ -956,7 +961,7 @@ Ordinary arithmetic and comparisons propagate null. A nonempty IN list with no m
 
 Computed int/double/string/bytes outputs become named fields. Computed timestamps and integer/string arrays use existing TagValue variants in the `__ql` family. An unnamed computed expression is `expr_1`, `expr_2`, etc., by its SELECT position; aliases are recommended. Direct columns retain their existing containers. All DataPoints retain their raw timestamp/SID/version, and hidden expression inputs are omitted. Duplicate names within a container are rejected.
 
-SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.13. A grouped SELECT expression must match a grouping key; arbitrary expressions over aggregate results and expressions as aggregate arguments are unsupported. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.14. Query memory limits still apply; disk spilling is not implemented.
+SELECT expressions apply to raw measure queries and to computed grouping keys described in section 5.13. When a SELECT expression contains an aggregate result, it may combine that result with grouping keys and constants. Other grouped SELECT expressions must match a grouping expression. Scalar expressions may also be used as aggregate arguments. Combining computed SELECT outputs with SELECT TOP is rejected. The same expression evaluator supports raw-input WHERE and post-aggregation HAVING, as described below. General ordering by computed aliases is described in section 5.14. Query memory limits still apply; disk spilling is not implemented.
 
 ### 5.10. Field and expression filters
 
@@ -1001,7 +1006,13 @@ HAVING SUM(value::FIELD) > ?
 LIMIT 10
 ```
 
-HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls, computed aggregate arguments and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
+HAVING supports arithmetic, casts, comparisons, boolean expressions, IN, CASE and COALESCE over grouped source columns and named COUNT/SUM/MIN/MAX/AVG/MEAN calls. A query can select only `host` while filtering `HAVING SUM(value::FIELD) > ?`: the hidden aggregate is not returned. Repeated calls share aggregation state and native branches. SELECT aliases are outside HAVING scope: refer to `host` and `SUM(value::FIELD)`, not `node` and `total`. Nested aggregate calls and nongrouped source references are rejected before dispatch. Scalar aggregation retains its SQL empty-input row; HAVING can then remove it. Group-only queries with HAVING are supported too.
+
+For scaled integer fields, `SUM(DECIMAL_FROM_SCALED(cost_scaled, 10))` accumulates the integer coefficients exactly. The scale must be an integer literal from 0 through 18. The signed coefficient is limited to 38 decimal digits (absolute value at most 10^38 - 1); exceeding this bound fails the query. Negative values and NULL follow SUM semantics, including NULL for empty or all-NULL input. Results use the existing string field value, formatted with exactly the declared number of fractional digits, including trailing zeros. Ordinary integer SUM remains checked int64.
+
+Decimal results remain numeric for HAVING comparisons and ORDER BY. Comparisons with integers and other decimal sums use their scales exactly; floating-point operands are unsupported. `COALESCE` accepts decimal arguments of matching scale, NULL, and the integer literal zero. Decimal arithmetic, casts, CASE results, and general decimal storage are unsupported. Distributed execution merges raw rows and performs decimal aggregation locally; decimal partials are not transported. Group state and buffers share the query memory budget.
+
+`IN` and `NOT IN` use the same exact comparisons regardless of operand order, including an integer on the left and decimal sums in the list. With a nonempty list, a NULL left operand yields UNKNOWN. A matching list entry takes precedence over a NULL entry; without a match, a NULL entry makes the result UNKNOWN.
 
 Within a measure predicate, `CONTAINS` and `NOT CONTAINS` are aliases of the existing infix `HAVING` and `NOT HAVING` operators. CONTAINS is contextual, so existing tags named `contains` and resources named `contains-svc` remain valid. The new aliases are limited to measure queries; other resource types keep their existing syntax.
 
@@ -1094,6 +1105,81 @@ Raw queries may order by unselected columns or expressions. Grouped queries may 
 Ordering runs after filtering, aggregation, HAVING and visible-tuple DISTINCT. OFFSET and LIMIT apply last. With no LIMIT, the liaison sorts all completed rows. A finite LIMIT retains at most OFFSET + LIMIT candidate rows in a heap, then sorts those candidates and applies the requested page. The sum uses uint64 arithmetic; large offsets can still require substantial memory. LIMIT 0 performs no data scan.
 
 Accepted candidates own copies of their values and do not retain source batches. Key buffers, candidate storage and output share the query memory budget. A full sort or a large top-k fails with `ResourceExhausted` when that budget is exhausted; temporary-file spilling remains deferred. Native input materialization has its own residency costs, so a small LIMIT does not bound total scan work or query memory. Simple timestamp and explicit index-rule ordering retain their existing native execution paths.
+
+
+### 5.15. Indexed LIKE and ILIKE
+
+Measure queries support two whole-value pattern predicates:
+
+```sql
+SELECT name, COUNT(DISTINCT member) AS members
+FROM MEASURE activity IN metrics
+WHERE time >= ? AND time < ? AND name ILIKE ? AND value::FIELD > 0
+GROUP BY name
+ORDER BY members DESC, name ASC
+LIMIT 20;
+```
+
+Bind `%amber%` to find names containing `amber`. `LIKE` is case-sensitive;
+`ILIKE` uses locale-independent Unicode simple folding. Matching preserves the
+original value for projection, grouping and distinct counting.
+
+| Pattern | Meaning |
+|---------|---------|
+| `amber` | The complete value `amber` |
+| `amber%` | A value starting with `amber` |
+| `%amber%` | A value containing `amber` |
+| `a_b` | `a`, exactly one Unicode character, then `b` |
+| Empty string | Only an empty value |
+
+`%` matches zero or more Unicode characters; `_` matches exactly one. Both
+include newlines. Spaces, punctuation, `*`, `?` and regular-expression symbols
+are ordinary literal characters. No tokenization or trimming occurs.
+
+The default pattern escape character is backslash. `ESCAPE '!'` chooses another
+single Unicode character; `ESCAPE ''` disables escaping. An escape quotes the
+following character, so `name LIKE 'a!_b' ESCAPE '!'` matches the literal `a_b`.
+A trailing escape is invalid. Prefer bound patterns: QL string literals retain
+their existing backslash decoding, which differs from PostgreSQL standard
+string literals. The `ESCAPE` argument must be a literal, not a parameter or NULL.
+
+The source must be a scalar STRING tag with a bound single-tag inverted index
+whose analyzer is omitted, empty or `keyword`. Tokenizing analyzers such as
+`simple`, `standard` and `url` cannot preserve whole-value matching and are
+rejected. Missing indexes, arrays and ambiguous tag names are also rejected.
+Exactly one distinct valid rule may cover the source tag; multiple rules are
+rejected even when both use `keyword`, because writes populate only one of them.
+Repeated bindings of the same identified rule do not introduce ambiguity.
+No special analyzer or index rebuild is needed for existing whole-value indexes.
+Index visibility follows the existing query model; missing postings do not
+trigger a raw-data scan or consistency barrier.
+
+Patterns accept scalar string literals, string parameters or NULL. NULL sources
+or patterns produce UNKNOWN and do not pass WHERE. Numeric coercion and computed
+patterns are unsupported. These predicates support positive AND conjunctions
+with time, tag and field filters; OR/NOT, NOT LIKE/NOT ILIKE, SELECT expressions
+and HAVING are unsupported. Indexed selection runs before field residuals and
+aggregation. Raw pattern queries must order by time or an explicit native index
+rule; they do not fall back to sorting raw rows. Completed aggregate and DISTINCT
+results retain their existing ordering behavior.
+
+ILIKE does not apply locale-specific collations, accent removal, Unicode
+normalization or multi-character case expansion. It is not a promise of equality
+with every PostgreSQL collation.
+
+Each query accepts at most 16 pattern predicates of at most 1 KiB each. Workers
+share a 1,000,000-unit dictionary/automaton work limit, 100,000 expanded-term
+limit and 16 MiB cumulative pattern-allocation limit; each automaton also has a
+1 MiB bound. Existing query memory limits can stop execution sooner. Exceeding a
+limit fails the query with ResourceExhausted rather than returning partial counts.
+Cached QL plans retain recipes; bound patterns and automata belong to one execution.
+The operator words are contextual: existing resource and group names such as
+`like-rate` and `escape-group` remain valid.
+
+The external QL RPC and protobuf definitions are unchanged. Distributed pattern queries use
+a versioned internal request envelope. All participating query nodes must support
+it; an older node rejects the request and fails the query. Existing MATCH token
+search and native protobuf queries keep their current semantics.
 
 ## 6. BydbQL for Top-N
 

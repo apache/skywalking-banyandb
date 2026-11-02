@@ -39,6 +39,13 @@ type Feature struct {
 
 // Suite is the reproducible QL-only integration artifact.
 type Suite struct {
+	ShardAggregateReadiness      []AggregateFixture            `json:"shard_aggregate_readiness"`
+	ShardAggregateScenarios      []AggregateScenario           `json:"shard_aggregate_scenarios"`
+	CapacityReadiness            []AggregateFixture            `json:"capacity_readiness"`
+	CapacityScenarios            []AggregateScenario           `json:"capacity_scenarios"`
+	CapacityFixtureDigest        string                        `json:"capacity_fixture_digest"`
+	PatternReadiness             []AggregateFixture            `json:"pattern_readiness"`
+	PatternScenarios             []AggregateScenario           `json:"pattern_scenarios"`
 	ParentChildReadiness         []AggregateFixture            `json:"parent_child_readiness"`
 	ParentChildScenarios         []AggregateScenario           `json:"parent_child_scenarios"`
 	SortingResources             []SortingResource             `json:"sorting_resources"`
@@ -161,6 +168,15 @@ func (s Suite) Validate() error {
 }
 
 func (s Suite) validateScenarios() error {
+	if err := validateP2(s); err != nil {
+		return err
+	}
+	if err := validateP1(s); err != nil {
+		return err
+	}
+	if err := validatePatterns(s); err != nil {
+		return err
+	}
 	if err := validateParentChild(s); err != nil {
 		return err
 	}
@@ -204,6 +220,21 @@ func (s Suite) validateScenarios() error {
 
 func (s Suite) witnessCases() []Case {
 	cases := append([]Case(nil), s.Cases...)
+	for _, scenario := range s.ShardAggregateScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.CapacityReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	for _, scenario := range s.CapacityScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
+	for _, fixture := range s.PatternReadiness {
+		cases = append(cases, fixture.Cases...)
+	}
+	for _, scenario := range s.PatternScenarios {
+		cases = append(cases, scenario.Cases...)
+	}
 	for _, fixture := range s.ParentChildReadiness {
 		cases = append(cases, fixture.Cases...)
 	}

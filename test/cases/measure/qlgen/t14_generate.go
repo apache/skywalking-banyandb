@@ -184,7 +184,6 @@ func generateT14Rejections(b *suiteBuilder) ([]Case, error) {
 		{"ungrouped_tag", "zone = 'x'"},
 		{"unknown_source", "missing = 1"},
 		{"nested_aggregate", "SUM(SUM(v)) > 3"},
-		{"aggregate_argument", "SUM(v + 1) > 3"},
 		{"non_boolean", "SUM(v)"},
 		{"unknown_function", "ABS(SUM(v)) > 3"},
 	} {

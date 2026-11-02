@@ -282,14 +282,14 @@ func measureBucketWidth(raw string, intervals []string) (time.Duration, error) {
 	return width, nil
 }
 
-func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan, error) {
+func (m *MeasureTemplate) bindExpressions(bound *BoundQuery, aggregate *ql.AggregatePlan) (*ql.ExpressionPlan, error) {
 	if m.expressions == nil {
 		return nil, nil
 	}
 	plan := &ql.ExpressionPlan{Outputs: make([]ql.ExpressionOutput, 0, len(m.expressions))}
 	seen := make(map[measureColumnKey]bool, len(m.expressions))
 	for _, output := range m.expressions {
-		expression, err := output.expression.bind(bound)
+		expression, err := output.expression.bindCompleted(bound, aggregate)
 		if err != nil {
 			return nil, err
 		}
@@ -309,6 +309,9 @@ func (m *MeasureTemplate) bindExpressions(bound *BoundQuery) (*ql.ExpressionPlan
 			if err != nil {
 				return nil, err
 			}
+		}
+		if resolved.Type == ql.ExpressionDecimal {
+			column.Type, column.Scale = vectorized.ColumnTypeDecimal, resolved.Scale
 		}
 		key := measureColumnKey{family: column.TagFamily, name: column.Name, role: column.Role}
 		if seen[key] {
@@ -371,8 +374,8 @@ func (m *measureExpression) bindOutputExpression(bound *BoundQuery, aggregate *q
 	return m.bindMembership(&value)
 }
 
-// appendBoundExpressionArgument shares positional IN expansion for SELECT and
-// WHERE bindings. Only RHS literal arrays expand; the left operand stays scalar.
+// appendBoundExpressionArgument shares positional IN binding for SELECT and
+// WHERE. String lists stay compact; numeric lists retain scalar coercion rules.
 func appendBoundExpressionArgument(expression *ql.Expression, index int, argument *ql.Expression) {
 	if index > 0 && (expression.Op == "in" || expression.Op == "not_in") && argument.Op == "literal" {
 		switch argument.Type {
@@ -382,8 +385,8 @@ func appendBoundExpressionArgument(expression *ql.Expression, index int, argumen
 			}
 			return
 		case ql.ExpressionStringArray:
-			for _, value := range argument.Literal.Strings {
-				expression.Args = append(expression.Args, &ql.Expression{Op: "literal", Type: ql.ExpressionString, Literal: ql.ExpressionScalar{String: value}})
+			if len(argument.Literal.Strings) > 0 {
+				expression.Args = append(expression.Args, argument)
 			}
 			return
 		default:
@@ -407,6 +410,8 @@ func expressionOutputColumn(name string, typ ql.ExpressionType) (vectorized.Colu
 		column.Type = vectorized.ColumnTypeInt64
 	case ql.ExpressionFloat:
 		column.Type = vectorized.ColumnTypeFloat64
+	case ql.ExpressionDecimal:
+		column.Type = vectorized.ColumnTypeDecimal
 	case ql.ExpressionString:
 		column.Type = vectorized.ColumnTypeString
 	case ql.ExpressionBytes:

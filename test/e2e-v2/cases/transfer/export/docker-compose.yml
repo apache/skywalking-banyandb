@@ -66,6 +66,10 @@ services:
       file: ../../../script/docker-compose/base-compose.yml
       service: oap
     environment:
+      # OAP drops records older than their TTL on receipt; this case writes data dated days ago.
+      TESTING_TTL: "true"
+      # The admin server's ui-management module stores a UI template in the property group.
+      SW_ADMIN_SERVER: default
       SW_STORAGE: banyandb
       SW_STORAGE_BANYANDB_TARGETS: "liaison:17912"
       SW_STORAGE_BANYANDB_RECORDS_ENABLE_WARM_STAGE: "true"
@@ -85,6 +89,7 @@ services:
     ports:
       - 11800
       - 12800
+      - 17128
     networks:
       - e2e
     depends_on:

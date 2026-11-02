@@ -23,6 +23,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -122,6 +123,8 @@ type FieldResolver interface {
 
 // MeasureQueryOptions is the options of a measure query.
 type MeasureQueryOptions struct {
+	// PatternRequests intersect whole-value indexed patterns before row reads.
+	PatternRequests []native.TermSetRequest
 	// Criteria is the filter the series index evaluates after series
 	// matchers/IndexModeSubject narrow the universe (NIDX-03 §5/§6.2); it
 	// never builds an engine query itself. A nil Criteria matches every

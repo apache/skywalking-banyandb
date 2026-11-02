@@ -19,20 +19,14 @@ package ql
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 func wrapExpressionQuery(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (vectorized.PullOperator, error) {
-	if plan.Aggregate != nil {
-		if source != nil {
-			_ = source.Close()
-		}
-		return nil, fmt.Errorf("projection expressions cannot be combined with aggregation")
-	}
 	ctx = vectorized.WithQueryMemoryTracker(ctx, 256<<20)
 	input := *plan
+	// Aggregation and HAVING finish before the scalar projection; pagination follows it.
 	input.Expressions, input.Limit, input.Offset = nil, nil, 0
 	filtered, err := WrapRaw(ctx, source, &input)
 	if err != nil {

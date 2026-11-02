@@ -17,7 +17,10 @@
 
 package ql
 
-import "github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+import (
+	"github.com/apache/skywalking-banyandb/pkg/decimal"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+)
 
 // ExpressionType distinguishes SQL values without assigning new wire types.
 type ExpressionType uint8
@@ -33,6 +36,7 @@ const (
 	ExpressionTimestamp
 	ExpressionIntArray
 	ExpressionStringArray
+	ExpressionDecimal
 )
 
 // ExpressionScalar holds one typed literal; Expression.Type selects its payload.
@@ -41,6 +45,7 @@ type ExpressionScalar struct {
 	Bytes   []byte
 	Ints    []int64
 	Strings []string
+	Decimal decimal.Int128
 	Int64   int64
 	Float64 float64
 	Bool    bool
@@ -51,13 +56,16 @@ type ExpressionScalar struct {
 // Op is literal, column, cast, case, simple_case, coalesce, +, -, *, /, %,
 // negate, positive, =, !=, <, <=, >, >=, and, or, not, is_null, is_not_null,
 // in, not_in, contains or not_contains. Cast Type names the target. CASE arguments are condition/value
-// pairs followed by ELSE; simple_case prepends the comparison value.
+// pairs followed by ELSE; simple_case prepends the comparison value. IN and
+// NOT IN accept compact literal STRING arrays in RHS arguments; their elements
+// are membership values, while the left operand remains scalar.
 type Expression struct {
 	Op      string
 	Args    []*Expression
 	Source  vectorized.ColumnDef
 	Literal ExpressionScalar
 	Type    ExpressionType
+	Scale   uint8
 }
 
 // ExpressionOutput pairs an expression with its existing response column identity.

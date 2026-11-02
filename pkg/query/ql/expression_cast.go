@@ -250,6 +250,8 @@ func (v *expressionVector) scalarAt(row int) ExpressionScalar {
 		return value
 	}
 	switch v.typ {
+	case ExpressionDecimal:
+		value.Decimal = v.decimalAt(row)
 	case ExpressionFloat:
 		value.Float64 = v.floatAt(row)
 	case ExpressionBool:

@@ -547,7 +547,7 @@ func (ms *measureService) executeQueryWithRawPlan(ctx context.Context, req *meas
 	}
 	var payload any = req
 	if batches {
-		payload = &vmeasure.BatchQueryRequest{Request: req}
+		payload = measureBatchRequest(req, rawPlan)
 	}
 	feat, err := ms.broadcaster.Publish(ctx, data.TopicMeasureQuery, bus.NewMessage(bus.MessageID(now.UnixNano()), payload))
 	if err != nil {
@@ -582,7 +582,7 @@ func measureQueryResponse(ctx context.Context, data any, gatedStatuses map[strin
 		}
 		return result, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, result.Error())
+		return nil, dataNodeQueryError(result)
 	case error:
 		return nil, queryStatus(result)
 	}
@@ -689,7 +689,7 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 		responseListCount = len(d.Lists)
 		return d, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, dataNodeQueryError(d)
 	}
 	return nil, nil
 }

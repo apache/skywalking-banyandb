@@ -24,6 +24,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
@@ -64,7 +65,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 				return err
 			}
 
-			if err = logger.Init(logging); err != nil {
+			if err = initLogging(cmd, logging); err != nil {
 				return err
 			}
 
@@ -82,6 +83,15 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	cmd.PersistentFlags().StringVar(&common.FlagNodeHost, "node-host", "", "the node host of the server only used when node-host-provider is \"flag\"")
 	cmd.PersistentFlags().StringSliceVar(&common.FlagNodeLabels, "node-labels", nil, "the node labels. e.g. key1=value1,key2=value2")
 	logger.RegisterFlags(cmd.PersistentFlags(), &logging)
+	// Registered on the persistent set rather than a group's, because the sink
+	// has to be configured before the command tree hands control to the group.
+	logger.RegisterNativeFlags(cmd.PersistentFlags(), &logging.Native)
+	nativeLoggingConfig = &logging.Native
+	// One sink for the process. NewRoot builds every role's command, so a sink
+	// created per role would be attached several times over and the logger
+	// would admit into whichever was constructed last -- not the one whose
+	// consumer actually runs.
+	nativeLogSink = nativelog.NewSink()
 	crashOutputConfig.RegisterFlags(cmd.PersistentFlags())
 	cmd.AddCommand(newStandaloneCmd(runners...))
 	cmd.AddCommand(newDataCmd(runners...))
@@ -109,3 +119,50 @@ func (c *nodeIDProviderValue) String() string {
 func (c *nodeIDProviderValue) Type() string {
 	return "nodeIDProvider"
 }
+
+// initLogging builds the logger for the role cmd names.
+//
+// Whether the role stores its own logs is decided before the logger is built,
+// not after. Native lowers a logger's admission floor to the native level, so
+// enabling it for a role with no consumer would make the process encode lines
+// that both the console gate and the absent sink then discard.
+//
+// The sink is attached for the command actually being run, not in each role's
+// constructor: NewRoot builds every subcommand, so a constructor attach would
+// take effect even when another role was invoked. That role would then admit
+// into a buffer nobody drains, paying the full build cost per line to count it
+// lost.
+func initLogging(cmd *cobra.Command, logging logger.Logging) error {
+	supported := cmd.Annotations[nativeLoggingAnnotation] == "supported"
+	effective := logging
+	if !supported {
+		effective.Native.Enabled = false
+	}
+	if err := logger.Init(effective); err != nil {
+		return err
+	}
+	if supported {
+		nativeLogSink.Attach()
+		return nil
+	}
+	if logging.Native.Enabled {
+		logger.Warningf(
+			"--logging-native-enabled is not supported by %q; this process's logs are not stored natively",
+			cmd.Name())
+	}
+	return nil
+}
+
+// nativeLoggingAnnotation marks a role command whose unit list includes a
+// consumer for the native log sink.
+const nativeLoggingAnnotation = "banyandb.io/native-logging"
+
+// nativeLoggingConfig is the native logging configuration the root command
+// parsed. The role commands read it when they build their log service: the
+// flags live on the persistent set, so they are resolved once for every role.
+var nativeLoggingConfig *logger.NativeLogging
+
+// nativeLogSink is the single buffer this process admits into. It is
+// attached to the logger only by a role that also runs a consumer for it:
+// a role without one would fill the buffer and drop for ever.
+var nativeLogSink *nativelog.Sink
