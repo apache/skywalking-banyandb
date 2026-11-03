@@ -42,6 +42,7 @@ Release Notes.
 ### Bug Fixes
 
 - Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
+- Fix the native index reader rejecting valid segments as corrupt when a term dictionary exceeded 64 MiB (for example, unanalyzed log bodies indexed as single terms), which crash-looped the data node on startup. The reader no longer applies fixed size caps the writer and merger do not honor: dictionaries, stored chunk tables, stored-document counts per segment and posting bitmaps are bounded by the segment's own sections and document count, and stored chunks may decode up to 128 documents of 8 MiB. `PublishSnapshot` now rejects a manifest the reader would refuse before writing any file.
 - Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
 - Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
 
