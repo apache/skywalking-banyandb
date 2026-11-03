@@ -36,8 +36,9 @@ const (
 	// that may pass, such as a schema read; the client may resend the batch.
 	ImportReasonNotWritten = "NOT_WRITTEN"
 
-	// ImportRateBusy marks the message of a STATUS_SERVER_BUSY reply of a data node whose import
-	// rate limit cannot admit a batch in time; the batch was not written and may be resent.
+	// ImportRateBusy prefixes the message of a STATUS_RATE_LIMITED reply of a data node whose
+	// import rate limit cannot admit a batch in time; the batch was not written and may be resent.
+	// It is for people reading the message only: the reply is told apart by its status.
 	ImportRateBusy = "import rate limit: "
 
 	// ImportMetadataBatchSeq is the metadata key of the failed batch's batch_seq.

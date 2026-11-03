@@ -38,9 +38,9 @@ var (
 	gossipShardQueryDatabaseSize       = 100
 
 	// repairPerPropertyCtxBudget bounds every ctx-aware call inside one
-	// gossip-triggered per-property repair: shard.repair -> s.search,
-	// shard.repair -> buildDeleteFromTimeDocuments -> s.search, and any
-	// nested ctx-aware lookup. updateDocuments takes no ctx and is not
+	// gossip-triggered per-property repair: shard.repair -> s.entityRevisions
+	// (the one native read of the entity's revisions) and any nested
+	// ctx-aware call. updateDocuments takes no ctx and is not
 	// bounded.
 	repairPerPropertyCtxBudget = 10 * time.Second
 )

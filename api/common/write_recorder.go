@@ -24,7 +24,7 @@ import (
 	"time"
 )
 
-// The back-off between the attempts of RetryWrite.
+// The back-off between the attempts of RetryWrite and RetryUntil.
 var (
 	writeRetryBackoff    = 100 * time.Millisecond
 	writeRetryBackoffMax = 2 * time.Second
@@ -106,21 +106,32 @@ func RetryWrite(ctx context.Context, write func() error) error {
 	if err == nil || r == nil {
 		return err
 	}
+	RetryUntil(ctx, r.deadline, func() bool {
+		err = write()
+		return err == nil
+	})
+	return err
+}
+
+// RetryUntil runs again after a back-off that doubles from 100ms up to 2s between attempts,
+// until again reports done, deadline passes or ctx ends. It returns whether again reported done.
+// The caller makes the first attempt itself.
+func RetryUntil(ctx context.Context, deadline time.Time, again func() (done bool)) bool {
 	backoff := writeRetryBackoff
 	for {
-		wait := min(backoff, time.Until(r.deadline))
+		wait := min(backoff, time.Until(deadline))
 		if wait <= 0 {
-			return err
+			return false
 		}
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return err
+			return false
 		case <-timer.C:
 		}
-		if err = write(); err == nil {
-			return nil
+		if again() {
+			return true
 		}
 		backoff = min(backoff*2, writeRetryBackoffMax)
 	}

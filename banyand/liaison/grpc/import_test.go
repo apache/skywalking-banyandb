@@ -1640,31 +1640,6 @@ func rateLimitedInit(catalog commonv1.Catalog, group, stage string) (*transferv1
 	return init, rl
 }
 
-func TestImportRows_EveryNodeStreamOpensWithTheRateLimit(t *testing.T) {
-	f := newImportFixture(t, clusterNodes())
-	init, rl := rateLimitedInit(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, "hot")
-	rows := []*transferv1.ImportRowsRequest_StreamRow{streamRow("svc-1", 11), streamRow("svc-2", 22), streamRow("svc-3", 33)}
-	if _, err := runImport(f, init, batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 0, Rows: streamRows(rows...)})); err != nil {
-		t.Fatal(err)
-	}
-	byNode := f.client.byNode()
-	if len(byNode) < 2 {
-		t.Fatalf("rows reached %d node(s), want the replicas of several nodes", len(byNode))
-	}
-	initsOf := make(map[string]int)
-	for _, p := range f.client.inits {
-		if !proto.Equal(p.payload.(*transferv1.ImportWriteInit).GetRateLimit(), rl) || p.topic != data.TopicStreamImport {
-			t.Fatalf("init %v on %s, want rate limit %v on %s", p.payload, p.topic, rl, data.TopicStreamImport)
-		}
-		initsOf[p.node]++
-	}
-	for node := range byNode {
-		if initsOf[node] != 1 {
-			t.Fatalf("node %s got %d init frame(s) for one batch, want 1", node, initsOf[node])
-		}
-	}
-}
-
 func TestImportRows_BatchTimeoutCoversTheRateLimit(t *testing.T) {
 	f := newImportFixture(t, clusterNodes()[:1])
 	init, _ := rateLimitedInit(commonv1.Catalog_CATALOG_MEASURE, testMeasureGroup, "")
@@ -1710,7 +1685,7 @@ func TestImportRows_RateBusyNodeIsRetriedPastThePressureTimeout(t *testing.T) {
 	f.client.onClose = func(node string, _ []any) *common.Error {
 		// hot-b's rate limit holds the batch back for longer than any memory pressure may last.
 		if node == "hot-b" && refusals.Add(1) <= 10 {
-			return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, transfer.ImportRateBusy+"the node is admitting other imports")
+			return common.NewErrorWithStatus(modelv1.Status_STATUS_RATE_LIMITED, transfer.ImportRateBusy+"the node is admitting other imports")
 		}
 		return nil
 	}
@@ -1739,7 +1714,7 @@ func TestImportRows_RateBusyRetryStopsWhenTheStreamIsCanceled(t *testing.T) {
 		if refusals.Add(1) == 3 {
 			cancel()
 		}
-		return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, transfer.ImportRateBusy+"the node is admitting other imports")
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_RATE_LIMITED, transfer.ImportRateBusy+"the node is admitting other imports")
 	}
 	s := &fakeImportStream{ctx: ctx, frames: []*transferv1.ImportRowsRequest{
 		initFrame(commonv1.Catalog_CATALOG_MEASURE, testMeasureGroup, ""), measureBatch(1),
@@ -1750,37 +1725,47 @@ func TestImportRows_RateBusyRetryStopsWhenTheStreamIsCanceled(t *testing.T) {
 }
 
 func TestBusyOf(t *testing.T) {
-	if got := busyOf(common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, transfer.ImportRateBusy+"x")); got != rateBusy {
-		t.Fatalf("busyOf(rate limit) = %v, want rateBusy", got)
-	}
-	// pub rebuilds a remote node's reply around the text of the node's own error.
-	relayed := common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, transfer.ImportRateBusy+"x")
-	if got := busyOf(common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, relayed.Error())); got != rateBusy {
-		t.Fatalf("busyOf(relayed rate limit) = %v, want rateBusy", got)
-	}
-	if got := busyOf(common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "memory pressure")); got != pressureBusy {
-		t.Fatalf("busyOf(memory pressure) = %v, want pressureBusy", got)
+	for name, tc := range map[string]struct {
+		ce   *common.Error
+		want nodeBusy
+	}{
+		"rate limit": {common.NewErrorWithStatus(modelv1.Status_STATUS_RATE_LIMITED, "x"), rateBusy},
+		// The status alone decides: a memory-pressure reply naming the import rate is still pressure.
+		"memory pressure": {common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, transfer.ImportRateBusy+"x"), pressureBusy},
+		"internal error":  {common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, "x"), notBusy},
+	} {
+		if got := busyOf(tc.ce); got != tc.want {
+			t.Errorf("busyOf(%s) = %v, want %v", name, got, tc.want)
+		}
 	}
 }
 
+// TestImportRows_EveryNodeBatchOpensWithTheInitFrame checks, for every catalog, that each node's
+// batch opens with exactly one init frame carrying the stream's rate limit, on the catalog's
+// import topic, followed only by rows.
 func TestImportRows_EveryNodeBatchOpensWithTheInitFrame(t *testing.T) {
 	for name, tc := range map[string]struct {
-		init  *transferv1.ImportRowsRequest
-		batch *transferv1.ImportRowsRequest
+		batch    *transferv1.ImportRowsRequest
+		group    string
+		stage    string
+		topic    bus.Topic
+		catalog  commonv1.Catalog
+		minNodes int
 	}{
 		"stream": {
-			init:  initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, "hot"),
+			catalog: commonv1.Catalog_CATALOG_STREAM, group: testStreamGroup, stage: "hot", topic: data.TopicStreamImport, minNodes: 2,
 			batch: batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(streamRow("svc-1", 11), streamRow("svc-2", 22), streamRow("svc-3", 33))}),
 		},
-		"measure": {init: initFrame(commonv1.Catalog_CATALOG_MEASURE, testMeasureGroup, ""), batch: measureBatch(1)},
+		"measure": {catalog: commonv1.Catalog_CATALOG_MEASURE, group: testMeasureGroup, topic: data.TopicMeasureImport, batch: measureBatch(1)},
 		"property": {
-			init:  initFrame(commonv1.Catalog_CATALOG_PROPERTY, testPropertyGroup, ""),
+			catalog: commonv1.Catalog_CATALOG_PROPERTY, group: testPropertyGroup, topic: data.TopicPropertyImport, minNodes: 2,
 			batch: batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: propertyRows(propertyRow("a", 1, 0), propertyRow("b", 1, 0))}),
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newImportFixture(t, clusterNodes())
-			if _, err := runImport(f, tc.init, tc.batch); err != nil {
+			init, rl := rateLimitedInit(tc.catalog, tc.group, tc.stage)
+			if _, err := runImport(f, init, tc.batch); err != nil {
 				t.Fatal(err)
 			}
 			if len(f.client.frames) == 0 {
@@ -1796,25 +1781,26 @@ func TestImportRows_EveryNodeBatchOpensWithTheInitFrame(t *testing.T) {
 					}
 				}
 			}
+			initsOf := make(map[string]int)
+			for _, p := range f.client.inits {
+				if !proto.Equal(p.payload.(*transferv1.ImportWriteInit).GetRateLimit(), rl) || p.topic != tc.topic {
+					t.Fatalf("init %v on %s, want rate limit %v on %s", p.payload, p.topic, rl, tc.topic)
+				}
+				initsOf[p.node]++
+			}
+			byNode := f.client.byNode()
+			if len(byNode) < max(tc.minNodes, 1) {
+				t.Fatalf("%d node(s) got rows, want at least %d", len(byNode), max(tc.minNodes, 1))
+			}
+			if len(initsOf) != len(byNode) {
+				t.Fatalf("%d node(s) got rows, %d got init frames, want one init each", len(byNode), len(initsOf))
+			}
+			for node := range byNode {
+				if initsOf[node] != 1 {
+					t.Fatalf("node %s got %d init frame(s) for one batch, want 1", node, initsOf[node])
+				}
+			}
 		})
-	}
-}
-
-func TestImportRows_EveryPropertyBatchCarriesTheRateLimit(t *testing.T) {
-	f := newImportFixture(t, clusterNodes())
-	init, rl := rateLimitedInit(commonv1.Catalog_CATALOG_PROPERTY, testPropertyGroup, "")
-	batch := &transferv1.ImportRowsRequest_RowBatch{BatchSeq: 0, Rows: propertyRows(propertyRow("p-1", 1, 0), propertyRow("p-2", 1, 0))}
-	if _, err := runImport(f, init, batchFrame(batch)); err != nil {
-		t.Fatal(err)
-	}
-	byNode := f.client.byNode()
-	if len(byNode) == 0 || len(f.client.inits) != len(byNode) {
-		t.Fatalf("%d node(s) got %d init(s), want one each", len(byNode), len(f.client.inits))
-	}
-	for _, p := range f.client.inits {
-		if !proto.Equal(p.payload.(*transferv1.ImportWriteInit).GetRateLimit(), rl) || p.topic != data.TopicPropertyImport {
-			t.Fatalf("init %v on %s, want rate limit %v on %s", p.payload, p.topic, rl, data.TopicPropertyImport)
-		}
 	}
 }
 

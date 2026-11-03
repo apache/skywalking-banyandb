@@ -178,7 +178,7 @@ func TestImportListener_BusyNodeWritesNothing(t *testing.T) {
 	for range 40 {
 		frames = append(frames, streamWrite("x"))
 	}
-	ce := wantStatus(t, l.Rev(ctx, bus.NewMessage(1, frames)), modelv1.Status_STATUS_SERVER_BUSY)
+	ce := wantStatus(t, l.Rev(ctx, bus.NewMessage(1, frames)), modelv1.Status_STATUS_RATE_LIMITED)
 	if !strings.Contains(ce.Error(), "import rate limit") {
 		t.Fatalf("busy reply %q does not name the import rate limit", ce.Error())
 	}
@@ -203,7 +203,7 @@ func TestImportListener_ChargesTheEncodedBytes(t *testing.T) {
 			}
 			// Ten rows of more than ten bytes at 1 B/s wait longer than the request has left.
 			write := &recordingListener{}
-			wantStatus(t, newTestImportListener(write).Rev(ctx, bus.NewMessage(1, frames)), modelv1.Status_STATUS_SERVER_BUSY)
+			wantStatus(t, newTestImportListener(write).Rev(ctx, bus.NewMessage(1, frames)), modelv1.Status_STATUS_RATE_LIMITED)
 			// The same rows at a byte rate that admits them in time are written.
 			frames[0] = initBytes(1 << 20)
 			if reply := newTestImportListener(write).Rev(ctx, bus.NewMessage(1, frames)); reply.Data() != nil {
@@ -247,11 +247,11 @@ func TestImportListener_CanceledWaitIsAnErrorReply(t *testing.T) {
 	}
 }
 
-// fastImportRetry shortens the retry bounds of the import listener until the test ends.
+// fastImportRetry sets the retry budget of the import listener until the test ends.
 func fastImportRetry(t *testing.T, budget time.Duration) {
-	b, base, maxBackoff := importRetryBudget, importRetryBackoff, importRetryBackoffMax
-	importRetryBudget, importRetryBackoff, importRetryBackoffMax = budget, time.Millisecond, 4*time.Millisecond
-	t.Cleanup(func() { importRetryBudget, importRetryBackoff, importRetryBackoffMax = b, base, maxBackoff })
+	b := importRetryBudget
+	importRetryBudget = budget
+	t.Cleanup(func() { importRetryBudget = b })
 }
 
 // scriptedWrite stands in for a write listener whose every call is scripted: it gets the rows
@@ -503,9 +503,9 @@ func TestImportListener_IgnoresARowIndexOutsideTheBatch(t *testing.T) {
 }
 
 func TestNotWrittenNamesAtMostTenRows(t *testing.T) {
-	failed := make([]rowFailure, 12)
+	failed := make([]common.RowFailure, 12)
 	for i := range failed {
-		failed[i] = rowFailure{row: i * 2, err: errors.New("cannot load tsdb")}
+		failed[i] = common.RowFailure{Row: i * 2, Err: errors.New("cannot load tsdb")}
 	}
 	ce := wantStatus(t, notWritten(1, 30, failed), modelv1.Status_STATUS_INTERNAL_ERROR)
 	want := "12 of 30 imported row(s) were not written after retries (rows 0,2,4,6,8,10,12,14,16,18,...), the first: cannot load tsdb"
@@ -602,5 +602,5 @@ func TestImportListener_DataNodesAdmitAtTheirOwnRate(t *testing.T) {
 	if reply := b.Rev(ctx, bus.NewMessage(2, []any{initWrite(2), streamWrite("y"), streamWrite("z")})); reply.Data() != nil {
 		t.Fatalf("reply of node b = %v, want its rows admitted at its own rate", reply.Data())
 	}
-	wantStatus(t, a.Rev(ctx, bus.NewMessage(3, []any{initWrite(2), streamWrite("y"), streamWrite("z")})), modelv1.Status_STATUS_SERVER_BUSY)
+	wantStatus(t, a.Rev(ctx, bus.NewMessage(3, []any{initWrite(2), streamWrite("y"), streamWrite("z")})), modelv1.Status_STATUS_RATE_LIMITED)
 }

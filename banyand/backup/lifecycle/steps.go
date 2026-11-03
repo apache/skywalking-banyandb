@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -354,13 +355,11 @@ func parseGroup(
 		l.Info().Msgf("no matching stage for group %s, defaulting to first stage %s segment interval: %d(%s), total ttl needs: %d(%s)",
 			g.Metadata.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
 	}
-	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
+	listCtx, cancelList := context.WithTimeout(context.Background(), 10*time.Second)
+	nodeSel, nsl, err := node.NewStageSelector(listCtx, nst.NodeSelector, metadata.GroupRegistry().ListGroup)
+	cancelList()
 	if err != nil {
-		return nil, "", "", "", errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
-	}
-	nodeSel := node.NewRoundRobinSelector("", metadata)
-	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
-		return nil, "", "", "", fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
+		return nil, "", "", "", errors.WithMessagef(err, "failed to initialize node selector %s for group %s", nst.NodeSelector, g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
 	// Stamp the lifecycle's self identity onto the publisher so the wire

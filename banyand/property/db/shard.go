@@ -55,6 +55,8 @@ const (
 )
 
 var (
+	errNativeStoreNotConfigured = errors.New("native property store is not configured")
+
 	sourceFieldKey   = index.FieldKey{TagName: sourceField}
 	entityFieldKey   = index.FieldKey{TagName: entityID}
 	groupFieldKey    = index.FieldKey{TagName: groupField}
@@ -68,8 +70,9 @@ type shard struct {
 	l           *logger.Logger
 	repairState *repair
 	// testBeforeNativeRead, when set, is called once, synchronously, at the
-	// start of a native read (buildDeleteFromTimeDocuments's lookup and
-	// searchNative's query) before touching s.nativeStore. It exists only
+	// start of a native read (every caller of nativeRead: searchNative's query,
+	// entityRevisions' read for repair, and buildDeleteFromTimeDocuments's
+	// lookup) before touching s.nativeStore. It exists only
 	// because native reads (native.Owner.Acquire) are deliberately
 	// lock-free -- unlike Update/Repair's write path, which
 	// db_lifetime_test.go blocks through a real, production seam
@@ -231,10 +234,11 @@ func (s *shard) deleteFromTime(ctx context.Context, docID [][]byte, delTime time
 }
 
 func (s *shard) buildDeleteFromTimeDocuments(ctx context.Context, docID [][]byte, deleteTime int64) ([]index.Document, error) {
-	if s.testBeforeNativeRead != nil {
-		s.testBeforeNativeRead()
+	store, err := s.nativeRead()
+	if err != nil {
+		return nil, err
 	}
-	existing, err := s.nativeStore.lookup(ctx, docID)
+	existing, err := store.lookup(ctx, docID)
 	if err != nil {
 		return nil, fmt.Errorf("lookup existing documents failure: %w", err)
 	}
@@ -269,33 +273,41 @@ func (s *shard) updateDocuments(ctx context.Context, docs index.Documents) error
 	return err
 }
 
-func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+// nativeRead starts a native read: it calls the testBeforeNativeRead hook and returns the
+// store, or an error when the shard has none.
+func (s *shard) nativeRead() (*nativePropertyStore, error) {
 	if s.testBeforeNativeRead != nil {
 		s.testBeforeNativeRead()
 	}
 	if s.nativeStore == nil {
-		return nil, errors.New("native property store is not configured")
+		return nil, errNativeStoreNotConfigured
 	}
-	return s.nativeStore.query(ctx, request, order, limit)
+	return s.nativeStore, nil
+}
+
+func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+	store, err := s.nativeRead()
+	if err != nil {
+		return nil, err
+	}
+	return store.query(ctx, request, order, limit)
 }
 
 // entityRevisions returns the newest stored revision and the live revisions of the entity
 // request selects, in one native read.
 func (s *shard) entityRevisions(ctx context.Context, request *propertyv1.QueryRequest) (newest *queryProperty, live []*queryProperty, err error) {
-	if s.testBeforeNativeRead != nil {
-		s.testBeforeNativeRead()
+	store, err := s.nativeRead()
+	if err != nil {
+		return nil, nil, err
 	}
-	if s.nativeStore == nil {
-		return nil, nil, errors.New("native property store is not configured")
-	}
-	return s.nativeStore.entityRevisions(ctx, request)
+	return store.entityRevisions(ctx, request)
 }
 
 func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
 	start := time.Now()
 	var (
-		search1Elapsed     time.Duration
-		deletePhaseElapsed time.Duration
+		readElapsed        time.Duration
+		buildDeleteElapsed time.Duration
 		updateElapsed      time.Duration
 		liveCount          int
 		deleteCount        int
@@ -306,8 +318,8 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		case err != nil:
 			s.l.Warn().Int64("elapsed_ms", elapsed.Milliseconds()).Str("group", property.Metadata.Group).
 				Str("name", property.Metadata.Name).Str("id", property.Id).Err(err).
-				Int64("search1_ms", search1Elapsed.Milliseconds()).
-				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
+				Int64("read_ms", readElapsed.Milliseconds()).
+				Int64("build_delete_ms", buildDeleteElapsed.Milliseconds()).
 				Int64("update_ms", updateElapsed.Milliseconds()).
 				Int("live_count", liveCount).
 				Int("delete_count", deleteCount).
@@ -315,24 +327,24 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 		case elapsed >= 5*time.Second:
 			s.l.Warn().Int64("elapsed_ms", elapsed.Milliseconds()).Str("group", property.Metadata.Group).
 				Str("name", property.Metadata.Name).Str("id", property.Id).
-				Int64("search1_ms", search1Elapsed.Milliseconds()).
-				Int64("delete_phase_ms", deletePhaseElapsed.Milliseconds()).
+				Int64("read_ms", readElapsed.Milliseconds()).
+				Int64("build_delete_ms", buildDeleteElapsed.Milliseconds()).
 				Int64("update_ms", updateElapsed.Milliseconds()).
 				Int("live_count", liveCount).
 				Int("delete_count", deleteCount).
 				Msg("slow property repair")
 		}
 	}()
-	search1Start := time.Now()
+	readStart := time.Now()
 	newest, live, err := s.entityRevisions(ctx, &propertyv1.QueryRequest{
 		Groups: []string{property.Metadata.Group}, Name: property.Metadata.Name, Ids: []string{property.Id},
 	})
-	search1Elapsed = time.Since(search1Start)
+	readElapsed = time.Since(readStart)
 	if err != nil {
-		return false, nil, fmt.Errorf("query older properties failed: %w", err)
+		return false, nil, fmt.Errorf("read entity revisions failed: %w", err)
 	}
 	liveCount = len(live)
-	// if there no older properties, we can insert the latest document.
+	// no stored revision: insert the repaired document as it is.
 	if newest == nil {
 		var doc *index.Document
 		doc, err = s.buildUpdateDocument(id, property, deleteTime)
@@ -356,9 +368,11 @@ func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Prop
 	}
 
 	propertyID := GetPropertyID(property)
-	deletePhaseStart := time.Now()
+	// build_delete_ms times only building the tombstones in memory: the live revisions were
+	// read with the entity's other revisions, in read_ms.
+	buildDeleteStart := time.Now()
 	deletedDocuments, err := s.buildDeleteDocuments(s.buildNotDeletedList(live, propertyID), time.Now().UnixNano())
-	deletePhaseElapsed = time.Since(deletePhaseStart)
+	buildDeleteElapsed = time.Since(buildDeleteStart)
 	if err != nil {
 		return false, nil, fmt.Errorf("build delete older documents failed: %w", err)
 	}

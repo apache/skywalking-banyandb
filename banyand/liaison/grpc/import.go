@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +34,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/protoadapt"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -524,6 +527,26 @@ func (w *importWriter) metadataCache() func(name string) *commonv1.Metadata {
 	}
 }
 
+// locateRow checks the timestamp of row i of a stream or measure batch and locates its shard
+// with the resource's entity, through ds, the catalog's discovery service. It returns the shard
+// and the encoded entity values, or the failure of the batch: SCHEMA_NOT_FOUND for a resource
+// the liaison does not know, ROW_INVALID otherwise.
+func (w *importWriter) locateRow(ds *discoveryService, catalog string, seq uint64, i int, md *commonv1.Metadata,
+	ts *timestamppb.Timestamp, tagFamilies []*modelv1.TagFamilyForWrite,
+) (uint32, []*modelv1.TagValue, error) {
+	if err := timestamp.CheckPb(ts); err != nil {
+		return 0, nil, rowError(seq, i, "invalid timestamp: %v", err)
+	}
+	values, shard, err := ds.navigateByLocatorWithShardNum(md, tagFamilies, nil, nil, w.route.shardNum)
+	if errors.Is(err, errNotExist) {
+		return 0, nil, schemaNotFound(seq, "%s %s/%s not found", catalog, md.GetGroup(), md.GetName())
+	}
+	if err != nil {
+		return 0, nil, rowError(seq, i, "locate the shard of %s %s: %v", catalog, md.GetName(), err)
+	}
+	return uint32(shard), values[1:].Encode(), nil
+}
+
 func (w *importWriter) streamMessages(seq uint64, rows []*transferv1.ImportRowsRequest_StreamRow) ([]shardMessage, error) {
 	msgs := make([]shardMessage, 0, len(rows))
 	metadataOf := w.metadataCache()
@@ -533,21 +556,15 @@ func (w *importWriter) streamMessages(seq uint64, rows []*transferv1.ImportRowsR
 		if el == nil {
 			return nil, rowError(seq, i, "element is required")
 		}
-		if err := timestamp.CheckPb(el.GetTimestamp()); err != nil {
-			return nil, rowError(seq, i, "invalid timestamp: %v", err)
-		}
-		values, shard, err := w.s.streams.navigateByLocatorWithShardNum(md, el.GetTagFamilies(), nil, nil, w.route.shardNum)
-		if errors.Is(err, errNotExist) {
-			return nil, schemaNotFound(seq, "stream %s/%s not found", md.GetGroup(), md.GetName())
-		}
+		shard, entity, err := w.locateRow(w.s.streams, "stream", seq, i, md, el.GetTimestamp(), el.GetTagFamilies())
 		if err != nil {
-			return nil, rowError(seq, i, "locate the shard of stream %s: %v", md.GetName(), err)
+			return nil, err
 		}
-		msgs = append(msgs, shardMessage{shard: uint32(shard), payload: &transferv1.ImportWrite{Row: &transferv1.ImportWrite_Stream{
+		msgs = append(msgs, shardMessage{shard: shard, payload: &transferv1.ImportWrite{Row: &transferv1.ImportWrite_Stream{
 			Stream: &streamv1.InternalWriteRequest{
 				Request:      &streamv1.WriteRequest{Metadata: md, Element: el},
-				ShardId:      uint32(shard),
-				EntityValues: values[1:].Encode(),
+				ShardId:      shard,
+				EntityValues: entity,
 				RawElementId: row.GetRawElementId(),
 			},
 		}}})
@@ -567,21 +584,15 @@ func (w *importWriter) measureMessages(seq uint64, rows []*transferv1.ImportRows
 		if point.GetVersion() == 0 {
 			return nil, rowError(seq, i, "the version of measure %s must not be 0", md.GetName())
 		}
-		if err := timestamp.CheckPb(point.GetTimestamp()); err != nil {
-			return nil, rowError(seq, i, "invalid timestamp: %v", err)
-		}
-		values, shard, err := w.s.measures.navigateByLocatorWithShardNum(md, point.GetTagFamilies(), nil, nil, w.route.shardNum)
-		if errors.Is(err, errNotExist) {
-			return nil, schemaNotFound(seq, "measure %s/%s not found", md.GetGroup(), md.GetName())
-		}
+		shard, entity, err := w.locateRow(w.s.measures, "measure", seq, i, md, point.GetTimestamp(), point.GetTagFamilies())
 		if err != nil {
-			return nil, rowError(seq, i, "locate the shard of measure %s: %v", md.GetName(), err)
+			return nil, err
 		}
-		msgs = append(msgs, shardMessage{shard: uint32(shard), payload: &transferv1.ImportWrite{Row: &transferv1.ImportWrite_Measure{
+		msgs = append(msgs, shardMessage{shard: shard, payload: &transferv1.ImportWrite{Row: &transferv1.ImportWrite_Measure{
 			Measure: &measurev1.InternalWriteRequest{
 				Request:      &measurev1.WriteRequest{Metadata: md, DataPoint: point},
-				ShardId:      uint32(shard),
-				EntityValues: values[1:].Encode(),
+				ShardId:      shard,
+				EntityValues: entity,
 			},
 		}}})
 	}
@@ -719,9 +730,9 @@ func (w *importWriter) publishToNode(ctx context.Context, seq uint64, topic bus.
 			if elapsed >= cfg.pressureTimeout {
 				w.s.l.Warn().Str("node", node).Uint64("batch_seq", seq).Dur("elapsed", elapsed).
 					Msg("the data node stayed busy; failing the import stream")
-				return importError(codes.ResourceExhausted, transfer.ImportReasonNodeFailed,
-					map[string]string{transfer.ImportMetadataBatchSeq: strconv.FormatUint(seq, 10), transfer.ImportMetadataNode: node},
-					fmt.Sprintf("batch_seq=%d node=%s: the data node stayed busy under transient load (memory pressure) for %s", seq, node, elapsed))
+				return batchFailure(codes.ResourceExhausted, transfer.ImportReasonNodeFailed, seq,
+					map[string]string{transfer.ImportMetadataNode: node},
+					fmt.Sprintf("the data node stayed busy under transient load (memory pressure) for %s", elapsed))
 			}
 			wait = min(wait, cfg.pressureTimeout-elapsed)
 		}
@@ -746,13 +757,16 @@ const (
 	rateBusy
 )
 
-// busyOf tells why a busy answer refused a batch; a reply relayed from a remote node carries
-// the node's message inside its own.
+// busyOf tells whether, and why, a node's answer refused a whole batch before writing any of it.
 func busyOf(ce *common.Error) nodeBusy {
-	if strings.Contains(ce.Error(), transfer.ImportRateBusy) {
+	switch ce.Status() {
+	case modelv1.Status_STATUS_RATE_LIMITED:
 		return rateBusy
+	case modelv1.Status_STATUS_SERVER_BUSY:
+		return pressureBusy
+	default:
+		return notBusy
 	}
-	return pressureBusy
 }
 
 // publishToNodeOnce sends the init frame and the payloads through a fresh batch publisher that
@@ -766,8 +780,11 @@ func (w *importWriter) publishToNodeOnce(ctx context.Context, seq uint64, topic 
 	for i, p := range frames {
 		if _, err = publisher.Publish(ctx, topic, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), node, p)); err != nil {
 			_, _ = publisher.Close()
-			if i == 0 && isServerBusy(err) {
-				return pressureBusy, nil
+			var ce *common.Error
+			if i == 0 && errors.As(err, &ce) {
+				if busy = busyOf(ce); busy != notBusy {
+					return busy, nil
+				}
 			}
 			return notBusy, nodeFailure(seq, node, err, false)
 		}
@@ -775,8 +792,8 @@ func (w *importWriter) publishToNodeOnce(ctx context.Context, seq uint64, topic 
 	cee, err := publisher.Close()
 	for _, ce := range cee {
 		if ce != nil && ce.Status() != modelv1.Status_STATUS_SUCCEED {
-			if ce.Status() == modelv1.Status_STATUS_SERVER_BUSY {
-				return busyOf(ce), nil
+			if busy = busyOf(ce); busy != notBusy {
+				return busy, nil
 			}
 			return notBusy, nodeFailure(seq, node, ce, true)
 		}
@@ -909,23 +926,51 @@ func schemaReadError(err error, format string, args ...any) error {
 	return importError(codes.Unavailable, transfer.ImportReasonNotWritten, nil, fmt.Sprintf("%s: %v", fmt.Sprintf(format, args...), err))
 }
 
-// batchStatus re-states a status error as a batch failure of batch seq, keeping its code and
-// details.
+// batchStatus re-states a status error as a failure of batch seq, keeping its code, its
+// ImportService reason and its other details.
 func batchStatus(seq uint64, err error) error {
-	st := status.Convert(err).Proto()
-	st.Message = fmt.Sprintf("batch_seq=%d: %s", seq, st.GetMessage())
-	return status.ErrorProto(st)
+	st := status.Convert(err)
+	reason := ""
+	var extra map[string]string
+	var others []protoadapt.MessageV1
+	for _, d := range st.Details() {
+		if info, ok := d.(*errdetails.ErrorInfo); ok && info.GetDomain() == transfer.ImportErrorDomain {
+			reason, extra = info.GetReason(), info.GetMetadata()
+			continue
+		}
+		if m, ok := d.(protoadapt.MessageV1); ok {
+			others = append(others, m)
+		}
+	}
+	return batchFailure(st.Code(), reason, seq, extra, st.Message(), others...)
 }
 
+// batchError is batchFailure without a reason: the client classifies it by its code.
 func batchError(code codes.Code, seq uint64, format string, args ...any) error {
-	return status.Errorf(code, "batch_seq=%d: %s", seq, fmt.Sprintf(format, args...))
+	return batchFailure(code, "", seq, nil, fmt.Sprintf(format, args...))
+}
+
+// batchFailure is the status of a failure of batch seq. Every batch failure is built here, so
+// that it carries the batch both ways: its message starts with "batch_seq=<seq>", followed by
+// " node=<node>" when the metadata names a node, and its ImportService ErrorInfo detail carries
+// batch_seq with the extra metadata, which the client finds the batch by. An empty reason leaves
+// the client to classify the failure by its code.
+func batchFailure(code codes.Code, reason string, seq uint64, extra map[string]string, msg string, details ...protoadapt.MessageV1) error {
+	metadata := make(map[string]string, len(extra)+1)
+	maps.Copy(metadata, extra)
+	metadata[transfer.ImportMetadataBatchSeq] = strconv.FormatUint(seq, 10)
+	prefix := "batch_seq=" + metadata[transfer.ImportMetadataBatchSeq]
+	if node, ok := metadata[transfer.ImportMetadataNode]; ok {
+		prefix += " node=" + node
+	}
+	return importError(code, reason, metadata, prefix+": "+msg, details...)
 }
 
 // importError is a status carrying the ErrorInfo detail the import client classifies the
 // failure by; the message stays the human-readable text.
-func importError(code codes.Code, reason string, metadata map[string]string, msg string) error {
+func importError(code codes.Code, reason string, metadata map[string]string, msg string, details ...protoadapt.MessageV1) error {
 	st := status.New(code, msg)
-	detailed, err := st.WithDetails(&errdetails.ErrorInfo{Domain: transfer.ImportErrorDomain, Reason: reason, Metadata: metadata})
+	detailed, err := st.WithDetails(append(details, &errdetails.ErrorInfo{Domain: transfer.ImportErrorDomain, Reason: reason, Metadata: metadata})...)
 	if err != nil {
 		return st.Err()
 	}
@@ -934,16 +979,14 @@ func importError(code codes.Code, reason string, metadata map[string]string, msg
 
 // rowError rejects row i of a batch as invalid.
 func rowError(seq uint64, i int, format string, args ...any) error {
-	return importError(codes.InvalidArgument, transfer.ImportReasonRowInvalid,
-		map[string]string{transfer.ImportMetadataBatchSeq: strconv.FormatUint(seq, 10), transfer.ImportMetadataRow: strconv.Itoa(i)},
-		fmt.Sprintf("batch_seq=%d: row %d: %s", seq, i, fmt.Sprintf(format, args...)))
+	return batchFailure(codes.InvalidArgument, transfer.ImportReasonRowInvalid, seq,
+		map[string]string{transfer.ImportMetadataRow: strconv.Itoa(i)},
+		fmt.Sprintf("row %d: %s", i, fmt.Sprintf(format, args...)))
 }
 
 // schemaNotFound rejects a batch naming a resource that does not exist.
 func schemaNotFound(seq uint64, format string, args ...any) error {
-	return importError(codes.NotFound, transfer.ImportReasonSchemaNotFound,
-		map[string]string{transfer.ImportMetadataBatchSeq: strconv.FormatUint(seq, 10)},
-		fmt.Sprintf("batch_seq=%d: %s", seq, fmt.Sprintf(format, args...)))
+	return batchFailure(codes.NotFound, transfer.ImportReasonSchemaNotFound, seq, nil, fmt.Sprintf(format, args...))
 }
 
 // withTooLargeDetail marks the receive error of a frame over the server's message size limit.
@@ -973,23 +1016,17 @@ func nodeFailure(seq uint64, node string, err error, sent bool) error {
 	case matched && ce.Status() == modelv1.Status_STATUS_INTERNAL_ERROR && brokenConnection(ce.Error()):
 		code = codes.Unavailable
 	}
-	return importError(code, transfer.ImportReasonNodeFailed,
-		map[string]string{transfer.ImportMetadataBatchSeq: strconv.FormatUint(seq, 10), transfer.ImportMetadataNode: node},
-		fmt.Sprintf("batch_seq=%d node=%s: %v", seq, node, err))
+	return batchFailure(code, transfer.ImportReasonNodeFailed, seq, map[string]string{transfer.ImportMetadataNode: node}, err.Error())
 }
 
 // brokenConnection tells whether a batch event's message is the text of a gRPC status that
-// fails a node over: pub reports a broken response stream as an internal error carrying it.
+// fails a node over, by the codes grpchelper.IsFailoverError fails a node over on: pub reports
+// a broken response stream as an internal error carrying that text.
 func brokenConnection(msg string) bool {
-	for _, c := range []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled} {
+	for _, c := range grpchelper.FailoverCodes() {
 		if strings.Contains(msg, "rpc error: code = "+c.String()+" ") {
 			return true
 		}
 	}
 	return false
-}
-
-func isServerBusy(err error) bool {
-	var ce *common.Error
-	return errors.As(err, &ce) && ce.Status() == modelv1.Status_STATUS_SERVER_BUSY
 }

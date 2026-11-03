@@ -53,7 +53,7 @@ func nodeRate(nodeID string) *ratelimit.Node {
 // ImportWrite batch, admits their rows at the rate its init frame asks for, and hands the rows
 // to write, the listener of the catalog's write topic, in one batch message. Every import topic of
 // the data node nodeID shares one rate. A batch the node
-// cannot admit in time is answered STATUS_SERVER_BUSY before any row is written. What write fails
+// cannot admit in time is answered STATUS_RATE_LIMITED before any row is written. What write fails
 // to store, which it only logs for a regular write, it records in the context it is given: the
 // rows not stored are written again (see writeRows), and what still fails is answered as an error.
 func ImportListener(nodeID string, write bus.MessageListener) bus.MessageListener {
@@ -113,27 +113,17 @@ func (l *importListener) Rev(ctx context.Context, message bus.Message) bus.Messa
 	}
 	if err := l.rate.Pay(ctx, limit.GetBytesPerSecond(), limit.GetRowsPerSecond(), bytes, len(rows)); err != nil {
 		if errors.Is(err, ratelimit.ErrBusy) {
-			return bus.NewMessage(message.ID(), common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, ImportRateBusy+err.Error()))
+			return bus.NewMessage(message.ID(), common.NewErrorWithStatus(modelv1.Status_STATUS_RATE_LIMITED, ImportRateBusy+err.Error()))
 		}
 		return bus.NewMessage(message.ID(), common.NewError("wait for the import rate: %v", err))
 	}
 	return l.writeRows(ctx, message.ID(), rows)
 }
 
-// The bounds of writing a batch again: a node keeps writing the rows that failed before they
-// were stored, and retrying the writes that may be repeated, for at most importRetryBudget,
-// well within the liaison's batch timeout.
-var (
-	importRetryBudget     = 30 * time.Second
-	importRetryBackoff    = 100 * time.Millisecond
-	importRetryBackoffMax = 2 * time.Second
-)
-
-// rowFailure is a row of the batch, by its index, that failed before it was stored.
-type rowFailure struct {
-	err error
-	row int
-}
+// importRetryBudget bounds writing a batch again: a node keeps writing the rows that failed
+// before they were stored, and retrying the writes that may be repeated, with the back-off of
+// common.RetryUntil for at most importRetryBudget, well within the liaison's batch timeout.
+var importRetryBudget = 30 * time.Second
 
 // writeRows hands rows to the write listener and writes again, with back-off, only the rows that
 // failed before they were stored, until importRetryBudget is spent. A write listener only logs a
@@ -145,44 +135,38 @@ func (l *importListener) writeRows(ctx context.Context, id bus.MessageID, rows [
 	for i := range pending {
 		pending[i] = i
 	}
-	backoff := importRetryBackoff
-	for {
-		failed, reply := l.attempt(ctx, id, rows, pending, deadline)
+	var failed []common.RowFailure
+	var reply bus.Message
+	try := func() bool {
+		failed, reply = l.attempt(ctx, id, rows, pending, deadline)
 		if _, isErr := reply.Data().(*common.Error); isErr || len(failed) == 0 {
-			return reply
-		}
-		wait := min(backoff, time.Until(deadline))
-		if wait <= 0 {
-			return notWritten(id, len(rows), failed)
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return notWritten(id, len(rows), failed)
-		case <-timer.C:
+			return true
 		}
 		pending = pending[:0]
 		for _, f := range failed {
-			pending = append(pending, f.row)
+			pending = append(pending, f.Row)
 		}
-		backoff = min(backoff*2, importRetryBackoffMax)
+		return false
 	}
+	if try() || common.RetryUntil(ctx, deadline, try) {
+		return reply
+	}
+	return notWritten(id, len(rows), failed)
 }
 
 // attempt writes the pending rows once and returns those that failed before they were stored,
 // or a reply that ends the batch: the write listener's own error, or the failures that came
 // after the rows were stored, which writing the rows again would duplicate.
-func (l *importListener) attempt(ctx context.Context, id bus.MessageID, rows []any, pending []int, deadline time.Time) ([]rowFailure, bus.Message) {
+func (l *importListener) attempt(ctx context.Context, id bus.MessageID, rows []any, pending []int, deadline time.Time) ([]common.RowFailure, bus.Message) {
 	if l.perRow {
 		for k, i := range pending {
 			recorder := common.NewWriteRecorder(deadline)
 			reply := l.write.Rev(common.WithWriteRecorder(ctx, recorder), bus.NewMessage(id, rows[i]))
 			if err := firstFailure(reply, recorder); err != nil {
 				// Rows are written in order: the failed row and every later one are written again.
-				failed := make([]rowFailure, 0, len(pending)-k)
+				failed := make([]common.RowFailure, 0, len(pending)-k)
 				for _, j := range pending[k:] {
-					failed = append(failed, rowFailure{row: j, err: err})
+					failed = append(failed, common.RowFailure{Row: j, Err: err})
 				}
 				return failed, bus.Message{}
 			}
@@ -202,10 +186,10 @@ func (l *importListener) attempt(ctx context.Context, id bus.MessageID, rows []a
 		return nil, bus.NewMessage(id, common.NewError("%d write(s) after storing imported rows failed, the first: %v; "+
 			"the rows are stored, and importing them again would store stream and trace rows twice", len(failures), failures[0]))
 	}
-	var failed []rowFailure
+	var failed []common.RowFailure
 	for _, f := range recorder.RowFailures() {
 		if f.Row >= 0 && f.Row < len(pending) {
-			failed = append(failed, rowFailure{row: pending[f.Row], err: f.Err})
+			failed = append(failed, common.RowFailure{Row: pending[f.Row], Err: f.Err})
 		}
 	}
 	return failed, reply
@@ -230,16 +214,16 @@ func firstFailure(reply bus.Message, recorder *common.WriteRecorder) error {
 const maxNamedRows = 10
 
 // notWritten answers a batch of total rows whose failed rows could not be written.
-func notWritten(id bus.MessageID, total int, failed []rowFailure) bus.Message {
+func notWritten(id bus.MessageID, total int, failed []common.RowFailure) bus.Message {
 	named := make([]string, 0, min(len(failed), maxNamedRows))
 	for _, f := range failed[:min(len(failed), maxNamedRows)] {
-		named = append(named, strconv.Itoa(f.row))
+		named = append(named, strconv.Itoa(f.Row))
 	}
 	if len(failed) > maxNamedRows {
 		named = append(named, "...")
 	}
 	return bus.NewMessage(id, common.NewError("%d of %d imported row(s) were not written after retries (rows %s), the first: %v",
-		len(failed), total, strings.Join(named, ","), failed[0].err))
+		len(failed), total, strings.Join(named, ","), failed[0].Err))
 }
 
 // decodeImportWrite returns the frame f carries and its encoded size: a frame of a remote

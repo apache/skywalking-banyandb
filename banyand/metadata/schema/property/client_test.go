@@ -23,6 +23,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1443,6 +1444,8 @@ type lateWriteSchemaServer struct {
 	late        *propertyv1.Property
 	replayDelay time.Duration
 	pushMu      sync.Mutex
+	// fullSyncs counts the full-sync requests received.
+	fullSyncs atomic.Int64
 }
 
 func (s *lateWriteSchemaServer) WatchSchemas(stream grpc.BidiStreamingServer[schemav1.WatchSchemasRequest, schemav1.WatchSchemasResponse]) error {
@@ -1453,6 +1456,7 @@ func (s *lateWriteSchemaServer) WatchSchemas(stream grpc.BidiStreamingServer[sch
 		}
 		fullSync := len(req.TagProjection) > 0
 		if fullSync {
+			s.fullSyncs.Add(1)
 			time.Sleep(s.replayDelay)
 		}
 		if err = s.replay(stream, req); err != nil {
@@ -1518,7 +1522,13 @@ func (s *recordingSchemaServer) DeleteSchema(_ context.Context, req *schemav1.De
 	return &schemav1.DeleteSchemaResponse{Found: false}, nil
 }
 
-func serveRecordingServer(mock *recordingSchemaServer, lis net.Listener) *grpc.Server {
+// schemaTestServer is a mock serving both schema services.
+type schemaTestServer interface {
+	schemav1.SchemaManagementServiceServer
+	schemav1.SchemaUpdateServiceServer
+}
+
+func serveRecordingServer(mock schemaTestServer, lis net.Listener) *grpc.Server {
 	srv := grpc.NewServer()
 	schemav1.RegisterSchemaManagementServiceServer(srv, mock)
 	schemav1.RegisterSchemaUpdateServiceServer(srv, mock)
@@ -1859,25 +1869,19 @@ func TestFullSyncServerDown(t *testing.T) {
 // A schema written just after a full sync took its snapshot reaches the cache through the
 // watch before the sync finishes; the sync must not take it for one deleted on the server.
 func TestFullSyncKeepsASchemaWrittenDuringTheSync(t *testing.T) {
-	newServer := func(late *propertyv1.Property, replayDelay time.Duration) string {
+	newServer := func(late *propertyv1.Property, replayDelay time.Duration) (*lateWriteSchemaServer, string) {
 		mock := &lateWriteSchemaServer{recordingSchemaServer: newRecordingSchemaServer(), late: late, replayDelay: replayDelay}
 		mock.addSchema(buildMockGroupProperty(t))
 		lis, lisErr := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, lisErr)
-		srv := grpc.NewServer()
-		schemav1.RegisterSchemaManagementServiceServer(srv, mock)
-		schemav1.RegisterSchemaUpdateServiceServer(srv, mock)
-		healthSrv := health.NewServer()
-		healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
-		grpc_health_v1.RegisterHealthServer(srv, healthSrv)
-		go func() { _ = srv.Serve(lis) }()
+		srv := serveRecordingServer(mock, lis)
 		t.Cleanup(srv.Stop)
-		return lis.Addr().String()
+		return mock, lis.Addr().String()
 	}
 	// The first server answers the sync at once and then pushes the late stream; the second
 	// answers a while later, so the stream is cached before the sync compares.
-	first := newServer(buildMockStreamProperty(t, "late-stream", time.Now()), 0)
-	second := newServer(nil, 500*time.Millisecond)
+	_, first := newServer(buildMockStreamProperty(t, "late-stream", time.Now()), 0)
+	slow, second := newServer(nil, 500*time.Millisecond)
 
 	reg := newTestRegistryWithConfig(t, &property.ClientConfig{
 		SyncInterval:       time.Second,
@@ -1891,8 +1895,11 @@ func TestFullSyncKeepsASchemaWrittenDuringTheSync(t *testing.T) {
 	require.NoError(t, reg.Start(ctx))
 
 	waitForAddOrUpdateEvent(t, handler, schema.KindStream, "late-stream")
-	// Let the full sync that raced with the push finish, and one more after it.
-	time.Sleep(3 * time.Second)
+	// Full syncs run one after another: once the slow server has received two more full-sync
+	// requests, the sync that raced with the push has finished, and so has one after it.
+	seen := slow.fullSyncs.Load()
+	require.Eventually(t, func() bool { return slow.fullSyncs.Load() >= seen+2 }, 15*time.Second, 50*time.Millisecond,
+		"the registry did not run two more full syncs")
 	for _, evt := range handler.getDeleteEvents() {
 		assert.False(t, evt.Kind == schema.KindStream && evt.Name == "late-stream",
 			"the stream written during the full sync was deleted")

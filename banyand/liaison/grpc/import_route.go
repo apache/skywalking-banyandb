@@ -19,6 +19,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 
@@ -27,15 +28,13 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
-	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 // importHotStage names the default stage of a group: the nodes that match none of its
-// lifecycle stages.
-const importHotStage = "hot"
+// lifecycle stages. The importer names it the same way, so the two sides of ImportRows agree.
+const importHotStage = transfer.DefaultStageName
 
 // importRoute is the placement snapshot of one (group, stage) import: shards[s] lists the
 // distinct nodes shard s is written to.
@@ -107,23 +106,16 @@ func (s *importService) stageRoute(ctx context.Context, g *commonv1.Group, stage
 	return locateRoute(group, want, matched.GetShardNum(), matched.GetReplicas(), nodes)
 }
 
-// stageNodes builds the selector a lifecycle migration places a stage with: a round-robin
-// selector over the registered nodes matching the stage's node selector, laid out by every
-// group the schema registry holds.
+// stageNodes builds the selector a lifecycle migration places a stage with (see
+// node.NewStageSelector) over the registered nodes, laid out by every group the schema
+// registry holds.
 func (s *importService) stageNodes(ctx context.Context, st *commonv1.LifecycleStage) (NodeRegistry, error) {
-	ls, err := pub.ParseLabelSelector(st.GetNodeSelector())
-	if err != nil {
+	sel, _, err := node.NewStageSelector(ctx, st.GetNodeSelector(), s.listGroups)
+	if errors.Is(err, node.ErrInvalidNodeSelector) {
 		return nil, status.Errorf(codes.FailedPrecondition, "stage %s: %v", st.GetName(), err)
 	}
-	groups, err := s.listGroups(ctx)
 	if err != nil {
-		return nil, schemaReadError(err, "list the groups")
-	}
-	sel := node.NewRoundRobinSelector("", nil)
-	sel.SetNodeSelector(ls)
-	handler := sel.(schema.EventHandler)
-	for _, g := range groups {
-		handler.OnAddOrUpdate(schema.Metadata{TypeMeta: schema.TypeMeta{Kind: schema.KindGroup}, Spec: g})
+		return nil, schemaReadError(err, "stage %s", st.GetName())
 	}
 	for _, n := range s.routeTable.GetRouteTable().GetRegistered() {
 		sel.AddNode(n)

@@ -162,9 +162,9 @@ message TargetsResponse {
   uint32 copies = 4;
   repeated Shard shards = 5;
   // inactive_node_ids lists the route's nodes this liaison is not connected to right now.
-  repeated string inactive_node_ids = 7;
+  repeated string inactive_node_ids = 6;
   // group_deleting reports that the stored group is being deleted, so writes would be refused.
-  bool group_deleting = 8;
+  bool group_deleting = 7;
 }
 
 // ImportWrite is one frame a liaison sends to a data node on an import topic. A batch opens

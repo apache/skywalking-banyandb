@@ -1078,6 +1078,7 @@ Status is the response status for write
 | STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
 | STATUS_SCHEMA_NOT_APPLIED | 10 | Client&#39;s ModRevision is ahead of the server cache; the server waited and timed out. |
 | STATUS_SERVER_BUSY | 11 | The data node is under memory pressure; the batch was not written. |
+| STATUS_RATE_LIMITED | 12 | The data node&#39;s rate limit cannot admit the batch in time; the batch was not written and may be resent. |
 
 
  
