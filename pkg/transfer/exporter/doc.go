@@ -15,8 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package exporter is the client-side orchestration of a data export dry run: the
-// connection preflight against a liaison, the Plan call and its report, and the release of
-// an export session. plan.yaml, selector and parallelism parsing live in pkg/transfer. It
-// talks to the liaison only and never depends on any banyand/ storage package.
+// Package exporter is the client-side orchestration of data export: the connection
+// preflight against the liaisons, the dry-run Plan and its report, the export session library
+// (create, list, heartbeat, release), and RunExport, which writes the schema, drives one
+// Export stream per data node, dealt round robin over the liaisons, verifies and persists
+// every file and seals manifest.json. The settings are resolved by pkg/transfer/config. It talks to the
+// liaison only and never depends on any banyand/ storage package.
 package exporter

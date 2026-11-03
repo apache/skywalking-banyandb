@@ -183,6 +183,19 @@ func RegisterGeneratedQLTable(description string) bool {
 			})
 		}
 		registerGeneratedQLReuseScenarios(suite, &base)
+		registerGeneratedQLAggregateScenarios(suite, &base)
+		registerGeneratedQLNativeAggregateScenarios(suite, &base)
+		registerGeneratedQLExpressionScenarios(suite, &base)
+		registerGeneratedQLFilterScenarios(suite, &base)
+		registerGeneratedQLHavingScenarios(suite, &base)
+		registerGeneratedQLDistinctScenarios(suite, &base)
+		registerGeneratedQLGroupingScenarios(suite, &base)
+		registerGeneratedQLSortingScenarios(suite, &base)
+		registerGeneratedQLParentChildScenarios(suite, &base)
+		registerGeneratedQLCapacityScenarios(suite, &base)
+		registerGeneratedQLShardAggregateScenarios(suite, &base)
+		registerGeneratedQLPatternScenarios(suite, &base)
+		registerGeneratedQLLegacyCompatibility(suite, &base)
 	})
 }
 

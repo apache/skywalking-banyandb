@@ -104,9 +104,7 @@ func buildTestPlugin(t *testing.T, dir string) string {
 // permanent for the process lifetime, which is intentional for the wrong-symbol
 // guard (it needs the .so already open so Lookup can be reached).
 func resetPluginCache() {
-	pluginCache.mu.Lock()
-	pluginCache.m = make(map[pluginCacheKey]sdk.Sampler)
-	pluginCache.mu.Unlock()
+	pluginCache.Reset()
 }
 
 // TestLoadSamplerPlugin exercises loadSamplerPlugin's happy path and every

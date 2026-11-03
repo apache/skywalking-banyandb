@@ -378,6 +378,7 @@ func TestPlanInventory_PreemptReportsOldSessionsWhenTheWalkFails(t *testing.T) {
 	meta := filepath.Join(fx.backends[commonv1.Catalog_CATALOG_STREAM].GetDataPath(),
 		"sw_record", "seg-20260928", "shard-0", "0000000000000001", "metadata.json")
 	writeFile(t, meta, []byte(`{broken`))
+	writeFile(t, filepath.Join(filepath.Dir(filepath.Dir(meta)), "0000000000000001.snp"), []byte(`["0000000000000001"]`))
 	frames, err := collectErr(fx.planner, createReq("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", true))
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("a corrupt part must answer Internal, got %v", err)
@@ -586,6 +587,7 @@ func TestPlanInventory_CorruptPartMetadataIsInternal(t *testing.T) {
 	meta := filepath.Join(fx.backends[commonv1.Catalog_CATALOG_STREAM].GetDataPath(),
 		"sw_record", "seg-20260928", "shard-0", "0000000000000001", "metadata.json")
 	writeFile(t, meta, []byte(`{broken`))
+	writeFile(t, filepath.Join(filepath.Dir(filepath.Dir(meta)), "0000000000000001.snp"), []byte(`["0000000000000001"]`))
 	if _, err := collectErr(fx.planner, &transferv1.PlanRequest{}); status.Code(err) != codes.Internal {
 		t.Fatalf("a corrupt part must answer Internal, got %v", err)
 	}

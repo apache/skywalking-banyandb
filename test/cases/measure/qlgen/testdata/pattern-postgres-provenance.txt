@@ -1,0 +1,6 @@
+PostgreSQL 17.6 (Debian 17.6-2.pgdg12+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit
+["postgres@sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"]
+Image: postgres:17.6-bookworm
+Initialization: POSTGRES_INITDB_ARGS=--locale=C.UTF-8
+Command: psql -U postgres -X -A -t -v ON_ERROR_STOP=1 < pattern-postgres.sql
+Executed: 2026-10-28; 20 neutral reference cases.

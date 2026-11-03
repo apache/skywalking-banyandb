@@ -17,8 +17,8 @@ See [`docs/operation/plugins.md`](plugins.md) for deployment and
 
 ## Symptom: "my data is not being sampled" (nothing is dropped)
 
-Work through these checks in order; each one either explains the symptom or
-rules out a cause.
+For data-node merge/finalization sampling, work through these checks in order.
+For migration sampling, see [Lifecycle migration](#lifecycle-migration) below.
 
 1. **Is the feature enabled on this node?** `-trace-pipeline-native-plugin-enabled`
    must be `true` and `-trace-pipeline-trusted-plugin-dir` must be set to a
@@ -52,13 +52,12 @@ rules out a cause.
    expect to be dropped comes back `true`, the sampler's own logic (or its
    config, e.g. a threshold set too permissively) is the cause, not the
    engine.
-6. **Remember: plugins target the whole group, not a schema or a stage.**
-   `TracePipelineConfig.schema_names` / `schema_name_regex` / `stages` are
-   accepted by the proto but **not wired** into the engine today — the
-   validator rejects any config that tries to use them
-   (`api/validate/validate.go`), and the group as a whole is the only unit a
-   pipeline can target. If you were expecting a schema-scoped or
-   stage-scoped effect, that scoping does not exist yet.
+6. **Check which host owns the chain.** Data-node merge/finalization uses the
+   top-level `pipeline.plugins`. Lifecycle migration uses
+   `pipeline.stages[].plugins` for the source stage. The API accepts
+   `schema_names`, `schema_name_regex`, and `stages`; the lifecycle agent applies
+   the schema selectors when resolving its source-stage chain. A stage-only
+   configuration does not install a data-node merge sampler.
 
 ## Symptom: "unexpected data is being sampled" (wrong traces kept or dropped)
 
@@ -100,3 +99,32 @@ rules out a cause.
    maturity and fragment-boundary range expansion. The fixed fallback is 2h when
    the group omits a positive value. Verify that the deployment's maximum delay
    between fragments of one trace fits within that grace.
+
+## Lifecycle migration
+
+For sampling while moving traces between storage stages, check the following:
+
+1. Enable `--trace-sampling-enabled` on the lifecycle agent and set
+   `--trace-sampling-trusted-dir` to the directory containing compatible `.so`
+   files. The data-node plugin flags do not enable the lifecycle host. A missing
+   or incompatible plugin fails migration preflight; inspect the agent's error
+   log rather than the data-node sampler metrics.
+2. Check `pipeline.enabled`, schema selectors, and the source-stage chain.
+   For hot-to-warm migration, configure `pipeline.stages[].stage: hot`.
+   Top-level `pipeline.plugins` and `enabled_events` do not select migration
+   samplers. With no applicable source-stage chain, migration remains unsampled.
+3. Inspect the lifecycle report's top-level `trace_sampling` entries for each
+   artifact's `manifest` counts and fail-open reasons, plus `resume_count`.
+   Subtract `kept_traces` from `traces` to calculate dropped traces. Migration assembles
+   traces across snapshot parts within each segment/shard, and conservatively
+   retains unsafe inputs such as oversized traces or possible segment-boundary
+   fragments. Data-node per-merge behavior described above is a separate path.
+4. After a crash, reuse the same progress and snapshot storage. Prepared sampling
+   decisions are durable and can be replayed without loading the plugin again;
+   changing plugin configuration does not resample those prepared decisions.
+   Missing or inconsistent recovery artifacts stop migration instead of silently
+   starting over. Unacknowledged delivery may be repeated after recovery.
+
+See [Trace retention sampling](lifecycle.md#trace-retention-sampling) for the
+configuration example, report fields, and recovery contract, and
+[Lifecycle-agent hosting](plugins.md#lifecycle-agent-hosting) for plugin packaging.

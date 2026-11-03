@@ -36,6 +36,15 @@ func (s *server) HealthCheck(_ context.Context, req *clusterv1.HealthCheckReques
 				}, nil
 			}
 		}
+		if sl := s.getStreamListener(t); sl != nil {
+			if err := sl.CheckHealth(); err != nil {
+				return &clusterv1.HealthCheckResponse{
+					ServiceName: req.ServiceName,
+					Status:      err.Status(),
+					Error:       err.Error(),
+				}, nil
+			}
+		}
 		return &clusterv1.HealthCheckResponse{
 			ServiceName: req.ServiceName,
 			Status:      modelv1.Status_STATUS_SUCCEED,

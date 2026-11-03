@@ -19,6 +19,8 @@ package lifecycle
 
 import (
 	"context"
+	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -249,6 +251,39 @@ func (pcv *measurePartCountVisitor) VisitPart(_ *timestamp.TimeRange, _ common.S
 func migrateTraceWithFileBasedAndProgress(ctx context.Context, tsdbRootPath string, timeRange timestamp.TimeRange, group *GroupConfig,
 	logger *logger.Logger, progress *Progress, chunkSize int, md metadata.Repo,
 ) ([]string, error) {
+	var policy *pinnedSamplingPolicy
+	var policyErr error
+	pendingSampling, discoveryErr := hasPreparedSampling(group.SamplingHost.ArtifactRoot, group.Metadata.Name)
+	if discoveryErr != nil {
+		return nil, discoveryErr
+	}
+	if config := group.GetPipeline(); !group.LegacyTraceReplay && config != nil && config.Enabled && len(config.Stages) > 0 && group.SourceStage == "" {
+		return nil, fmt.Errorf("sampling source stage identity is missing")
+	}
+	desired := false
+	if config := group.GetPipeline(); config != nil && config.Enabled {
+		for _, stage := range config.Stages {
+			desired = desired || stage.Stage == group.SourceStage && len(stage.Plugins) > 0
+		}
+	}
+	sampled, modeErr := selectSamplingMode(group.SamplingHost.ArtifactRoot, group.Metadata.Name,
+		filepath.Dir(tsdbRootPath), group.LegacyTraceReplay, desired || pendingSampling)
+	if modeErr != nil {
+		return nil, modeErr
+	}
+	if sampled && !pendingSampling {
+		policy, policyErr = resolveSamplingPolicy(ctx, group, md)
+	}
+	if sampled && policy == nil && policyErr == nil && !pendingSampling {
+		modePath := filepath.Join(group.SamplingHost.ArtifactRoot, group.Metadata.Name, "mode.json")
+		if modeErr = saveSamplingMode(modePath, samplingModeRecord{Snapshot: filepath.Dir(tsdbRootPath)}); modeErr != nil {
+			return nil, modeErr
+		}
+	}
+	if policyErr != nil {
+		return nil, policyErr
+	}
+	defer policy.close()
 	// Convert segment interval to IntervalRule using storage.MustToIntervalRule
 	segmentIntervalRule := storage.MustToIntervalRule(group.SegmentInterval)
 
@@ -273,6 +308,12 @@ func migrateTraceWithFileBasedAndProgress(ctx context.Context, tsdbRootPath stri
 		group.SourceStage, group.TargetStage, segmentIntervalRule,
 	)
 	defer visitor.Close()
+	visitor.samplingPolicy = policy
+	visitor.samplingGroup = group
+	visitor.snapshot = filepath.Dir(tsdbRootPath)
+	if policy != nil || pendingSampling {
+		visitor.samplingRoot = group.SamplingHost.ArtifactRoot
+	}
 
 	// Set the planned source-item counts for progress tracking.
 	if counter != nil {
@@ -283,6 +324,9 @@ func migrateTraceWithFileBasedAndProgress(ctx context.Context, tsdbRootPath stri
 	// Use the existing VisitTracesInTimeRange function with our file-based visitor
 	_, err = trace.VisitTracesInTimeRange(tsdbRootPath, timeRange, visitor, segmentIntervalRule)
 	if err != nil {
+		return nil, err
+	}
+	if err = visitor.completeSampledSeries(); err != nil {
 		return nil, err
 	}
 	return segmentSuffixes, nil

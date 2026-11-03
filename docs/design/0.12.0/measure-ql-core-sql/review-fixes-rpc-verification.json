@@ -1,0 +1,108 @@
+{
+  "base": "39d33bc5d8b49ea7ee33c253de2b476648637669",
+  "post_rebase_head": "cab0cb0c7e97993f816361c63d2079629bdda2b7",
+  "review_fixes_source": "working-tree changes on post_rebase_head, identified by changed_source_sha256",
+  "post_rebase_feature_commits": [
+    "026667c14",
+    "d6f51e055",
+    "075f36a40"
+  ],
+  "container": {
+    "image": "banyandb-distributed-querybench:go1.26.10",
+    "cpus": 4,
+    "memory_bytes": 8589934592,
+    "memory_swap_bytes": 8589934592,
+    "GOMAXPROCS": 4,
+    "topologies": "sequential"
+  },
+  "build_tags": [
+    "querymetrics"
+  ],
+  "label_filter": "measure-ql && (QL-patterns || QLB-T07 || QLB-T08)",
+  "regression_focus": "qg3_decimal_membership_integer_first_in$",
+  "regression_source": "current generated tests with pkg/query/ql/expression_operator.go overlaid from post_rebase_head",
+  "membership": {
+    "scenarios": 16,
+    "bindings": 48,
+    "verification_rpcs_per_topology": 96,
+    "cache_modes": [
+      "normal",
+      "bypass"
+    ]
+  },
+  "runs": [
+    {
+      "stage": "post_rebase",
+      "topology": "standalone",
+      "utc": "2026-10-29T00:04:29.611602+00:00",
+      "binary_sha256": "d1761fb9784fdad689a8c28560160487853590bb61589d6e12d5a18ffcddc13b",
+      "exit_code": 0,
+      "suite_passed": true,
+      "specs_run": 145,
+      "specs_passed": 145,
+      "suite_seconds": 24.388185929,
+      "membership_specs_passed": 0
+    },
+    {
+      "stage": "post_rebase",
+      "topology": "distributed",
+      "utc": "2026-10-29T00:04:55.140334+00:00",
+      "binary_sha256": "cda58b6938499bff6c3a571c860e02004b5b7b398725ffe77a098bb744419cd4",
+      "exit_code": 0,
+      "suite_passed": true,
+      "specs_run": 145,
+      "specs_passed": 145,
+      "suite_seconds": 46.106739887,
+      "membership_specs_passed": 0
+    },
+    {
+      "stage": "regression_with_old_comparator",
+      "topology": "standalone",
+      "utc": "2026-10-29T00:49:40.158075+00:00",
+      "binary_sha256": "23607d2acb4c6948cd471f1338f520f74cc1912e90f712440c02e0c40cd99de2",
+      "exit_code": 1,
+      "suite_passed": false,
+      "specs_run": 1,
+      "specs_passed": 0,
+      "suite_seconds": 15.615194347,
+      "membership_specs_passed": 0
+    },
+    {
+      "stage": "review_fixes",
+      "topology": "standalone",
+      "utc": "2026-10-29T00:50:31.251804+00:00",
+      "binary_sha256": "9fd26dc10e63b535f75232a2a559b9f28993ff210a309778862cbf35d588e9c3",
+      "exit_code": 0,
+      "suite_passed": true,
+      "specs_run": 161,
+      "specs_passed": 161,
+      "suite_seconds": 25.438763841,
+      "membership_specs_passed": 16
+    },
+    {
+      "stage": "review_fixes",
+      "topology": "distributed",
+      "utc": "2026-10-29T00:50:58.109630+00:00",
+      "binary_sha256": "e90c31aac5752829b5b8e1866a85d913d57a167d9b9d452950d685980935d6c3",
+      "exit_code": 0,
+      "suite_passed": true,
+      "specs_run": 161,
+      "specs_passed": 161,
+      "suite_seconds": 47.024187595,
+      "membership_specs_passed": 16
+    }
+  ],
+  "changed_source_sha256": {
+    "banyand/queue/pub/native_receive_test.go": "14e27882a5a5fcd85efb6d53c1804cea2cb3c178f9213c66999058fd4e748b43",
+    "pkg/index/native/wildcard.go": "3db9386f6dc1aa80ca35817b5e7e5d615f2b51e9e4801beefde5f60dcff51200",
+    "pkg/index/native/wildcard_automaton.go": "fcb84e2788a8c198b22d6562221ff1d0a639e5ffe3f0795f1e459431c79e5d3c",
+    "pkg/index/native/wildcard_query.go": "24b0970af6a0026c5b9979b2489832b7e2a2e25976599b8903d4c3f6e7384792",
+    "pkg/index/native/wildcard_query_test.go": "1f446ca28440f73f7ed518fa32cf1d85cfb040503d887a4ffbc2fe077b8bc31b",
+    "pkg/index/native/wildcard_test.go": "97e4edab72ae7da35b6d2f9d6446b4780a26ae505cabc9d4af1e67a1d9265dab",
+    "pkg/query/ql/decimal_expression_test.go": "52e3b3c70dd22ffd699aba60585c5c7c6e90ff40c687c8ef3546c56771161584",
+    "pkg/query/ql/expression_operator.go": "fc2d4d40e6cf0daa49157946151c166e995b73f5279c86c6ff4d9e4988616fe2",
+    "test/cases/measure/qlgen/generated/suite.json": "6afe499ddd197ee0c8614ed2ef02ef925f1dfc616509bae723bdd9321debe56a",
+    "test/cases/measure/qlgen/qg3_generate.go": "3cc129d2d467bdc5274f69a92ca7b91a8854d4cf78d48dc5bb325ecb0f70cfd3",
+    "test/cases/measure/qlgen/qg3_membership_generate.go": "54882edb40a893c640d375493f2b120d2047e5d7aceb4c904a973594465fcf55"
+  }
+}

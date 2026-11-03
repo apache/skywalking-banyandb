@@ -62,6 +62,10 @@ func TestStatTSDBGroup_AggregatesShardsAndSegments(t *testing.T) {
 	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000002", "metadata.json"), partJSON(20, 80, 3, 50, 300))
 	writeFile(t, filepath.Join(seg, "shard-0", "idx", "x"), make([]byte, 16)) // stream element index: bytes, not a part
 	writeFile(t, filepath.Join(seg, "shard-1", "0000000000000003", "metadata.json"), partJSON(1, 2, 1, 400, 500))
+	// A part no snapshot names (a merge source not yet removed) is not live.
+	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000004", "metadata.json"), partJSON(5, 5, 5, 1, 2))
+	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000005.snp"), []byte(`["0000000000000001","0000000000000002"]`))
+	writeFile(t, filepath.Join(seg, "shard-1", "0000000000000001.snp"), []byte(`["0000000000000003"]`))
 	// A segment without shards (only metadata) must still be reported.
 	seg2 := filepath.Join(group, "seg-20260927")
 	writeFile(t, filepath.Join(seg2, "metadata"), []byte("1.4.0"))
@@ -107,6 +111,7 @@ func TestStatTSDBGroup_PartVanishedMidWalkIsSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(seg, "shard-0", "000000000000000a", "metadata.json"), partJSON(1, 1, 1, 1, 2))
+	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000001.snp"), []byte(`["0000000000000009","000000000000000a"]`))
 	units, err := statTSDBGroup(group, commonv1.Catalog_CATALOG_MEASURE, "g", false, testPartReader(commonv1.Catalog_CATALOG_MEASURE))
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +129,7 @@ func TestStatTSDBGroup_PartlessShardIsExcluded(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(seg, "shard-1", "0000000000000001", "metadata.json"), partJSON(1, 1, 1, 1, 2))
+	writeFile(t, filepath.Join(seg, "shard-1", "0000000000000001.snp"), []byte(`["0000000000000001"]`))
 	units, err := statTSDBGroup(group, commonv1.Catalog_CATALOG_STREAM, "g", false, testPartReader(commonv1.Catalog_CATALOG_STREAM))
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +145,7 @@ func TestStatTSDBGroup_TraceShardCountsSidxBytes(t *testing.T) {
 	seg := filepath.Join(group, "seg-2026092810")
 	writeFile(t, filepath.Join(seg, "metadata"), []byte(`{"version":"1.5.0"}`))
 	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000001", "metadata.json"), partJSON(10, 40, 7, 100, 200))
+	writeFile(t, filepath.Join(seg, "shard-0", "0000000000000001.snp"), []byte(`["0000000000000001"]`))
 	// sidx parts describe themselves in manifest.json (banyand/internal/sidx/part.go).
 	writeFile(t, filepath.Join(seg, "shard-0", "sidx", "rule_a", "0000000000000001", "manifest.json"), partJSON(25, 60, 7, 100, 200))
 	writeFile(t, filepath.Join(seg, "shard-0", "sidx", "rule_b", "0000000000000001", "manifest.json"), partJSON(5, 10, 7, 100, 200))

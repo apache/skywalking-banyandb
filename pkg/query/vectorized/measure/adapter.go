@@ -252,6 +252,14 @@ func serializationPreflight(batch *vectorized.RecordBatch) (int64, uint64, bool,
 		return 0, 0, false, vectorized.ErrMemoryBudgetExceeded
 	}
 	perRow := uint64(512) + uint64(len(batch.Columns))*128
+	for _, def := range batch.Schema.Columns {
+		if def.Type == vectorized.ColumnTypeDecimal {
+			if perRow > math.MaxInt64-40 {
+				return 0, 0, false, vectorized.ErrMemoryBudgetExceeded
+			}
+			perRow += 40
+		}
+	}
 	fixed := memoryRetained * 4
 	if rows > (math.MaxInt64-fixed)/perRow {
 		return 0, 0, false, vectorized.ErrMemoryBudgetExceeded
@@ -319,6 +327,12 @@ func serializationWireBound(batch *vectorized.RecordBatch, rows, retained, const
 	for _, def := range batch.Schema.Columns {
 		if def.Type == vectorized.ColumnTypeTagValue || def.Type == vectorized.ColumnTypeFieldValue {
 			return 0, false, nil
+		}
+		if def.Type == vectorized.ColumnTypeDecimal {
+			if perRow > math.MaxInt64-40 {
+				return 0, false, vectorized.ErrMemoryBudgetExceeded
+			}
+			perRow += 40
 		}
 		names := uint64(len(def.Name))
 		if names > math.MaxInt64-perRow {

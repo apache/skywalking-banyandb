@@ -98,7 +98,7 @@ func TestPreflight_CredentialsReachEveryRPC(t *testing.T) {
 	}
 	defer conn.Close()
 	// A later RPC on the same connection must still carry the credentials.
-	if _, err := FetchGroups(context.Background(), conn); err != nil {
+	if _, err := FetchGroups(context.Background(), conn.Primary()); err != nil {
 		t.Fatalf("credentials must be attached to every RPC: %v", err)
 	}
 	if _, _, err := Preflight(context.Background(), []string{addr}, ConnectOptions{Timeout: 2 * time.Second}); err == nil {
@@ -201,6 +201,30 @@ func TestPreflight_SkipsACandidateThatNeverAnswers(t *testing.T) {
 	}
 }
 
+// Candidates are probed concurrently: two hung candidates cost one describe timeout, not two,
+// and the usable liaisons keep the given order, so the primary is the first usable one.
+func TestPreflight_ProbesCandidatesConcurrently(t *testing.T) {
+	saved := describeTimeout
+	describeTimeout = time.Second
+	t.Cleanup(func() { describeTimeout = saved })
+	hungA, hungB := newFakeLiaison(), newFakeLiaison()
+	hungA.hangDescribe, hungB.hangDescribe = true, true
+	firstAddr, secondAddr := serveLiaison(t, newFakeLiaison()), serveLiaison(t, newFakeLiaison())
+	start := time.Now()
+	ls, info, err := Preflight(context.Background(), []string{serveLiaison(t, hungA), serveLiaison(t, hungB), firstAddr, secondAddr},
+		ConnectOptions{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ls.Close()
+	if elapsed := time.Since(start); elapsed >= 2*describeTimeout {
+		t.Fatalf("hung candidates must be probed concurrently, took %v", elapsed)
+	}
+	if len(ls.All) != 2 || ls.All[0].Addr != firstAddr || ls.All[1].Addr != secondAddr || info.Liaison != firstAddr {
+		t.Fatalf("liaisons = %+v, info = %+v", ls.All, info)
+	}
+}
+
 // A canceled or expired caller context is a runtime failure carrying the context error, not
 // "none of the liaison addresses is usable".
 func TestPreflight_CanceledContextIsARuntimeFailure(t *testing.T) {
@@ -230,7 +254,7 @@ func TestFetchGroups_ExitCodeFollowsTheStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	_, err = FetchGroups(context.Background(), conn)
+	_, err = FetchGroups(context.Background(), conn.Primary())
 	if code := ExitCodeFor(err); code != ExitRuntime || !strings.Contains(err.Error(), "list groups") {
 		t.Fatalf("an UNAVAILABLE registry is a run-time failure (exit 3), got exit %d: %v", code, err)
 	}

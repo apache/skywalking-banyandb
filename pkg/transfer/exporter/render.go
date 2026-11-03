@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -30,6 +32,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
 // ValidateOutputFormat accepts the dry-run renderings table (also ""), yaml and json and
@@ -150,4 +153,66 @@ func timeRange(minTS, maxTS int64) string {
 		layout = "2006-01-02"
 	}
 	return lo.Format(layout) + " ~ " + hi.Format(layout)
+}
+
+// summaryRow is one (node, catalog, group, stage) line of the real-export summary.
+type summaryRow struct {
+	// key orders the rows: node, catalog, group and stage.
+	key, node, catalog, group, stage string
+	units, files, rows, bytes        uint64
+	elapsed                          time.Duration
+}
+
+// elapsedKey keys the time a node spent on the units of one group; catalog is the manifest
+// label (MEASURE). A node holds a group in one stage, so the stage is not needed.
+func elapsedKey(node, catalog, group string) string {
+	return strings.Join([]string{node, catalog, group}, "\x00")
+}
+
+// renderSummary prints what a finished export wrote, from its manifest: one row per node,
+// catalog, group and stage with the time its units took (elapsed, keyed by elapsedKey),
+// then the totals line with the time of the whole export.
+func renderSummary(w io.Writer, output string, m *manifest.Manifest, elapsed map[string]time.Duration, total time.Duration) error {
+	byKey := map[string]*summaryRow{}
+	var rows []*summaryRow
+	for _, u := range m.Units {
+		catalog := strings.ToLower(u.Catalog)
+		for _, src := range u.Sources {
+			key := strings.Join([]string{src.Node, catalog, u.Group, u.Stage}, "\x00")
+			r, ok := byKey[key]
+			if !ok {
+				r = &summaryRow{
+					key: key, node: src.Node, catalog: catalog, group: u.Group, stage: u.Stage,
+					elapsed: elapsed[elapsedKey(src.Node, u.Catalog, u.Group)],
+				}
+				byKey[key] = r
+				rows = append(rows, r)
+			}
+			r.units++
+			r.rows += src.TotalCount
+			files := slices.Clone(src.SegmentFiles)
+			for _, sh := range src.Shards {
+				files = append(files, sh.Files...)
+				r.rows += sh.TotalCount
+			}
+			for _, f := range files {
+				r.files, r.bytes = r.files+1, r.bytes+f.Bytes
+			}
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].key < rows[j].key })
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NODE\tCATALOG\tGROUP\tSTAGE\tUNITS\tFILES\tROWS\tSIZE\tTIME")
+	var files, bytes uint64
+	for _, r := range rows {
+		files, bytes = files+r.files, bytes+r.bytes
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%s\t%s\n", r.node, r.catalog, r.group, r.stage, r.units, r.files, r.rows,
+			humanBytes(r.bytes), formatDuration(r.elapsed))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	_, err := fmt.Fprintf(w, "\nexport written to %s: %d unit(s), %d file(s), %s, %d warning(s) in %s\n",
+		output, len(m.Units), files, humanBytes(bytes), len(m.Warnings), formatDuration(total))
+	return err
 }

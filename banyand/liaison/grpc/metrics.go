@@ -42,6 +42,15 @@ type metrics struct {
 	totalStreamMsgSent        meter.Counter
 	totalStreamMsgSentErr     meter.Counter
 
+	// Write sessions: sealed batches, their outcomes, busy retries and the two
+	// reasons a session stops reading from its client.
+	writeBatchSealed     meter.Counter
+	writeBatchFinished   meter.Counter
+	writeBatchRows       meter.Counter
+	writeBatchBusyRetry  meter.Counter
+	writeBackpressure    meter.Counter
+	writeBatchAckLatency meter.Histogram
+
 	totalRegistryStarted  meter.Counter
 	totalRegistryFinished meter.Counter
 	totalRegistryErr      meter.Counter
@@ -105,6 +114,12 @@ func newMetrics(factory observability.Factory, rbacFactories ...observability.Fa
 		totalStreamMsgReceivedErr:          factory.NewCounter("total_stream_msg_received_err", "group", "service", "method"),
 		totalStreamMsgSent:                 factory.NewCounter("total_stream_msg_sent", "group", "service", "method"),
 		totalStreamMsgSentErr:              factory.NewCounter("total_stream_msg_sent_err", "group", "service", "method"),
+		writeBatchSealed:                   factory.NewCounter("write_batch_sealed_total", "service", "reason"),
+		writeBatchFinished:                 factory.NewCounter("write_batch_finished_total", "service", "status"),
+		writeBatchRows:                     factory.NewCounter("write_batch_rows_total", "service"),
+		writeBatchBusyRetry:                factory.NewCounter("write_batch_busy_retry_total", "service", "status"),
+		writeBackpressure:                  factory.NewCounter("write_backpressure_total", "service", "reason"),
+		writeBatchAckLatency:               factory.NewHistogram("write_batch_ack_seconds", meter.DefBuckets, "service"),
 		totalRegistryStarted:               factory.NewCounter("total_registry_started", "group", "service", "method"),
 		totalRegistryFinished:              factory.NewCounter("total_registry_finished", "group", "service", "method"),
 		totalRegistryErr:                   factory.NewCounter("total_registry_err", "group", "service", "method"),

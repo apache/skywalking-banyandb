@@ -32,6 +32,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
@@ -72,10 +73,10 @@ const unsupportedExport = "does not support export (older version)"
 // after exportPlanNodeMaxWait without a frame.
 var errPlanNodeMaxWait = errors.New("export plan max wait exceeded")
 
-// exportService is the liaison-side ExportService: a server-streaming proxy. Plan fans
-// out to every registered data node, relays `units` frames 1:1 stamping node_id from the
-// upstream connection, and closes with one `summary` frame; Sessions fans one lifecycle
-// action out and answers one frame per node.
+// exportService is the liaison-side ExportService proxy. Plan fans out to every registered
+// data node, relays `units` frames 1:1 stamping node_id from the upstream connection, and
+// closes with one `summary` frame; Sessions fans one lifecycle action out and answers one
+// frame per node; Export relays one bidirectional stream to the data node it targets.
 type exportService struct {
 	transferv1.UnimplementedExportServiceServer
 	tire2        queue.Client
@@ -83,13 +84,18 @@ type exportService struct {
 	selfNode     func() string
 	newSessionID func() string
 	l            *logger.Logger
+	relayRate    *relayLimiter
 }
+
+// errNoDataNode answers a Plan or Sessions call while the liaison knows no data node yet:
+// unavailable for now, not a sign that a session is gone.
+var errNoDataNode = status.Error(codes.Unavailable, "this liaison has not discovered any data node")
 
 // newExportService fans out over the data nodes registered in routeTable. A standalone
 // process has no tire2 route table: it is its own only data node, named by selfNode, and its
 // local pipeline serves the ExportService in-process.
 func newExportService(tire2 queue.Client, routeTable route.TableProvider, selfNode func() string, l *logger.Logger) *exportService {
-	return &exportService{tire2: tire2, routeTable: routeTable, selfNode: selfNode, newSessionID: randomSessionID, l: l}
+	return &exportService{tire2: tire2, routeTable: routeTable, selfNode: selfNode, newSessionID: randomSessionID, l: l, relayRate: newRelayLimiter()}
 }
 
 // randomSessionID returns 16 random bytes as lowercase hex, which satisfies the session id
@@ -316,7 +322,7 @@ func (s *exportService) Plan(req *transferv1.PlanRequest, stream transferv1.Expo
 	}
 	nodes := s.planNodes()
 	if len(nodes) == 0 {
-		return status.Error(codes.FailedPrecondition, "this liaison has not discovered any data node")
+		return errNoDataNode
 	}
 	if req.GetCreate() != nil {
 		return s.planCreateSession(req, stream, nodes)
@@ -399,8 +405,9 @@ func (s *exportService) fanOutPlan(
 	// One sender owns the downstream stream and drains a bounded queue, so a client that stops
 	// reading stalls only the sender: the node workers still see another node's failure (or
 	// the client's own send error, which cancels ctx) and the fan-out ends without waiting on
-	// the client. The sender also stops on ctx, because a failed fan-out returns without
-	// closing out and the deferred cancel is then what releases it.
+	// the client. The sender also stops on ctx: a failed fan-out closes out and returns without
+	// waiting for it, and the deferred cancel then ends it, possibly before it sent the frames
+	// still queued, which a failure makes moot.
 	out := make(chan *transferv1.PlanResponse, exportPlanSendBuffer)
 	sender := run.Go(ctx, "liaison.grpc.export.plan-sender", s.l, func(context.Context) {
 		for {
@@ -531,6 +538,9 @@ func (s *exportService) fanOutPlan(
 	summary := &transferv1.PlanSummary{PreemptedSessionIds: slices.Compact(slices.Sorted(slices.Values(preempted)))}
 	frame := &transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Summary{Summary: summary}}
 	unfinished := finished < len(nodes)
+	// Every worker has returned, so nothing enqueues any more: closing out ends the sender's
+	// loop, also when it is idle on an empty queue.
+	close(out)
 	if err != nil {
 		// The sender is not waited for: it may still be blocked in send on a client that stopped
 		// reading, and only the handler returning ends that stream. It touches nothing but its own
@@ -540,7 +550,6 @@ func (s *exportService) fanOutPlan(
 		}
 		return frame, established, unfinished, toStatus(err).Err()
 	}
-	close(out)
 	<-sender.Done()
 	if err = context.Cause(ctx); err != nil {
 		return frame, established, unfinished, toStatus(err).Err()
@@ -575,7 +584,7 @@ func (s *exportService) Sessions(req *transferv1.SessionsRequest, stream transfe
 	}
 	nodes := s.planNodes()
 	if len(nodes) == 0 {
-		return status.Error(codes.FailedPrecondition, "this liaison has not discovered any data node")
+		return errNoDataNode
 	}
 	frames, err := s.fanOutSessions(stream.Context(), req, nodes)
 	if err != nil {
@@ -672,4 +681,149 @@ func (s *exportService) fanOutSessions(ctx context.Context, req *transferv1.Sess
 	}
 	sort.Slice(frames, func(i, j int) bool { return frames[i].GetNodeId() < frames[j].GetNodeId() })
 	return frames, nil
+}
+
+// errFirstFrameNotInit rejects an Export stream that does not open with init.
+var errFirstFrameNotInit = status.Error(codes.InvalidArgument, "the first export frame must be init")
+
+// Export implements transferv1.ExportServiceServer: a 1:1 relay of one stream to the data
+// node named by the first frame's init.target_node. Frames are forwarded one at a time in
+// both directions, so the client's and the node's flow control meet end to end: a slow client
+// slows the node down instead of filling the liaison's memory. The client's CloseSend is
+// forwarded as the upstream CloseSend and the node's result ends the stream. Every frame but
+// a chunk is forwarded unchanged; a chunk waits on the liaison's shared byte rate first, and
+// one larger than its share of the burst goes out in pieces with the same rows.
+func (s *exportService) Export(stream transferv1.ExportService_ExportServer) error {
+	first, err := stream.Recv()
+	if errors.Is(err, io.EOF) {
+		return errFirstFrameNotInit
+	}
+	if err != nil {
+		return err
+	}
+	init := first.GetInit()
+	if init == nil {
+		return errFirstFrameNotInit
+	}
+	if err = first.ValidateAll(); err != nil {
+		return status.Error(codes.InvalidArgument, err.Error())
+	}
+	target := init.GetTargetNode()
+	if !slices.ContainsFunc(s.planNodes(), func(n planNode) bool { return n.name() == target }) {
+		return status.Errorf(codes.NotFound, "data node %q is not registered", target)
+	}
+	peerAddr := "<unknown>"
+	if p, ok := peer.FromContext(stream.Context()); ok && p.Addr != nil {
+		peerAddr = p.Addr.String()
+	}
+	s.l.Info().Str("peer", peerAddr).Str("session", init.GetSessionId()).Str("node", target).Msg("export stream relayed to a data node")
+	defer s.relayRate.open(init.GetLiaisonBytesPerSecond())()
+
+	client, err := remoteNode{tire2: s.tire2, id: target}.exportClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(stream.Context())
+	defer cancel()
+	up, err := client.Export(ctx)
+	if err != nil {
+		return toStatus(err).Err()
+	}
+	// io.EOF from Send means the node already ended the stream; its result arrives on Recv.
+	if err = up.Send(first); err != nil && !errors.Is(err, io.EOF) {
+		return toStatus(err).Err()
+	}
+	toNodeErr := make(chan error, 1)
+	if err == nil {
+		// The pump ends with the client's half-close or, once this handler returned, with the
+		// stream's context; it never outlives the RPC. A panic fails this stream only.
+		run.Go(ctx, "liaison.grpc.export.relay-to-node", s.l, func(context.Context) {
+			pumpErr := status.Error(codes.Internal, "the relay to the data node failed unexpectedly")
+			defer func() {
+				toNodeErr <- pumpErr
+				if pumpErr != nil {
+					cancel()
+				}
+			}()
+			pumpErr = relayToNode(stream, up)
+		})
+	}
+	for {
+		frame, recvErr := up.Recv()
+		if errors.Is(recvErr, io.EOF) {
+			return nil
+		}
+		if recvErr != nil {
+			// A failed client->node pump cancels the upstream; report its cause instead.
+			select {
+			case pumpErr := <-toNodeErr:
+				if pumpErr != nil {
+					return toStatus(pumpErr).Err()
+				}
+			default:
+			}
+			return toStatus(recvErr).Err()
+		}
+		// Waiting here, before the next Recv, keeps the node's flow control end to end.
+		if chunk := frame.GetChunk(); chunk != nil {
+			if err = s.relayChunk(ctx, stream, frame, chunk); err != nil {
+				return err
+			}
+			continue
+		}
+		if err = stream.Send(frame); err != nil {
+			return err
+		}
+	}
+}
+
+// relayChunk forwards a chunk as the relay bucket lets its bytes through; ctx ends the wait
+// with the relay. A chunk the bucket passes in one step goes out as it is; a larger one goes out
+// in pieces, each sent as soon as its step passes and carrying the chunk's rows, so the client
+// keeps receiving frames at a low rate, even one lowered while the chunk is relayed; the bytes
+// and their order are kept.
+func (s *exportService) relayChunk(ctx context.Context, stream transferv1.ExportService_ExportServer,
+	frame *transferv1.ExportResponse, chunk *transferv1.DataChunk,
+) error {
+	content := chunk.GetContent()
+	n, err := s.relayRate.take(ctx, len(content))
+	if err != nil {
+		return err
+	}
+	if n == len(content) {
+		return stream.Send(frame)
+	}
+	for {
+		part := &transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: content[:n], Rows: chunk.GetRows()}}}
+		if err = stream.Send(part); err != nil {
+			return err
+		}
+		if content = content[n:]; len(content) == 0 {
+			return nil
+		}
+		if n, err = s.relayRate.take(ctx, len(content)); err != nil {
+			return err
+		}
+	}
+}
+
+// relayToNode forwards every client frame after init to the node and the client's half-close
+// as the upstream CloseSend. A node that already ended the stream (io.EOF from Send) stops the
+// pump without an error, because the node's result reaches the client through Recv.
+func relayToNode(stream transferv1.ExportService_ExportServer, up transferv1.ExportService_ExportClient) error {
+	for {
+		frame, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return up.CloseSend()
+		}
+		if err != nil {
+			return err
+		}
+		if err = up.Send(frame); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
 }

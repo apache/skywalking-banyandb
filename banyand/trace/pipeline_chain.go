@@ -23,19 +23,14 @@ import (
 	"time"
 
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
+	runtime "github.com/apache/skywalking-banyandb/banyand/internal/pipeline"
 	pkgbytes "github.com/apache/skywalking-banyandb/pkg/bytes"
-	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 )
 
-var (
-	chainLog = logger.GetLogger("trace").Named("pipeline-chain")
-	// samplerExecutionSlots bounds batches retained by sampler calls that ignore
-	// the execution timeout. A slot is released only after Decide returns.
-	samplerExecutionSlots = make(chan struct{}, cgroups.CPUs())
-)
+var chainLog = logger.GetLogger("trace").Named("pipeline-chain")
 
 const (
 	pluginExecutionResultSuccess     = "success"
@@ -66,8 +61,8 @@ type pluginLinkExecutionObservation struct {
 // consecutive-timeout circuit breaker disables the chain after circuitBreakN
 // timeouts.
 type mergeChain struct {
+	session              *runtime.Session
 	observeExecution     func(pluginExecutionObservation)
-	timer                *time.Timer
 	worker               *mergeDecisionWorker
 	executionSlots       chan struct{}
 	observeLinkExecution func(pluginLinkExecutionObservation)
@@ -77,25 +72,15 @@ type mergeChain struct {
 	samplerNames         []string
 	projection           sdk.Projection
 	consecutiveTOs       int
-	circuitBreakN        int
 	executionMu          sync.Mutex
 	mu                   sync.Mutex
 	circuitOpen          bool
 }
 
-type mergeDecisionRequest struct {
-	batch        *sdk.TraceBatch
-	observation  *mergeEvaluationObservation
-	decisionMask []bool
-}
-
 type mergeDecisionWorker struct {
 	observation *mergeEvaluationObservation
-	requests    chan mergeDecisionRequest
-	results     chan sdk.Verdict
 	stopCh      chan struct{}
 	samplers    []sdk.Sampler
-	stopOnce    sync.Once
 }
 
 type observedSampler struct {
@@ -162,44 +147,28 @@ func defaultSamplerMetricName(idx int) string {
 }
 
 func newNamedMergeChain(group, schema string, samplers []namedSampler, circuitBreakN int) *mergeChain {
-	var union sdk.Projection
-	seen := make(map[string]struct{})
 	activeSamplers := make([]sdk.Sampler, 0, len(samplers))
 	activeNames := make([]string, 0, len(samplers))
 	for _, named := range samplers {
 		if named.sampler == nil {
 			continue
 		}
-		sampler := named.sampler
-		activeSamplers = append(activeSamplers, sampler)
+		activeSamplers = append(activeSamplers, named.sampler)
 		name := named.name
 		if name == "" {
 			name = defaultSamplerMetricName(len(activeNames))
 		}
 		activeNames = append(activeNames, name)
-		proj := sampler.Project()
-		for _, name := range proj.Tags {
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			union.Tags = append(union.Tags, name)
-		}
-		if proj.SpanIDs {
-			union.SpanIDs = true
-		}
-		if proj.Spans {
-			union.Spans = true
-		}
 	}
+	session := runtime.NewSession(activeSamplers, circuitBreakN)
 	return &mergeChain{
-		projection:     union,
+		projection:     session.Projection(),
+		session:        session,
 		samplers:       activeSamplers,
 		samplerNames:   activeNames,
-		executionSlots: samplerExecutionSlots,
+		executionSlots: nil,
 		group:          group,
 		schema:         schema,
-		circuitBreakN:  circuitBreakN,
 	}
 }
 
@@ -223,81 +192,49 @@ func (mc *mergeChain) executeObservedInto(batch *sdk.TraceBatch, timeout time.Du
 ) (sdk.Verdict, bool, error) {
 	mc.executionMu.Lock()
 	defer mc.executionMu.Unlock()
-
 	if len(mc.samplers) == 0 {
 		return retainAllVerdict(len(batch.Traces), decisionMask), true, nil
 	}
-
 	mc.mu.Lock()
-	if mc.circuitOpen {
-		mc.mu.Unlock()
-		mc.observe(pluginExecutionObservation{
-			result: pluginExecutionResultCircuitOpen, batchTraces: len(batch.Traces),
-		}, observation)
+	circuitOpen := mc.circuitOpen
+	mc.mu.Unlock()
+	if circuitOpen {
+		mc.observe(pluginExecutionObservation{result: pluginExecutionResultCircuitOpen, batchTraces: len(batch.Traces)}, observation)
 		return retainAllVerdict(len(batch.Traces), decisionMask), true, nil
 	}
-	mc.mu.Unlock()
-
-	if !mc.acquireExecutionSlot(timeout) {
-		return mc.handleTimeout(batch, observation, decisionMask, nil, true)
+	if mc.executionSlots != nil {
+		mc.session.SetExecutionSlots(mc.executionSlots)
 	}
-
-	worker := mc.acquireWorker()
-	worker.requests <- mergeDecisionRequest{batch: batch, observation: observation, decisionMask: decisionMask}
-	timeoutCh := mc.resetTimer(timeout)
-
-	select {
-	case verdict := <-worker.results:
-		mc.stopTimer()
-		mc.mu.Lock()
-		mc.consecutiveTOs = 0
-		mc.mu.Unlock()
-		mc.observe(pluginExecutionObservation{
-			result: pluginExecutionResultSuccess, batchTraces: len(batch.Traces),
-		}, observation)
-		return verdict, true, nil
-	case <-timeoutCh:
-		return mc.handleTimeout(batch, observation, nil, worker, false)
+	worker := mc.worker
+	if worker == nil {
+		worker = &mergeDecisionWorker{stopCh: make(chan struct{})}
+		worker.samplers = make([]sdk.Sampler, len(mc.samplers))
+		for idx, sampler := range mc.samplers {
+			worker.samplers[idx] = &observedSampler{Sampler: sampler, chain: mc, worker: worker, pluginName: mc.samplerNames[idx]}
+		}
+		if len(mc.samplers) > 0 {
+			mc.worker = worker
+		}
 	}
-}
-
-func (mc *mergeChain) acquireExecutionSlot(timeout time.Duration) bool {
-	select {
-	case mc.executionSlots <- struct{}{}:
-		return true
-	default:
-	}
-	timeoutCh := mc.resetTimer(timeout)
-	select {
-	case mc.executionSlots <- struct{}{}:
-		mc.stopTimer()
-		return true
-	case <-timeoutCh:
-		return false
-	}
-}
-
-func (mc *mergeChain) handleTimeout(batch *sdk.TraceBatch, observation *mergeEvaluationObservation, decisionMask []bool,
-	worker *mergeDecisionWorker, reusable bool,
-) (sdk.Verdict, bool, error) {
-	if worker != nil {
-		mc.abandonWorker(worker)
+	worker.observation = observation
+	verdict, reusable, err := mc.session.ExecuteInto(batch, timeout, decisionMask,
+		func(_ []sdk.Sampler, batch *sdk.TraceBatch, mask []bool) sdk.Verdict {
+			return mc.runChainWithSamplers(worker.samplers, batch, observation, mask)
+		})
+	result := pluginExecutionResultSuccess
+	if err != nil {
+		close(worker.stopCh)
+		mc.worker = nil
+		result = pluginExecutionResultTimeout
 	}
 	mc.mu.Lock()
-	mc.consecutiveTOs++
-	opened := false
-	if mc.circuitBreakN > 0 && mc.consecutiveTOs >= mc.circuitBreakN {
-		mc.circuitOpen = true
-		opened = true
+	mc.circuitOpen, mc.consecutiveTOs = mc.session.State()
+	if err == nil && mc.circuitOpen {
+		result = pluginExecutionResultCircuitOpen
 	}
 	mc.mu.Unlock()
-	mc.observe(pluginExecutionObservation{
-		result: pluginExecutionResultTimeout, batchTraces: len(batch.Traces),
-	}, observation)
-	if opened {
-		return retainAllVerdict(len(batch.Traces), decisionMask), reusable, fmt.Errorf("circuit_open")
-	}
-	return retainAllVerdict(len(batch.Traces), decisionMask), reusable, fmt.Errorf("timeout")
+	mc.observe(pluginExecutionObservation{result: result, batchTraces: len(batch.Traces)}, observation)
+	return verdict, reusable, err
 }
 
 func (mc *mergeChain) observe(observation pluginExecutionObservation, evaluation *mergeEvaluationObservation) {
@@ -322,86 +259,14 @@ func retainAllVerdict(traceCount int, mask []bool) sdk.Verdict {
 	return sdk.Verdict{Keep: mask}
 }
 
-func (mc *mergeChain) acquireWorker() *mergeDecisionWorker {
-	if mc.worker != nil {
-		return mc.worker
-	}
-	worker := &mergeDecisionWorker{
-		requests: make(chan mergeDecisionRequest),
-		results:  make(chan sdk.Verdict),
-		stopCh:   make(chan struct{}),
-	}
-	worker.samplers = make([]sdk.Sampler, len(mc.samplers))
-	for idx, sampler := range mc.samplers {
-		worker.samplers[idx] = &observedSampler{
-			Sampler: sampler, chain: mc, worker: worker, pluginName: mc.samplerNames[idx],
-		}
-	}
-	mc.worker = worker
-	go worker.run(mc)
-	return worker
-}
-
-func (mdw *mergeDecisionWorker) run(chain *mergeChain) {
-	for {
-		select {
-		case request := <-mdw.requests:
-			if !mdw.execute(chain, request) {
-				return
-			}
-		case <-mdw.stopCh:
-			return
-		}
-	}
-}
-
-func (mdw *mergeDecisionWorker) execute(chain *mergeChain, request mergeDecisionRequest) (keepRunning bool) {
-	defer func() { <-chain.executionSlots }()
-	mdw.observation = request.observation
-	result := chain.runChainWithSamplers(mdw.samplers, request.batch, request.observation, request.decisionMask)
-	mdw.observation = nil
-	select {
-	case mdw.results <- result:
-		return true
-	case <-mdw.stopCh:
-		return false
-	}
-}
-
-func (mc *mergeChain) abandonWorker(worker *mergeDecisionWorker) {
-	worker.stopOnce.Do(func() { close(worker.stopCh) })
-	if mc.worker == worker {
-		mc.worker = nil
-	}
-}
-
-func (mc *mergeChain) resetTimer(timeout time.Duration) <-chan time.Time {
-	if mc.timer == nil {
-		mc.timer = time.NewTimer(timeout)
-		return mc.timer.C
-	}
-	mc.stopTimer()
-	mc.timer.Reset(timeout)
-	return mc.timer.C
-}
-
-func (mc *mergeChain) stopTimer() {
-	if mc.timer == nil || mc.timer.Stop() {
-		return
-	}
-	select {
-	case <-mc.timer.C:
-	default:
-	}
-}
-
 func (mc *mergeChain) close() {
 	mc.executionMu.Lock()
 	defer mc.executionMu.Unlock()
-	mc.stopTimer()
 	if mc.worker != nil {
-		mc.abandonWorker(mc.worker)
+		close(mc.worker.stopCh)
+		mc.worker = nil
 	}
+	mc.session.Close()
 }
 
 // runChain evaluates the chain via the shared sdk.EvaluateChain — the same

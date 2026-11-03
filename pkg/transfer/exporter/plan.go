@@ -36,12 +36,13 @@ import (
 // DefaultStageName is the name the CLI and manifest give the engine's unnamed default tier.
 const DefaultStageName = "hot"
 
-// PlanResult is everything one dry-run Plan call returned. Frames holds the `units` frames
+// PlanResult is everything one Plan call returned. Frames holds the `units` frames
 // with node_id stamped and the stage normalized; the node lists come from the `summary` frame.
 type PlanResult struct {
-	Frames           []*transferv1.UnitFrame
-	UnreachableNodes []string
-	AnsweredNodes    []string
+	Frames              []*transferv1.UnitFrame
+	UnreachableNodes    []string
+	AnsweredNodes       []string
+	PreemptedSessionIDs []string
 }
 
 // RunPlan performs the single server-streaming live-directory Plan call of a dry run.
@@ -62,12 +63,13 @@ func unsupported(err error) error {
 	return err
 }
 
-// collectPlanFrames drains a dry-run Plan stream. `units` frames are kept, the single
+// collectPlanFrames drains a Plan stream: a dry run, or a create after its `created` frame
+// was read. `units` frames are kept, the single
 // `summary` frame closes the stream and is folded into the result, and frames from nodes
 // the liaison reported unreachable are dropped so a half-answered node counts as a
 // coverage gap, not as a source; a frame from a node the summary lists as neither answered nor
-// unreachable breaks the protocol. A `created` frame (the client never asks for a session), a
-// second summary or any frame after it breaks the protocol; a stream that ends without the
+// unreachable breaks the protocol. A `created` frame at this point, a second summary or any
+// frame after it breaks the protocol; a stream that ends without the
 // summary is an error too: without it the coverage is unknown.
 func collectPlanFrames(stream transferv1.ExportService_PlanClient) (*PlanResult, error) {
 	result := &PlanResult{}
@@ -89,14 +91,20 @@ func collectPlanFrames(stream transferv1.ExportService_PlanClient) (*PlanResult,
 			sawSummary = true
 			result.UnreachableNodes = f.Summary.GetUnreachableNodes()
 			result.AnsweredNodes = f.Summary.GetAnsweredNodes()
+			result.PreemptedSessionIDs = f.Summary.GetPreemptedSessionIds()
 			continue
 		case *transferv1.PlanResponse_Units:
 			units = f.Units
 		default:
-			return nil, Exit(ExitRuntime, "plan stream: unexpected frame %T in a dry run", frame.GetFrame())
+			return nil, Exit(ExitRuntime, "plan stream: unexpected frame %T", frame.GetFrame())
 		}
 		if units.GetNodeId() == "" {
 			return nil, errors.New("plan frame without node_id; the liaison must stamp every units frame")
+		}
+		for _, u := range units.GetUnits() {
+			if seg := u.GetSegment(); seg != nil && seg.GetUnit() == nil {
+				return nil, Exit(ExitRuntime, "plan stream: node %s sent a segment inventory without its unit", units.GetNodeId())
+			}
 		}
 		units.Stage = NormalizeStage(units.GetStage())
 		result.Frames = append(result.Frames, units)

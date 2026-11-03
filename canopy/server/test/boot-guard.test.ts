@@ -65,8 +65,8 @@ describe('Boot guards (MF3)', () => {
 
     expect(() => loadConfig()).not.toThrow();
     const cfg = loadConfig();
-    expect(cfg.users.length).toBeGreaterThan(0);
-    expect(cfg.users[0].role).toBe('admin');
+    expect(cfg.auth.local.users.length).toBeGreaterThan(0);
+    expect(cfg.auth.local.users[0].role).toBe('admin');
 
     Object.assign(process.env, orig);
   });

@@ -112,3 +112,28 @@ func TestErrIterator(t *testing.T) {
 	assert.ErrorIs(t, it.Err(), boom)
 	assert.Equal(t, dump.Position{BlockIdx: 0, RowIdx: -1}, it.Position())
 }
+
+// Fixed-width types need eight bytes per value; strings and binaries fit any bytes.
+func TestFitsValueType(t *testing.T) {
+	eight := make([]byte, 8)
+	cases := []struct {
+		value     []byte
+		values    [][]byte
+		valueType pbv1.ValueType
+		fits      bool
+	}{
+		{valueType: pbv1.ValueTypeInt64, value: eight, fits: true},
+		{valueType: pbv1.ValueTypeInt64, value: []byte("abc"), fits: false},
+		{valueType: pbv1.ValueTypeInt64, value: nil, fits: true},
+		{valueType: pbv1.ValueTypeTimestamp, value: make([]byte, 9), fits: false},
+		{valueType: pbv1.ValueTypeInt64Arr, values: [][]byte{eight, eight}, fits: true},
+		{valueType: pbv1.ValueTypeInt64Arr, values: [][]byte{eight, []byte("x")}, fits: false},
+		{valueType: pbv1.ValueTypeStr, value: []byte("abc"), fits: true},
+		{valueType: pbv1.ValueTypeStrArr, values: [][]byte{[]byte("a"), []byte("bcd")}, fits: true},
+	}
+	for i, c := range cases {
+		if got := dump.FitsValueType(c.valueType, c.value, c.values); got != c.fits {
+			t.Fatalf("case %d (%v): got %v, want %v", i, c.valueType, got, c.fits)
+		}
+	}
+}

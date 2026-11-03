@@ -89,6 +89,7 @@ type server struct {
 	clientCloser          context.CancelFunc
 	ser                   *grpclib.Server
 	listeners             map[bus.Topic][]bus.MessageListener
+	streamListeners       map[bus.Topic]bus.StreamListener
 	topicMap              map[string]bus.Topic
 	chunkedSyncHandlers   map[bus.Topic]queue.ChunkedSyncHandler
 	log                   *logger.Logger
@@ -124,6 +125,7 @@ func NewServer(omr observability.MetricsRegistry) queue.Server {
 func NewServerWithPorts(omr observability.MetricsRegistry, flagNamePrefix string, port, httpPort uint32) queue.Server {
 	srv := &server{
 		listeners:           make(map[bus.Topic][]bus.MessageListener),
+		streamListeners:     make(map[bus.Topic]bus.StreamListener),
 		topicMap:            make(map[string]bus.Topic),
 		chunkedSyncHandlers: make(map[bus.Topic]queue.ChunkedSyncHandler),
 		omr:                 omr,

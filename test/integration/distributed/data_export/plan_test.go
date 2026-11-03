@@ -67,6 +67,21 @@ var (
 	nodeNames      []string
 	closeDataNodes []func()
 	conn           *grpc.ClientConn
+	// The base times the suite wrote its data with (test/cases/<catalog>/data), every write
+	// spaced by writeInterval.
+	streamBase  time.Time
+	measureBase time.Time
+	traceBase   time.Time
+)
+
+const writeInterval = 500 * time.Millisecond
+
+// The suite writes measureRows points into service_cpm_minute and topNSourcePoints into
+// topNSourceMeasure, the source measure of a Top-N aggregation of sw_metric.
+const (
+	measureRows       = 6
+	topNSourceMeasure = "service_instance_cpm_minute"
+	topNSourcePoints  = 6
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -105,12 +120,19 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ginkgo.By("Writing stream, measure, trace and property data")
-	casesstreamdata.Write(conn, "sw", timestamp.NowMilli(), 500*time.Millisecond)
+	streamBase = timestamp.NowMilli()
+	casesstreamdata.Write(conn, "sw", streamBase, writeInterval)
 	ns := timestamp.NowMilli().UnixNano()
-	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json",
-		time.Unix(0, ns-ns%int64(time.Minute)), 500*time.Millisecond)
-	casestracedata.Write(conn, "sw", timestamp.NowMilli(), 500*time.Millisecond)
+	measureBase = time.Unix(0, ns-ns%int64(time.Minute))
+	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", measureBase, writeInterval)
+	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", measureBase, writeInterval)
+	// A minute apart, the points of a Top-N aggregation's source measure span several windows,
+	// so the liaison's Top-N processor closes all but the last and writes their _top_n_result rows.
+	casesmeasuredata.Write(conn, topNSourceMeasure, "sw_metric", topNSourceMeasure+"_data.json", measureBase, time.Minute)
+	traceBase = timestamp.NowMilli()
+	casestracedata.Write(conn, "sw", traceBase, writeInterval)
 	casespropertydata.Write(conn, "sw1")
+	transfertest.WriteTombstone(conn)
 	return []byte(liaisonAddr)
 }, func(_ []byte) {})
 
@@ -275,7 +297,18 @@ func defaultShardSources(frames []*transferv1.PlanResponse) map[string]map[strin
 	return out
 }
 
-var _ = ginkgo.Describe("ExportService", ginkgo.Ordered, func() {
+// The suite's specs share one cluster and the last plan spec stops a data node, so a single
+// ordered container runs the export specs first and the plan specs after them.
+var _ = ginkgo.Describe("Data export on a cluster", ginkgo.Ordered, func() {
+	exportSpecs()
+	planSpecs()
+})
+
+func planSpecs() {
+	ginkgo.Describe("ExportService", ginkgo.Ordered, planServiceSpecs)
+}
+
+func planServiceSpecs() {
 	streamSelector := []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_STREAM}}
 
 	ginkgo.BeforeAll(func() {
@@ -621,4 +654,4 @@ var _ = ginkgo.Describe("ExportService", ginkgo.Ordered, func() {
 		gomega.Expect(transfertest.UnitFrames(frames)).NotTo(gomega.BeEmpty())
 		gomega.Expect(transfertest.Release(conn, frames[0].GetCreated().GetSessionId())).To(gomega.BeEmpty())
 	})
-})
+}

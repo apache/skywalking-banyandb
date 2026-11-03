@@ -20,13 +20,14 @@ package qlgen
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-var timeToken = regexp.MustCompile(`\{\{(time|nanos):([^{}]+)\}\}`)
+var timeToken = regexp.MustCompile(`\{\{(time|nanos|unix_nanos):([^{}]+)\}\}`)
 
 // Render replaces time offsets in queries, bound parameters, or expected JSON.
 func Render(template string, base time.Time) (string, error) {
@@ -61,7 +62,11 @@ func Render(template string, base time.Time) (string, error) {
 			renderErr = fmt.Errorf("time offset overflows duration: %d", millis)
 			return token
 		}
-		return base.Add(time.Duration(millis) * unit).UTC().Format(time.RFC3339Nano)
+		timestamp := base.Add(time.Duration(millis) * unit).UTC()
+		if kind == "unix_nanos" {
+			return strconv.FormatInt(timestamp.UnixNano(), 10)
+		}
+		return timestamp.Format(time.RFC3339Nano)
 	})
 	if renderErr != nil {
 		return "", renderErr
@@ -232,6 +237,16 @@ func jsonValue(value any) any {
 	case int64:
 		return map[string]any{"int": map[string]any{"value": strconv.FormatInt(typed, 10)}}
 	case float64:
+		if math.IsNaN(typed) {
+			return map[string]any{"float": map[string]any{"value": "NaN"}}
+		}
+		if math.IsInf(typed, 0) {
+			text := "Infinity"
+			if typed < 0 {
+				text = "-Infinity"
+			}
+			return map[string]any{"float": map[string]any{"value": text}}
+		}
 		return map[string]any{"float": map[string]any{"value": typed}}
 	case []string:
 		if typed == nil {

@@ -246,9 +246,9 @@ func isLoopbackHost(host string) bool {
 // GroupConfig encapsulates the parsed lifecycle configuration for a Group.
 // It contains all necessary information for migration and deletion operations.
 type GroupConfig struct {
+	NodeSelector node.Selector
+	QueueClient  queue.Client
 	*commonv1.Group
-	NodeSelector   node.Selector
-	QueueClient    queue.Client
 	AccumulatedTTL *commonv1.IntervalRule
 	// SegmentInterval is the current stage's segment interval, used to read
 	// source segments on this node.
@@ -259,10 +259,12 @@ type GroupConfig struct {
 	TargetSegmentInterval *commonv1.IntervalRule
 	// SourceStage and TargetStage are the migration's source and target stage
 	// names (e.g. "hot" -> "warm"), surfaced in the migration report's errors.
-	SourceStage    string
-	TargetStage    string
-	TargetShardNum uint32
-	TargetReplicas uint32
+	SourceStage       string
+	TargetStage       string
+	SamplingHost      samplingHostConfig
+	TargetShardNum    uint32
+	TargetReplicas    uint32
+	LegacyTraceReplay bool
 }
 
 // Close releases resources held by the GroupConfig.

@@ -131,6 +131,7 @@ type lifecycleService struct {
 	orphanArchiveSubdir string
 	orphanCfg           orphanConfig
 	localNodeMD         schema.Metadata
+	samplingHost        samplingHostConfig
 	maxExecutionTimes   int
 	chunkSize           run.Bytes
 	lifecycleGRPCPort   uint32
@@ -215,6 +216,11 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 	flagS.DurationVar(&lifecycleSendRetryTimeout, "lifecycle-send-retry-timeout", defaultLifecycleSendRetryTimeout,
 		"Max total time to retry streaming a migration part to a target node on transient failures (target restarting, disconnect, receiver busy)")
 
+	flagS.BoolVar(&l.samplingHost.Enabled, "trace-sampling-enabled", false, "Enable native sampler hosting for source-stage trace migration policies")
+	flagS.StringVar(&l.samplingHost.TrustedDirectory, "trace-sampling-trusted-dir", "", "Trusted directory containing migration sampler plugins")
+	flagS.DurationVar(&l.samplingHost.Timeout, "trace-sampling-timeout", time.Second, "Maximum execution time for a migration sampling batch")
+	flagS.IntVar(&l.samplingHost.CircuitBreakN, "trace-sampling-circuit-break", 3, "Consecutive sampling timeouts before retaining all subsequent batches")
+
 	// Lifecycle server flags
 	flagS.BoolVar(&l.lifecycleTLS, "lifecycle-tls", false, "connection uses TLS if true, else plain TCP")
 	flagS.StringVar(&l.lifecycleCertFile, "lifecycle-cert-file", "", "the TLS cert file")
@@ -227,6 +233,25 @@ func (l *lifecycleService) FlagSet() *run.FlagSet {
 }
 
 func (l *lifecycleService) Validate() error {
+	if l.samplingHost.Enabled {
+		if l.samplingHost.TrustedDirectory == "" {
+			return errors.New("trace-sampling-trusted-dir is required when trace sampling is enabled")
+		}
+		directory, directoryErr := os.Stat(l.samplingHost.TrustedDirectory)
+		if directoryErr != nil {
+			return fmt.Errorf("trace sampling trusted directory: %w", directoryErr)
+		}
+		if !directory.IsDir() {
+			return errors.New("trace-sampling-trusted-dir must be a directory")
+		}
+		if l.samplingHost.Timeout <= 0 {
+			return errors.New("trace-sampling-timeout must be positive")
+		}
+		if l.samplingHost.CircuitBreakN <= 0 {
+			return errors.New("trace-sampling-circuit-break must be positive")
+		}
+	}
+
 	if l.schedule != "" {
 		l.lifecycleGRPCAddr = net.JoinHostPort(l.lifecycleHost, strconv.FormatUint(uint64(l.lifecycleGRPCPort), 10))
 		if l.lifecycleGRPCAddr == ":" {
@@ -615,7 +640,31 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 	defer func() {
 		l.recordLastRun(runStart, err)
 	}()
+	// Discover durable sampled work before interpreting advisory legacy progress.
+	recoveredProgress := NewProgress(l.progressFilePath, l.l)
+	recoveredGroups, recoveryErr := recoverSamplingAttempts(l.progressFilePath+".sampling", recoveredProgress)
+	if recoveryErr != nil {
+		return recoveryErr
+	}
 	progress := LoadProgress(l.progressFilePath, l.l)
+	progress.legacyTraceSnapshot = progress.SnapshotTraceDir != ""
+	progress.samplingOwnedGroups = recoveredProgress.samplingOwnedGroups
+	if progress.samplingOwnedGroups == nil {
+		progress.samplingOwnedGroups = make(map[string]bool)
+	}
+	for groupName := range recoveredGroups {
+		progress.samplingOwnedGroups[groupName] = true
+	}
+	if recoveredProgress.SnapshotTraceDir != "" {
+		if progress.SnapshotTraceDir != "" && progress.SnapshotTraceDir != recoveredProgress.SnapshotTraceDir {
+			return fmt.Errorf("legacy progress conflicts with sampling snapshot")
+		}
+		progress.SnapshotTraceDir = recoveredProgress.SnapshotTraceDir
+		for groupName := range progress.samplingOwnedGroups {
+			delete(progress.CompletedGroups, groupName)
+			delete(progress.DeletedTraceGroups, groupName)
+		}
+	}
 	progress.ClearErrors()
 
 	groups, err := l.getGroupsToProcess(ctx, progress)
@@ -624,6 +673,15 @@ func (l *lifecycleService) action(ctx context.Context) (err error) {
 		return err
 	}
 
+	for index, group := range groups {
+		if pinned := recoveredGroups[group.Metadata.Name]; pinned != nil {
+			groups[index] = pinned
+			delete(recoveredGroups, group.Metadata.Name)
+		}
+	}
+	for _, pinned := range recoveredGroups {
+		groups = append(groups, pinned)
+	}
 	l.l.Info().Msgf("starting migration for %d groups: %v", len(groups), getGroupNames(groups))
 
 	if len(groups) == 0 {
@@ -893,6 +951,7 @@ func (l *lifecycleService) buildMigrationReport(p *Progress) map[string]interfac
 		"summary":        l.buildSummaryStats(p),
 		"errors":         l.buildErrorSummary(p),
 		"orphans":        orphans,
+		"trace_sampling": p.TraceSamplingReports,
 		"snapshot_info": map[string]interface{}{
 			"stream_dir":  p.SnapshotStreamDir,
 			"measure_dir": p.SnapshotMeasureDir,
@@ -1432,6 +1491,10 @@ func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Gr
 		l.l.Error().Err(err).Msgf("failed to parse group %s", g.Metadata.Name)
 		return
 	}
+	group.LegacyTraceReplay = progress.legacyTraceSnapshot && !progress.samplingOwnedGroups[g.Metadata.Name]
+	group.SamplingHost = l.samplingHost
+	group.SamplingHost.ArtifactRoot = l.progressFilePath + ".sampling"
+
 	l.recordCycleGroup(g.Metadata.Name, senderNode, senderRole, senderTier)
 	defer group.Close()
 
@@ -1452,6 +1515,22 @@ func (l *lifecycleService) processTraceGroup(ctx context.Context, g *commonv1.Gr
 
 	l.l.Info().Msgf("deleting expired trace segments for group: %s", g.Metadata.Name)
 	l.deleteExpiredTraceSegments(ctx, g, segmentSuffixes, progress)
+	if group.SamplingHost.ArtifactRoot != "" {
+		artifactGroup := filepath.Join(group.SamplingHost.ArtifactRoot, g.Metadata.Name)
+		if _, artifactErr := os.Stat(artifactGroup); artifactErr == nil {
+			if !progress.IsTraceGroupDeleted(g.Metadata.Name) {
+				return
+			}
+			if cleanupErr := os.RemoveAll(artifactGroup); cleanupErr != nil {
+				l.l.Error().Err(cleanupErr).Msg("sampling artifact cleanup failed")
+				return
+			}
+			if cleanupErr := syncSamplingDirectory(group.SamplingHost.ArtifactRoot); cleanupErr != nil {
+				l.l.Error().Err(cleanupErr).Msg("sampling cleanup durability failed")
+				return
+			}
+		}
+	}
 	progress.MarkGroupCompleted(g.Metadata.Name)
 	progress.Save(l.progressFilePath, l.l)
 }
@@ -1470,6 +1549,9 @@ func (l *lifecycleService) processTraceGroupFileBased(ctx context.Context, g *Gr
 	// skip the counting if the tsdb root path does not exist
 	// may no data found in the snapshot
 	if _, err := os.Stat(rootDir); err != nil && errors.Is(err, os.ErrNotExist) {
+		if _, artifactErr := os.Stat(filepath.Join(g.SamplingHost.ArtifactRoot, g.Metadata.Name)); artifactErr == nil {
+			return nil, fmt.Errorf("required prepared sampling snapshot group %s is missing", g.Metadata.Name)
+		}
 		l.l.Info().Msgf("skipping file-based trace migration for group because is empty in the snapshot dir: %s", g.Metadata.Name)
 		return nil, nil
 	}

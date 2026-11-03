@@ -43,12 +43,13 @@ import (
 //     -Inf < -finite < +/-0 (the two zeros compare equal) < +finite < +Inf.
 //   - string: raw UTF-8 bytes.
 //   - []byte: raw bytes.
+//   - []int64 / []string (array tags): pbv1.MarshalTagValue of the array TagValue, the
+//     same bytes the row path's newComparableElement produced.
 //   - *modelv1.TagValue passthrough: pbv1.MarshalTagValue applied to the
 //     cell. This is the same encoding the row path's newComparableElement
 //     uses, so equal-sort-field windows align with the row baseline.
 //
-// Returns an error on unsupported column types (e.g. []int64, []string,
-// FieldValue) — those should be rejected at plan-analysis time before the
+// Returns an error on unsupported column types (e.g. FieldValue) — those should be rejected at plan-analysis time before the
 // merger ever sees them. A null cell encodes as nil so it sorts before any
 // non-null value in lex order.
 func encodeSortKey(col vectorized.Column, rowIdx int) ([]byte, error) {
@@ -99,6 +100,11 @@ func encodeSortKey(col vectorized.Column, rowIdx int) ([]byte, error) {
 			return nil, nil
 		}
 		return pbv1.MarshalTagValue(tv)
+	case *vectorized.TypedColumn[[]int64]:
+		// An array tag sorts by the same encoding the row path gave its TagValue.
+		return pbv1.MarshalTagValue(&modelv1.TagValue{Value: &modelv1.TagValue_IntArray{IntArray: &modelv1.IntArray{Value: c.Data()[rowIdx]}}})
+	case *vectorized.TypedColumn[[]string]:
+		return pbv1.MarshalTagValue(&modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: c.Data()[rowIdx]}}})
 	}
 	return nil, fmt.Errorf("encodeSortKey: unsupported column type %s", col.Type())
 }

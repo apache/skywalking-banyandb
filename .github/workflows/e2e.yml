@@ -35,11 +35,11 @@ concurrency:
 jobs:
   DockerImage:
     name: Build Docker image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Setup build environment
@@ -56,7 +56,7 @@ jobs:
 
   StoragePlugins:
     name: ${{ matrix.test.name }}
-    runs-on: ${{ matrix.test.runs-on || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.test.runs-on || 'ubuntu-24.04' }}
     timeout-minutes: 90
     needs: [DockerImage]
     strategy:
@@ -73,6 +73,8 @@ jobs:
             config: test/e2e-v2/cases/log/banyandb/e2e.yaml
           - name: Zipkin
             config: test/e2e-v2/cases/zipkin/banyandb/e2e.yaml
+          - name: AI Agent
+            config: test/e2e-v2/cases/ai-agent/banyandb/e2e.yaml
           - name: Cluster
             config: test/e2e-v2/cases/cluster/e2e.yaml
           - name: RBAC
@@ -82,12 +84,14 @@ jobs:
           - name: Rover eBPF - Istio mesh, Kind
             config: test/e2e-v2/cases/rover/process/istio/banyandb/e2e-banyandb.yaml
             runs-on: ubuntu-24.04
+          - name: Native Logs
+            config: test/e2e-v2/cases/nativelog/e2e.yaml
           - name: Lifecycle File Discovery
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
             config: test/e2e-v2/cases/lifecycle/dns-discovery/e2e.yaml
-          - name: Transfer Dry Run
-            config: test/e2e-v2/cases/transfer/dry-run/e2e.yaml
+          - name: Transfer Export
+            config: test/e2e-v2/cases/transfer/export/e2e.yaml
             # Its setup builds bydbctl on the host, which needs the generated protobuf code
             # (gitignored) from the prepare job's build artifacts.
             download-artifacts: 'true'
@@ -95,7 +99,7 @@ jobs:
       TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Load env
         run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
       - name: Setup build environment
@@ -105,7 +109,7 @@ jobs:
           setup-node: 'false'
           setup-docker: 'false'
       - name: Download docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: banyandb-docker-image
           path: /tmp
@@ -114,7 +118,7 @@ jobs:
           docker load --input /tmp/banyandb-testing-image.tar.gz
           docker image ls
       - name: Login to ghcr
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -136,7 +140,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -162,7 +166,7 @@ jobs:
           path: "test/e2e-v2/cases/lifecycle/data-generator/tmp"
 
   Storage:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     needs: [StoragePlugins]
     steps:
@@ -172,7 +176,7 @@ jobs:
   RBACStress:
     name: RBAC Cluster Stress
     if: ${{ inputs.run-rbac-stress }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     continue-on-error: true
     needs: [DockerImage]
@@ -180,7 +184,7 @@ jobs:
       TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Load env
         run: grep -v '^#' test/e2e-v2/script/env >> "$GITHUB_ENV"
       - name: Setup build environment
@@ -190,14 +194,14 @@ jobs:
           setup-node: 'false'
           setup-docker: 'false'
       - name: Download docker image artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: banyandb-docker-image
           path: /tmp
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
       - if: ${{ failure() }}

@@ -224,7 +224,7 @@ method policy used by direct gRPC and grpc-gateway calls:
   deletion-task queries.
 - `cluster:admin` covers snapshots, retention deletion, measure internal query,
   the conditionally registered node-schema-status RPCs, and the data export
-  `ExportService` methods `Plan` and `Sessions`.
+  `ExportService` methods `Plan`, `Sessions` and `Export`.
 - `schema:read` and `schema:write` cover group and resource-schema operations,
   including schema-barrier waits. Group lists are filtered to the caller's
   visible groups.

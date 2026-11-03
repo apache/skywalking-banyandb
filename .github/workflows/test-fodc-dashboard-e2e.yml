@@ -40,17 +40,17 @@ concurrency:
 jobs:
   skip:
     if: ${{ github.event_name == 'workflow_call' && !inputs.should_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Skip FODC Dashboard E2E
         run: echo "Skipping FODC Dashboard E2E because this change does not affect FODC-related paths."
 
   fodc-dashboard-sync-check:
     if: ${{ github.event_name != 'workflow_call' || inputs.should_run }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Verify dashboard metrics match test lists
         run: bash test/e2e-v2/cases/fodc/check-dashboard-sync.sh
 
@@ -61,7 +61,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
 
@@ -75,7 +75,7 @@ jobs:
           setup-docker: 'true'
 
       - name: Cache generate tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: bin
           key: ${{ runner.os }}-generate-tool-${{ hashFiles('**/version.mk', 'go.mod') }}
@@ -102,6 +102,6 @@ jobs:
         run: docker image ls | grep -E 'skywalking-banyandb' || true
 
       - name: Run FODC dashboard-metrics e2e
-        uses: apache/skywalking-infra-e2e@ef073adb8b9e148e4eaf3f905fa4e238ee5cc7d6
+        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/fodc/e2e.yaml

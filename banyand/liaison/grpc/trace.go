@@ -19,12 +19,14 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -41,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	"github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -78,6 +81,8 @@ type traceService struct {
 	l               *logger.Logger
 	metrics         *metrics
 	queryBudget     *protector.QueryBudget
+	protector       protector.Memory
+	writeConfig     *writeSessionConfig
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
 }
@@ -103,7 +108,7 @@ func (s *traceService) activeQueryAccessLog(root string, sampled bool) (err erro
 }
 
 func (s *traceService) validateWriteRequest(writeEntity *tracev1.WriteRequest,
-	metadata *commonv1.Metadata, specLocator *traceSpecLocator, stream tracev1.TraceService_WriteServer,
+	metadata *commonv1.Metadata, specLocator *traceSpecLocator, stream traceResponseSender,
 ) modelv1.Status {
 	id := getID(metadata)
 	traceEntity, existed := s.entityRepo.getTrace(id)
@@ -264,110 +269,135 @@ func (s *traceService) navigateWithRetry(writeEntity *tracev1.WriteRequest, meta
 	return s.navigate(metadata, writeEntity, specLocator)
 }
 
-func (s *traceService) publishMessages(
-	ctx context.Context,
-	publisher queue.BatchPublisher,
-	writeEntity *tracev1.WriteRequest,
-	metadata *commonv1.Metadata,
-	spec *tracev1.TagSpec,
-	shardID common.ShardID,
-	nodeMetadataSent map[string]bool,
-	nodeSpecSent map[string]bool,
-) ([]string, error) {
-	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
-	if err != nil {
-		return nil, err
-	}
-
-	requestToSend := &tracev1.WriteRequest{
-		Version: writeEntity.GetVersion(),
-		Tags:    writeEntity.GetTags(),
-		Span:    writeEntity.GetSpan(),
-	}
-	if !nodeMetadataSent[nodeID] {
-		requestToSend.Metadata = metadata
-		nodeMetadataSent[nodeID] = true
-	}
-	if spec != nil && !nodeSpecSent[nodeID] {
-		requestToSend.TagSpec = spec
-		nodeSpecSent[nodeID] = true
-	}
-	iwr := &tracev1.InternalWriteRequest{
-		ShardId: uint32(shardID),
-		Request: requestToSend,
-	}
-
-	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
-	if _, err := publisher.Publish(ctx, data.TopicTraceWrite, message); err != nil {
-		return nil, err
-	}
-	return []string{nodeID}, nil
+// traceResponseSender receives the responses of a trace Write stream.
+type traceResponseSender interface {
+	Send(*tracev1.WriteResponse) error
 }
 
-func (s *traceService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, version uint64, stream tracev1.TraceService_WriteServer) {
+// traceSessionSender queues responses on a write session instead of writing them to the stream.
+type traceSessionSender struct {
+	session *writeSession
+}
+
+func (t traceSessionSender) Send(resp *tracev1.WriteResponse) error {
+	t.session.Reply(writeReply{metadata: resp.GetMetadata(), id: resp.GetVersion(), status: resp.GetStatusCode()})
+	return nil
+}
+
+func (s *traceService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, version uint64, sender traceResponseSender) {
 	if metadata == nil {
 		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
 		return
 	}
-	if status != modelv1.Status_STATUS_SUCCEED {
-		s.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "trace", "write")
+	if errResp := sender.Send(&tracev1.WriteResponse{Metadata: metadata, Status: status.String(), StatusCode: status, Version: version}); errResp != nil {
+		if dl := s.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to queue trace write response")
+		}
 	}
-	s.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "trace", "write")
-	if errResp := stream.Send(&tracev1.WriteResponse{Metadata: metadata, Status: status.String(), Version: version}); errResp != nil {
+}
+
+// sendResponse writes one queued response to the client. It runs on the write session's sender goroutine only.
+func (s *traceService) sendResponse(stream tracev1.TraceService_WriteServer, reply writeReply) error {
+	group := reply.metadata.GetGroup()
+	if reply.status != modelv1.Status_STATUS_SUCCEED {
+		s.metrics.totalStreamMsgReceivedErr.Inc(1, group, "trace", "write")
+	}
+	s.metrics.totalStreamMsgSent.Inc(1, group, "trace", "write")
+	errResp := stream.Send(&tracev1.WriteResponse{
+		Metadata:     reply.metadata,
+		Version:      reply.id,
+		Status:       reply.status.String(),
+		StatusCode:   reply.status,
+		RetryAfterMs: reply.retryAfterMs,
+	})
+	if errResp != nil {
 		if dl := s.l.Debug(); dl.Enabled() {
 			dl.Err(errResp).Msg("failed to send trace write response")
 		}
-		s.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "trace", "write")
+		s.metrics.totalStreamMsgSentErr.Inc(1, group, "trace", "write")
 	}
+	return errResp
+}
+
+func (s *traceService) memoryHigh() bool {
+	return s.protector != nil && s.protector.State() == protector.StateHigh
+}
+
+type traceRecv struct {
+	req *tracev1.WriteRequest
+	err error
 }
 
 func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 	s.metrics.totalStreamStarted.Inc(1, "trace", "write")
-	publisher := s.pipeline.NewBatchPublisher(s.writeTimeout)
 	start := time.Now()
-	var succeedSent []succeedSentMessage
+	var cfg writeSessionConfig
+	if s.writeConfig != nil {
+		cfg = *s.writeConfig
+	}
+	session := newWriteSession(stream.Context(), cfg, writeSessionDeps{
+		newPublisher: func() queue.BatchPublisher { return s.pipeline.NewBatchPublisher(s.writeTimeout) },
+		send:         func(reply writeReply) error { return s.sendResponse(stream, reply) },
+		memoryHigh:   s.memoryHigh,
+		release:      s.groupRepo.releaseRequest,
+		log:          s.l,
+		metrics:      s.metrics,
+		service:      "trace",
+		topic:        data.TopicTraceWrite,
+	})
 	requestCount := 0
-	defer func() {
-		cee, err := publisher.Close()
-		for _, ssm := range succeedSent {
-			code := modelv1.Status_STATUS_SUCCEED
-			if cee != nil {
-				for _, node := range ssm.nodes {
-					if ce, ok := cee[node]; ok {
-						code = ce.Status()
-						break
-					}
-				}
-			}
-			s.sendReply(ssm.metadata, code, ssm.messageID, stream)
-		}
-		if err != nil {
-			s.l.Error().Err(err).Msg("failed to close the publisher")
-		}
-		if dl := s.l.Debug(); dl.Enabled() {
-			dl.Int("total_requests", requestCount).Msg("completed trace write batch")
-		}
-		s.metrics.totalStreamFinished.Inc(1, "trace", "write")
-		s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "trace", "write")
-	}()
+	err := s.receiveWrites(stream, session, &requestCount)
+	finishErr := session.Finish()
+	if err == nil {
+		err = finishErr
+	}
+	if dl := s.l.Debug(); dl.Enabled() {
+		dl.Int("total_requests", requestCount).Msg("completed trace write stream")
+	}
+	s.metrics.totalStreamFinished.Inc(1, "trace", "write")
+	s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "trace", "write")
+	return err
+}
 
+// receiveWrites reads the client's rows into the session until the client half-closes (nil), the stream breaks,
+// or the session fails. Rows are validated and routed here; their acknowledgement is the session's business.
+func (s *traceService) receiveWrites(stream tracev1.TraceService_WriteServer, session *writeSession, requestCount *int) error {
 	ctx := stream.Context()
+	recvCh := make(chan traceRecv)
+	stop := make(chan struct{})
+	defer close(stop)
+	// Recv runs on its own goroutine so that a session failure ends the stream even when the client is idle.
+	run.Go(ctx, "trace-write-recv", s.l, func(context.Context) {
+		for {
+			req, err := stream.Recv()
+			select {
+			case recvCh <- traceRecv{req: req, err: err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	sender := traceSessionSender{session: session}
 
 	var metadata *commonv1.Metadata
 	var spec *tracev1.TagSpec
 	var specLocator *traceSpecLocator
+	var epoch uint64
 	isFirstRequest := true
-	nodeMetadataSent := make(map[string]bool)
-	nodeSpecSent := make(map[string]bool)
 
 	for {
+		var in traceRecv
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-session.Fatal():
+			return session.Err()
+		case in = <-recvCh:
 		}
-
-		writeEntity, err := stream.Recv()
+		writeEntity, err := in.req, in.err
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -379,18 +409,23 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 		}
 
 		if writeEntity.GetMetadata() != nil {
+			// Clients may repeat the metadata on every message; only a different target starts a new batch.
+			if metadata == nil || !proto.Equal(metadata, writeEntity.GetMetadata()) {
+				epoch++
+			}
 			metadata = writeEntity.GetMetadata()
-			nodeMetadataSent = make(map[string]bool)
 			specLocator = nil
 		} else if isFirstRequest {
 			s.l.Error().Msg("metadata is required for the first request of gRPC stream")
-			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetVersion(), stream)
+			s.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeEntity.GetVersion(), sender)
 			return errors.New("metadata is required for the first request of gRPC stream")
 		}
 		isFirstRequest = false
 		if writeEntity.GetTagSpec() != nil {
+			if spec == nil || !proto.Equal(spec, writeEntity.GetTagSpec()) {
+				epoch++
+			}
 			spec = writeEntity.GetTagSpec()
-			nodeSpecSent = make(map[string]bool)
 			id := getID(metadata)
 			traceEntity, existed := s.entityRepo.getTrace(id)
 			if existed {
@@ -398,15 +433,15 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 			}
 		}
 
-		requestCount++
+		*requestCount++
 		s.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "trace", "write")
 
 		if acquireErr := s.groupRepo.acquireRequest(metadata.Group); acquireErr != nil {
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), sender)
 			continue
 		}
 
-		if s.validateWriteRequest(writeEntity, metadata, specLocator, stream) != modelv1.Status_STATUS_SUCCEED {
+		if s.validateWriteRequest(writeEntity, metadata, specLocator, sender) != modelv1.Status_STATUS_SUCCEED {
 			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
@@ -414,7 +449,7 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 		shardID, err := s.navigateWithRetry(writeEntity, metadata, specLocator)
 		if err != nil {
 			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), sender)
 			s.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
@@ -425,21 +460,44 @@ func (s *traceService) Write(stream tracev1.TraceService_WriteServer) error {
 			}
 		}
 
-		nodes, err := s.publishMessages(ctx, publisher, writeEntity, metadata, spec, shardID, nodeMetadataSent, nodeSpecSent)
-		if err != nil {
-			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
-			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), stream)
+		if err = s.appendRow(session, writeEntity, metadata, spec, shardID, epoch); err != nil {
 			s.groupRepo.releaseRequest(metadata.Group)
-			continue
+			if !errors.Is(err, errWriteRowRejected) {
+				return err
+			}
+			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
+			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetVersion(), sender)
 		}
-		s.groupRepo.releaseRequest(metadata.Group)
-
-		succeedSent = append(succeedSent, succeedSentMessage{
-			metadata:  metadata,
-			messageID: writeEntity.GetVersion(),
-			nodes:     nodes,
-		})
 	}
+}
+
+// appendRow locates the row's node and appends it to that node's open batch. A nil error means the session owns
+// the row and will release its group request when the batch is acknowledged. A rejection that concerns only this
+// row wraps errWriteRowRejected; any other error means the session has failed or the stream is gone.
+func (s *traceService) appendRow(session *writeSession, writeEntity *tracev1.WriteRequest,
+	metadata *commonv1.Metadata, spec *tracev1.TagSpec, shardID common.ShardID, epoch uint64,
+) error {
+	nodeID, err := s.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	err = session.Append(nodeID, metadata.GetGroup(), epoch, writeAck{metadata: metadata, id: writeEntity.GetVersion()},
+		func(first bool) ([]byte, error) {
+			request := &tracev1.WriteRequest{
+				Version: writeEntity.GetVersion(),
+				Tags:    writeEntity.GetTags(),
+				Span:    writeEntity.GetSpan(),
+			}
+			if first {
+				request.Metadata = metadata
+				request.TagSpec = spec
+			}
+			return proto.Marshal(&tracev1.InternalWriteRequest{ShardId: uint32(shardID), Request: request})
+		})
+	if errors.Is(err, errWriteRowSerialize) {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	return err
 }
 
 var emptyTraceQueryResponse = &tracev1.QueryResponse{Traces: make([]*tracev1.Trace, 0)}
@@ -599,7 +657,7 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		}
 		return queryResp, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, dataNodeQueryError(d)
 	}
 	return nil, nil
 }

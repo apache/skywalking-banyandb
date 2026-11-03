@@ -115,6 +115,7 @@ COPY --from=reporoot . .
 FROM build-plugins-base AS build-plugins-server
 ARG GO_LINK_VERSION
 RUN go build -trimpath -ldflags "${GO_LINK_VERSION}" -tags slim -o /out/banyand-server-plugins ./banyand/cmd/server
+RUN go build -trimpath -ldflags "${GO_LINK_VERSION}" -tags slim -o /out/banyand-lifecycle-plugins ./banyand/cmd/lifecycle
 
 # build-plugins-so compiles every first-party plugin under plugins/<vendor>/<name>
 # with the IDENTICAL toolchain/flags as build-plugins-server above (same base
@@ -151,8 +152,8 @@ RUN set -e; \
 # It ships an EMPTY /plugins directory (the trusted-dir mount POINT) and NO .so
 # files: plugins are delivered at deploy time by MOUNTING the carrier image
 # (final-carrier below) at /plugins. Because /plugins is empty, a mount there
-# shadows nothing. banyand-backup/restore/lifecycle/migration do not host
-# plugins, so they are reused unmodified from the ordinary `make release`
+# shadows nothing. The lifecycle agent hosts the same plugins and is built
+# alongside the data node above. Backup/restore/migration are reused from `make release`
 # static build output (this Dockerfile's own context, like the default
 # `build-linux` stage above) — the plugin CI job runs `make release` first for
 # exactly this.
@@ -169,7 +170,7 @@ WORKDIR /plugins
 WORKDIR /
 COPY build/bin/linux/${TARGETARCH}/banyand-backup-static /backup
 COPY build/bin/linux/${TARGETARCH}/banyand-restore-static /restore
-COPY build/bin/linux/${TARGETARCH}/banyand-lifecycle-static /lifecycle
+COPY --from=build-plugins-server /out/banyand-lifecycle-plugins /lifecycle
 COPY build/bin/linux/${TARGETARCH}/banyand-migration-static /migration
 
 ENV GRPC_GO_LOG_SEVERITY_LEVEL=ERROR

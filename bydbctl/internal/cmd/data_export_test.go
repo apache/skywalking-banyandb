@@ -214,16 +214,18 @@ var _ = Describe("Data Export Dry Run", func() {
 		}
 	})
 
-	It("refuses a real export and the flags that only a real export reads", func() {
-		_, _, err := run("data", "export", "--nodes", grpcAddr)
-		Expect(err).To(MatchError(ContainSubstring("--dry-run")))
+	It("refuses the real-export flags in a dry run and a native export", func() {
 		var exitErr *exporter.ExitError
+		for _, flag := range []string{"--output=" + filepath.Join(dataDir, "out"), "--preempt", "--schema-only"} {
+			_, _, err := run("data", "export", "--dry-run", flag, "--nodes", grpcAddr)
+			Expect(err).To(MatchError(ContainSubstring("cannot be combined with --dry-run")), flag)
+			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
+			Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
+		}
+		_, _, err := run("data", "export", "--format=native", "--output", filepath.Join(dataDir, "out"), "--nodes", grpcAddr)
+		Expect(err).To(MatchError(ContainSubstring("native export format is not implemented yet")))
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
 		Expect(exitErr.Code).To(Equal(exporter.ExitUsage))
-		for _, flag := range []string{"--output=" + filepath.Join(dataDir, "out"), "--preempt", "--format=csv", "--include-schema=false"} {
-			_, _, err = run("data", "export", "--dry-run", flag, "--nodes", grpcAddr)
-			Expect(err).To(MatchError(ContainSubstring("unknown flag")), flag)
-		}
 	})
 
 	It("lets --selector override the plan.yaml selectors and checks the plan.yaml ones", func() {
@@ -234,8 +236,8 @@ var _ = Describe("Data Export Dry Run", func() {
 		_, _, err = run("data", "export", "--dry-run", "--nodes", grpcAddr, "--plan", planFile, "--selector", "catalog=stream")
 		Expect(err).NotTo(HaveOccurred(), "--selector replaces the plan.yaml selectors")
 		for body, want := range map[string]string{
-			"export:\n  selectors:\n    - catalog: stream\n      groups: [\"\"]\n":                        "plan.yaml export.selectors[0]: empty group name",
-			"export:\n  selectors:\n    - catalog: stream\n    - catalog: stream\n      groups: [a, a]\n": "plan.yaml export.selectors[1]: group \"a\" given twice",
+			"export:\n  selectors:\n    - catalog: stream\n      groups: [\"\"]\n":                        "plan.yaml export.selectors: [0]: empty group name",
+			"export:\n  selectors:\n    - catalog: stream\n    - catalog: stream\n      groups: [a, a]\n": "plan.yaml export.selectors: [1]: group \"a\" given twice",
 		} {
 			Expect(os.WriteFile(planFile, []byte(body), 0o600)).To(Succeed())
 			_, _, err = run("data", "export", "--dry-run", "--nodes", grpcAddr, "--plan", planFile)

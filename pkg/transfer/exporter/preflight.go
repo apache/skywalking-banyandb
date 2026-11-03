@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"time"
 
@@ -32,9 +33,11 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
-// ClusterInfo is what the connection preflight learned about the source cluster.
+// ClusterInfo is what the connection preflight learned about the source cluster from the
+// primary liaison.
 type ClusterInfo struct {
 	Liaison    string
 	DataNodes  []*databasev1.Node
@@ -43,12 +46,39 @@ type ClusterInfo struct {
 
 // ConnectOptions are the dial parameters shared by every liaison candidate.
 type ConnectOptions struct {
+	// Log receives a WARN line for every candidate that is skipped; nil discards them.
+	Log       io.Writer
 	Cert      string
 	Username  string
 	Password  string
 	Timeout   time.Duration
 	EnableTLS bool
 	Insecure  bool
+}
+
+// Liaison is one usable liaison: its address and its connection.
+type Liaison struct {
+	Conn *grpc.ClientConn
+	Addr string
+}
+
+// Liaisons are the usable liaisons in the order they were given. The first is the primary:
+// the schema, Plan and Sessions calls go through it, while export streams are spread over
+// all of them.
+type Liaisons struct {
+	All []*Liaison
+}
+
+// Primary is the connection of the first usable liaison.
+func (l *Liaisons) Primary() *grpc.ClientConn { return l.All[0].Conn }
+
+// Close closes every connection.
+func (l *Liaisons) Close() error {
+	var errs []error
+	for _, li := range l.All {
+		errs = append(errs, li.Conn.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // basicCredentials attaches the username/password metadata the liaison's auth interceptor
@@ -66,8 +96,8 @@ func (c basicCredentials) RequireTransportSecurity() bool { return c.secure }
 
 var _ credentials.PerRPCCredentials = basicCredentials{}
 
-// describeTimeout bounds one candidate's describe RPCs so a hung liaison does not keep the
-// next candidate from being tried.
+// describeTimeout bounds one candidate's describe RPCs so a hung liaison does not hold up
+// the preflight.
 var describeTimeout = 10 * time.Second
 
 // errNoDataNode marks a liaison that answered but has not discovered any data node yet.
@@ -77,12 +107,14 @@ var errNoDataNode = errors.New("has not discovered any data node yet")
 // liaison uses for its data-node clients.
 const maxRecvMsgSize = 32 << 20
 
-// Preflight tries the liaison candidates in order and returns the first one that answers,
-// after checking it is a liaison and reading the data-node table.
-// A candidate that cannot be reached, whose answer is lost in transport, or whose registry
-// is still empty is skipped; a reachable endpoint that refuses the credentials or is not a
-// liaison is a configuration error, not a retry.
-func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*grpc.ClientConn, *ClusterInfo, error) {
+// Preflight probes every liaison candidate concurrently and keeps each one that answers, in
+// the given order, after checking it is a liaison with a non-empty data-node table. A
+// candidate that cannot be reached, whose answer is lost in transport, or whose registry is
+// still empty is skipped with a WARN line; a reachable endpoint that refuses the credentials
+// or is not a liaison is a configuration error that stops the preflight, the first such
+// candidate in order winning. At least one candidate must be usable; the cluster information
+// comes from the first, the primary.
+func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*Liaisons, *ClusterInfo, error) {
 	if len(candidates) == 0 {
 		return nil, nil, Exit(ExitUsage, "no liaison address given")
 	}
@@ -107,44 +139,114 @@ func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*
 	if timeout <= 0 {
 		timeout = 10 * time.Second
 	}
-	var errs []error
-	for _, addr := range candidates {
-		if ctx.Err() != nil {
-			return nil, nil, canceled(ctx)
+	warn := opts.Log
+	if warn == nil {
+		warn = io.Discard
+	}
+	if ctx.Err() != nil {
+		return nil, nil, canceled(ctx)
+	}
+	// Every candidate is probed at once; the results are walked in the given order so the
+	// primary and the reported refusal do not depend on which probe answers first.
+	probeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make([]probeResult, len(candidates))
+	tasks := make([]*run.Task, len(candidates))
+	l := logger.GetLogger("exporter")
+	for i, addr := range candidates {
+		// A probe that panics leaves this error behind instead of a usable-looking result.
+		results[i] = probeResult{err: fmt.Errorf("probing liaison %s failed unexpectedly", addr)}
+		tasks[i] = run.Go(probeCtx, "export-preflight-probe", l, func(ctx context.Context) {
+			conn, info, err := probe(ctx, addr, timeout, opts, dialOpts)
+			results[i] = probeResult{conn: conn, info: info, err: err}
+		})
+	}
+	// fail closes every connection a probe opened and returns err.
+	fail := func(err error) error {
+		cancel()
+		for _, t := range tasks {
+			t.Wait()
 		}
-		// ConnWithAuth runs its own health-check deadline and takes no ctx.
-		conn, dialErr := grpchelper.ConnWithAuth(addr, timeout, opts.Username, opts.Password, dialOpts...) //nolint:contextcheck
-		if dialErr != nil {
-			// The health check answered with a status that is not a transport loss: the
-			// liaison is up and refused this client, so the next one would refuse it too.
-			if st, isStatus := status.FromError(dialErr); isStatus && !grpchelper.IsFailoverError(dialErr) {
-				if st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied {
-					return nil, nil, Exit(ExitPreflight, "liaison %s refused the credentials: %w", addr, dialErr)
-				}
-				return nil, nil, Exit(ExitPreflight, "liaison %s rejected the health check: %w", addr, dialErr)
+		for _, r := range results {
+			if r.conn != nil {
+				_ = r.conn.Close()
 			}
-			errs = append(errs, fmt.Errorf("%s: %w", addr, dialErr))
+		}
+		return err
+	}
+	usable := &Liaisons{}
+	var primary *ClusterInfo
+	var errs []error
+	for i, addr := range candidates {
+		<-tasks[i].Done()
+		r := results[i]
+		if r.err == nil {
+			usable.All = append(usable.All, &Liaison{Addr: addr, Conn: r.conn})
+			if primary == nil {
+				primary = r.info
+			}
 			continue
 		}
-		describeCtx, cancel := context.WithTimeout(ctx, describeTimeout)
-		info, infoErr := describe(describeCtx, conn, addr)
-		cancel()
-		if infoErr == nil {
-			return conn, info, nil
-		}
-		_ = conn.Close()
 		if ctx.Err() != nil {
-			return nil, nil, canceled(ctx)
+			return nil, nil, fail(canceled(ctx))
 		}
-		if code := status.Code(infoErr); code == codes.Unauthenticated || code == codes.PermissionDenied {
-			return nil, nil, Exit(ExitPreflight, "liaison %s refused the credentials: %w", addr, infoErr)
+		var skip *unusableError
+		if !errors.As(r.err, &skip) {
+			return nil, nil, fail(r.err)
 		}
-		if !errors.Is(infoErr, errNoDataNode) && !grpchelper.IsFailoverError(infoErr) {
-			return nil, nil, infoErr
-		}
-		errs = append(errs, infoErr)
+		fmt.Fprintf(warn, "WARN liaison %s is not usable, skipped: %v\n", addr, skip.err)
+		errs = append(errs, skip.err)
 	}
-	return nil, nil, Exit(ExitPreflight, "none of the liaison addresses is usable: %w", errors.Join(errs...))
+	if primary == nil {
+		return nil, nil, Exit(ExitPreflight, "none of the liaison addresses is usable: %w", errors.Join(errs...))
+	}
+	return usable, primary, nil
+}
+
+// probeResult is the outcome of probing one candidate.
+type probeResult struct {
+	conn *grpc.ClientConn
+	info *ClusterInfo
+	err  error
+}
+
+// unusableError marks a candidate Preflight skips rather than fails on.
+type unusableError struct{ err error }
+
+func (e *unusableError) Error() string { return e.err.Error() }
+
+func (e *unusableError) Unwrap() error { return e.err }
+
+// probe dials one candidate and describes it. A transport-class failure or an empty registry
+// is an unusableError; a refusal is a final ExitError.
+func probe(ctx context.Context, addr string, timeout time.Duration, opts ConnectOptions, dialOpts []grpc.DialOption) (*grpc.ClientConn, *ClusterInfo, error) {
+	// ConnWithAuth runs its own health-check deadline and takes no ctx.
+	conn, err := grpchelper.ConnWithAuth(addr, timeout, opts.Username, opts.Password, dialOpts...) //nolint:contextcheck
+	if err != nil {
+		// The health check answered with a status that is not a transport loss: the
+		// liaison is up and refused this client, so the next one would refuse it too.
+		if st, isStatus := status.FromError(err); isStatus && !grpchelper.IsFailoverError(err) {
+			if st.Code() == codes.Unauthenticated || st.Code() == codes.PermissionDenied {
+				return nil, nil, Exit(ExitPreflight, "liaison %s refused the credentials: %w", addr, err)
+			}
+			return nil, nil, Exit(ExitPreflight, "liaison %s rejected the health check: %w", addr, err)
+		}
+		return nil, nil, &unusableError{err: fmt.Errorf("%s: %w", addr, err)}
+	}
+	describeCtx, cancel := context.WithTimeout(ctx, describeTimeout)
+	info, err := describe(describeCtx, conn, addr)
+	cancel()
+	if err == nil {
+		return conn, info, nil
+	}
+	_ = conn.Close()
+	if code := status.Code(err); code == codes.Unauthenticated || code == codes.PermissionDenied {
+		return nil, nil, Exit(ExitPreflight, "liaison %s refused the credentials: %w", addr, err)
+	}
+	if errors.Is(err, errNoDataNode) || grpchelper.IsFailoverError(err) {
+		return nil, nil, &unusableError{err: err}
+	}
+	return nil, nil, err
 }
 
 // canceled reports a preflight the caller canceled or timed out as a runtime failure, not as
