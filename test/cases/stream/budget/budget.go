@@ -47,13 +47,16 @@ const (
 	QueryPoolBytes = 16 << 20
 	elementCount   = 16
 	payloadBytes   = 64 << 10
+	// oversizedBytes is the payload of the last element: a single value larger than the whole query allowance. Values are
+	// charged by their size, so a scan only runs out of budget on data that really is larger than the allowance.
+	oversizedBytes = 2 << 20
 	searchableTags = 17
 	streamName     = "sw"
 	groupName      = "default"
 )
 
 // Write stores elementCount elements, one second apart from baseTime, each in its own series and with a
-// payloadBytes data_binary tag, so that scanning all of them reads far more than the node's query allowance.
+// payloadBytes data_binary tag, except the last one, whose oversizedBytes tag alone is larger than the node's query allowance.
 func Write(conn *grpc.ClientConn, baseTime time.Time) {
 	registry := databasev1.NewStreamRegistryServiceClient(conn)
 	resp, err := registry.Get(context.Background(), &databasev1.StreamRegistryServiceGetRequest{
@@ -65,6 +68,10 @@ func Write(conn *grpc.ClientConn, baseTime time.Time) {
 	for i := range payload {
 		payload[i] = byte(i * 31)
 	}
+	oversized := make([]byte, oversizedBytes)
+	for i := range oversized {
+		oversized[i] = byte(i * 31)
+	}
 	client := streamv1.NewStreamServiceClient(conn)
 	gomega.Eventually(func(innerGm gomega.Gomega) {
 		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
@@ -72,6 +79,10 @@ func Write(conn *grpc.ClientConn, baseTime time.Time) {
 		writeClient, writeErr := client.Write(ctx)
 		innerGm.Expect(writeErr).NotTo(gomega.HaveOccurred())
 		for i := 0; i < elementCount; i++ {
+			data := payload
+			if i == elementCount-1 {
+				data = oversized
+			}
 			sendErr := writeClient.Send(&streamv1.WriteRequest{
 				Metadata:  metadata,
 				MessageId: uint64(time.Now().UnixNano()),
@@ -79,7 +90,7 @@ func Write(conn *grpc.ClientConn, baseTime time.Time) {
 					ElementId: strconv.Itoa(i),
 					Timestamp: timestamppb.New(baseTime.Add(time.Duration(i) * time.Second)),
 					TagFamilies: []*modelv1.TagFamilyForWrite{
-						{Tags: []*modelv1.TagValue{{Value: &modelv1.TagValue_BinaryData{BinaryData: payload}}}},
+						{Tags: []*modelv1.TagValue{{Value: &modelv1.TagValue_BinaryData{BinaryData: data}}}},
 						{Tags: searchableTagValues(i)},
 					},
 				},
@@ -137,7 +148,7 @@ func query(baseTime time.Time, window time.Duration) *streamv1.QueryRequest {
 }
 
 // ExpectFitsAndExceeds asserts the contract against a node whose query allowance is about 1 MiB: a query that reads
-// one element succeeds, and a query that reads all of them fails with codes.ResourceExhausted.
+// one element succeeds, and a query that reads all of them, including the oversized one, fails with codes.ResourceExhausted.
 func ExpectFitsAndExceeds(conn *grpc.ClientConn, baseTime time.Time) {
 	client := streamv1.NewStreamServiceClient(conn)
 	gomega.Eventually(func(innerGm gomega.Gomega) {

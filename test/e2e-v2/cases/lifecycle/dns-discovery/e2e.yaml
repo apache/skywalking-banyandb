@@ -59,8 +59,7 @@ setup:
           --set fullnameOverride=skywalking \
           --set oap.image.repository=ghcr.io/apache/skywalking/oap \
           --set oap.image.tag=${SW_OAP_COMMIT} \
-          --set ui.image.repository=ghcr.io/apache/skywalking/ui \
-          --set ui.image.tag=${SW_OAP_COMMIT} \
+          --set ui.enabled=false \
           -f test/e2e-v2/cases/lifecycle/dns-discovery/skywalking-values.yaml
     - name: Deploy provider and consumer demo apps
       command: envsubst < test/e2e-v2/cases/lifecycle/dns-discovery/provider-consumer.yaml | kubectl apply -f -

@@ -21,7 +21,9 @@ import (
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -102,10 +104,56 @@ func TestQueryBudgetFallbackIsFinite(t *testing.T) {
 	release()
 }
 
-func TestQueryBudgetAdmitRejectsWindowUnderPressure(t *testing.T) {
-	b := NewQueryBudget(&budgetProtector{limit: 64 << 20, avail: 64 << 20})
-	if _, err := b.Admit(context.Background(), 100000, 0, 20); !errors.Is(err, ErrQueryWindowPressure) {
-		t.Fatalf("want dynamic window rejection, got %v", err)
+func TestQueryBudgetFallbackPoolAdmitsLargeRequestedWindow(t *testing.T) {
+	for _, window := range []uint32{1793, 10000, 100000} {
+		b := NewQueryBudget(&Nop{})
+		ctx, release, err := b.AdmitContext(context.Background(), window, 0, 20)
+		if err != nil {
+			t.Fatalf("limit %d must be admitted without an estimated-window check: %v", window, err)
+		}
+		if _, ok := querypkg.BudgetLeaseFromContext(ctx); !ok {
+			t.Fatalf("limit %d: missing lease", window)
+		}
+		release()
+		if b.Reserved() != 0 {
+			t.Fatalf("limit %d: reservation leak %d", window, b.Reserved())
+		}
+	}
+	b := NewQueryBudget(&Nop{})
+	release, err := b.Admit(context.Background(), 5000, 5000, 20)
+	if err != nil {
+		t.Fatalf("limit+offset 10000 must be admitted: %v", err)
+	}
+	release()
+}
+
+func TestQueryBudgetAdmitRejectsWindowAboveAbsoluteCeiling(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	if _, err := b.Admit(context.Background(), 100001, 0, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want ErrQueryTooLarge, got %v", err)
+	}
+	if _, err := b.Admit(context.Background(), 50000, 50001, 20); !errors.Is(err, ErrQueryTooLarge) {
+		t.Fatalf("want ErrQueryTooLarge for limit+offset, got %v", err)
+	}
+}
+
+func TestQueryBudgetAdmitRejectsWhenPoolExhausted(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	for i := 0; i < 8; i++ {
+		release, err := b.Admit(context.Background(), 10000, 0, 20)
+		if err != nil {
+			t.Fatalf("admission %d within the pool failed: %v", i, err)
+		}
+		releases = append(releases, release)
+	}
+	if _, err := b.Admit(context.Background(), 20, 0, 20); !errors.Is(err, ErrQueryResourceExhausted) {
+		t.Fatalf("want ErrQueryResourceExhausted once the pool is reserved, got %v", err)
 	}
 }
 
@@ -389,10 +437,13 @@ func mustReservation(ctx context.Context, t *testing.T) *QueryReservation {
 }
 
 func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
-	for _, cause := range []error{ErrQueryResourceExhausted, ErrQueryWindowPressure} {
-		failure := QueryFailure(fmt.Errorf("scan: %w", cause), "execute %s: %v", "plan", cause)
-		if failure.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
-			t.Fatalf("%v: status %v", cause, failure.Status())
+	exhausted := QueryFailure(fmt.Errorf("scan: %w", ErrQueryResourceExhausted), "execute %s: %v", "plan", ErrQueryResourceExhausted)
+	if exhausted.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+		t.Fatalf("status %v", exhausted.Status())
+	}
+	for _, limit := range []error{vectorized.ErrMemoryBudgetExceeded, native.ErrQueryLimit} {
+		if got := QueryFailure(fmt.Errorf("scan: %w", limit), "execute plan: %v", limit).Status(); got != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+			t.Fatalf("%v: status %v, want RESOURCE_EXHAUSTED", limit, got)
 		}
 	}
 	failure := QueryFailure(errors.New("boom"), "execute %s: %v", "plan", "boom")

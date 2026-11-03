@@ -33,10 +33,12 @@ import (
 )
 
 func TestT12GeneratedCallsCompileAndRebindSameText(t *testing.T) {
-	suite, err := Generate()
+	builder := &suiteBuilder{features: make(map[string]bool)}
+	_, scenarios, _, err := generateT12(builder)
 	require.NoError(t, err)
+	require.NoError(t, builder.err)
 	base := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
-	for _, scenario := range suite.FilterScenarios {
+	for _, scenario := range scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
 			var template *bydbql.MeasureTemplate
 			var first string
@@ -55,8 +57,9 @@ func TestT12GeneratedCallsCompileAndRebindSameText(t *testing.T) {
 					require.NoError(t, compileErr)
 				}
 				require.Equal(t, first, query)
-				_, bindErr := template.BindParams(params, base)
+				execution, bindErr := template.BindParams(params, base)
 				require.NoError(t, bindErr, "value errors belong to active execution rows, not cached binding")
+				require.Equal(t, c.NoScan, execution.Plan.Empty, "scan contract for %s", c.Name)
 			}
 		})
 	}

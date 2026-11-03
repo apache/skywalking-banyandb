@@ -22,9 +22,21 @@
 BASE_DIR=$1
 BIN_DIR=$2
 
-if ! command -v yq &> /dev/null; then
-  mkdir -p $BASE_DIR/yq && cd $BASE_DIR/yq
-  curl -kLo yq.tar.gz https://github.com/mikefarah/yq/archive/v4.14.1.tar.gz
-  tar -zxf yq.tar.gz --strip=1
-  go install && go build -ldflags -s && cp yq $BIN_DIR/
+# The ai-agent case parses OAP's JSON with yq `tonumber`, which yq v4.33.3 (the version
+# SkyWalking's own install-yq.sh pins) and earlier lack. Pin a release that has it.
+YQ_VERSION=${YQ_VERSION:-v4.54.1}
+
+# Install when yq is absent or too old to evaluate `tonumber`; a newer yq that ships with
+# the runner is kept.
+if ! command -v yq &> /dev/null || ! echo '"1"' | yq 'tonumber' &> /dev/null; then
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64) YQ_BINARY=yq_linux_amd64 ;;
+    Linux-aarch64 | Linux-arm64) YQ_BINARY=yq_linux_arm64 ;;
+    Darwin-x86_64) YQ_BINARY=yq_darwin_amd64 ;;
+    Darwin-arm64) YQ_BINARY=yq_darwin_arm64 ;;
+    *) echo "unsupported platform for yq: $(uname -s)-$(uname -m)"; exit 1 ;;
+  esac
+  mkdir -p "$BIN_DIR"
+  curl -sSLf -o "$BIN_DIR/yq" "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/${YQ_BINARY}"
+  chmod +x "$BIN_DIR/yq"
 fi

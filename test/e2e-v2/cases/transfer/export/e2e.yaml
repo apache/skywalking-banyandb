@@ -50,6 +50,12 @@ setup:
       command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
     - name: report events so the stream catalog holds data
       command: bash test/e2e-v2/cases/transfer/export/scripts/report-events.sh ${oap_host}:${oap_11800}
+    # OAP 11 no longer writes UI templates at startup, so the property group would stay empty.
+    # One template created through ui-management gives the property catalog data to export.
+    - name: create a UI template so the property catalog holds data
+      command: |
+        printf '%s' '{"name":"transfer-e2e"}' > /tmp/transfer-uitpl.json
+        swctl --display json --admin-url=http://${oap_host}:${oap_17128} admin ui-template create --id transfer-e2e -f /tmp/transfer-uitpl.json
 
 verify:
   # Every case is idempotent (csv-export.sh exports into a new directory and releases the session

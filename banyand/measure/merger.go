@@ -20,6 +20,7 @@ package measure
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 
@@ -163,7 +164,8 @@ func (tst *tsTable) mergePartsThenSendIntroduction(creator snapshotCreator, part
 	select {
 	case merges <- mi:
 	case <-tst.loopCloser.CloseNotify():
-		return newPart, errClosed
+		tst.removeMeasurePartOnFailure(newPart)
+		return nil, errClosed
 	}
 	<-mi.applied
 	return newPart, nil
@@ -232,6 +234,19 @@ func (tst *tsTable) reserveSpace(parts []*partWrapper) uint64 {
 }
 
 var errNoPartToMerge = fmt.Errorf("no part to merge")
+
+// removeMeasurePartOnFailure closes the part and removes its directory from disk.
+// Used when a merge fails after the measure part was created so the directory is not left as trash.
+func (tst *tsTable) removeMeasurePartOnFailure(pw *partWrapper) {
+	if pw == nil || pw.p == nil {
+		return
+	}
+	pathToRemove := pw.p.path
+	pw.decRef()
+	if err := os.RemoveAll(pathToRemove); err != nil {
+		tst.l.Warn().Err(err).Str("path", pathToRemove).Msg("failed to remove unintroduced merged part")
+	}
+}
 
 func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}, parts []*partWrapper, partID uint64, root string) (*partWrapper, error) {
 	if len(parts) == 0 {

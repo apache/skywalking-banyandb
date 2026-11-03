@@ -91,7 +91,7 @@ func queryStatus(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	}
 	if errors.Is(err, native.ErrQueryLimit) || errors.Is(err, protector.ErrQueryResourceExhausted) ||
-		errors.Is(err, protector.ErrQueryWindowPressure) || errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
+		errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
 	return err
