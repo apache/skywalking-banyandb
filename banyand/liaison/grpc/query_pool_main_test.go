@@ -6,7 +6,7 @@
 // not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing,
 // software distributed under the License is distributed on an
@@ -15,35 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package grpc_test
 
 import (
-	"fmt"
 	"os"
 	"testing"
 
-	"github.com/apache/skywalking-banyandb/pkg/test"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 )
 
-// console holds what the package's tests print to stderr.
-var console *test.CapturedStderr
-
-// TestMain replaces os.Stderr once, before any test runs. zerolog's console
-// writer reads os.Stderr on every write, so replacing it while a goroutine an
-// earlier test started still logs is a data race; here nothing logs yet. A
-// test that asserts on the console reads the part printed since it began.
-// When a test fails, what was printed is written to the real stderr.
+// TestMain pins the host memory to "unreadable", so the query budget keeps its fixed 64 MiB fallback pool (8 MiB per
+// query) and the budget tests exercise the same limits on every machine instead of a pool sized from its memory.
 func TestMain(m *testing.M) {
-	stderr := os.Stderr
-	var err error
-	console, err = test.CaptureStderr()
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		os.Exit(1)
-	}
-	code := m.Run()
-	if code != 0 {
-		_, _ = stderr.WriteString(console.String())
-	}
-	os.Exit(code)
+	protector.SetHostMemoryForTest(0)
+	os.Exit(m.Run())
 }

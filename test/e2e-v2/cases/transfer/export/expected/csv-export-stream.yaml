@@ -28,6 +28,9 @@
 # kinds are set), the groups with their resource options and the schema of the known sources;
 # schemaRefs checks that every resource, index rule, binding and TopN aggregation refers to
 # exported entries.
+# sw_records carries the options OAP 11 creates with this case's settings: one shard, the one-day
+# hot TTL of SW_STORAGE_BANYANDB_RECORDS_TTL_DAYS and, because SW_STORAGE_BANYANDB_RECORDS_ENABLE_WARM_STAGE
+# is on, a warm stage (7d TTL, 2d segments, nodeSelector type=warm), which makes "warm" a default stage.
 # Other groups may appear and are not pinned.
 exitCode: 0
 catalog: stream
@@ -112,12 +115,19 @@ schema:
     {{- contains .schema.groups }}
     - name: sw_records
       catalog: stream
-      shardNum: 2
+      shardNum: 1
       replicas: 0
       segmentInterval: 1d
-      ttl: 3d
-      defaultStages: ["hot"]
-      stages: []
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 1
+          replicas: 0
+          segmentInterval: 2d
+          ttl: 7d
+          nodeSelector: "type=warm"
+          close: false
     {{- end }}
   resources:
     {{- contains .schema.resources }}

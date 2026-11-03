@@ -1,0 +1,109 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+tokens: 56124
+instance_tokens: 56124
+by_type:
+  - labels:
+      - key: type
+        value: cacheCreation
+    value: 5400
+  - labels:
+      - key: type
+        value: cacheRead
+    value: 48600
+  - labels:
+      - key: type
+        value: input
+    value: 108
+  - labels:
+      - key: type
+        value: output
+    value: 2016
+by_model:
+  - labels:
+      - key: model
+        value: claude-opus-5
+      - key: type
+        value: cacheCreation
+    value: 5400
+  - labels:
+      - key: model
+        value: claude-opus-5
+      - key: type
+        value: cacheRead
+    value: 48600
+  - labels:
+      - key: model
+        value: claude-opus-5
+      - key: type
+        value: input
+    value: 108
+  - labels:
+      - key: model
+        value: claude-opus-5
+      - key: type
+        value: output
+    value: 2016
+by_source:
+  - labels:
+      - key: query_source
+        value: main
+      - key: type
+        value: cacheCreation
+    value: 4000
+  - labels:
+      - key: query_source
+        value: main
+      - key: type
+        value: cacheRead
+    value: 36000
+  - labels:
+      - key: query_source
+        value: main
+      - key: type
+        value: input
+    value: 80
+  - labels:
+      - key: query_source
+        value: main
+      - key: type
+        value: output
+    value: 1450
+  - labels:
+      - key: query_source
+        value: subagent
+      - key: type
+        value: cacheCreation
+    value: 1400
+  - labels:
+      - key: query_source
+        value: subagent
+      - key: type
+        value: cacheRead
+    value: 12600
+  - labels:
+      - key: query_source
+        value: subagent
+      - key: type
+        value: input
+    value: 28
+  - labels:
+      - key: query_source
+        value: subagent
+      - key: type
+        value: output
+    value: 566
+cache_read_share_in_range: true

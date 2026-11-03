@@ -88,6 +88,9 @@ message ScanRequest {
   uint64 max_chunk_bytes = 9;
   // max_chunk_rows is the liaison's cap for one chunk's rows.
   uint32 max_chunk_rows = 10;
+  // idle_timeout_ms is how long the liaison lets the scan stay silent, neither a chunk nor a heartbeat, before it
+  // fails the stream. The data node heartbeats well within it. Zero selects the data node's default.
+  uint32 idle_timeout_ms = 11;
 }
 
 // ScanResponse is one chunk. The last chunk has last = true and may carry an

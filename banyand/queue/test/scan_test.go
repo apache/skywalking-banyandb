@@ -69,7 +69,7 @@ type scanSetup struct {
 
 // startScanNode runs a real data-node queue server whose trace query topic is served by fn,
 // and a real publisher connected to it.
-func startScanNode(t *testing.T, name, heartbeat string, listener bus.StreamListener) *scanSetup {
+func startScanNode(t *testing.T, name string, listener bus.StreamListener) *scanSetup {
 	t.Helper()
 	ports, err := test.AllocateFreePorts(2)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func startScanNode(t *testing.T, name, heartbeat string, listener bus.StreamList
 		},
 	}
 	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
-	cmd.SetArgs([]string{fmt.Sprintf("--%s-scan-heartbeat-interval=%s", name, heartbeat)})
+	cmd.SetArgs([]string{})
 	go func() { _ = cmd.Execute() }()
 	var stopOnce atomic.Bool
 	stop := func() {
@@ -142,7 +142,7 @@ func chunkID(t *testing.T, m bus.Message) string {
 
 func TestScanMultiChunkInOrderThenEOF(t *testing.T) {
 	var gotGroups atomic.Value
-	setup := startScanNode(t, "scan-order", "100ms", &scanListener{fn: func(ctx context.Context, m bus.Message, sink bus.Sink) error {
+	setup := startScanNode(t, "scan-order", &scanListener{fn: func(ctx context.Context, m bus.Message, sink bus.Sink) error {
 		gotGroups.Store(m.Data().(*tracev1.QueryRequest).Groups)
 		for i := 0; i < 20; i++ {
 			if err := sink.Send(ctx, traceChunk(fmt.Sprintf("t%02d", i))); err != nil {
@@ -163,8 +163,9 @@ func TestScanMultiChunkInOrderThenEOF(t *testing.T) {
 }
 
 func TestScanHeartbeatsKeepASlowScanAlive(t *testing.T) {
-	// The scan is silent for 4x the idle timeout; only the heartbeats keep the stream open.
-	setup := startScanNode(t, "scan-heartbeat", "50ms", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
+	// The scan is silent for 4x the idle timeout; only the heartbeats, which the node derives from the idle
+	// timeout the publisher announces, keep the stream open.
+	setup := startScanNode(t, "scan-heartbeat", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
 		select {
 		case <-time.After(800 * time.Millisecond):
 		case <-ctx.Done():
@@ -182,13 +183,14 @@ func TestScanHeartbeatsKeepASlowScanAlive(t *testing.T) {
 
 func TestScanIdleTimeoutFiresWithoutHeartbeats(t *testing.T) {
 	listenerCtxDone := make(chan struct{})
-	// A heartbeat interval far beyond the idle timeout makes the node effectively silent.
-	setup := startScanNode(t, "scan-silent", "1h", &scanListener{fn: func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
+	// The node never heartbeats faster than its minimum interval, so an idle timeout below it makes the node
+	// effectively silent.
+	setup := startScanNode(t, "scan-silent", &scanListener{fn: func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
 		<-ctx.Done()
 		close(listenerCtxDone)
 		return ctx.Err()
 	}})
-	ns := setup.scatter(context.Background(), t, queue.ScatterOptions{IdleTimeout: 200 * time.Millisecond})
+	ns := setup.scatter(context.Background(), t, queue.ScatterOptions{IdleTimeout: 20 * time.Millisecond})
 	_, err := ns.Next(context.Background())
 	require.Error(t, err)
 	assert.ErrorIs(t, err, queue.ErrScanIdleTimeout)
@@ -198,7 +200,7 @@ func TestScanIdleTimeoutFiresWithoutHeartbeats(t *testing.T) {
 func TestScanCallerCancellationReachesTheListener(t *testing.T) {
 	started := make(chan struct{})
 	listenerErr := make(chan error, 1)
-	setup := startScanNode(t, "scan-cancel", "100ms", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
+	setup := startScanNode(t, "scan-cancel", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
 		if err := sink.Send(ctx, traceChunk("first")); err != nil {
 			return err
 		}
@@ -223,7 +225,7 @@ func TestScanCallerCancellationReachesTheListener(t *testing.T) {
 func TestScanCloseReachesTheListener(t *testing.T) {
 	started := make(chan struct{})
 	listenerCtxDone := make(chan struct{})
-	setup := startScanNode(t, "scan-close", "100ms", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
+	setup := startScanNode(t, "scan-close", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
 		if err := sink.Send(ctx, traceChunk("first")); err != nil {
 			return err
 		}
@@ -239,7 +241,7 @@ func TestScanCloseReachesTheListener(t *testing.T) {
 }
 
 func TestScanListenerErrorIsDeliveredAfterTheChunks(t *testing.T) {
-	setup := startScanNode(t, "scan-error", "100ms", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
+	setup := startScanNode(t, "scan-error", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
 		if err := sink.Send(ctx, traceChunk("ok")); err != nil {
 			return err
 		}
@@ -257,7 +259,7 @@ func TestScanListenerErrorIsDeliveredAfterTheChunks(t *testing.T) {
 
 func TestScanTransportErrorWhenTheNodeDiesIsNotEOF(t *testing.T) {
 	started := make(chan struct{})
-	setup := startScanNode(t, "scan-die", "100ms", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
+	setup := startScanNode(t, "scan-die", &scanListener{fn: func(ctx context.Context, _ bus.Message, sink bus.Sink) error {
 		if err := sink.Send(ctx, traceChunk("first")); err != nil {
 			return err
 		}
@@ -278,7 +280,7 @@ func TestScanTransportErrorWhenTheNodeDiesIsNotEOF(t *testing.T) {
 
 func TestScanUnhealthyListenerRejectsTheScan(t *testing.T) {
 	var ran atomic.Bool
-	setup := startScanNode(t, "scan-unhealthy", "100ms", &scanListener{
+	setup := startScanNode(t, "scan-unhealthy", &scanListener{
 		health: common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, "not ready"),
 		fn: func(context.Context, bus.Message, bus.Sink) error {
 			ran.Store(true)
@@ -295,7 +297,7 @@ func TestScanUnhealthyListenerRejectsTheScan(t *testing.T) {
 
 func TestScanForwardsChunkLimitsToTheListener(t *testing.T) {
 	var got atomic.Value
-	setup := startScanNode(t, "scanlimits", "1s", &scanListener{fn: func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
+	setup := startScanNode(t, "scanlimits", &scanListener{fn: func(ctx context.Context, _ bus.Message, _ bus.Sink) error {
 		got.Store(bus.ChunkLimitsFrom(ctx))
 		return nil
 	}})

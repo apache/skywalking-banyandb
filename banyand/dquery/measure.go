@@ -28,6 +28,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -94,7 +95,7 @@ func (p *measureQueryProcessor) Rev(ctx context.Context, message bus.Message) (r
 	}
 	plan, err := p.analyzeDistributedPlan(queryCriteria, measureSchemas, measureIndexRules, vecCfg, patterns...)
 	if err != nil {
-		resp = bus.NewMessage(bus.MessageID(now), common.NewError("fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
+		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for measure %s: %v", queryCriteria.Name, err))
 		return
 	}
 

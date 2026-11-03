@@ -1055,6 +1055,7 @@ Status is the response status for write
 | STATUS_METADATA_REQUIRED | 9 | Metadata is required for the first request |
 | STATUS_SCHEMA_NOT_APPLIED | 10 | Client&#39;s ModRevision is ahead of the server cache; the server waited and timed out. |
 | STATUS_SERVER_BUSY | 11 | The data node is under memory pressure; the batch was not written. |
+| STATUS_RESOURCE_EXHAUSTED | 12 | A query exceeded its memory allowance or the shared query pool. |
 
 
  
@@ -2692,6 +2693,7 @@ ScanRequest opens a server-streaming scan on a data node.
 | sender_tier | [string](#string) |  |  |
 | max_chunk_bytes | [uint64](#uint64) |  | max_chunk_bytes is the liaison&#39;s cap for one chunk body. |
 | max_chunk_rows | [uint32](#uint32) |  | max_chunk_rows is the liaison&#39;s cap for one chunk&#39;s rows. |
+| idle_timeout_ms | [uint32](#uint32) |  | idle_timeout_ms is how long the liaison lets the scan stay silent, neither a chunk nor a heartbeat, before it fails the stream. The data node heartbeats well within it. Zero selects the data node&#39;s default. |
 
 
 
@@ -7476,6 +7478,8 @@ TagFamilySpec defines the specification of a tag family.
 | message_id | [uint64](#uint64) |  | the message_id from request. |
 | status | [string](#string) |  | status indicates the request processing result |
 | metadata | [banyandb.common.v1.Metadata](#banyandb-common-v1-Metadata) |  | the metadata from request when request fails |
+| status_code | [banyandb.model.v1.Status](#banyandb-model-v1-Status) |  | status_code is the typed form of status. New clients should read it. |
+| retry_after_ms | [uint32](#uint32) |  | retry_after_ms, when non-zero, asks the client to pause sending for that long. It rides on an acknowledgement and does not change that acknowledgement&#39;s status. |
 
 
 

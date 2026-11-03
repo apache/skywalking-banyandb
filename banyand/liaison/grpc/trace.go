@@ -280,7 +280,7 @@ type traceSessionSender struct {
 }
 
 func (t traceSessionSender) Send(resp *tracev1.WriteResponse) error {
-	t.session.Reply(writeReply{metadata: resp.GetMetadata(), version: resp.GetVersion(), status: resp.GetStatusCode()})
+	t.session.Reply(writeReply{metadata: resp.GetMetadata(), id: resp.GetVersion(), status: resp.GetStatusCode()})
 	return nil
 }
 
@@ -305,7 +305,7 @@ func (s *traceService) sendResponse(stream tracev1.TraceService_WriteServer, rep
 	s.metrics.totalStreamMsgSent.Inc(1, group, "trace", "write")
 	errResp := stream.Send(&tracev1.WriteResponse{
 		Metadata:     reply.metadata,
-		Version:      reply.version,
+		Version:      reply.id,
 		Status:       reply.status.String(),
 		StatusCode:   reply.status,
 		RetryAfterMs: reply.retryAfterMs,
@@ -481,7 +481,7 @@ func (s *traceService) appendRow(session *writeSession, writeEntity *tracev1.Wri
 	if err != nil {
 		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
 	}
-	err = session.Append(nodeID, metadata.GetGroup(), epoch, writeAck{metadata: metadata, version: writeEntity.GetVersion()},
+	err = session.Append(nodeID, metadata.GetGroup(), epoch, writeAck{metadata: metadata, id: writeEntity.GetVersion()},
 		func(first bool) ([]byte, error) {
 			request := &tracev1.WriteRequest{
 				Version: writeEntity.GetVersion(),
@@ -657,7 +657,7 @@ func (s *traceService) Query(ctx context.Context, req *tracev1.QueryRequest) (re
 		}
 		return queryResp, nil
 	case *common.Error:
-		return nil, errors.WithMessage(errQueryMsg, d.Error())
+		return nil, dataNodeQueryError(d)
 	}
 	return nil, nil
 }

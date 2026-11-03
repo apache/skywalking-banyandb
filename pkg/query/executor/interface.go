@@ -68,6 +68,15 @@ type StreamExecutable interface {
 	StreamCloser
 }
 
+// BatchIterator yields the output batches of a vectorized plan one at a time.
+type BatchIterator interface {
+	// NextBatch returns the next batch with at least one active row, or nil at the end.
+	// A returned batch stays valid after later calls and after Close.
+	NextBatch(ctx context.Context) (*vectorized.RecordBatch, error)
+	// Close releases the pipeline and the scan source. It is safe to call more than once.
+	Close() error
+}
+
 // StreamVecExecutable is the capability a stream plan node exposes when it can be
 // executed through the native columnar (vectorized) path. The data-node processor
 // type-asserts the analyzed plan to this interface; since the row path was removed
@@ -79,6 +88,13 @@ type StreamExecutable interface {
 // result.
 type StreamVecExecutable interface {
 	ExecuteVectorized(ctx context.Context) ([]*vectorized.RecordBatch, *vectorized.BatchSchema, error)
+	// OpenVectorized starts the same execution as ExecuteVectorized and returns the
+	// merged, deduplicated and limited batches one at a time, so a caller can send
+	// each before the next is produced. The merge is still a breaker: it consumes
+	// its whole input before the first batch is returned. The returned schema is nil
+	// when the scan found no source, and the iterator is then empty. The caller must
+	// Close the iterator, which releases the pipeline and the scan source.
+	OpenVectorized(ctx context.Context) (BatchIterator, *vectorized.BatchSchema, error)
 	// ProjectionTags returns the projected tag families/names in projection order,
 	// so the egress builds the same tag families/tags the row path would.
 	ProjectionTags() []model.TagProjection

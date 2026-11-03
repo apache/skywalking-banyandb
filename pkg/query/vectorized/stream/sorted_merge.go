@@ -33,8 +33,17 @@ import (
 // gathered lazily during emission.
 type mergeRowRef struct {
 	batch  *vectorized.RecordBatch
+	src    *mergeBatch
 	arrive int
 	row    int
+}
+
+// mergeBatch tracks one consumed input batch: the bytes charged for it and how
+// many of its rows the merge still references. When the last row is pruned the
+// batch is garbage and exactly the charged bytes are refunded.
+type mergeBatch struct {
+	charged  uint64
+	retained int
 }
 
 // SortedMerge is a globally-ordering breaker over stream RecordBatches.
@@ -50,7 +59,9 @@ type mergeRowRef struct {
 type SortedMerge struct {
 	schema    *vectorized.BatchSchema
 	pool      *vectorized.BatchPool
+	lease     query.BudgetLease
 	rows      []mergeRowRef
+	live      []*mergeBatch
 	batchSize int
 	maxRows   int
 	pruneAt   int
@@ -142,14 +153,21 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 	if chargeErr := query.Charge(ctx, chargeBytes); chargeErr != nil {
 		return chargeErr
 	}
+	if lease, admitted := query.BudgetLeaseFromContext(ctx); admitted {
+		s.lease = lease
+	}
+	src := &mergeBatch{charged: chargeBytes}
+	if chargeBytes > 0 {
+		s.live = append(s.live, src)
+	}
 	if batch.Selection == nil {
 		for row := 0; row < batch.Len; row++ {
-			s.rows = append(s.rows, mergeRowRef{batch: batch, row: row, arrive: s.arriveSeq})
+			s.rows = append(s.rows, mergeRowRef{batch: batch, src: src, row: row, arrive: s.arriveSeq})
 			s.arriveSeq++
 		}
 	} else {
 		for _, sel := range batch.Selection {
-			s.rows = append(s.rows, mergeRowRef{batch: batch, row: int(sel), arrive: s.arriveSeq})
+			s.rows = append(s.rows, mergeRowRef{batch: batch, src: src, row: int(sel), arrive: s.arriveSeq})
 			s.arriveSeq++
 		}
 	}
@@ -161,6 +179,7 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 	if s.pruneAt > 0 && len(s.rows) >= s.pruneAt {
 		s.sortRows()
 		s.capByDistinctElementID()
+		s.refundDropped()
 	}
 	return nil
 }
@@ -182,8 +201,36 @@ func (s *SortedMerge) Finalize(context.Context) error {
 	s.sortRows()
 	if s.maxRows > 0 {
 		s.capByDistinctElementID()
+		s.refundDropped()
 	}
 	return nil
+}
+
+// refundDropped returns the charge of every input batch that no retained row
+// references any more, which a prune just made garbage. It charges and refunds
+// the same per-batch figure, so the two always balance.
+func (s *SortedMerge) refundDropped() {
+	if len(s.live) == 0 {
+		return
+	}
+	for _, mb := range s.live {
+		mb.retained = 0
+	}
+	for i := range s.rows {
+		s.rows[i].src.retained++
+	}
+	kept := s.live[:0]
+	for _, mb := range s.live {
+		if mb.retained > 0 {
+			kept = append(kept, mb)
+			continue
+		}
+		if s.lease != nil {
+			s.lease.Refund(mb.charged)
+		}
+	}
+	clear(s.live[len(kept):])
+	s.live = kept
 }
 
 // sortRows stably orders the buffered rows by the schema order key, breaking
@@ -305,12 +352,19 @@ func (s *SortedMerge) NextBatch(ctx context.Context) (*vectorized.RecordBatch, e
 	return batch, nil
 }
 
-// Close is idempotent and releases buffered references.
+// Close is idempotent, releases buffered references and refunds the charge of
+// every batch the merge still retains.
 func (s *SortedMerge) Close() error {
 	if s.closed {
 		return nil
 	}
 	s.closed = true
+	if s.lease != nil {
+		for _, mb := range s.live {
+			s.lease.Refund(mb.charged)
+		}
+	}
+	s.live = nil
 	s.rows = nil
 	return nil
 }
