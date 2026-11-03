@@ -28,8 +28,9 @@ import (
 // rows, then signals EOF via ErrLimitExhausted.
 //
 // These are the CLIENT offset/limit values, applied liaison-side as the final
-// slice (mirrors distributedLimit.Execute in stream_plan_distributed.go). The
-// per-node scan cap of limit+offset is applied UPSTREAM (M6), not here.
+// window by the distributed plan: the frame path applies them here, the proto row
+// path slices its merged rows to the same window. The per-node scan cap of
+// limit+offset is applied upstream, at the data node, not here.
 type Limit struct {
 	schema  *vectorized.BatchSchema
 	offset  uint32
