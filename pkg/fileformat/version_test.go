@@ -26,3 +26,9 @@ import (
 func TestCurrentVersionIsCompatible(t *testing.T) {
 	assert.Contains(t, CompatibleVersions(), CurrentVersion)
 }
+
+func TestCurrentVersionAndCompatibleList(t *testing.T) {
+	assert.Equal(t, "1.6.0", CurrentVersion)
+	assert.Equal(t, []string{"1.4.0", "1.5.0", "1.6.0"}, CompatibleVersions())
+	assert.Contains(t, CompatibleVersions(), CurrentVersion)
+}
