@@ -333,6 +333,14 @@ const smallSegmentTermSetDocuments = 64
 // lower it.
 var maxBloomFilterTerms = 1 << 20
 
+// maxSmallTermSetTerms and maxSmallTermSetBytes bound the exact term set a
+// small segment retains per field; past either, termAbsent uses the bloom
+// filter.
+const (
+	maxSmallTermSetTerms = 1 << 14
+	maxSmallTermSetBytes = 1 << 20
+)
+
 // termAbsent reports whether term is certainly not in field's dictionary:
 // exactly from a term set on small segments, probabilistically from a bloom
 // filter on larger ones. It reports false (unknown) when neither applies.
@@ -348,6 +356,11 @@ func (s *storedSegmentReader) termAbsent(field string, term []byte) (bool, error
 		if terms, buildErr = s.buildSmallTermSet(field); buildErr != nil {
 			return false, buildErr
 		}
+	}
+	if terms == nil {
+		// The dictionary is too large to hold exactly; the bloom filter
+		// summarizes it in a bounded size.
+		return s.bloomTermAbsent(field, term)
 	}
 	_, present := terms[string(term)]
 	return !present, nil
@@ -399,6 +412,15 @@ func (s *storedSegmentReader) buildTermBloom(field string) (*filter.BloomFilter,
 
 // visitDictionaryTerms calls visit with every term of dictionary in order.
 func visitDictionaryTerms(dictionary termIndex, visit func(term []byte)) error {
+	return visitDictionaryTermsUntil(dictionary, func(term []byte) bool {
+		visit(term)
+		return true
+	})
+}
+
+// visitDictionaryTermsUntil calls visit with each term of dictionary in order
+// until visit returns false.
+func visitDictionaryTermsUntil(dictionary termIndex, visit func(term []byte) bool) error {
 	iterator, iteratorErr := dictionary.Iterator(nil, nil)
 	if iteratorErr != nil {
 		if iteratorDone(iteratorErr) {
@@ -414,7 +436,9 @@ func visitDictionaryTerms(dictionary termIndex, visit func(term []byte)) error {
 		if term == nil && value == 0 {
 			return nil
 		}
-		visit(term)
+		if !visit(term) {
+			return nil
+		}
 		if nextErr := iterator.Next(); nextErr != nil {
 			if iteratorDone(nextErr) {
 				return nil
@@ -424,6 +448,10 @@ func visitDictionaryTerms(dictionary termIndex, visit func(term []byte)) error {
 	}
 }
 
+// buildSmallTermSet returns the field's exact term set, or a nil map, kept as
+// the answer, when the dictionary exceeds maxSmallTermSetTerms terms or
+// maxSmallTermSetBytes term bytes: a dictionary is no longer capped, so the
+// retained heap copy is bounded here instead.
 func (s *storedSegmentReader) buildSmallTermSet(field string) (map[string]struct{}, error) {
 	dictionary, dictionaryErr := s.dictionary(field)
 	if dictionaryErr != nil {
@@ -431,8 +459,21 @@ func (s *storedSegmentReader) buildSmallTermSet(field string) (map[string]struct
 	}
 	terms := make(map[string]struct{})
 	if dictionary != nil {
-		if visitErr := visitDictionaryTerms(dictionary, func(term []byte) { terms[string(term)] = struct{}{} }); visitErr != nil {
-			return nil, visitErr
+		if dictionary.Len() > maxSmallTermSetTerms {
+			terms = nil
+		} else {
+			termBytes := 0
+			if visitErr := visitDictionaryTermsUntil(dictionary, func(term []byte) bool {
+				termBytes += len(term)
+				if termBytes > maxSmallTermSetBytes {
+					terms = nil
+					return false
+				}
+				terms[string(term)] = struct{}{}
+				return true
+			}); visitErr != nil {
+				return nil, visitErr
+			}
 		}
 	}
 	cached, keepErr := s.keep(&s.termSets, field, terms)

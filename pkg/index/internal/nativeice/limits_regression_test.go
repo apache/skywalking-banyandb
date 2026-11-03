@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,11 +41,11 @@ func writeTestSegmentFile(t testing.TB, generation Generation) string {
 // plan by bytes, so a busy shard produces such segments.
 func TestPersistedSegmentServesMoreDocumentsThanOldOffsetIndexCap(t *testing.T) {
 	const documentCount = (16<<20)/storedDocumentOffsetByteWidth + 1000
+	// One shared identifier keeps the _id dictionary at a single term; the test
+	// only exercises the stored offset index at the document-count boundary.
 	documents := make([]EncodeDocument, documentCount)
 	for documentIndex := range documents {
-		identifier := make([]byte, 8)
-		binary.BigEndian.PutUint64(identifier, uint64(documentIndex))
-		documents[documentIndex] = EncodeDocument{Identifier: identifier}
+		documents[documentIndex] = EncodeDocument{Identifier: []byte("shared")}
 	}
 	reader, openErr := OpenSegmentFile(writeTestSegmentFile(t, Generation{Documents: documents}))
 	requireNativeNoError(t, openErr)
@@ -147,4 +148,71 @@ func TestPublishSnapshotRejectsManifestTheReaderWouldRefuse(t *testing.T) {
 	reader, openErr := OpenStrict(directory)
 	requireNativeNoError(t, openErr)
 	requireNativeNoError(t, reader.Close())
+}
+
+// TestEncodeSegmentRejectsDocumentOverStoredLimit checks that a document the
+// reader would refuse is rejected at write time rather than written.
+func TestEncodeSegmentRejectsDocumentOverStoredLimit(t *testing.T) {
+	_, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
+		Identifier: []byte("huge"),
+		Fields:     []EncodeField{{Name: "content", Value: make([]byte, maxStoredDocumentSize), Store: true}},
+	}}})
+	requireNativeErrorIs(t, encodeErr, ErrInvalidGeneration)
+
+	_, encodeErr = EncodeSegment(Generation{Documents: []EncodeDocument{{
+		Identifier: []byte("large"),
+		Fields:     []EncodeField{{Name: "content", Value: make([]byte, maxStoredDocumentSize/2), Store: true}},
+	}}})
+	requireNativeNoError(t, encodeErr)
+}
+
+// TestStoredChunkDecodedLengthFollowsTheFile checks that the decoded-length
+// bound grows with the chunk's last document offset, so a corrupt header
+// cannot reserve more than the data beside it, and that it cannot overflow.
+func TestStoredChunkDecodedLengthFollowsTheFile(t *testing.T) {
+	requireNativef(t, maxStoredChunkDecodedLength(0) == maxStoredDocumentSize, "empty chunk bound = %d", maxStoredChunkDecodedLength(0))
+	requireNativef(t, maxStoredChunkDecodedLength(100<<20) == 100<<20+maxStoredDocumentSize, "bound = %d", maxStoredChunkDecodedLength(100<<20))
+	requireNativef(t, maxStoredChunkDecodedLength(^uint64(0)) == uint64(math.MaxInt), "overflowing offset bound = %d", maxStoredChunkDecodedLength(^uint64(0)))
+}
+
+// TestTermAbsentBoundsTheExactTermSet checks that a small segment whose
+// dictionary is too large to hold exactly answers from the bloom filter and
+// retains no term copy.
+func TestTermAbsentBoundsTheExactTermSet(t *testing.T) {
+	cases := map[string]struct{ termCount, termLength int }{
+		"too many terms": {termCount: maxSmallTermSetTerms + 1, termLength: 8},
+		"too many bytes": {termCount: 600, termLength: maxSmallTermSetBytes/600 + 16},
+	}
+	for name, shape := range cases {
+		t.Run(name, func(t *testing.T) {
+			terms := make([]EncodeTerm, shape.termCount)
+			for termIndex := range terms {
+				term := make([]byte, shape.termLength)
+				binary.BigEndian.PutUint64(term[shape.termLength-8:], uint64(termIndex))
+				terms[termIndex] = EncodeTerm{Value: term, Frequency: 1}
+			}
+			path := writeTestSegmentFile(t, Generation{Documents: []EncodeDocument{{
+				Identifier: []byte("one"),
+				Fields:     []EncodeField{{Name: "content", Value: []byte("content"), Index: true, Terms: terms}},
+			}}})
+			reader, openErr := OpenSegmentFile(path)
+			requireNativeNoError(t, openErr)
+			t.Cleanup(func() { requireNativeNoError(t, reader.Close()) })
+			storedReader, readerErr := newStoredSegmentReader(reader.segments[0].file, reader.segments[0].size, reader.segments[0].record)
+			requireNativeNoError(t, readerErr)
+			t.Cleanup(storedReader.close)
+
+			absent, absentErr := storedReader.termAbsent("content", terms[len(terms)/2].Value)
+			requireNativeNoError(t, absentErr)
+			requireNativef(t, !absent, "an indexed term was reported absent")
+			absent, absentErr = storedReader.termAbsent("content", []byte("not-an-indexed-term"))
+			requireNativeNoError(t, absentErr)
+			requireNativef(t, absent, "a missing term was not reported absent")
+
+			cached, built := storedReader.termSets.Load("content")
+			requireNativef(t, built && cached.(map[string]struct{}) == nil, "the oversized term set was retained")
+			_, filtered := storedReader.termFilters.Load("content")
+			requireNativef(t, filtered, "no bloom filter replaced the term set")
+		})
+	}
 }
