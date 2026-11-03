@@ -39,7 +39,6 @@ const (
 	maxSelectionTermCount      = 1 << 16
 	maxSelectionTermLength     = 64 << 10
 	maxSelectionDictionarySize = 64 << 20
-	maxSelectionPostingsSize   = 64 << 20
 	selectionPostingBatchSize  = 1024
 	selectionDecodeReadSize    = 32 << 10
 	maxFrequencyChunkCount     = 1 << 20
@@ -289,8 +288,11 @@ func (s *storedSegmentReader) locateDictionary(field string) (uint64, uint64, bo
 	if lengthErr != nil {
 		return 0, 0, false, lengthErr
 	}
-	if length > maxSelectionDictionarySize || length > s.footer.docValueOffset-cursor {
-		return 0, 0, false, corruptError("segment %q has an oversized term dictionary", s.path)
+	// The section bound is the only limit: a dictionary is read in place (or
+	// borrowed from an admitted payload), so its size costs no heap, and the
+	// writer and merger emit whatever length the field's terms require.
+	if length > s.footer.docValueOffset-cursor {
+		return 0, 0, false, corruptError("segment %q has a term dictionary beyond its section", s.path)
 	}
 	return cursor, length, true, nil
 }
@@ -446,12 +448,10 @@ func iteratorDone(err error) bool {
 	return errors.Is(err, vellum.ErrIteratorDone) || strings.Contains(strings.ToLower(err.Error()), "iterator")
 }
 
-// readDictionaryBytes applies the dictionary's 64 MiB bound without changing
-// the smaller bound used by stored-document and posting reads.
+// readDictionaryBytes returns the dictionary's bytes. An admitted payload is
+// borrowed without a copy, so only the heap copy of a file-backed read is
+// bounded, by maxSelectionDictionarySize.
 func (s *storedSegmentReader) readDictionaryBytes(offset, length uint64) ([]byte, error) {
-	if length > maxSelectionDictionarySize {
-		return nil, corruptError("segment %q requested an oversized term dictionary", s.path)
-	}
 	if length > uint64(^uint(0)>>1) {
 		return nil, corruptError("segment %q term dictionary length overflows int", s.path)
 	}
@@ -460,6 +460,9 @@ func (s *storedSegmentReader) readDictionaryBytes(offset, length uint64) ([]byte
 			return nil, corruptError("segment %q dictionary read exceeds file bounds", s.path)
 		}
 		return memory.data[int(offset):int(offset+length)], nil
+	}
+	if length > maxSelectionDictionarySize {
+		return nil, corruptError("segment %q requested an oversized term dictionary", s.path)
 	}
 	data := make([]byte, int(length))
 	if readErr := s.readInto(offset, data); readErr != nil {
@@ -570,7 +573,7 @@ func (s *storedSegmentReader) termFrequencies(field string, term []byte) ([]Term
 		return nil, corruptError("segment %q has a posting detail offset outside its section", s.path)
 	}
 	postingsLength, lengthErr := s.readUvarint(&cursor, s.footer.docValueOffset)
-	if lengthErr != nil || postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
+	if lengthErr != nil || postingsLength > s.maxPostingsLength() || postingsLength > s.footer.docValueOffset-cursor {
 		if lengthErr != nil {
 			return nil, lengthErr
 		}
@@ -701,7 +704,7 @@ func (s *storedSegmentReader) postingDocuments(postingOffset uint64) ([]uint64, 
 	if lengthErr != nil {
 		return nil, lengthErr
 	}
-	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
+	if postingsLength > s.maxPostingsLength() || postingsLength > s.footer.docValueOffset-cursor {
 		return nil, corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
 	if postingsLength > uint64(^uint(0)>>1) {
@@ -898,7 +901,7 @@ func (s *storedSegmentReader) decodePostingAtContext(ctx context.Context, postin
 	if lengthErr != nil {
 		return 0, nil, lengthErr
 	}
-	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
+	if postingsLength > s.maxPostingsLength() || postingsLength > s.footer.docValueOffset-cursor {
 		return 0, nil, corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
 	if err := query.ReserveAllocation(ctx, postingsLength*16+4096); err != nil {
@@ -1120,7 +1123,7 @@ func (s *storedSegmentReader) unionGeneralPostings(ctx context.Context, selected
 	if lengthErr != nil {
 		return lengthErr
 	}
-	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-postingsCursor {
+	if postingsLength > s.maxPostingsLength() || postingsLength > s.footer.docValueOffset-postingsCursor {
 		return corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
 	if err := query.ReserveAllocation(ctx, postingsLength*16+4096); err != nil {
