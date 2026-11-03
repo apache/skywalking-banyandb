@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"unsafe"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
@@ -35,38 +36,48 @@ const (
 	AggregateMin
 	AggregateMax
 	AggregateAvg
+	AggregateCountDistinct
 )
 
 // AggregateCall describes one aggregate input independently of output aliases.
 type AggregateCall struct {
-	Source   vectorized.ColumnDef
-	Function AggregateFunction
+	Source       vectorized.ColumnDef
+	Function     AggregateFunction
+	Decimal      bool
+	DecimalScale uint8
 }
 
 // AggregateOutput names one selected grouping key or aggregate call.
 type AggregateOutput struct {
-	Column  vectorized.ColumnDef
-	Index   int
-	IsGroup bool
+	Column    vectorized.ColumnDef
+	Index     int
+	IsGroup   bool
+	Timestamp bool // Timestamp requests timestamp-tag encoding at final egress.
 }
 
 // AggregatePlan is an immutable recipe for complete local aggregation.
 type AggregatePlan struct {
-	GroupBy []vectorized.ColumnDef
-	Calls   []AggregateCall
-	Outputs []AggregateOutput
+	GroupExpressions *ExpressionPlan
+	TimeBucketWidth  string // Resolved existing native width; empty means no bucket.
+	GroupBy          []vectorized.ColumnDef
+	Calls            []AggregateCall
+	Outputs          []AggregateOutput
+	TimeBucketIndex  int // GroupBy index of the bucket key when TimeBucketWidth is nonempty.
 }
 
 // AggregateStats separates retained group keys and fixed-width state from native input residency.
 type AggregateStats struct {
-	InputRows     uint64
-	Groups        uint64
-	GroupCapacity uint64
-	KeyBytes      uint64
-	KeyCapacity   uint64
-	StateBytes    uint64 // Used fixed-width state bytes for actual groups.
-	StateCapacity uint64 // Reserved fixed-width state capacity in bytes.
-	StateLanes    uint64
+	InputRows           uint64
+	Groups              uint64
+	GroupCapacity       uint64
+	KeyBytes            uint64
+	KeyCapacity         uint64
+	StateBytes          uint64 // Used fixed-width state bytes for actual groups.
+	StateCapacity       uint64 // Reserved fixed-width state capacity in bytes.
+	StateLanes          uint64
+	DistinctKeys        uint64 // Retained (group, value) pairs across distinct states.
+	DistinctKeyBytes    uint64 // Used encoded distinct key bytes.
+	DistinctKeyCapacity uint64 // Reserved distinct indexes, key arenas and scratch bytes.
 }
 
 type aggregateCallRef struct {
@@ -75,10 +86,12 @@ type aggregateCallRef struct {
 }
 
 type aggregateOperator struct {
+	metrics          *groupMetrics
 	source           vectorized.PullOperator
 	tracker          *vectorized.MemoryTracker
 	schema           *vectorized.BatchSchema
 	output           *vectorized.RecordBatch
+	bucketWidth      string
 	states           []aggregateState
 	calls            []aggregateCallRef
 	outputs          []AggregateOutput
@@ -87,6 +100,7 @@ type aggregateOperator struct {
 	stateReaders     []aggregateReader
 	groups           aggregateGroups
 	stats            AggregateStats
+	distinctLimit    uint64
 	metadataBytes    int64
 	outputBytes      int64
 	outputValueBytes int64
@@ -94,12 +108,28 @@ type aggregateOperator struct {
 	complete         bool
 	closed           bool
 	sourceClosed     bool
+	distinct         bool
+	bucketIndex      int
 }
 
 // WrapAggregate takes source ownership, including on construction failure.
 // It consumes every active input row before emitting synthesized groups, without native identity metadata.
 func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *AggregatePlan) (_ vectorized.PullOperator, err error) {
-	op := &aggregateOperator{source: source}
+	if plan != nil && plan.GroupExpressions != nil {
+		source, err = wrapGroupExpressions(ctx, source, plan)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return wrapAggregate(ctx, source, plan, false)
+}
+
+func wrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *AggregatePlan, distinct bool) (_ vectorized.PullOperator, err error) {
+	metrics := &aggregateGroupMetrics
+	if distinct {
+		metrics = &distinctGroupMetrics
+	}
+	op := &aggregateOperator{source: source, distinct: distinct, metrics: metrics, bucketIndex: -1}
 	defer func() {
 		if err != nil {
 			_ = op.Close()
@@ -120,7 +150,7 @@ func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 		return nil, err
 	}
 	op.metadataBytes = bytes
-	op.groups = aggregateGroups{tracker: op.tracker}
+	op.groups = aggregateGroups{tracker: op.tracker, metrics: metrics}
 	op.groupValues = make([]aggregateValue, len(plan.GroupBy))
 	op.groupReaders = make([]aggregateReader, len(plan.GroupBy))
 	for index, def := range plan.GroupBy {
@@ -132,6 +162,9 @@ func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 			return nil, readerErr
 		}
 		op.groupReaders[index] = reader
+		if index == plan.TimeBucketIndex && plan.TimeBucketWidth != "" {
+			op.bucketIndex, op.bucketWidth = index, plan.TimeBucketWidth
+		}
 	}
 	if err = op.compileCalls(source.OutputSchema(), plan.Calls); err != nil {
 		return nil, err
@@ -157,8 +190,14 @@ func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 		if output.Column.Type != expected {
 			return nil, fmt.Errorf("aggregate output %q has type %s; expected %s", output.Column.Name, output.Column.Type, expected)
 		}
+		if !output.IsGroup && plan.Calls[output.Index].Decimal && output.Column.Scale != plan.Calls[output.Index].DecimalScale {
+			return nil, fmt.Errorf("aggregate output %q has inconsistent decimal scale", output.Column.Name)
+		}
 		defs[index] = output.Column
 		defs[index].Entity = false
+	}
+	if op.bucketIndex >= 0 {
+		defs = append(defs, vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64})
 	}
 	op.schema = vectorized.NewBatchSchema(defs)
 	return op, nil
@@ -166,25 +205,47 @@ func WrapAggregate(ctx context.Context, source vectorized.PullOperator, plan *Ag
 
 func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls []AggregateCall) error {
 	o.calls = make([]aggregateCallRef, len(calls))
-	bySource := make(map[vectorized.ColumnDef]int)
+	type stateKey struct {
+		source   vectorized.ColumnDef
+		distinct bool
+		decimal  bool
+	}
+	bySource := make(map[stateKey]int)
 	for index, call := range calls {
-		if call.Function > AggregateAvg || !aggregateScalarType(call.Source.Type) {
+		if call.Function > AggregateCountDistinct || !aggregateScalarType(call.Source.Type) {
 			return fmt.Errorf("unsupported aggregate function or source type for %q", call.Source.Name)
 		}
-		if call.Function != AggregateCount && call.Source.Type != vectorized.ColumnTypeInt64 && call.Source.Type != vectorized.ColumnTypeFloat64 {
+		if call.Function != AggregateCount && call.Function != AggregateCountDistinct &&
+			call.Source.Type != vectorized.ColumnTypeInt64 && call.Source.Type != vectorized.ColumnTypeFloat64 {
 			return fmt.Errorf("aggregate on %q requires a numeric column", call.Source.Name)
 		}
 		def := call.Source
 		def.Entity = false
-		state, exists := bySource[def]
+		if call.Decimal && (call.Function != AggregateSum || def.Type != vectorized.ColumnTypeInt64 || call.DecimalScale > 18) {
+			return fmt.Errorf("decimal aggregation requires SUM of int64 with scale 0 to 18")
+		}
+		key := stateKey{source: def, distinct: call.Function == AggregateCountDistinct, decimal: call.Decimal}
+		state, exists := bySource[key]
 		if !exists {
 			reader, err := newAggregateReader(schema, def)
 			if err != nil {
 				return err
 			}
 			state = len(o.states)
-			bySource[def] = state
-			o.states = append(o.states, aggregateState{source: def})
+			bySource[key] = state
+			entry := aggregateState{source: def, decimal: call.Decimal}
+			if key.distinct {
+				bytes, boundErr := groupAllocationBytes(int64(unsafe.Sizeof(aggregateGroups{})))
+				if boundErr != nil {
+					return boundErr
+				}
+				if reserveErr := o.reserve(bytes); reserveErr != nil {
+					return reserveErr
+				}
+				o.metadataBytes += bytes
+				entry.distinct = &aggregateGroups{tracker: o.tracker, metrics: o.metrics}
+			}
+			o.states = append(o.states, entry)
 			o.stateReaders = append(o.stateReaders, reader)
 		}
 		o.states[state].require(call.Function)
@@ -194,8 +255,11 @@ func (o *aggregateOperator) compileCalls(schema *vectorized.BatchSchema, calls [
 }
 
 func aggregateOutputType(call AggregateCall) vectorized.ColumnType {
+	if call.Decimal {
+		return vectorized.ColumnTypeDecimal
+	}
 	switch call.Function {
-	case AggregateCount:
+	case AggregateCount, AggregateCountDistinct:
 		return vectorized.ColumnTypeInt64
 	case AggregateAvg:
 		return vectorized.ColumnTypeFloat64
@@ -206,14 +270,12 @@ func aggregateOutputType(call AggregateCall) vectorized.ColumnType {
 
 // AggregateStatistics returns the structural state of a local aggregate, including after Close.
 func AggregateStatistics(source vectorized.PullOperator) (AggregateStats, bool) {
-	op, ok := source.(*aggregateOperator)
-	if !ok {
-		if raw, rawOK := source.(*rawOperator); rawOK {
-			return AggregateStatistics(raw.source)
+	for current := source; current != nil; current = operatorSource(current) {
+		if op, ok := current.(*aggregateOperator); ok && !op.distinct {
+			return op.statistics(), true
 		}
-		return AggregateStats{}, false
 	}
-	return op.statistics(), true
+	return AggregateStats{}, false
 }
 
 func (o *aggregateOperator) statistics() AggregateStats {
@@ -227,6 +289,11 @@ func (o *aggregateOperator) statistics() AggregateStats {
 	stats.KeyCapacity = uint64(o.groups.tableBytes + o.groups.keyReserved + o.groups.scratchBytes)
 	for index := range o.states {
 		stats.StateLanes += uint64(o.states[index].lanes())
+		if keys := o.states[index].distinct; keys != nil {
+			stats.DistinctKeys += uint64(len(keys.keys))
+			stats.DistinctKeyBytes += uint64(keys.keyBytes)
+			stats.DistinctKeyCapacity += uint64(keys.tableBytes + keys.keyReserved + keys.scratchBytes)
+		}
 	}
 	stats.StateBytes = stats.Groups * stats.StateLanes * 8
 	stats.StateCapacity = stats.GroupCapacity * stats.StateLanes * 8
@@ -266,6 +333,9 @@ func (o *aggregateOperator) Close() error {
 	o.closed = true
 	o.groups.close()
 	for index := range o.states {
+		if o.states[index].distinct != nil {
+			o.states[index].distinct.close()
+		}
 		o.states[index] = aggregateState{}
 	}
 	o.states = nil
@@ -280,14 +350,14 @@ func (o *aggregateOperator) reserve(bytes int64) error {
 	if err := o.tracker.Reserve(bytes); err != nil {
 		return err
 	}
-	recordAggregateReserve(bytes)
+	o.metrics.reserve(bytes)
 	return nil
 }
 
 func (o *aggregateOperator) release(bytes int64) {
 	if bytes != 0 && o.tracker != nil {
 		o.tracker.Release(bytes)
-		recordAggregateRelease(bytes)
+		o.metrics.release(bytes)
 	}
 }
 
@@ -337,9 +407,12 @@ func (o *aggregateOperator) consumeAll(ctx context.Context) error {
 		if err = o.consumeBatch(ctx, batch); err != nil {
 			return err
 		}
+		if o.distinctLimit != 0 && uint64(len(o.groups.keys)) >= o.distinctLimit {
+			break
+		}
 	}
-	// Source columns can borrow native decode buffers. Only encoded group keys
-	// and fixed-width state survive the scan; discard the readers before egress.
+	// Source columns can borrow native decode buffers. Encoded grouping/distinct
+	// keys and fixed-width states own their data; discard readers before egress.
 	clear(o.groupValues)
 	for index := range o.groupReaders {
 		o.groupReaders[index].column = nil
@@ -351,7 +424,7 @@ func (o *aggregateOperator) consumeAll(ctx context.Context) error {
 		return err
 	}
 	o.complete = true
-	recordAggregateExecution(o.statistics())
+	o.metrics.execution(o.statistics())
 	return nil
 }
 
@@ -384,6 +457,7 @@ func (o *aggregateOperator) consumeBatch(ctx context.Context, batch *vectorized.
 			if err != nil {
 				return err
 			}
+			value.timestamp = o.groupReaders[index].timestamp
 			o.groupValues[index] = value
 		}
 		group, err := o.groupID(o.groupValues)
@@ -400,6 +474,9 @@ func (o *aggregateOperator) consumeBatch(ctx context.Context, batch *vectorized.
 			}
 		}
 		o.stats.InputRows++
+		if o.distinctLimit != 0 && uint64(len(o.groups.keys)) >= o.distinctLimit {
+			break
+		}
 	}
 	return nil
 }

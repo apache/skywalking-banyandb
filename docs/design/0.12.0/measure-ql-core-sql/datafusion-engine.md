@@ -1,10 +1,12 @@
 # DataFusion-inspired measure QL engine
 
-Status: **implemented through T08 in PR 2.** Shared batches, typed raw queries
-and compiled-plan reuse are merged through PR #1417. This branch adds local SQL
-aggregation and eligible native aggregate split/merge. Expressions, HAVING,
-DISTINCT, computed grouping and general sorting remain later PRs. Current scope
-and evidence are in the [PR 2 verification record](pr2-verification.md).
+Status: **implemented through T17 and exact count-distinct composition in PR 4.**
+The merged foundation and aggregation come from PRs #1417 and #1424. This branch
+adds DISTINCT, computed/ordinal grouping, selectable time buckets and general
+sorting above open [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432),
+with main at `86659118` as the integration baseline. Current scope and validation
+are recorded in the [PR 4 verification record](pr4-verification.md). Relational
+joins and CTEs are outside this delivery.
 
 This refines the [Catalog B implementation plan](README.md), originally reviewed
 against PR #1412 at `012115c5`. The companion [research note](datafusion-research.md)
@@ -108,6 +110,77 @@ shared pooled Column object safe: resetting that object can destroy the view.
 Use independently owned column views/descriptors and retain their backing owners,
 or copy when a safe view is unavailable. Batch release returns descriptors and
 buffers exactly once. This is required for aliases and repeated column projections.
+
+T10 implements this contract in `pkg/query/ql/expression*.go`. Immutable,
+schema-resolved recipes retain symbolic parameters in the compiled template;
+binding creates fresh typed expressions, and operator construction chooses
+typed kernels and source offsets. Boolean values stay local to the evaluator,
+without a native ColumnType or encoding change. A batch-local protobuf boundary
+decoder handles only selected rows; borrowed source slices and owned scratch
+buffers remain separate. CASE, COALESCE and boolean short-circuiting pass physical
+row masks to children, including constant expressions that may fail if evaluated.
+
+Native sources already emit at most 65,536 physical rows. The public expression
+operator rejects an oversized external batch before constructing uint16 row
+indices, rather than silently losing rows. Scalar numeric/string/bytes results
+reach final egress as ConstColumn. Constant array payloads remain scalar through
+evaluation; final projection allocates tracked row headers for the existing
+serializer, whose native ConstColumn does not support arrays. This is an egress
+compatibility cost, recorded separately from the scalar-constant kernel gate.
+Computed timestamps use UTC Unix nanoseconds and become timestamp TagValues
+only in the final QL adapter. See the [language guide](../../../interacting/bydbql.md#59-typed-select-expressions)
+for the checked arithmetic, cast, null and result-mapping rules.
+
+T12 reuses those compiled kernels in `WrapFilter`. A BOOL result narrows selection
+without copying output value columns; only TRUE passes. The operator borrows the
+input schema, columns and metadata until the next pull, skips empty selections,
+and charges typed decoding scratch, row masks and selection storage before
+allocation. The output-copy field is structurally zero, verified by column-identity
+checks in unit tests and the kernel benchmark; it is not measured copy telemetry.
+Charged decoding scratch is outside that invariant.
+EOF, evaluation errors, cancellation and repeated Close release state and close
+the source exactly once. Oversized external batches reject before uint16 conversion.
+The filter owns the source explicitly; its shared expression kernel owns scratch.
+Planner and runtime share BOOLEAN/NULL predicate validation.
+
+The planner keeps safe necessary tag predicates and a conservative time envelope
+in the native request, then evaluates the full residual before visible projection,
+T07 aggregation and final pagination. A time branch under OR cannot exclude rows
+matched by another branch. Hidden predicate inputs survive time filtering but
+never reach final output. A residual disables T08 native aggregation and input
+LIMIT/OFFSET pushdown. Cached recipes retain symbolic values; each execution binds
+fresh parameters and one clock. Legacy tag-only MATCH and collection HAVING keep
+their original routing. T14 adds typed collection membership composition with
+new residuals; MATCH composition remains rejected.
+Names-only routing preserves ordinary legacy queries across groups whose unused
+column types differ. Typed schema validation runs when typed execution is needed.
+One input collector extends the native scan with hidden columns without changing
+visible slots; SELECT and WHERE share array binding and tag ambiguity metadata.
+See the [WHERE contract](../../../interacting/bydbql.md#510-field-and-expression-filters).
+
+T14 adds immutable `HavingPlan` metadata to the same execution recipe. Binding
+resolves source grouping keys and aggregate calls, deduplicates repeated calls,
+and retains hidden keys/calls until the predicate has run. SELECT aliases do not
+change HAVING name resolution. Local aggregation and the completed native merge
+both feed the shared filter kernel before visible projection and final pagination.
+Group-only HAVING uses local grouping; scalar empty aggregation still produces its
+SQL empty row before the predicate. No child pagination can remove input groups.
+
+The runtime exposes separate raw WHERE and HAVING statistics even though both
+stages share evaluation, borrowing and memory accounting. Each bound execution
+owns fresh scratch and reservations; cached recipes retain no bound values or
+operator state. CONTAINS/NOT CONTAINS reuse legacy all-terms membership rules,
+including scalar, duplicate, null and empty-list behavior. Typed unindexed arrays
+work through the existing batch decoder. The QL dispatcher checks current binding
+and rule metadata before native dispatch, including cache hits, and rejects typed
+membership on indexed arrays. It does not filter binding validity windows because
+native schema caches also apply those bindings. Scalar/no-membership plans skip
+the metadata check. The guard is retained from the T14 rollout. The inherited
+native projection repair fixes truncated array decoding; enabling typed membership
+on indexed arrays
+requires a separate change with its own validation. The new operator spelling
+is contextual and measure-only. The
+[T14 verification record](t14-verification.md) preserves the reproducer and boundary.
 
 ## 4. Plan stages and the small optimizer
 
@@ -233,6 +306,17 @@ DataFusion's grouped-accumulator approach is the reference; its full partial-sta
 wire/distributed machinery is not needed here. See the pinned sources in the
 [research note](datafusion-research.md).
 
+T16 adds a typed key-expression stage between WHERE and local aggregation.
+Compiled structural identities resolve repeated keys once; SELECT ordinals bind
+after star expansion and share their selected expression's parameter identity.
+Synthetic fields preserve source-column identities, including distinct original
+timestamps and bucket timestamps. TIME_BUCKET uses native fixed-duration epoch
+flooring. Local and native output preserve the bucket as metadata and any selected
+timestamp alias; native merge identity includes the bucket. Eligible native
+reductions remain unchanged, while other computed keys use the raw path.
+Expression buffers and immutable cached recipes use the existing bounded memory
+and plan-cache accounting. See [T16 verification](t16-verification.md).
+
 Use one QL key codec for aggregate merging, DISTINCT and computed grouping. Encode
 logical types, explicit null markers and variable-length boundaries; define array
 structure if admitted. Null, zero and empty string must differ. Normalize signed
@@ -245,6 +329,22 @@ DISTINCT is HashAggregate with visible projected slots as keys and zero aggregat
 states. Group-only B9 uses the same path. This shares memory accounting and key
 semantics without copying the legacy first-row-per-group behavior. The legacy
 key codec cannot implement this correctly as-is; keep the SQL codec liaison-local.
+
+T15 implements this path after visible projection, including removal of hidden
+HAVING inputs, and before final pagination. The same tracker accounts for input,
+key-table growth and output. Unordered finite LIMIT stops the table at
+OFFSET + LIMIT unique keys; explicit ordering and absent LIMIT consume complete
+input. Upstream grouping and native result materialization retain their own
+input requirements. Full keys use chunk arenas and compact references;
+64-KiB chunks use the native tracked pool with an 8-MiB global idle bound.
+Checked-out capacity and growth overlap are charged before allocation. Separate DISTINCT
+counters avoid attributing its zero-state table to an upstream aggregate. Selected
+timestamps carry a logical key marker, while incidental source timestamps and
+series identities are excluded. Scalar and binary keys are admitted; array keys
+reject during binding. See [T15 verification](t15-verification.md) for the generated
+RPC cases and equivalent GROUP BY benchmark, and
+[T15 memory verification](t15-memory-verification.md) for the arena, early stopping
+and native buffering follow-up.
 
 Do not silently inherit native numeric or empty-input quirks. The extended QL
 contract is COUNT -> int64, AVG -> float64, empty scalar count -> 0 and other
@@ -283,12 +383,15 @@ compare identical semantics with pushdown enabled or disabled.
 | DISTINCT / GROUP BY | One null-aware group table; emit key columns only when no aggregates | Reuse batch allocation patterns, not the legacy key codec |
 | OFFSET / LIMIT | Selection slicing, uint64 counters, absent versus zero | Adapt helper locally; no native contract change |
 
-For sorting, evaluate keys once per batch. Use compact row references into retained
-column buffers and emit gathered batches; retained source bytes must be charged.
-For top-k, clone accepted candidates into a compact retained batch/arena so keeping
-one row does not pin an unbounded number of entire input blocks. Eviction releases
-or reuses that candidate's storage. Bound by retained bytes as well as k. No
-unbounded full sort fallback after exhausting memory.
+T17 evaluates sort keys once per batch and copies retained row values into owned
+candidate storage, including reachable variable-width values. Neither full sort
+nor top-k retains source-batch owners. Unlimited output uses cancellable heapsort;
+finite LIMIT keeps at most `uint64(OFFSET) + uint64(LIMIT)` candidates in a max-heap
+and then sorts that retained page prefix. Eviction reuses candidate cell storage.
+Key buffers, candidate capacity/payload and output charge the shared query tracker
+before allocation. Exhaustion fails the query; there is no unbounded fallback or
+disk spilling. See [T17 verification](t17-verification.md) for accounting and
+cleanup evidence.
 
 ORDER BY defaults, hidden keys, output aliases, field-filter-before-aggregation,
 HAVING membership compatibility, cast syntax and existing response limitations

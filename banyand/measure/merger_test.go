@@ -35,7 +35,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
 
@@ -1800,4 +1802,45 @@ func Test_mergeParts_splitPreservesValues(t *testing.T) {
 	require.NoError(t, reader.error())
 	require.Equal(t, (parts-1)*rowsPerPart+maxBlockLength, count)
 	require.Greater(t, blockCount, 1)
+}
+
+func Test_mergePartsThenSendIntroduction_cleansUpOnShutdown(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+
+	fileSystem := fs.NewLocalFileSystem()
+	inputID := uint64(5)
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(dpsTS1)
+	mp.mustFlush(fileSystem, partPath(tmpPath, inputID))
+	p := mustOpenFilePart(inputID, tmpPath, fileSystem)
+	p.partMetadata.ID = inputID
+	pw := newPartWrapper(nil, p)
+	releaseMemPart(mp)
+
+	tst := &tsTable{
+		fileSystem: fileSystem,
+		root:       tmpPath,
+		l:          logger.GetLogger("measure-test"),
+		pm:         protector.Nop{},
+		loopCloser: run.NewCloser(0),
+	}
+	tst.loopCloser.CloseThenWait()
+
+	merged := map[uint64]struct{}{inputID: {}}
+	got, err := tst.mergePartsThenSendIntroduction(
+		snapshotCreatorMerger,
+		[]*partWrapper{pw},
+		merged,
+		make(chan *mergerIntroduction),
+		make(chan struct{}),
+		"file",
+	)
+	require.ErrorIs(t, err, errClosed)
+	require.Nil(t, got)
+
+	outputID := tst.curPartID
+	require.False(t, fileSystem.IsExist(partPath(tmpPath, outputID)),
+		"merged part directory should be removed when the introduction is refused")
+	require.True(t, fileSystem.IsExist(partPath(tmpPath, inputID)))
 }

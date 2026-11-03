@@ -50,7 +50,6 @@ func TestGrpcBufferMemoryRatioFlagDefault(t *testing.T) {
 		streamSVC:      &streamService{},
 		measureSVC:     &measureService{},
 		traceSVC:       &traceService{},
-		writeConfig:    &writeSessionConfig{},
 		propertyServer: &propertyServer{},
 	}
 	fs := s.FlagSet()
@@ -65,7 +64,6 @@ func TestLiaisonWriteTimeoutFlagDefaults(t *testing.T) {
 		streamSVC:      &streamService{},
 		measureSVC:     &measureService{},
 		traceSVC:       &traceService{},
-		writeConfig:    &writeSessionConfig{},
 		propertyServer: &propertyServer{},
 	}
 	flagSet := s.FlagSet()

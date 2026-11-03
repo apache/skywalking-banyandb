@@ -1,0 +1,290 @@
+[
+  {
+    "round": 0,
+    "arm": "prefix",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "62cb0d7c4064e2b14d956bd6676436a3ee6e7c71ec05b3ebe32938924ad19a75",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t    385127 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  130068 B/op\t     465 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 385127.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 130068.0,
+      "allocs/op": 465.0
+    }
+  },
+  {
+    "round": 0,
+    "arm": "prefix",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "9449051bef2aedbec4cbb59bae747fd64b2f6b2c3f553598f0bf2b4769a53c49",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t     37821 ns/op\t        16.00 hits/op\t     26204 reserved-B/op\t   19875 B/op\t     319 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 37821.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 26204.0,
+      "B/op": 19875.0,
+      "allocs/op": 319.0
+    }
+  },
+  {
+    "round": 0,
+    "arm": "leading",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "c327a1074c10f3cfd69b5154174db59c38466f6924e3ca1198a59948e75e73ee",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t   1661315 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  186424 B/op\t     576 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1661315.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 186424.0,
+      "allocs/op": 576.0
+    }
+  },
+  {
+    "round": 0,
+    "arm": "leading",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "49d8bdfa84f2b3118251e4f84b04f4390242e71cc7bfbf05900a4460a9dfd187",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t    683105 ns/op\t        16.00 hits/op\t     24780 reserved-B/op\t   19003 B/op\t     315 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 683105.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 24780.0,
+      "B/op": 19003.0,
+      "allocs/op": 315.0
+    }
+  },
+  {
+    "round": 0,
+    "arm": "no_match",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "19bdb2c400d4ef84dabdc692e7ea8725375ff693c52499d3768b5920c329aecd",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t   1989051 ns/op\t         0 hits/op\t         0 reserved-B/op\t  192266 B/op\t     345 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1989051.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 0.0,
+      "B/op": 192266.0,
+      "allocs/op": 345.0
+    }
+  },
+  {
+    "round": 0,
+    "arm": "no_match",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "a2f26dbb91d709694da84c917ed5d06d7f020510bf842a9ccdd057118fa54c23",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t    659649 ns/op\t         0 hits/op\t      5372 reserved-B/op\t    7640 B/op\t      58 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 659649.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 5372.0,
+      "B/op": 7640.0,
+      "allocs/op": 58.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "prefix",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "fc8a96a0e954b6ba5ec856056a6cbebb494aa288191be803c40df08fc0f82f5a",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t     40321 ns/op\t        16.00 hits/op\t     26204 reserved-B/op\t   19875 B/op\t     319 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 40321.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 26204.0,
+      "B/op": 19875.0,
+      "allocs/op": 319.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "prefix",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "65125565098cc36886b4e4fc45870f37b9c8b667dcd92a2e70ee1587dd7a18d4",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t    376028 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  130068 B/op\t     465 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 376028.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 130068.0,
+      "allocs/op": 465.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "leading",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "7d6147b3bfc6a416feb762ce89229555cf4a9780058830758f5e07d1392a4ee2",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t    742310 ns/op\t        16.00 hits/op\t     24780 reserved-B/op\t   19005 B/op\t     315 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 742310.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 24780.0,
+      "B/op": 19005.0,
+      "allocs/op": 315.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "leading",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "eda01a7fdaf4e3b2943c3974730eb81a152fda0f38c9a55600b92a7961456eb8",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t   1668145 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  186427 B/op\t     576 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1668145.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 186427.0,
+      "allocs/op": 576.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "no_match",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "b25d591af652542d2928198415e889ad9aa01ad87132ca95bda2cb7185ac21cd",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t    718288 ns/op\t         0 hits/op\t      5372 reserved-B/op\t    7640 B/op\t      58 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 718288.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 5372.0,
+      "B/op": 7640.0,
+      "allocs/op": 58.0
+    }
+  },
+  {
+    "round": 1,
+    "arm": "no_match",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "ab46dea3ae3a9cd49bd809a0e8381c34476a541c685d92b8f16b7639ed3e4d43",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t   1913198 ns/op\t         0 hits/op\t         0 reserved-B/op\t  192265 B/op\t     345 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1913198.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 0.0,
+      "B/op": 192265.0,
+      "allocs/op": 345.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "prefix",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "13b8dfdf5564ed297c3bb4f8ce08ea47f485a2c0d8a5f60fc1167cf9dc03539e",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t    374712 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  130069 B/op\t     465 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 374712.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 130069.0,
+      "allocs/op": 465.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "prefix",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "5e113dd8395e31f7b6aeb6927e44baccd82527448123004af8a848ca89da870f",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/prefix-2         \t     100\t     38448 ns/op\t        16.00 hits/op\t     26204 reserved-B/op\t   19875 B/op\t     319 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 38448.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 26204.0,
+      "B/op": 19875.0,
+      "allocs/op": 319.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "leading",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "c20230555a6c7ec7239dc4e942e0b3e4c5a0eabf21636eef30c5de73afdd156d",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t   1690984 ns/op\t        16.00 hits/op\t     16612 reserved-B/op\t  186420 B/op\t     576 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1690984.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 16612.0,
+      "B/op": 186420.0,
+      "allocs/op": 576.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "leading",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "f9056c57297ec4c1e8af558cc5b795d4c6da20f06b23f8000c2415a9db787dd5",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/leading-2         \t     100\t    705705 ns/op\t        16.00 hits/op\t     24780 reserved-B/op\t   19004 B/op\t     315 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 705705.0,
+      "hits/op": 16.0,
+      "reserved-B/op": 24780.0,
+      "B/op": 19004.0,
+      "allocs/op": 315.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "no_match",
+    "revision": "baseline",
+    "exit_code": 0,
+    "log_sha256": "98ce0745b11029e96ac5c358035da5909896dc59dd97539df4551f8dc98b307f",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t   1922068 ns/op\t         0 hits/op\t         0 reserved-B/op\t  192265 B/op\t     345 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 1922068.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 0.0,
+      "B/op": 192265.0,
+      "allocs/op": 345.0
+    }
+  },
+  {
+    "round": 2,
+    "arm": "no_match",
+    "revision": "candidate",
+    "exit_code": 0,
+    "log_sha256": "3fd8c146c1079564622564d1d32a2e074f832c3cebf9a0869bee0278454aa182",
+    "benchmark_line": "BenchmarkNativeWildcardReuse/no_match-2         \t     100\t    702785 ns/op\t         0 hits/op\t      5372 reserved-B/op\t    7640 B/op\t      58 allocs/op",
+    "iterations": 100,
+    "metrics": {
+      "ns/op": 702785.0,
+      "hits/op": 0.0,
+      "reserved-B/op": 5372.0,
+      "B/op": 7640.0,
+      "allocs/op": 58.0
+    }
+  }
+]

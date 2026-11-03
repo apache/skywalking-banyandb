@@ -32,6 +32,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
@@ -43,10 +44,11 @@ import (
 type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
+	pm                  protector.Memory
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -54,10 +56,14 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		l:                   l,
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
+		pm:                  pm,
 	}
 }
 
 func (w *writeCallback) CheckHealth() *common.Error {
+	if w.pm != nil && w.pm.State() == protector.StateHigh {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "memory pressure is high, the batch is not written")
+	}
 	if w.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "stream is readonly because \"stream-retention-high-watermark\" is 0")
 	}
@@ -290,14 +296,21 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 	return nil
 }
 
+// log returns the logger for one write. A native log write carries its own
+// logger in ctx, so what this write path logs about it reaches the console
+// and never native storage, where it would be written and logged again.
+func (w *writeCallback) log(ctx context.Context) *logger.Logger {
+	return logger.FetchOrDefault(ctx, "stream", w.l)
+}
+
 func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
-		w.l.Warn().Msg("invalid event data type")
+		w.log(ctx).Warn().Msg("invalid event data type")
 		return
 	}
 	if len(events) < 1 {
-		w.l.Warn().Msg("empty event")
+		w.log(ctx).Warn().Msg("empty event")
 		return
 	}
 	groups := make(map[string]*elementsInGroup)
@@ -311,12 +324,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		case []byte:
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
-				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.log(ctx).Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				common.RecordRowFailure(ctx, i, fmt.Errorf("stream: cannot decode write event: %w", err))
 				continue
 			}
 		default:
-			w.l.Warn().Msg("invalid event data type")
+			w.log(ctx).Warn().Msg("invalid event data type")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("stream: invalid event data type %T", e))
 			continue
 		}
@@ -329,7 +342,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			w.log(ctx).Error().Err(handleErr).Msg("cannot handle write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
@@ -347,14 +360,14 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				// if the request has been canceled since.
 				// A refused batch admits none of its documents, so the write may be retried.
 				if err := common.RetryWrite(ctx, func() error { return index.WriteContext(context.WithoutCancel(ctx), es.docs) }); err != nil {
-					w.l.Error().Err(err).Msg("cannot write element index")
+					w.log(ctx).Error().Err(err).Msg("cannot write element index")
 					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write element index: %w", groupName, err))
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
 				// Inserting a series that exists is a no-op, so the write may be retried.
 				if err := common.RetryWrite(ctx, func() error { return es.segment.IndexDB().Insert(es.seriesDocs.docs) }); err != nil {
-					w.l.Error().Err(err).Msg("cannot write series index")
+					w.log(ctx).Error().Err(err).Msg("cannot write series index")
 					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write series index: %w", groupName, err))
 				}
 			}

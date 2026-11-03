@@ -20,6 +20,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -174,9 +175,80 @@ func TestVerifyQLOnlyFixture(t *testing.T) {
 	if err = VerifyQLError(context.Background(), conn, "invalid", codes.NotFound); err == nil {
 		t.Fatal("wrong status accepted")
 	}
+	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument, "bad query"); err != nil {
+		t.Fatal(err)
+	}
+	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument, "indexed array"); err == nil {
+		t.Fatal("wrong error message accepted")
+	}
 	conn.err = nil
 	conn.response = &bydbqlv1.QueryResponse{}
 	if err = VerifyQLError(context.Background(), conn, "invalid", codes.InvalidArgument); err == nil {
 		t.Fatal("success accepted as error")
+	}
+}
+
+func TestCompareQLResultDistinctNaNPayloads(t *testing.T) {
+	for _, ordered := range []bool{true, false} {
+		if err := CompareQLResult(qlFloatRows(math.Float64frombits(0x7ff8000000000001)), qlFloatRows(math.Float64frombits(0x7ff80000000000ff)), ordered); err != nil {
+			t.Fatal(err)
+		}
+		if err := CompareQLResult(qlFloatRows(math.NaN()), qlFloatRows(0), ordered); err == nil {
+			t.Fatal("NaN must remain distinct from zero")
+		}
+	}
+}
+
+func TestCompareQLResultLargeTimestampMultiset(t *testing.T) {
+	want := &measurev1.QueryResponse{}
+	for ordinal := range 1024 {
+		want.DataPoints = append(want.DataPoints, &measurev1.DataPoint{Timestamp: &timestamppb.Timestamp{Seconds: int64(ordinal + 1)}})
+	}
+	got := proto.Clone(want).(*measurev1.QueryResponse)
+	for ordinal := range got.DataPoints {
+		got.DataPoints[ordinal] = proto.Clone(want.DataPoints[1023-ordinal]).(*measurev1.DataPoint)
+		got.DataPoints[ordinal].Sid = uint64(ordinal + 1)
+		got.DataPoints[ordinal].Version = int64(ordinal + 2)
+	}
+	if err := CompareQLResult(got, want, false); err != nil {
+		t.Fatal(err)
+	}
+	got.DataPoints[0].Timestamp.Seconds++
+	if err := CompareQLResult(got, want, false); err == nil {
+		t.Fatal("changed timestamp accepted")
+	}
+	got.DataPoints[0] = proto.Clone(got.DataPoints[1]).(*measurev1.DataPoint)
+	if err := CompareQLResult(got, want, false); err == nil {
+		t.Fatal("changed multiplicity accepted")
+	}
+	if want.DataPoints[0].Sid != 0 || want.DataPoints[0].Version != 0 {
+		t.Fatal("comparison changed expected rows")
+	}
+}
+
+func TestCompareQLResultUnknownFieldsRetainGlobalMatching(t *testing.T) {
+	want := qlTestRows()
+	got := proto.Clone(want).(*measurev1.QueryResponse)
+	want.DataPoints[0].Timestamp.ProtoReflect().SetUnknown([]byte{0xa0, 0x06, 1, 0xa8, 0x06, 2})
+	got.DataPoints[0].Timestamp.ProtoReflect().SetUnknown([]byte{0xa8, 0x06, 2, 0xa0, 0x06, 1})
+	if err := CompareQLResult(got, want, false); err != nil {
+		t.Fatal(err)
+	}
+	got.DataPoints[0].Timestamp.ProtoReflect().SetUnknown([]byte{0xa8, 0x06, 3, 0xa0, 0x06, 1})
+	if err := CompareQLResult(got, want, false); err == nil {
+		t.Fatal("different nested unknown fields accepted")
+	}
+}
+
+func TestCompareQLResultInvalidUTF8RetainsGlobalMatching(t *testing.T) {
+	want := qlTestRows()
+	want.DataPoints[0].Fields[0].Name = string([]byte{0xff})
+	got := proto.Clone(want).(*measurev1.QueryResponse)
+	if err := CompareQLResult(got, want, false); err != nil {
+		t.Fatal(err)
+	}
+	got.DataPoints[0].Fields[0].Name = string([]byte{0xfe})
+	if err := CompareQLResult(got, want, false); err == nil {
+		t.Fatal("different invalid UTF-8 accepted")
 	}
 }

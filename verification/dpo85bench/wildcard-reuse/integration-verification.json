@@ -1,0 +1,116 @@
+{
+  "scenarios": 31,
+  "bindings": 108,
+  "readiness_pages": 7,
+  "fixture_digest": "a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258",
+  "container": {
+    "image": "banyandb-distributed-querybench:go1.26.10",
+    "image_id": "sha256:09c665d7ce2302ef883da73a11f72161ee18a66336dfb7d03f52fd817875d877",
+    "cpus": 4,
+    "memory_bytes": 8589934592,
+    "memory_swap_bytes": 8589934592,
+    "environment": {
+      "GOMAXPROCS": "4"
+    },
+    "topologies": "sequential"
+  },
+  "artifact_check": "passed",
+  "runs": {
+    "standalone": {
+      "utc": "2026-10-28T22:57:31.039785+00:00",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        "wildcard-unify-pattern-standalone",
+        "--cpus=4",
+        "--memory=8g",
+        "--memory-swap=8g",
+        "-e",
+        "GOMAXPROCS=4",
+        "-v",
+        "/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike:/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike:ro",
+        "-v",
+        "/tmp/wildcard-unify-pattern-standalone.test:/test-bin:ro",
+        "-v",
+        "/tmp/wildcard-unify-pattern-evidence:/evidence",
+        "-w",
+        "/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike/test/integration/standalone/query",
+        "banyandb-distributed-querybench:go1.26.10",
+        "/test-bin",
+        "-test.timeout=30m",
+        "-ginkgo.label-filter=measure-ql && QL-patterns",
+        "-ginkgo.fail-on-empty",
+        "-ginkgo.no-color",
+        "-ginkgo.json-report=/evidence/standalone.json"
+      ],
+      "binary_sha256": "65bec938906cef25de28faa40f7159a67a5dea8a0d055085cf72cfd9b9f14770",
+      "log": "/tmp/wildcard-unify-pattern-evidence/standalone.log",
+      "exit_code": 0,
+      "wall_seconds": 16.598193611949682,
+      "suite_seconds": 15.700132562,
+      "passed": true,
+      "counters": [
+        "Pattern visibility: pages=7 actual_readiness_rpcs=7 (retry-inclusive)",
+        "Pattern generated: completed_specs=31 registered_specs=31 verification_rpcs=216 fixture=a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258"
+      ]
+    },
+    "distributed": {
+      "utc": "2026-10-28T22:59:22.519059+00:00",
+      "command": [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        "wildcard-unify-pattern-distributed",
+        "--cpus=4",
+        "--memory=8g",
+        "--memory-swap=8g",
+        "-e",
+        "GOMAXPROCS=4",
+        "-v",
+        "/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike:/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike:ro",
+        "-v",
+        "/tmp/wildcard-unify-pattern-distributed.test:/test-bin:ro",
+        "-v",
+        "/tmp/wildcard-unify-pattern-evidence:/evidence",
+        "-w",
+        "/mnt/d/skywalking-banyandb-worktrees/ql-like-ilike/test/integration/distributed/query",
+        "banyandb-distributed-querybench:go1.26.10",
+        "/test-bin",
+        "-test.timeout=30m",
+        "-ginkgo.label-filter=measure-ql && QL-patterns",
+        "-ginkgo.fail-on-empty",
+        "-ginkgo.no-color",
+        "-ginkgo.json-report=/evidence/distributed.json"
+      ],
+      "binary_sha256": "375a2c0db9f95c5f5e0e9a9f42a0a9c2894917698e0a1088e2531597b8a66aff",
+      "log": "/tmp/wildcard-unify-pattern-evidence/distributed.log",
+      "exit_code": 0,
+      "wall_seconds": 30.650847780052572,
+      "suite_seconds": 29.337586319,
+      "passed": true,
+      "counters": [
+        "Pattern visibility: pages=7 actual_readiness_rpcs=18 (retry-inclusive)",
+        "Pattern generated: completed_specs=31 registered_specs=31 verification_rpcs=216 fixture=a1f3342de28c28746fe6a1904dfb9c39a96f05e3edddac57a0ff4933f4e20258"
+      ]
+    }
+  },
+  "source_changes": [
+    {
+      "path": "pkg/index/native/wildcard_query_test.go",
+      "freeze_sha256": "df818c4a3432868c81d5abbdb4b30f04e036b87aba94109b3d64ce534331f36c",
+      "current_sha256": "f8c1f68b29c1452ce1aa0c5c3c7582bf41165c94758855ed64d7ed6517db0d59"
+    }
+  ],
+  "production_source_manifest_matches": true,
+  "nonlinked_test_change_note": "pkg/index/native/wildcard_query_test.go received explicit typed-glob MaxTerms validation regressions after freeze. Dependency-package unit tests are not linked into integration binaries.",
+  "pause_note": {
+    "status": "resumed_without_rebuild",
+    "reason": "Root briefly reopened production freeze while checking typed-glob MaxTerms validation, then confirmed the validation already existed in frozen source. Standalone had passed before pause arrived; no run was interrupted and distributed had not started. Frozen production binaries remain valid; later native-package unit-test additions are not linked into integration binaries."
+  },
+  "artifact_unchanged_since_freeze": true,
+  "baseline": "b54a9fc76e74baa1c0ecbf75513a082c32649a72",
+  "toolchain": "go1.26.10 linux/amd64"
+}

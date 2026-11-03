@@ -62,6 +62,7 @@ type nativeAggregateOperator struct {
 	tracker     *vectorized.MemoryTracker
 	schema      *vectorized.BatchSchema
 	output      *vectorized.RecordBatch
+	bucketWidth string
 	groupDefs   []vectorized.ColumnDef
 	groupValues []aggregateValue
 	states      []nativeAggregateState
@@ -86,12 +87,13 @@ type nativeAggregateOperator struct {
 	position    int
 	complete    bool
 	closed      bool
+	bucketIndex int
 }
 
 // MergeNativeAggregate executes leaves sequentially and owns each opened source.
 // All leaves finish before any final SQL group is emitted.
 func MergeNativeAggregate(ctx context.Context, plan *NativeAggregatePlan, open NativeAggregateSource) (_ vectorized.PullOperator, err error) {
-	o := &nativeAggregateOperator{open: open}
+	o := &nativeAggregateOperator{open: open, bucketIndex: -1}
 	defer func() {
 		if err != nil {
 			_ = o.Close()
@@ -117,9 +119,12 @@ func MergeNativeAggregate(ctx context.Context, plan *NativeAggregatePlan, open N
 	o.metadata, o.maxCount, o.maxGroups = metadata, plan.MaxCount, plan.MaxGroups
 	o.groupDefs = append([]vectorized.ColumnDef(nil), plan.Aggregate.GroupBy...)
 	o.groupValues = make([]aggregateValue, len(o.groupDefs))
-	for _, def := range o.groupDefs {
+	for index, def := range o.groupDefs {
 		if !aggregateScalarType(def.Type) || (def.Role != vectorized.RoleTag && def.Role != vectorized.RoleField && def.Role != vectorized.RoleTimestamp) {
 			return nil, fmt.Errorf("native aggregate grouping column %q has unsupported type or role", def.Name)
+		}
+		if index == plan.Aggregate.TimeBucketIndex && plan.Aggregate.TimeBucketWidth != "" {
+			o.bucketIndex, o.bucketWidth = index, plan.Aggregate.TimeBucketWidth
 		}
 	}
 	if err = o.compile(plan); err != nil {
@@ -194,6 +199,9 @@ func (o *nativeAggregateOperator) compile(plan *NativeAggregatePlan) error {
 		}
 		defs[index] = output.Column
 		defs[index].Entity = false
+	}
+	if o.bucketIndex >= 0 {
+		defs = append(defs, vectorized.ColumnDef{Name: "time", Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64})
 	}
 	o.schema = vectorized.NewBatchSchema(defs)
 	return nil

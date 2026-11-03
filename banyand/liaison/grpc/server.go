@@ -133,9 +133,6 @@ type server struct {
 	*traceRegistryServer
 	authReloader *auth.Reloader
 	groupRepo    *groupRepo
-	// writeConfig is the write session config the --write-* flags fill; the trace write path and
-	// the import share it.
-	writeConfig *writeSessionConfig
 	*indexRuleBindingRegistryServer
 	metrics                  *metrics
 	routeTableProviders      map[string]route.TableProvider
@@ -178,6 +175,8 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		resourceOpts: make(map[string]*commonv1.ResourceOpts),
 		inflight:     make(map[string]*groupInflight),
 	}
+	// The trace write path and the import share one write session config, so the import retries
+	// a busy data node with the same bounds as a trace write.
 	writeConfig := &writeSessionConfig{}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
 	streamSVC := &streamService{
@@ -185,6 +184,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	measureSVC := &measureService{
 		discoveryService: newDiscoveryServiceWithEntityRepo(schema.KindMeasure, schemaRegistry, nr.MeasureLiaisonNodeRegistry, gr, er),
@@ -258,7 +258,6 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 	}
 	s := &server{
 		omr:           omr,
-		writeConfig:   writeConfig,
 		streamSVC:     streamSVC,
 		measureSVC:    measureSVC,
 		traceSVC:      traceSVC,
@@ -528,7 +527,6 @@ func (s *server) FlagSet() *run.FlagSet {
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
 	fs.DurationVar(&s.traceSVC.maxWaitDuration, "trace-metadata-cache-wait-duration", 0,
 		"the maximum duration to wait for metadata cache to load (for testing purposes)")
-	s.writeConfig.registerFlags(fs)
 	fs.IntVar(&s.propertyServer.repairQueueCount, "property-repair-queue-count", 128, "the number of queues for property repair")
 	fs.IntVar(&s.bydbqlCacheSize, "bydbql-prepared-cache-size", 4000,
 		"max number of prepared BydbQL statements cached on the query path; 0 disables the cache")

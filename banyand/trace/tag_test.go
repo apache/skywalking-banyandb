@@ -192,3 +192,26 @@ func TestTagEncodingDecoding(t *testing.T) {
 		assert.Nil(t, decodedValues)
 	})
 }
+
+func TestMustDecodeTagValueAndArray_StrArr_Idempotency(t *testing.T) {
+	raw := []byte("a\\|b|c|")
+
+	res1 := mustDecodeTagValueAndArray(pbv1.ValueTypeStrArr, raw, nil)
+	assert.NotNil(t, res1)
+	assert.Equal(t, []string{"a|b", "c"}, res1.GetStrArray().GetValue())
+
+	// 2nd decode on the exact same slice must return identical result (idempotency)
+	res2 := mustDecodeTagValueAndArray(pbv1.ValueTypeStrArr, raw, nil)
+	assert.NotNil(t, res2)
+	assert.Equal(t, res1, res2, "subsequent decode must be idempotent")
+}
+
+func TestMustDecodeTagValueAndArray_StrArr_Immutability(t *testing.T) {
+	raw := []byte("a\\|b|c|")
+	snapshot := append([]byte(nil), raw...)
+
+	_ = mustDecodeTagValueAndArray(pbv1.ValueTypeStrArr, raw, nil)
+
+	// Source buffer must remain byte-identical (immutability)
+	assert.Equal(t, snapshot, raw, "input buffer must remain byte-identical after decoding")
+}

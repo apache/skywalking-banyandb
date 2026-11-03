@@ -623,7 +623,7 @@ func runImport(f *importFixture, frames ...*transferv1.ImportRowsRequest) (*fake
 	return s, f.svc.ImportRows(s)
 }
 
-func streamRow(svc string, rawID uint64) *transferv1.ImportRowsRequest_StreamRow {
+func importStreamRow(svc string, rawID uint64) *transferv1.ImportRowsRequest_StreamRow {
 	return &transferv1.ImportRowsRequest_StreamRow{
 		Name: testStreamName,
 		Element: &streamv1.ElementValue{
@@ -670,7 +670,7 @@ func TestImportRows_InitValidation(t *testing.T) {
 
 func TestImportRows_StreamFansOutWithMetadataAndRawElementID(t *testing.T) {
 	f := newImportFixture(t, clusterNodes())
-	rows := []*transferv1.ImportRowsRequest_StreamRow{streamRow("svc-1", 11), streamRow("svc-2", 22), streamRow("svc-3", 33)}
+	rows := []*transferv1.ImportRowsRequest_StreamRow{importStreamRow("svc-1", 11), importStreamRow("svc-2", 22), importStreamRow("svc-3", 33)}
 	s, err := runImport(f, initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, "hot"),
 		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 0, Rows: streamRows(rows...)}),
 		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 1}))
@@ -724,7 +724,7 @@ func TestImportRows_StreamFansOutWithMetadataAndRawElementID(t *testing.T) {
 func TestImportRows_StreamStageRoutingUsesStageShardNum(t *testing.T) {
 	f := newImportFixture(t, clusterNodes())
 	_, err := runImport(f, initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, "Warm"),
-		batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(streamRow("svc-1", 1))}))
+		batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(importStreamRow("svc-1", 1))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -732,7 +732,7 @@ func TestImportRows_StreamStageRoutingUsesStageShardNum(t *testing.T) {
 		t.Fatalf("published = %v, want one message on warm-a", f.client.published)
 	}
 	_, want, err := partition.ApplyLocators(testStreamName,
-		streamRow("svc-1", 1).GetElement().GetTagFamilies(), mustLocator(t, f.svc.streams, testStreamGroup, testStreamName), nil, 2)
+		importStreamRow("svc-1", 1).GetElement().GetTagFamilies(), mustLocator(t, f.svc.streams, testStreamGroup, testStreamName), nil, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -903,7 +903,7 @@ func TestImportRows_NodeFailureMapping(t *testing.T) {
 func TestImportRows_StandaloneWritesLocally(t *testing.T) {
 	f := newImportFixture(t, nil)
 	_, err := runImport(f, initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, "warm"),
-		batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(streamRow("svc", 1), streamRow("svc-2", 2))}))
+		batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(importStreamRow("svc", 1), importStreamRow("svc-2", 2))}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1108,7 +1108,7 @@ func TestImportRows_LimiterAppliesAndPaysEachBatch(t *testing.T) {
 	// Each batch fits in the 2000 byte burst; only paying both of them makes the stream wait.
 	frames := []*transferv1.ImportRowsRequest{init}
 	for seq := uint64(0); seq < 2; seq++ {
-		frames = append(frames, batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: seq, Rows: streamRows(streamRow(strings.Repeat("x", 1100), 1))}))
+		frames = append(frames, batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: seq, Rows: streamRows(importStreamRow(strings.Repeat("x", 1100), 1))}))
 	}
 	var limitDuringStream rate.Limit
 	s := &fakeImportStream{
@@ -1152,10 +1152,10 @@ func TestImportRows_SchemaNotFoundDetail(t *testing.T) {
 	wantCode(t, err, codes.NotFound, "group missing not found")
 	wantErrorInfo(t, err, transfer.ImportReasonSchemaNotFound, nil)
 
-	row := streamRow("svc", 1)
+	row := importStreamRow("svc", 1)
 	row.Name = "absent"
 	_, err = runImport(f, initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, ""),
-		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 4, Rows: streamRows(streamRow("svc", 2), row)}))
+		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 4, Rows: streamRows(importStreamRow("svc", 2), row)}))
 	wantCode(t, err, codes.NotFound, "batch_seq=4: stream sg/absent not found")
 	wantErrorInfo(t, err, transfer.ImportReasonSchemaNotFound, map[string]string{transfer.ImportMetadataBatchSeq: "4"})
 
@@ -1606,7 +1606,7 @@ func TestImportRows_PropertySchemaIsChecked(t *testing.T) {
 func TestImportRows_RefusedBatchNamesItsSeq(t *testing.T) {
 	f := newImportFixture(t, clusterNodes())
 	_, err := runImport(f, initFrame(commonv1.Catalog_CATALOG_STREAM, testStreamGroup, ""),
-		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 6, Rows: streamRows(streamRow("svc", 0))}))
+		batchFrame(&transferv1.ImportRowsRequest_RowBatch{BatchSeq: 6, Rows: streamRows(importStreamRow("svc", 0))}))
 	wantCode(t, err, codes.InvalidArgument, "batch_seq=6: ")
 }
 
@@ -1754,7 +1754,7 @@ func TestImportRows_EveryNodeBatchOpensWithTheInitFrame(t *testing.T) {
 	}{
 		"stream": {
 			catalog: commonv1.Catalog_CATALOG_STREAM, group: testStreamGroup, stage: "hot", topic: data.TopicStreamImport, minNodes: 2,
-			batch: batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(streamRow("svc-1", 11), streamRow("svc-2", 22), streamRow("svc-3", 33))}),
+			batch: batchFrame(&transferv1.ImportRowsRequest_RowBatch{Rows: streamRows(importStreamRow("svc-1", 11), importStreamRow("svc-2", 22), importStreamRow("svc-3", 33))}),
 		},
 		"measure": {catalog: commonv1.Catalog_CATALOG_MEASURE, group: testMeasureGroup, topic: data.TopicMeasureImport, batch: measureBatch(1)},
 		"property": {

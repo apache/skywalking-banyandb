@@ -220,8 +220,8 @@ func generateT03Errors(b *suiteBuilder) {
 		}
 	}
 	for index, query := range []T03Query{
-		{Columns: []T03Column{{Source: "v::FIELD", Alias: "value"}}, OrderBy: "value"},
-		{Columns: []T03Column{t03RID()}, OrderBy: "v"},
+		{Columns: []T03Column{{Source: "v::FIELD", Alias: "value"}}, OrderBy: "absent_sort_key::FIELD"},
+		{Columns: []T03Column{t03RID()}, OrderBy: "absent_sort_key::TAG"},
 		{Columns: []T03Column{{Source: "host", Alias: "same"}, {Source: "v::FIELD", Alias: "same"}}, OrderBy: "same"},
 	} {
 		query.Shorthand = true

@@ -76,7 +76,7 @@ export:                               # Export only: scope and options
   output: ./backup-20260708           # Export directory; CLI --output overrides this. Error if both are missing
   format: csv                         # native | csv
   compress: gzip                      # none | gzip; default gzip for CSV, none for native (native accepts only none)
-  maxFileSize: 1GiB                   # Shared by both formats: soft limit per output file, measured on bytes
+  maxFileSize: 1GiB                   # Shared by both formats: limit per output file in on-disk bytes (native: hard, >= 64KiB; CSV: soft)
                                       #   on disk after compression; 0 = unlimited
   includeSchema: true                 # false = no schema/ files and no schema revision check
   schemaOnly: false                   # true = write schema/ and manifest.json only: no session, no data
@@ -284,26 +284,49 @@ The storage layout differs by data type and mode.
 | Type | Source directory | Output |
 |---|---|---|
 | Normal group | `<group>/seg-20260907/metadata` | `metadata` (raw file, not packed into a container) |
-| | `<group>/seg-20260907/sidx` | `sidx-001.bnc` (segment-level container, one per segment) |
-| | `<group>/seg-20260907/shard-0` | `shard-0-001.bnc` (shard-level container, one per shard) |
+| | `<group>/seg-20260907/sidx` | `sidx-00001.bnc` (segment-level container, one per segment) |
+| | `<group>/seg-20260907/shard-0` | `shard-0-00001.bnc` (shard-level container, one per shard) |
 | Index-mode measure | `<group>/seg-20260907/metadata` | `metadata` |
-| | `<group>/seg-20260907/sidx` | `sidx-001.bnc` |
-| Property | `property/data/<group>/shard-0` | `shard-0-001.bnc` |
+| | `<group>/seg-20260907/sidx` | `sidx-00001.bnc` |
+| Property | `property/data/<group>/shard-0` | `shard-0-00001.bnc` |
 
 Two different directories are called `sidx`, and they are not the same thing:
 
 | Source path | Actual content | Container |
 |---|---|---|
-| `seg-XXX/sidx/` | **Series index** — a legacy-engine inverted directory, no parts | segment-level `sidx-NNN.bnc` |
-| `shard-N/sidx/<rule>/<016x>/` | **Trace secondary index parts** — real parts, one directory per index rule, each with `manifest.json` | shard-level `shard-N-NNN.bnc` |
+| `seg-XXX/sidx/` | **Series index** — a native index directory (`%012x.seg` segments and a `%012x.snp` manifest), no parts | segment-level `sidx-NNNNN.bnc` |
+| `shard-N/sidx/<rule>/<016x>/` | **Trace secondary index parts** — real parts, one directory per index rule, each with `manifest.json` | shard-level `shard-N-NNNNN.bnc` |
 
 #### 4.2.1 BNC file format
 
+The container library is `pkg/transfer/format/bnc`; its package documentation is the authoritative definition. All integers are little endian:
+
 ```text
-[file bytes...][footer protobuf][footer_len uint32][MAGIC "BNCA"]
+[member 0][member 1]…[member n-1][footer][footer CRC-32 u32][footer length u32]["BNCA"]
+
+footer:
+  uvarint volume_seq     number of this volume in its container, from 1
+  byte    last           1 when this is the last volume of the container, else 0
+  uvarint count          number of members, at least 1
+  repeat count times:
+    uvarint path_len
+    bytes   path         UTF-8, '/'-separated, relative to the container root
+    u64     size         bytes of this member
+    u32     crc32        IEEE CRC-32 of those bytes
+    uvarint file_offset  where these bytes start in their file, 0 for a whole file
+    uvarint file_size    size of the whole file, equal to size for a whole file
 ```
 
-The footer only records which byte range belongs to which file. The magic is `BNC` plus a single format-version letter, so a future incompatible layout becomes `BNCB` without needing a separate version field.
+- **No offsets are stored.** A member starts where the one before it ends, so overlaps, gaps and out-of-range offsets cannot be expressed; the members must add up to the file size minus the footer and the 12-byte trailer. Every uvarint is minimally encoded, so a footer has exactly one encoding.
+- **The magic carries the version.** It is `BNC` plus a single format-version letter, so a future incompatible layout becomes `BNCB` without needing a separate version field.
+- **Opening reads the tail only.** Two reads (trailer, then footer) check the magic, the footer CRC-32, every bound before allocating, every path, and where each member sits in its file. Member bytes are checked against their CRC-32s when they are read or verified.
+- **Limits:** footer ≤ 16 MiB, at most 2^20 members per volume, paths ≤ 4096 bytes with components ≤ 255 bytes. Zero-length files are allowed (CRC-32 0); no member is compressed, since column blocks are already zstd.
+
+**Volumes.** `max_file_size` caps every volume file on disk, footer and trailer included; `0` means no limit, and any other value below 64 KiB is refused. Each volume is a complete container named `<prefix>-00001.bnc`, `-00002.bnc`, … (five digits, at most 99999). The writer fills each volume up to the limit regardless of part boundaries; **a file that crosses the end of a volume is split**: its first piece is the last member of that volume and the rest continues as the first member of the next one, so one file — and one part — can span several volumes. `file_offset`/`file_size` place every piece in its file, and each piece has its own CRC-32.
+
+**Reading.** A reader opens all volumes of one container, in sequence order, as one volume set. The set requires volume numbers 1, 2, … with `last` set on the final volume only, and every unfinished file at the end of a volume to continue at exactly the next byte as the first member of the next one. A missing, reordered or repeated volume, a missing tail or a volume of another container is therefore rejected before any data is read. Files are then read whole across volumes; the read that returns the last byte of a corrupt piece fails, and closing the reader reports that failure again, because helpers that copy an exact length (`io.CopyN`, `io.ReadFull`) drop it.
+
+**What the container cannot prove.** A container carries no identity — a valid container from another artifact, unit or node passes every check — and a prefix that ends at an inner boundary (a first member that is itself a container, or volumes whose last one says it is last) opens and verifies. A file the producer never packed leaves nothing to detect. The manifest is the final authority: the importer compares the size and CRC-32 of every volume with the manifest entry of that path before it trusts a container.
 
 There are only three gRPC frame types:
 
@@ -470,10 +493,10 @@ Below that level:
 
 | | Native | CSV |
 |---|---|---|
-| Normal group | `seg-<suffix>/metadata` (raw file)<br>`seg-<suffix>/sidx-001.bnc`<br>`seg-<suffix>/shard-<N>-001.bnc` | `seg-<suffix>/shard-<N>-00001.csv.gz` |
-| Index-mode measure | `seg-<suffix>/metadata`<br>`seg-<suffix>/sidx-001.bnc` | `seg-<suffix>/segment-00001.csv.gz` |
-| Property | `shard-<N>-001.bnc` (no `seg-` layer) | `shard-<N>-00001.csv.gz` (no `seg-` layer) |
-| File splitting | `-001`, `-002`, …; each volume has a complete footer | `-00001`, `-00002`, …; each volume repeats the header |
+| Normal group | `seg-<suffix>/metadata` (raw file)<br>`seg-<suffix>/sidx-00001.bnc`<br>`seg-<suffix>/shard-<N>-00001.bnc` | `seg-<suffix>/shard-<N>-00001.csv.gz` |
+| Index-mode measure | `seg-<suffix>/metadata`<br>`seg-<suffix>/sidx-00001.bnc` | `seg-<suffix>/segment-00001.csv.gz` |
+| Property | `shard-<N>-00001.bnc` (no `seg-` layer) | `shard-<N>-00001.csv.gz` (no `seg-` layer) |
+| File splitting | `-00001`, `-00002`, …; each volume is a complete container of at most `max_file_size` bytes, and a file crossing the end of a volume continues in the next | `-00001`, `-00002`, …; each volume repeats the header |
 
 In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<catalog>` component is lowercase (`stream`, `measure`, `trace`, `property`), and the group name is escaped into a safe path component: every byte outside `[A-Za-z0-9._-]` becomes `%XX` (upper-case hex), and the names `.` and `..` are escaped in full. The client also rejects any `relative_path` from a node that is absolute, contains `..` or a backslash, or lies outside the unit's `<catalog>/<group>/` prefix, and refuses to overwrite an existing file. Directories are created `0700` and files `0600`.
 
@@ -542,7 +565,7 @@ In CSV, `--compress none` drops the `.gz` suffix (`shard-0-00001.csv`). The `<ca
 - `schemaOnly: true` marks a `--schema-only` artifact, which has no units.
 - `warnings` collects every unit warning, prefixed with the node and unit, plus the stage warnings of the dry run.
 
-A native export will also record the raw segment files (`metadata`, `sidx-NNN.bnc`) in `segmentFiles`, `entryCount` on each container, and `sidxCoversShards`; these fields are not written by the code yet.
+A native export will also record the raw segment files (`metadata`, `sidx-NNNNN.bnc`) in `segmentFiles`, `entryCount` on each volume (the footer entry count of that volume; a piece of a split file counts as one), and `sidxCoversShards`; these fields are not written by the code yet.
 
 `shards[].parts[]` is written **unconditionally**, for every shard of every source. The export side does not decide which shards need it: that array is the input to the import-side multi-source judgement ([Detection basis](#62-detection-basis)), and a shard that looks single-sourced today becomes multi-sourced as soon as a second artifact is merged in.
 
@@ -988,7 +1011,7 @@ The CSV export step (2026-10-10) completes the export path for CSV: the `Export`
 
 - **Export resume** — `.export-progress.json` ([Export progress file](#71-export-progress-file)), continuing against the same session with `Plan(read{id})`, `pointInTime: mixed`, plan comparison, `export.checkpoint` / `--checkpoint`, `--seal-partial`, and a `bydbctl data progress` command. Today the output directory must be new or empty and an interrupted export starts over.
 - **`--archive tar|tar.gz`** — packing the artifact into one file.
-- **Native format** — `.bnc` containers, `data extract`; `FORMAT_NATIVE`, its proto fields and the per-format producer interface are already reserved ([Native export](#42-native-export)).
+- **Native format** — `.bnc` containers (a native artifact is only consumed by `data import`; there is no offline extract command); `FORMAT_NATIVE`, its proto fields and the per-format producer interface are already reserved ([Native export](#42-native-export)).
 - **Import** — the CSV import (including property) and the cross-cluster e2e landed with the CSV import step ([CSV import as implemented](#54-csv-import-as-implemented)); native import and import resume remain design.
 - **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot.
 
@@ -1181,7 +1204,7 @@ The upstream `id` is a **framing signal, not an identifier**. The receiver alway
 | # | bydbctl → liaison (import/v1) | liaison → data-* (cluster.v1) | Liaison behavior |
 |---|---|---|---|
 | ⓪ | Read the manifest and target schema/topology | — | — |
-| ① | Read the footer of the selected `.bnc` files and split into streams by part | — | — |
+| ① | Open **every volume** of each container as one volume set, group its files by part and split into streams by part. A part — even a single file — may span volumes, so streams are cut on part boundaries, never on volume boundaries | — | — |
 | ② | `Init{catalog, group, shard_id, stage, kind, segment_version, parts{…}}` | — | Validate, resolve the target stage, call `LocateAll(group, shard, copies)`, open `SyncPart` streams |
 | ③ | `Chunk{chunk_index=0}` | `SyncPartRequest{chunk_index=0, metadata=SyncMetadata{…}, …}` | Build `SyncMetadata`, fill `session_id`, and **assemble** `version_info`: `file_format_version` is copied from the client's `Init.segment_version` — it is the guard on the *source* data — while `api_version` and `compatible_file_format_version` are the liaison's own. A liaison that fills `file_format_version` with its own value turns that guard into a tautology |
 | ④ | `Chunk` frames | `SyncPartRequest` frames × N | Forward to all N target nodes |
@@ -1201,16 +1224,16 @@ This step reads only `manifest.json` and the target cluster's topology; it opens
 ```text
 nodes/data-1/measure/sw_metric/seg-20260907/
   metadata            ← Raw file, not a container
-  sidx-001.bnc        ← Contains seg-20260907/sidx/**
-  shard-0-001.bnc     ← Contains shard-0/**
-  shard-1-001.bnc     ← Contains shard-1/**
+  sidx-00001.bnc        ← Contains seg-20260907/sidx/**
+  shard-0-00001.bnc     ← Contains shard-0/**
+  shard-1-00001.bnc     ← Contains shard-1/**
 ```
 
 | Artifact file | Container | Source data | Generated streams |
 |---|---|---|---|
 | `metadata` | No | `seg-XXX/metadata`, holding `{Version, EndTime}` | None — not sent. The receiver generates it locally when creating the segment |
-| `sidx-NNN.bnc` | Yes | `seg-XXX/sidx/**`, a legacy-engine inverted directory | `SERIES_INDEX` stream, **one per target node** ([Data transfer](#525-data-transfer)) — not one per shard |
-| `shard-N-NNN.bnc` | Yes | `shard-N/**`, `<016x>.snp`; also `idx/`, and for trace `sidx/<index-name>/<016x>/` | `PART` and `ELEMENT_INDEX` streams |
+| `sidx-NNNNN.bnc` | Yes | `seg-XXX/sidx/**`, a native index directory | `SERIES_INDEX` stream, **one per target node** ([Data transfer](#525-data-transfer)) — not one per shard |
+| `shard-N-NNNNN.bnc` | Yes | `shard-N/**`, `<016x>.snp`; also `idx/`, and for trace `sidx/<index-name>/<016x>/` | `PART` and `ELEMENT_INDEX` streams |
 
 Pushing runs in three rounds with a **global barrier** between them: ① segment-level series index, ② core parts, ③ element index. The barrier cannot be per-subtree, because the ordering dependency is per-shard and the same shard routinely appears under several source subtrees.
 
@@ -1240,12 +1263,12 @@ Init{
   }]
 }
 
-Footer of sidx-001.bnc, relative to the segment sidx/ directory:
+Footer of sidx-00001.bnc, relative to the segment sidx/ directory:
 
   000000000012.seg     offset=0          size=4_194_304
   000000000013.seg     offset=4_194_304  size=1_048_576
   000000000013.snp     offset=5_242_880  size=1_024
-  (a series index is a legacy-engine directory — only .seg and .snp, and no metadata.json)
+  (a series index is a native index directory — only .seg and .snp, and no metadata.json)
 
 Chunk{
   idx=0,
@@ -1265,7 +1288,7 @@ Completion{
 }
 ```
 
-**The series index is segment-scoped, not shard-scoped, so it is delivered once per target node.** `<segment>/sidx` is a single legacy-engine directory shared by every shard in that segment (`storage/segment.go` builds it from the segment location), and the receive side confirms it: `syncSeriesCallback.CreatePartHandler` — identical in stream, measure and trace — resolves the destination from `ctx.Group` and `ctx.MinTimestamp` only, calls `CreateSegmentIfNotExist`, and **never reads `ctx.ShardID`**. Compare the element index, whose handler does exactly the opposite: `syncElementIndexCallback.CreatePartHandler` calls `segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))`.
+**The series index is segment-scoped, not shard-scoped, so it is delivered once per target node.** `<segment>/sidx` is a single native index directory shared by every shard in that segment (`storage/segment.go` builds it from the segment location), and the receive side confirms it: `syncSeriesCallback.CreatePartHandler` — identical in stream, measure and trace — resolves the destination from `ctx.Group` and `ctx.MinTimestamp` only, calls `CreateSegmentIfNotExist`, and **never reads `ctx.ShardID`**. Compare the element index, whose handler does exactly the opposite: `syncElementIndexCallback.CreatePartHandler` calls `segment.CreateTSTableIfNotExist(common.ShardID(ctx.ShardID))`.
 
 So `sidxCoversShards` has **one job only: resolving which nodes need this index.** Run `LocateAll(group, shard, copies)` for each shard in the list, take the **union of the node sets, deduplicated**, and open one `SERIES_INDEX` stream per node. `shard_id` on that stream is only a routing hint for the liaison; the receiver ignores it for placement.
 
@@ -1297,7 +1320,7 @@ Init{
   ]
 }
 
-Entries under prefix 0000000000000001/ in shard-0-001.bnc:
+Entries under prefix 0000000000000001/ in shard-0-00001.bnc:
 
   metadata.json     size=214             ← not sent; scalar fields above are parsed from it
   meta.bin          size=1_048_576
@@ -1817,7 +1840,7 @@ There is deliberately no `overwrite` value anywhere. A part has no overwrite sem
 
 > **Not implemented yet.** The CSV export step writes no progress file and cannot resume: the output directory must be new or empty, and an interrupted export is run again from scratch ([Remaining work](#49-remaining-work)). This section is the design.
 
-Both directions must survive an interruption. Export is the simpler half: it checkpoints per **unit**, appending one to `done` only after every file of that unit has passed its CRC32 check and been renamed. Volume splitting does not change that granularity, because a part never spans volumes. Index-mode measure and the segment-level series index have no shard axis at all and resume at segment granularity.
+Both directions must survive an interruption. Export is the simpler half: it checkpoints per **unit**, appending one to `done` only after every file of that unit has passed its CRC32 check and been renamed. Volume splitting does not change that granularity: all volumes of a unit share one directory prefix, so the whole-directory cleanup on resume still applies. A part, and even one file, may span volumes, so the import side joins every volume of a unit before it groups parts, and checkpoints a part only after the whole logical part is acknowledged — never at the end of a physical volume. For trace, the core part and its secondary index parts travel in one `PART` session, or the receiver keeps a core part whose secondary index never arrives. Index-mode measure and the segment-level series index have no shard axis at all and resume at segment granularity.
 
 Import is more involved.
 
@@ -1884,7 +1907,7 @@ Stored by default in `<output>/.export-progress.json`. It holds the `session_id`
       "node": "data-1",
       "files": [
         {
-          "path": "nodes/data-1/measure/sw_metric/seg-20260907/shard-0-001.bnc",
+          "path": "nodes/data-1/measure/sw_metric/seg-20260907/shard-0-00001.bnc",
           "bytes": 402653184,
           "crc32": "0x9f2a1b34",
           "entryCount": 47,

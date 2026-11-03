@@ -60,6 +60,9 @@ func CreateTopNPostProcessorFloat(topN int32, aggrFunc modelv1.AggregationFuncti
 	return createTopNPostProcessor[float64](topN, aggrFunc, sort)
 }
 
+// topNItemsCapacityHint bounds preallocation derived from the requested topN.
+const topNItemsCapacityHint = 1024
+
 func createTopNPostProcessor[K streaming.TopSortKey](topN int32, aggrFunc modelv1.AggregationFunction, sort modelv1.Sort) PostProcessor[K] {
 	if aggrFunc == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
 		// if aggregation is not specified, we have to keep all timelines
@@ -75,7 +78,7 @@ func createTopNPostProcessor[K streaming.TopSortKey](topN int32, aggrFunc modelv
 		aggrFunc:  aggrFunc,
 		cache:     make(map[string]*topNAggregatorItem[K]),
 		timelines: make(map[uint64]*topNTimelineItem[K]),
-		items:     make([]*topNAggregatorItem[K], 0, topN),
+		items:     make([]*topNAggregatorItem[K], 0, min(max(int(topN), 0), topNItemsCapacityHint)),
 	}
 	heap.Init(aggregator)
 	return aggregator

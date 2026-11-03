@@ -53,9 +53,17 @@ func runGenerateQL(arguments []string) error {
 			pending++
 		}
 	}
-	fmt.Printf("Generated %d QL-only cases, %d reuse scenarios, %d aggregate scenarios, %d aggregate rejections and %d native aggregate scenarios; "+
+	fmt.Printf("Generated %d QL-only cases, %d reuse scenarios, %d aggregate scenarios, %d aggregate rejections, %d native aggregate scenarios, "+
+		"%d expression scenarios, %d expression rejections, %d filter scenarios, %d filter rejections and %d legacy compatibility scenarios; "+
+		"%d HAVING scenarios, %d HAVING rejections, %d legacy membership scenarios and %d HAVING compatibility scenarios; "+
+		"%d DISTINCT scenarios and %d DISTINCT rejections; %d grouping scenarios and %d grouping rejections; "+
+		"%d sorting scenarios, %d sorting rejections and %d sorting resource cases; %d parent/child scenarios; "+
 		"feasible pairs %d/%d; %d explicit pending features; output=%s\n",
 		len(suite.Cases), len(suite.ReuseScenarios), len(suite.AggregateScenarios), len(suite.AggregateRejections), len(suite.NativeAggregateScenarios),
+		len(suite.ExpressionScenarios), len(suite.ExpressionRejections), len(suite.FilterScenarios), len(suite.FilterRejections), len(suite.LegacyCompatibilityScenarios),
+		len(suite.HavingScenarios), len(suite.HavingRejections), len(suite.HavingLegacyScenarios), len(suite.HavingReviewScenarios),
+		len(suite.DistinctScenarios), len(suite.DistinctRejections), len(suite.GroupingScenarios), len(suite.GroupingRejections),
+		len(suite.SortingScenarios), len(suite.SortingRejections), len(suite.SortingResources), len(suite.ParentChildScenarios),
 		suite.Pairs.Covered, suite.Pairs.Required, pending, directory)
 	return nil
 }

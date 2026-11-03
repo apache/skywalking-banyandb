@@ -27,6 +27,8 @@ func wrapAggregateQuery(ctx context.Context, source vectorized.PullOperator, pla
 	ctx = vectorized.WithQueryMemoryTracker(ctx, 256<<20)
 	input := *plan
 	input.Aggregate = nil
+	input.Expressions = nil
+	input.Having = nil
 	input.Limit = nil
 	input.Offset = 0
 	filtered, err := WrapRaw(ctx, source, &input)
@@ -46,8 +48,8 @@ func wrapAggregateQuery(ctx context.Context, source vectorized.PullOperator, pla
 	defer tracker.Release(bytes)
 	outputs := make([]Slot, len(plan.Aggregate.Outputs))
 	for index, output := range plan.Aggregate.Outputs {
-		outputs[index] = Slot{ID: SlotID(index), Source: output.Column, Output: output.Column, Nullable: true}
+		outputs[index] = Slot{ID: SlotID(index), Source: output.Column, Output: output.Column, Nullable: true, Timestamp: output.Timestamp}
 	}
 	// Pagination applies to finalized groups, never to the raw aggregate input.
-	return WrapRaw(ctx, grouped, &RawPlan{Slots: outputs, Limit: plan.Limit, Offset: plan.Offset})
+	return WrapRaw(ctx, grouped, &RawPlan{Slots: outputs, Having: plan.Having, Limit: plan.Limit, Offset: plan.Offset})
 }

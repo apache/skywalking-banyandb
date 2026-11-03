@@ -32,12 +32,27 @@ import (
 // T07FixtureName isolates the six-row SQL aggregation fixture F.
 const T07FixtureName = "ql_t07"
 
+// T07DecimalFixtureName identifies the bounded decimal aggregation fixture.
+const T07DecimalFixtureName = "ql_t07_decimal"
+
 // T07GroupsFixtureName identifies the complete-input and deduplication fixture.
 const T07GroupsFixtureName = "ql_t07_groups"
 
 func t07Rows(name string) []fixtureRow {
 	if name == T07FixtureName {
 		return fixtureRows()[:6]
+	}
+	if name == T07DecimalFixtureName {
+		var rows []fixtureRow
+		for i := range 10 {
+			rows = append(rows, fixtureRow{Millis: int64(i * 1000), RID: int64(i + 1), Host: "a", Zone: "a", V: int64(999999999999999999), F: nil})
+		}
+		rows = append(rows,
+			fixtureRow{Millis: 10000, RID: 11, Host: "b", Zone: "b", V: int64(-999999999999999999)},
+			fixtureRow{Millis: 11000, RID: 12, Host: "b", Zone: "b", V: int64(-1)},
+			fixtureRow{Millis: 12000, RID: 13, Host: "c", Zone: "c"},
+		)
+		return rows
 	}
 	var rows []fixtureRow
 	for group := range 513 {
@@ -98,7 +113,7 @@ func T07FixtureWrites(name string, base time.Time) []*measurev1.WriteRequest {
 
 func t07ReadinessCases() ([]AggregateFixture, error) {
 	var fixtures []AggregateFixture
-	for _, name := range []string{T07FixtureName, T07GroupsFixtureName} {
+	for _, name := range []string{T07FixtureName, T07GroupsFixtureName, T07DecimalFixtureName} {
 		fixture := AggregateFixture{Name: name}
 		rows := t07Rows(name)
 		for start := 0; start < len(rows); start += 128 {

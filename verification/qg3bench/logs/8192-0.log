@@ -1,0 +1,24 @@
+{"level":"info","time":"2026-10-27T13:39:49Z","message":"honoring GOMAXPROCS=\"2\" as set in environment"}
+goos: linux
+goarch: amd64
+pkg: github.com/apache/skywalking-banyandb/verification/qg3bench
+cpu: AMD EPYC 7B13
+BenchmarkQG3RPC
+
+██████╗  █████╗ ███╗   ██╗██╗   ██╗ █████╗ ███╗   ██╗██████╗ ██████╗ 
+██╔══██╗██╔══██╗████╗  ██║╚██╗ ██╔╝██╔══██╗████╗  ██║██╔══██╗██╔══██╗
+██████╔╝███████║██╔██╗ ██║ ╚████╔╝ ███████║██╔██╗ ██║██║  ██║██████╔╝
+██╔══██╗██╔══██║██║╚██╗██║  ╚██╔╝  ██╔══██║██║╚██╗██║██║  ██║██╔══██╗
+██████╔╝██║  ██║██║ ╚████║   ██║   ██║  ██║██║ ╚████║██████╔╝██████╔╝
+╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═══╝╚═════╝ ╚═════╝ 
+    paired_test.go:76: verified scalar_int cache_hit=true native_merge=false state_bytes=16 state_capacity=16 tracked_process_peak=18102852 live_bytes=0
+    paired_test.go:76: verified scalar_decimal cache_hit=true native_merge=false state_bytes=32 state_capacity=32 tracked_process_peak=18123348 live_bytes=0
+    paired_test.go:76: verified group_int cache_hit=true native_merge=false state_bytes=128 state_capacity=128 tracked_process_peak=20335928 live_bytes=0
+    paired_test.go:76: verified group_decimal cache_hit=true native_merge=false state_bytes=256 state_capacity=256 tracked_process_peak=20366840 live_bytes=0
+    paired_test.go:106: SAMPLE rows=8192 round=0 case=scalar_int n=300 ns/op=1467616 cpu-ns/op=1773636 bytes/op=422779 allocs/op=1101
+    paired_test.go:106: SAMPLE rows=8192 round=0 case=scalar_decimal n=300 ns/op=1532358 cpu-ns/op=1881836 bytes/op=428408 allocs/op=1150
+    paired_test.go:106: SAMPLE rows=8192 round=0 case=group_int n=300 ns/op=2204366 cpu-ns/op=2586076 bytes/op=447008 allocs/op=1406
+    paired_test.go:106: SAMPLE rows=8192 round=0 case=group_decimal n=300 ns/op=2300214 cpu-ns/op=2689683 bytes/op=464211 allocs/op=1510
+BenchmarkQG3RPC-2   	       1	2971448521 ns/op
+PASS
+ok  	github.com/apache/skywalking-banyandb/verification/qg3bench	2.994s

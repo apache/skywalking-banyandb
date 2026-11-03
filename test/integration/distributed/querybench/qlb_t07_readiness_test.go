@@ -20,10 +20,12 @@ package querybench
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
@@ -94,8 +96,8 @@ func waitForQLBT07RawChunk(ctx context.Context, client bydbqlv1.BydbQLServiceCli
 		default:
 		}
 		if queryErr == nil {
-			queryErr = fmt.Errorf("expected rows=%d hash=%x, received rows=%d hash=%x", len(expected.DataPoints), expectedHash,
-				len(response.GetMeasureResult().GetDataPoints()), qlbT01Hash(response.GetMeasureResult()))
+			queryErr = fmt.Errorf("expected rows=%d hash=%x, received rows=%d hash=%x; %s", len(expected.DataPoints), expectedHash,
+				len(response.GetMeasureResult().GetDataPoints()), qlbT01Hash(response.GetMeasureResult()), qlbReadinessDifference(expected, response.GetMeasureResult()))
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("T07 host-pruned fixture did not become visible: %w", queryErr)
@@ -106,4 +108,31 @@ func waitForQLBT07RawChunk(ctx context.Context, client bydbqlv1.BydbQLServiceCli
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+func qlbReadinessDifference(expected, actual *measurev1.QueryResponse) string {
+	normalize := func(response *measurev1.QueryResponse) []*measurev1.DataPoint {
+		if response == nil {
+			return nil
+		}
+		points := proto.Clone(response).(*measurev1.QueryResponse).GetDataPoints()
+		for _, point := range points {
+			point.Sid, point.Version = 0, 0
+		}
+		slices.SortFunc(points, func(a, b *measurev1.DataPoint) int { return a.Timestamp.AsTime().Compare(b.Timestamp.AsTime()) })
+		return points
+	}
+	want, got := normalize(expected), normalize(actual)
+	for i := 0; i < min(len(want), len(got)); i++ {
+		if !proto.Equal(want[i], got[i]) {
+			return fmt.Sprintf("first differing tuple=%d expected={%s} actual={%s}", i, want[i], got[i])
+		}
+	}
+	if len(want) > len(got) {
+		return fmt.Sprintf("missing tuple=%d expected={%s}", len(got), want[len(got)])
+	}
+	if len(got) > len(want) {
+		return fmt.Sprintf("unexpected tuple=%d actual={%s}", len(want), got[len(want)])
+	}
+	return "no differing tuple"
 }
