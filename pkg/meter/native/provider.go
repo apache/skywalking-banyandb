@@ -66,7 +66,6 @@ type pendingMeasure struct {
 
 type provider struct {
 	metadata        metadata.Repo
-	scope           meter.Scope
 	scopeTags       scopeTags
 	nodeInfo        NodeInfo
 	pendingMeasures []pendingMeasure
@@ -77,7 +76,6 @@ type provider struct {
 // NewProvider returns a native metrics Provider.
 func NewProvider(scope meter.Scope, metadata metadata.Repo, nodeInfo NodeInfo) meter.Provider {
 	return &provider{
-		scope:     scope,
 		scopeTags: newScopeTags(scope),
 		metadata:  metadata,
 		nodeInfo:  nodeInfo,
