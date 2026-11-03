@@ -46,14 +46,14 @@ One binary, several roles. One property decides the destination: whether the pro
 |---|---|---|
 | `standalone` | full server | own storage, in-process (`queue.Local()`) — as native metrics already do |
 | `data` | shards, writes, queries | own storage, in-process (`TopicStreamWrite`) |
-| `liaison` | front door: validate, route, batch | one hop to a data node over its tier-2 client, the pool spelled `tire2Client` in the code |
+| `liaison` | front door: validate, route, batch | its write queue, as a stream write: over its tier-1 client, the pool spelled `tire1Client` in the code, to a liaison, whose queue syncs parts to the data nodes |
 | `backup`, `lifecycle`, FODC agent beside data | snapshot, migration, diagnostics | colocated data node's cluster server, `127.0.0.1:17912` |
 | FODC proxy, FODC agent beside a liaison | diagnostics, no colocated data node | liaison gRPC port (`--grpc-port`, default 17912) |
 | `restore`, `migration` | offline tools | normal logging only |
 
-> A liaison has local disk: it runs a two-tier write queue whose normal `StreamService/Write` route ends in part files. What it lacks is the storage engine, so it can hold a batch in flight but can never be where logs are read back from.
+> A liaison has local disk: it runs a two-tier write queue whose normal `StreamService/Write` route ends in part files, synced to the data nodes. What it lacks is the storage engine, so it holds a batch until a data node has it but can never be where logs are read back from.
 
-Three shapes: in-process; the liaison selecting a data node by shard; and every other producer publishing into the generic receiver, subscribed on data nodes' cluster server and on the liaison.
+Three shapes: in-process; the liaison writing through its write queue, as a stream write does; and every other producer publishing into the generic receiver, subscribed on data nodes' cluster server and on the liaison.
 
 > Restore and migration use normal logging only by construction, not as a gap to close later: a tool that runs while the database is down cannot log into it. The native flags are registered only by the server, backup, lifecycle and FODC binaries.
 
@@ -93,7 +93,7 @@ Native policy is resolved on the logger's **complete** module, every component i
 | payload | values carried in tags. The `data:fields` tag holds **only** keys with no tag of their own — no duplicated body |
 | bounds | `8MiB` held, queued and in flight; `64KiB` per event. Internal safety bounds, not flags: the memory protector decides when memory is short (section 5.1) |
 | triggers | every `1s`, or at `100` events or a quarter of the byte bound. Internal |
-| durability | none — no queue files, no WAL, no disk fallback |
+| durability | none in the buffer — no WAL, no disk fallback. A liaison delivers into its write queue, which is on disk, as every stream write (section 3.6) |
 
 The buffered publisher of the queue module owns the buffer (section 3.5). Its delivery goroutine selects over the stop signal, the flush ticker and the queue, so both triggers fire.
 
@@ -103,7 +103,7 @@ The buffered publisher of the queue module owns the buffer (section 3.5). Its de
 
 Phase 1 follows native metrics. A standalone or data node writes its own events through its local write pipeline, always to shard `0` of `_monitoring_log`, which is created with one shard. No entity hash selects a shard and no event goes to another node, so each node's logs stay on that node. A group created by an earlier build with more shards still works, because every group has shard `0`. This aligns the first implementation with native metrics; it does not define node-local, non-replicated shards as a general contract.
 
-> **Decided: keep the selection, replace the transport.** Reusing the liaison's existing shard-based routing and never touching disk cannot both hold, because that route terminates in the disk-backed write queue and writes part files. The liaison therefore keeps the shard and node **selection** and publishes directly to the selected data node over its tier-2 client, bypassing the write queue entirely. The new native log topic serves the receiver's foreign producers, not the liaison's own route. Two facts make this modest rather than novel: nothing enforces shard ownership on ingest, and `lifecycle` already publishes straight into a colocated data node in production today.
+> **Decided: the liaison writes its logs as a stream write.** A liaison sends `_monitoring_log/log` through the normal liaison stream write path: the tier-1 client, a liaison's write queue, and the part sync to the data nodes. The write queue already provides buffering, capacity control, persistence and delivery, the role the bounded buffer has on a single node, so the liaison adds no delivery or retry path of its own. An earlier version bypassed the queue for a memory-only route over the tier-2 client; review replaced it with this one. The new native log topic serves the receiver's foreign producers, not the liaison's own route.
 
 Section 3.6 applies this decision to the single-shard group of phase 1.
 
@@ -157,7 +157,7 @@ Logger -> filter/encode -> BufferedPublisher.Offer      (logging)
                                |
                          batch consumer                 (queue)
                                |
-                    Delivery: local now, remote in phase 2
+              Delivery: local now, to a located node in phase 2
 ```
 
 #### Contract
@@ -216,7 +216,7 @@ func NewBufferedPublisher(ctx context.Context, cfg BufferedConfig) BufferedPubli
 func NewLocalDelivery(client Client, topic bus.Topic, timeout time.Duration) Delivery
 ```
 
-Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to its topic through the local pipeline's batch publisher, turns the error map of `Close` into the batch's error, and marks a topic with no subscriber yet as retryable. The logging module wraps it to check the schema and stamp the node identity on each batch. The remote adapter is phase 2 (section 3.6).
+Phase 1 implements one `Delivery`, the local adapter: it publishes a batch to its topic through the local pipeline's batch publisher, turns the error map of `Close` into the batch's error, and marks a topic with no subscriber yet as retryable. The logging module wraps it to check the schema and stamp the node identity on each batch. Phase 2 addresses the same adapter to a located node (section 3.6).
 
 #### Guarantees
 
@@ -256,65 +256,53 @@ The queue package tests the guarantees through the `BufferedPublisher` interface
 
 ### 3.6 Phase 2: the liaison route
 
-Status: **implemented**, under review. The liaison stores its own logs. It has no storage engine, so it sends them to a data node.
+Status: **implemented**, under review. The liaison stores its own logs. It has no storage engine, so it writes them as a stream write does: through its write queue.
 
-It follows native metrics in what it selects and section 3.3 in how it sends. A liaison's native metrics locate shard `0` of their group, then publish through the liaison tier to a liaison's write queue, which writes part files and survives a data node outage on disk. Native logs locate shard `0` of `_monitoring_log` among the data nodes and publish to that node over the tier-2 client. No liaison write queue, no part files, no disk: memory only, as section 3.2 requires.
+It follows native metrics. A liaison's native metrics locate shard `0` of their group among the liaisons, publish over the tier-1 client to that liaison's write queue, and the queue syncs part files to the data nodes. Native logs do the same for shard `0` of `_monitoring_log`, with the selector and node registry the liaison's gRPC server uses for stream writes.
 
 ```text
 Logger -> filter/encode -> BufferedPublisher.Offer                 (logging, as phase 1)
                                |
-                 bounded admission, batches, retries                (queue, as phase 1)
+                     bounded admission, batches                     (queue, as phase 1)
                                |
-                   RemoteDelivery: locate, then publish             (queue, new)
+               node delivery: locate, then publish once             (queue)
                                |
-     tire2Client batch publisher, TopicStreamWrite, node ID of shard 0 of _monitoring_log
+  tire1Client batch publisher, TopicStreamWrite, the liaison of shard 0 of _monitoring_log
                                |
-                 the data node that owns shard 0 stores the batch
+  that liaison's write queue: part files on its disk, synced to the data node of shard 0
 ```
 
-Every liaison sends its logs to the same data node, the owner of shard `0`. A liaison logs much less than a data node, so one destination is enough for this phase.
-
-`_monitoring_log` has `Replicas` `0`, so there is no replica to fail over to. The tier-2 client already moves the destination instead. It removes a node from the selector when the node stops answering: at once when the node closes its connections or fails the writability probe the publisher runs before it sends, and otherwise at its health check, every 10s by default (`--data-client-health-check-interval`). Shard `0` then maps to another data node, and back when the node returns. The liaison follows that without a mechanism of its own:
-
-```text
-owner of shard 0 stops -> the batch is not sent: not writable, breaker open, no client for the node
-  -> retryable: the batch stays at the head of the buffer, retried once per interval
-  -> each attempt locates again -> the node is removed within 10s -> the next data node stores it
-```
-
-Up to 10 retries at the 1s interval cover the 10s health check, so a node outage costs no logs when the buffer holds them; past the buffer bound the newest events are dropped as `buffer_full`. A data node does not check shard ownership on ingest, and a query through the liaison reads every data node, as the phase-1 placement check shows with rows on five data nodes. So events stored on the next data node stay queryable.
+The buffer stays in front of the queue, because admission must not block and a publish over the network can. Past the buffer, the write queue does the work: it bounds what it takes with the disk watermark, keeps parts on disk, syncs them to the data nodes of the shard, and syncs to another data node when the shard's node goes away. `_monitoring_log` has `Replicas` `0`; a data node outage costs no logs while the liaison's disk holds them.
 
 #### What phase 2 adds
 
 | Part | Change |
 |---|---|
-| Queue module | `NewRemoteDelivery(client Client, topic bus.Topic, locate func() (string, error), timeout time.Duration) Delivery`. Each call to `Deliver`, retries included, calls `locate`, puts the node ID on every message, publishes through the client's batch publisher and turns the errors of `Publish` and `Close` into the batch's error, as the local adapter does. The queue module knows no group: the caller's `locate` does. |
-| Logging module | The delivery wrapper of phase 1, with the destination as a parameter: local on standalone and data nodes, remote on a liaison. Schema setup, identity stamping and the counters do not change. `locate` asks for shard `0`, replica `0` of `_monitoring_log`. |
-| Liaison setup | `pkg/cmdsetup/liaison.go` gives the route its own round-robin selector over the data nodes, registered on the tier-2 client for `TopicStreamWrite`, as each liaison topic has one. It selects as the stream part sync does, and a node the publisher removes for this topic leaves only this selector. The setup creates the logging service with the tier-2 client, that selector and the liaison's memory protector, stops it before the clients so the final drain can still send, and marks the role as supporting native logging, so the root command attaches the native sink when a liaison runs. |
-| Tier-2 batch publisher | `Publish` marks the errors it raises before a message is sent with `queue.ErrNotSent`: node not writable, breaker open, no client, the stream cannot open. Their text does not change. `RemoteDelivery` retries a batch only when every message has such an error. |
+| Queue module | `NewNodeDelivery(client Client, topic bus.Topic, node func() (string, error), timeout time.Duration) Delivery`: the local delivery of phase 1, with each batch addressed to the node that `node` returns when the batch is delivered. A failed locate is retryable, because nothing was published. Once a batch is published, its outcome is final: the delivery has no retry of its own. The queue module knows no group: the caller's `node` does. |
+| Logging module | The delivery wrapper of phase 1, with the destination as a parameter: local on standalone and data nodes, node delivery on a liaison. Schema setup, identity stamping and the counters do not change. `locate` asks for shard `0`, replica `0` of `_monitoring_log`. |
+| Liaison setup | `pkg/cmdsetup/liaison.go` creates the logging service with the tier-1 client, the stream liaison node registry that the gRPC server also uses, and the liaison's memory protector. It stops the service before the pipelines and clients, so the final drain can still send, and marks the role as supporting native logging, so the root command attaches the native sink when a liaison runs. |
+| Batch publisher | `Publish` takes its logger from its context, for feedback protection below. |
+| Write queue | The callback logs about an event of `_monitoring_log` as a native write, for feedback protection below. |
 | Counters | `locate_failed` joins the closed `reason` set. No other new reason and no new metric. |
 
 #### Failure handling
 
 | Situation | Behaviour | Counted as |
 |---|---|---|
-| `locate` fails: no data node registered yet, or the selector does not know the group yet | Both are transient at startup. Retryable: the batch stays at the head of the buffer and is retried once per interval, up to 10 retries, as `destination_unready` is in phase 1 | `locate_failed` after the retries or at shutdown |
-| no message of the batch was sent: the node is not writable, breaker open, no client for the node, the stream cannot open | Retryable, as above. The next attempt locates again, so it reaches the next data node once the client removes this one | `publish_failed` after the retries or at shutdown |
-| a send failed, or only part of the batch was sent | The node may have stored what was sent, so the batch is dropped, never retried | `publish_failed` |
-| the data node answered with an error in `Close`'s map: disk full, invalid request | The node decided, so the batch is dropped, never retried | `publish_failed` |
-| the node did not answer within the publish timeout | The node may have stored the batch, so it is dropped, never retried: a retry could store it twice | `publish_failed` |
-| a remote write is stuck | as a stuck local write: settled at the drain deadline, released if it returns | `shutdown_deadline` |
-
-The rule is one line: retry what never reached a node, drop what a node answered or may have stored.
+| `locate` fails: no liaison registered on the tier-1 client yet, or the selector does not know the group yet | Both are transient at startup. Retryable: the batch stays at the head of the buffer and is retried once per interval, up to 10 retries, as `destination_unready` is in phase 1 | `locate_failed` after the retries or at shutdown |
+| the publish fails, the liaison refuses the batch (disk over the watermark), or it does not answer in time | The batch is dropped. The write queue is the delivery path; the sink adds none | `publish_failed` |
+| a data node is down | The liaison's write queue keeps the parts and syncs them once shard `0` has a data node again. Nothing is lost at the sink | – |
+| a write to the liaison is stuck | as a stuck local write: settled at the drain deadline, released if it returns | `shutdown_deadline` |
 
 #### Feedback protection across the hop
 
-The native-write mark is a context value, so it does not cross the network. Two new log sites can see a native log write without it:
+The native-write mark is a context value, so it does not cross the network. These log sites can see a native log write without it:
 
 | Side | Log site | Rule |
 |---|---|---|
-| Liaison | the tier-2 batch publisher logs each node error of a batch | it takes its logger from the context of `Publish` with `FetchOrDefault`, as the stream write callback does. A failed native log batch then logs to the console only, and cannot feed one more stored line into each failing flush |
-| Data node | the stream write callback logs about a write it received over the cluster server | an event of `_monitoring_log` is logged as a native write, whatever its origin. The group reaches the log call, so the callback does not need the context mark |
+| Sending liaison | the tier-1 batch publisher logs each node error of a batch | it takes its logger from the context of `Publish` with `FetchOrDefault`, as the stream write callback does. A failed native log batch then logs to the console only |
+| Receiving liaison | the write-queue callback logs about an event it received: a refused write, no node for the shard, a failed index publish; and the queue's lookup of the shard's nodes | an event of `_monitoring_log` is logged as a native write, whatever its origin. The group reaches the log call, so the callback does not need the context mark |
+| Receiving liaison, asynchronous | the group's write queue: flushes, merges and part sync | already logs under `_MONITORING_LOG`: the queue's logger is named after its group, and the reserved exclusion covers it and its children |
 
 #### Unchanged
 
@@ -324,11 +312,11 @@ The buffer, its bounds, the memory policy of section 5.1, the schema, the entity
 
 | Level | Test |
 |---|---|
-| Queue | `RemoteDelivery` with a mock client: the located node ID is on every message; each attempt locates again, so a retry goes to the node `locate` returns then; a `locate` error and a batch with no message sent are retryable; a batch with one message sent, a failed send, a node error in `Close`'s map and a timeout end the batch; success returns nil. The tier-2 publisher marks a node with no client and a node that is not writable as not sent, with the error text unchanged |
-| Logging | a liaison counts `locate_failed` after the retries; a remote `Outcome` maps to the reasons above |
-| Recursion | a failed tier-2 batch publish logs nothing that reaches native storage; a data node's log about a received `_monitoring_log` write is not stored |
-| Integration | two suites, a liaison and data nodes in one process. One runs the shared cases of phase 1 with the liaison as the producer. The other stores a liaison marker on the owner of shard `0`, stops that data node, and finds the next marker on the other data node through the liaison; with `locate` run only once, the falsifier, it is lost. A node stopped in process closes its connections and is removed at once, so the retries that bridge the health check are covered by the queue tests |
-| E2E | the liaison joins the identity set; its rows are placed on the owner of shard `0`, read from the query trace as the data-node placement check does |
+| Queue | node delivery with a mock client: the located node ID is on every message; a `locate` error or an empty node is retryable and publishes nothing; a failed publish, a node error in `Close`'s map and a timeout end the batch; success returns nil. Through the publisher, a batch held on a failed `locate` goes to the node located on the next attempt |
+| Logging | a liaison addresses every message to the liaison of shard `0` and stamps its own identity; it counts `locate_failed` after the retries; an `Outcome` maps to the reasons above |
+| Recursion | a failed tier-1 batch publish logs nothing that reaches native storage; the write-queue callback's log about a received `_monitoring_log` event is not stored, and the same log about another group is |
+| Integration | two suites, a liaison and data nodes in one process. One runs the shared cases of phase 1 with the liaison as the producer. The other finds a liaison marker on the data node of shard `0`, stops that data node, and finds the next marker on the other data node through the liaison. With the write-queue callback dropping `_monitoring_log` events, the falsifier, the first marker is never stored |
+| E2E | the liaison joins the identity set; its rows are placed on the data node of shard `0`, read from the query trace as the data-node placement check does; with that node paused, the write queue syncs the next marker to another data node |
 
 Each new assertion is checked to fail when its change is reverted.
 
@@ -387,10 +375,9 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | delivery | stalled in a slow publish | the buffer absorbs it; batches capped at 25% of the byte bound, one in flight, so a stall cannot pin admission | – gauge `native_log_buffer_bytes{state="in_flight"}` |
 | schema | the group or stream cannot be read or created at startup | retry every 10s, batch in hand dropped | `schema_unavailable` |
 | schema | a `log` stream exists whose families, tag order or entity differ from this version's | refuse and count, with one error through normal logging. The schema check keeps running every 10s instead of the sink staying disabled, so an operator can drop and recreate the stream without a restart; waiting alone never clears it | `schema_incompatible` |
-| selection | `locate` errors: no data node registered yet, or the group not yet known to the selector | retried once per tick, up to 10 retries, then dropped; never published to an empty node | `locate_failed` — *phase 2* |
+| selection | `locate` errors on a liaison: no liaison registered on the tier-1 client yet, or the group not yet known to the selector | retried once per tick, up to 10 retries, then dropped; never published to an empty node | `locate_failed` — *phase 2* |
 | local publish | listener unhealthy | the bus skips it and drops the payload while returning an error, so any error means full batch loss | `publish_failed` |
-| remote publish | no message of the batch was sent: the node is not writable, breaker open, no client, the stream could not open | retried once per tick, up to 10 retries, each locating again, so it follows the client's removal of the node to the next data node | `publish_failed` — *phase 2* |
-| remote publish | a send failed, the node answered with an error, or it did not answer in time and may have stored the batch | batch dropped, never re-queued | `publish_failed` — *phase 2* |
+| liaison publish | the publish to the liaison's write queue fails, the queue refuses it (disk over the watermark), or it does not answer in time | batch dropped, never re-queued: past the publish, the write queue owns delivery | `publish_failed` — *phase 2* |
 | destination | local topic not yet subscribed | keep its events, still charged, at the head of the buffer, and retry them once per tick in batches under the same limits, up to 10 retries each, then drop. Nothing is retained at shutdown, where there is no next tick | `destination_unready` |
 | destination | the `log` stream is dropped at runtime | **known gap**: the stream write callback logs `cannot handle write event` and reports success, so the batch is counted as written. The schema check recreates the stream within 10s. The fix is in the shared write callback, where a wrong status makes the liaison fail over the data node, so it lands in its own PR, tracked in [apache/skywalking#14158](https://github.com/apache/skywalking/issues/14158) | – |
 | read path | a data node has not yet caught up on the schema | its query processor returns stream-not-exist and the distributed planner discards the whole response, blanking the query. **Pre-existing** for any group created while the cluster is running, user groups included — not introduced here. Mitigation is a one-site change in the planner, out of scope for this feature | – |
@@ -398,7 +385,7 @@ The metric names carry the `native_log_` prefix. The native meter provider names
 | shutdown | an event is admitted after the drain began, by a writer that obtained the sink before it | refused as closed and counted, never left in a buffer nothing delivers | `shutdown_deadline` |
 | shutdown | a local write is stuck | a local write runs on the delivery goroutine and does not honor its context, so it cannot be interrupted. Shutdown stops waiting at the 5s drain deadline; the events in that write are counted then, and their memory is freed only if the write returns | `shutdown_deadline` |
 
-> No row blocks, retries forever, or falls back to disk. Loss is bounded, and counted everywhere except the known gap above.
+> No row blocks or retries forever, and the buffer never falls back to disk; a liaison's write queue is the normal stream path, not a fallback. Loss is bounded, and counted everywhere except the known gap above.
 
 ### 5.1 Memory
 

@@ -38,7 +38,7 @@ BanyanDB can store its own log events in BanyanDB, alongside the measures native
 banyand standalone --logging-native-enabled --logging-native-level=info
 ```
 
-The `standalone`, `data` and `liaison` roles support it. A standalone or data node stores its own events locally. A liaison has no storage, so it sends its events to the data node that owns shard 0 of `_monitoring_log`, over its data-node client and in memory only. When that data node stops answering, the client removes it and the liaison sends to the next data node; batches that reached no node are retried meanwhile, up to 10 times, one per flush interval.
+The `standalone`, `data` and `liaison` roles support it. A standalone or data node stores its own events locally. A liaison has no storage, so it writes its events as a stream write: over its liaison client to the write queue of a liaison, which syncs them to the data node of shard 0 of `_monitoring_log`. While no data node can take them, the write queue keeps them on the liaison's disk, as it does every stream write.
 
 Events land in the `_monitoring_log` group as elements of a stream named `log`, queryable through the ordinary stream API:
 
@@ -125,21 +125,21 @@ The `reason` label takes one of ten values, so a loss is always attributable to 
 | `memory_pressure` | the memory protector reported high pressure | accept it: on a node short of memory this is the sink yielding, as intended |
 | `oversize_event` | one event exceeded 64KiB | shorten the log line |
 | `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
-| `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued. On a liaison, a batch that no data node received is retried first, up to 10 times |
+| `publish_failed` | the batch did not reach storage, or on a liaison the write queue | look at the write path — the whole batch is lost, never re-queued |
 | `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
 | `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it. The error is logged once |
 | `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
-| `locate_failed` | a liaison found no data node for `_monitoring_log` after 10 retries, one per flush interval | expected only at startup; if it persists, check that the liaison sees a data node |
+| `locate_failed` | a liaison found no liaison to write `_monitoring_log` to after 10 retries, one per flush interval | expected only at startup; if it persists, check that the liaison sees itself in its liaison route table |
 | `shutdown_deadline` | still buffered, or in a stuck write, when the drain deadline passed, or logged after shutdown began | expected on a busy node during shutdown |
 
 Logging caused by storing native logs is never stored, or one stored line could produce the next. That logging still reaches the console. Two modules are reserved for it, and `--logging-native-exclude-modules` cannot remove them:
 
-- `NATIVE-LOG` is the native log service. While the write path handles a native write, it logs as a child of `NATIVE-LOG`, for example `NATIVE-LOG.STREAM`. The same write path logs as before for every other write, so ordinary `STREAM` and `STORAGE` logs are collected. A liaison's data-node client logs about a native log batch as `NATIVE-LOG.QUEUE-PUB`, and a data node logs about the `_monitoring_log` events a liaison sent it as a child of `NATIVE-LOG` too.
+- `NATIVE-LOG` is the native log service. While the write path handles a native write, it logs as a child of `NATIVE-LOG`, for example `NATIVE-LOG.STREAM`. The same write path logs as before for every other write, so ordinary `STREAM` and `STORAGE` logs are collected. A liaison's client logs about a native log batch as `NATIVE-LOG.QUEUE-PUB`, and the liaison's write queue logs about the `_monitoring_log` events it received as a child of `NATIVE-LOG` too.
 - `_MONITORING_LOG` is the log group's own storage. A storage logger is named after its group, so its segments, shards, flushes and merges log under it.
 
 A blank entry in `--logging-native-exclude-modules` is ignored.
 
-An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: at its bound the newest event is dropped and counted, so a burst keeps the head that explains it.
+An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback; on a liaison, the write queue past it is the normal stream path -- and it never blocks the caller: at its bound the newest event is dropped and counted, so a burst keeps the head that explains it.
 
 `restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
 

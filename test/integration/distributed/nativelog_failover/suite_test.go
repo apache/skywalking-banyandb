@@ -123,11 +123,10 @@ var _ = Describe("The liaison route", func() {
 			owner = only(g, perNode)
 		}, flags.EventuallyTimeout, time.Second).Should(Succeed())
 
-		// A node that stops cleanly closes its connections, so the client
-		// evicts it at once and the next attempt locates the other node. A
-		// node that stops answering without closing them is evicted by the
-		// health check instead; the retries that bridge that window are
-		// covered by the queue package's tests.
+		// The liaison's write queue syncs shard 0 to the data node its
+		// registry locates. A node that stops cleanly closes its connections,
+		// so the client evicts it at once and the queue syncs the next part
+		// to the other node.
 		dataNodes[owner]()
 		delete(dataNodes, owner)
 		after := mark()

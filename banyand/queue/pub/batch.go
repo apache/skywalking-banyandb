@@ -154,7 +154,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 
 		// Check circuit breaker before attempting send
 		if !bp.pub.connMgr.IsRequestAllowed(node) {
-			err = multierr.Append(err, queue.NotSent(fmt.Errorf("circuit breaker open for node %s", node)))
+			err = multierr.Append(err, fmt.Errorf("circuit breaker open for node %s", node))
 			continue
 		}
 
@@ -212,7 +212,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		}
 		if bp.failedNodes != nil {
 			if ce := bp.failedNodes[node]; ce != nil {
-				err = multierr.Append(err, queue.NotSent(ce))
+				err = multierr.Append(err, ce)
 			}
 			continue
 		}
@@ -222,7 +222,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 			var clientOK bool
 			nodeClient, clientOK = bp.pub.connMgr.GetClient(node)
 			if !clientOK {
-				err = multierr.Append(err, queue.NotSent(fmt.Errorf("failed to get client for node %s", node)))
+				err = multierr.Append(err, fmt.Errorf("failed to get client for node %s", node))
 				return true
 			}
 			succeed, ce := bp.pub.checkWritable(ctx, node, topic)
@@ -233,13 +233,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 				bp.failedNodes = make(map[string]*common.Error)
 			}
 			bp.failedNodes[node] = ce
-			// A nil ce is appended as it always was; only a node's answer is
-			// marked as raised before the message was sent.
-			var failure error = ce
-			if ce != nil {
-				failure = queue.NotSent(ce)
-			}
-			err = multierr.Append(err, failure)
+			err = multierr.Append(err, ce)
 			return true
 		}() {
 			continue
@@ -252,7 +246,7 @@ func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages
 		if errCreateStream != nil {
 			// Release the stream context when Send fails because no response listener will own it.
 			cancel()
-			err = multierr.Append(err, queue.NotSent(fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream)))
+			err = multierr.Append(err, fmt.Errorf("failed to get stream for node %s: %w", node, errCreateStream))
 			continue
 		}
 		streamBatchStart := time.Now()

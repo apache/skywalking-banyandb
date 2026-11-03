@@ -73,6 +73,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 
 	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	streamLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel)
 	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamPartSync.String(), metaSvc)
 	streamSVC, err := stream.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, streamDataNodeSel, tire2Client)
 	if err != nil {
@@ -88,12 +89,10 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
 
-	// A liaison has no storage engine: it sends its own logs over the tier-2
-	// client to the data node that owns shard 0 of the log group, bypassing
-	// its disk-backed write queue.
-	nativeLogNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
-	logSvc := logging.NewLiaisonService(nativeLogSink, nativeLoggingConfig, metaSvc, tire2Client,
-		grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire2Client, nativeLogNodeSel), pm, metricSvc)
+	// A liaison has no storage engine: it writes its own logs as a stream
+	// write does, over the tier-1 client to a liaison's write queue.
+	logSvc := logging.NewLiaisonService(nativeLogSink, nativeLoggingConfig, metaSvc, tire1Client,
+		streamLiaisonNodeRegistry, pm, metricSvc)
 	logSvc.SetNodeType("liaison")
 
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC, traceSVC)
@@ -108,7 +107,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 
 	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
-		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
+		StreamLiaisonNodeRegistry:  streamLiaisonNodeRegistry,
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 	}, metricSvc, pm, routeProviders)
@@ -122,8 +121,9 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		metaSvc,
 		pm,
-		// Stopped before the clients below: units stop in this order, and the
-		// final drain sends through the tier-2 client.
+		// Stopped before the pipelines and clients below: units stop in this
+		// order, and the final drain sends through the tier-1 client to a
+		// liaison's internal pipeline.
 		logSvc,
 		localPipeline,
 		internalPipeline,
@@ -136,7 +136,6 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		traceLiaisonNodeSel,
 		traceDataNodeSel,
 		propertyNodeSel,
-		nativeLogNodeSel,
 		streamSVC,
 		measureSVC,
 		traceSVC,
@@ -168,7 +167,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel, traceDataNodeSel, nativeLogNodeSel} {
+				for _, sel := range []node.Selector{measureDataNodeSel, streamDataNodeSel, propertyNodeSel, traceDataNodeSel} {
 					sel.SetNodeSelector(ls)
 				}
 			}

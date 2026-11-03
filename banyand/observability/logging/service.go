@@ -59,10 +59,8 @@ const (
 	schemaRetryInterval = 10 * time.Second
 	// destinationRetries bounds how many ticks a batch is held while its
 	// destination cannot take it: the local write topic has no subscriber, or a
-	// liaison has no data node it reached. At the one-second interval that
-	// covers ten seconds, the data client's default health check, so a batch
-	// outlives the eviction of an unreachable node; past it the batch is
-	// dropped and counted.
+	// liaison has located no liaison yet. Past it the batch is dropped and
+	// counted.
 	destinationRetries = 10
 )
 
@@ -70,11 +68,11 @@ const (
 // been established.
 var errSchemaUnavailable = errors.New("the native log schema is not established yet")
 
-// errLocateFailed is the delivery failure of a liaison that located no data
-// node for the log group.
-var errLocateFailed = errors.New("no data node located for the native log group")
+// errLocateFailed is the delivery failure of a liaison that located no
+// liaison for the log group.
+var errLocateFailed = errors.New("no liaison located for the native log group")
 
-// NodeLocator locates the node that stores a shard of a group, as a liaison's
+// NodeLocator locates the node that takes a shard of a group, as a liaison's
 // node registry does.
 type NodeLocator interface {
 	Locate(group, name string, shardID, replicaID uint32) (string, error)
@@ -108,8 +106,8 @@ type Service struct {
 	metrics  *metrics
 	pipeline queue.Client
 	// nodes is set on a liaison, which has no storage engine: each batch goes
-	// to the data node it locates. Elsewhere it is nil and batches are written
-	// through the local pipeline.
+	// to the write queue of the liaison it locates, as a stream write does.
+	// Elsewhere it is nil and batches are written through the local pipeline.
 	nodes  NodeLocator
 	sink   *Sink
 	closer *run.Closer
@@ -149,8 +147,9 @@ func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 }
 
 // NewLiaisonService returns the service of a liaison. A liaison has no storage
-// engine, so it sends each batch over client, its tier-2 client, to the data
-// node nodes locates for shard 0 of the log group.
+// engine, so it writes each batch as a stream write does: over client, its
+// tier-1 client, to the liaison nodes locates for shard 0 of the log group,
+// whose write queue holds the batch until it reaches a data node.
 func NewLiaisonService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 	client queue.Client, nodes NodeLocator, pm protector.Memory, omr observability.MetricsRegistry,
 ) *Service {
@@ -211,14 +210,14 @@ func (s *Service) Serve() run.StopNotify {
 func (s *Service) delivery() queue.Delivery {
 	dest := queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout)
 	if s.nodes != nil {
-		dest = queue.NewRemoteDelivery(s.pipeline, data.TopicStreamWrite, s.locate, s.timing.writeTimeout)
+		dest = queue.NewNodeDelivery(s.pipeline, data.TopicStreamWrite, s.locate, s.timing.writeTimeout)
 	}
 	return &delivery{svc: s, dest: dest}
 }
 
-// locate returns the data node that owns shard 0 of the log group, the shard
-// every event is written to. It runs for every attempt, so a retried batch
-// goes to the node that owns the shard by then.
+// locate returns the liaison that takes shard 0 of the log group, the shard
+// every event is written to. It runs for every attempt, so a batch held while
+// no liaison was located goes to the one located by then.
 func (s *Service) locate() (string, error) {
 	node, err := s.nodes.Locate(GroupName, StreamName, shardID, 0)
 	if err != nil {
@@ -379,7 +378,7 @@ func (d *delivery) Deliver(ctx context.Context, batch []any) error {
 // internalRequest adds what the internal write path needs. The shard is always
 // shard 0, as for native metrics: a standalone or data node writes to its own
 // local pipeline, so its logs stay on the node that produced them, and a
-// liaison sends to the data node that owns shard 0.
+// liaison writes to the write queue of the liaison that takes shard 0.
 func internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
 	entity := entityOf(req)
 	if _, err := entity.ToEntity(); err != nil {

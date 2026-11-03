@@ -63,7 +63,7 @@ const (
 	// topic still had no subscriber after the bounded retries. The stream
 	// service registers that topic and can start after the first flush.
 	reasonDestinationUnready = "destination_unready"
-	// reasonLocateFailed counts a batch a liaison dropped because no data node
+	// reasonLocateFailed counts a batch a liaison dropped because no liaison
 	// could be located for it, after the bounded retries.
 	reasonLocateFailed = "locate_failed"
 	reasonShutdown     = "shutdown_deadline"

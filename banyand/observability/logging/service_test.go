@@ -867,12 +867,13 @@ func (l *fakeLocator) Locate(group, name string, shardID, replicaID uint32) (str
 	return l.node, l.err
 }
 
-// TestLiaisonSendsToTheDataNodeOfShardZero covers the liaison route: every
-// message is addressed to the data node that owns shard 0 of the log group,
-// carries the liaison's own identity, and is counted as written.
-func TestLiaisonSendsToTheDataNodeOfShardZero(t *testing.T) {
+// TestLiaisonWritesToTheLiaisonOfShardZero covers the liaison route: every
+// message is addressed to the liaison that takes shard 0 of the log group,
+// whose write queue holds it, carries the liaison's own identity, and is
+// counted as written.
+func TestLiaisonWritesToTheLiaisonOfShardZero(t *testing.T) {
 	client := &fakeClient{}
-	locator := &fakeLocator{node: "data-2"}
+	locator := &fakeLocator{node: "liaison-2"}
 	_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })
 	sink.SetNode(NodeInfo{NodeID: "liaison-0", NodeType: "liaison"})
 
@@ -883,8 +884,8 @@ func TestLiaisonSendsToTheDataNodeOfShardZero(t *testing.T) {
 	waitFor(t, "every event to be written", func() bool { return sink.Written() == admitted })
 
 	for i, node := range client.seenMessageNodes() {
-		if node != "data-2" {
-			t.Fatalf("message %d is addressed to %q, want the owner of shard 0", i, node)
+		if node != "liaison-2" {
+			t.Fatalf("message %d is addressed to %q, want the liaison of shard 0", i, node)
 		}
 	}
 	for i, id := range client.seenNodeIDs() {
@@ -894,10 +895,10 @@ func TestLiaisonSendsToTheDataNodeOfShardZero(t *testing.T) {
 	}
 }
 
-// TestLiaisonCountsWhatNoDataNodeTook covers a liaison that locates no data
-// node: the batch is held for the bounded retries, publishes nothing, and is
-// then counted as locate_failed, never as written.
-func TestLiaisonCountsWhatNoDataNodeTook(t *testing.T) {
+// TestLiaisonCountsWhatNoLiaisonTook covers a liaison that locates no
+// liaison: the batch is held for the bounded retries, publishes nothing, and
+// is then counted as locate_failed, never as written.
+func TestLiaisonCountsWhatNoLiaisonTook(t *testing.T) {
 	client := &fakeClient{}
 	locator := &fakeLocator{err: errors.New("no nodes available")}
 	_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })

@@ -15,9 +15,9 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package nativelogfailover checks where a liaison stores its own logs: on the
-// data node that owns shard 0 of the log group, and on the next data node once
-// that one stops. It stops a data node, so it runs apart from the cases that
+// Package nativelogfailover checks where a liaison's own logs are stored: its
+// write queue syncs them to the data node of shard 0 of the log group, and to
+// the next data node once that one stops. It stops a data node, so it runs apart from the cases that
 // read what the liaison stored earlier. The liaison and two data nodes run in
 // this process.
 package nativelogfailover

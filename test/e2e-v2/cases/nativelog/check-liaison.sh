@@ -16,13 +16,14 @@
 # limitations under the License.
 # The liaison route (phase 2).
 #
-# The liaison has no storage, so it sends its logs to the data node that owns
-# shard 0 of the single-shard log group: all of them land on that one node.
-# Placement is read from the query trace, as in check-placement.sh.
+# The liaison has no storage, so it writes its logs as a stream write: its
+# write queue syncs them to the data node of shard 0 of the single-shard log
+# group, so all of them land on that one node. Placement is read from the
+# query trace, as in check-placement.sh.
 #
 # That data node is then paused. It stops answering without closing its
 # connections, so the liaison's client removes it only when its health check
-# fails, and the liaison must follow it to another data node. A new marker
+# fails, and the write queue must sync to another data node. A new marker
 # group makes the liaison log `initialized`, which must be stored there.
 #
 #   check-liaison.sh <liaison-http-host:port>

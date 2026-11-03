@@ -29,7 +29,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
-	"go.uber.org/multierr"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -796,16 +795,11 @@ func TestLocalDeliveryReportsWhatTheDestinationDid(t *testing.T) {
 	}
 }
 
-// TestRemoteDeliveryReportsWhatTheNodeDid covers the remote adapter: every
-// message carries the located node; what never reached a node is retryable;
-// what the node answered, or may have stored, is not.
-func TestRemoteDeliveryReportsWhatTheNodeDid(t *testing.T) {
+// TestNodeDeliveryReportsWhatTheNodeDid covers delivery to a located node:
+// every message carries the node, and once the batch is published its outcome
+// is final, whatever the node did with it.
+func TestNodeDeliveryReportsWhatTheNodeDid(t *testing.T) {
 	refusal := common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high")
-	notSent := func() error { return NotSent(errors.New("circuit breaker open for node data-1")) }
-	sendFailed := errors.New("failed to send message to node data-1")
-	retryable := func(t *testing.T, err error) {
-		assert.ErrorIs(t, err, ErrRetryable)
-	}
 	final := func(t *testing.T, err error) {
 		require.Error(t, err)
 		assert.NotErrorIs(t, err, ErrRetryable)
@@ -816,12 +810,10 @@ func TestRemoteDeliveryReportsWhatTheNodeDid(t *testing.T) {
 		check      func(t *testing.T, err error)
 		stall      bool
 	}{
-		"delivered":        {check: func(t *testing.T, err error) { assert.NoError(t, err) }},
-		"no message sent":  {publishErr: multierr.Combine(notSent(), notSent()), check: retryable},
-		"one message sent": {publishErr: notSent(), check: final},
-		"a send failed":    {publishErr: multierr.Combine(notSent(), sendFailed), check: final},
+		"delivered":     {check: func(t *testing.T, err error) { assert.NoError(t, err) }},
+		"publish fails": {publishErr: errors.New("failed to get client for node liaison-1"), check: final},
 		"refused in the map": {
-			nodeErr: map[string]*common.Error{"data-1": refusal},
+			nodeErr: map[string]*common.Error{"liaison-1": refusal},
 			check: func(t *testing.T, err error) {
 				final(t, err)
 				assert.ErrorIs(t, err, refusal)
@@ -846,7 +838,7 @@ func TestRemoteDeliveryReportsWhatTheNodeDid(t *testing.T) {
 			publisher.EXPECT().Publish(gomock.Any(), testTopic, gomock.Len(2)).DoAndReturn(
 				func(ctx context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
 					for _, m := range messages {
-						assert.Equal(t, "data-1", m.Node())
+						assert.Equal(t, "liaison-1", m.Node())
 					}
 					if tc.stall {
 						<-ctx.Done()
@@ -854,15 +846,15 @@ func TestRemoteDeliveryReportsWhatTheNodeDid(t *testing.T) {
 					return nil, tc.publishErr
 				})
 			publisher.EXPECT().Close().Return(tc.nodeErr, nil)
-			d := NewRemoteDelivery(client, testTopic, func() (string, error) { return "data-1", nil }, timeout)
+			d := NewNodeDelivery(client, testTopic, func() (string, error) { return "liaison-1", nil }, timeout)
 			tc.check(t, d.Deliver(context.Background(), []any{"a", "b"}))
 		})
 	}
 }
 
-// TestRemoteDeliveryRetriesWhatNoNodeReceived covers a failed locate: it is
+// TestNodeDeliveryRetriesAFailedLocate covers a failed locate: it is
 // retryable, keeps its cause, and publishes nothing.
-func TestRemoteDeliveryRetriesWhatNoNodeReceived(t *testing.T) {
+func TestNodeDeliveryRetriesAFailedLocate(t *testing.T) {
 	cause := errors.New("no nodes available")
 	client := NewMockClient(gomock.NewController(t))
 	for name, locate := range map[string]func() (string, error){
@@ -870,56 +862,47 @@ func TestRemoteDeliveryRetriesWhatNoNodeReceived(t *testing.T) {
 		"no node to use": func() (string, error) { return "", nil },
 	} {
 		t.Run(name, func(t *testing.T) {
-			err := NewRemoteDelivery(client, testTopic, locate, time.Second).Deliver(context.Background(), []any{"a"})
+			err := NewNodeDelivery(client, testTopic, locate, time.Second).Deliver(context.Background(), []any{"a"})
 			assert.ErrorIs(t, err, ErrRetryable)
 		})
 	}
-	err := NewRemoteDelivery(client, testTopic, func() (string, error) { return "", cause }, time.Second).
+	err := NewNodeDelivery(client, testTopic, func() (string, error) { return "", cause }, time.Second).
 		Deliver(context.Background(), []any{"a"})
 	assert.ErrorIs(t, err, cause)
 }
 
-// TestRetriedBatchGoesToTheNodeLocatedThen follows a node failure through the
-// publisher: the first attempt reaches no node, and the retry goes to the
-// node locate returns by then, as after the client evicted the first one.
-func TestRetriedBatchGoesToTheNodeLocatedThen(t *testing.T) {
+// TestBatchGoesToTheNodeLocatedWhenItIsDelivered follows a failed locate
+// through the publisher, as on a liaison that has not discovered a node yet:
+// the batch is held, and goes to the node located on the next attempt.
+func TestBatchGoesToTheNodeLocatedWhenItIsDelivered(t *testing.T) {
 	cfg := testConfig()
 	cfg.BatchCount = 1
 	cfg.FlushInterval = 10 * time.Millisecond
 	p := NewBufferedPublisher(context.Background(), cfg)
 	ctrl := gomock.NewController(t)
 	client := NewMockClient(ctrl)
-	var mu sync.Mutex
-	var nodes []string
-	located := []string{"data-1", "data-2"}
-	client.EXPECT().NewBatchPublisher(time.Second).DoAndReturn(func(time.Duration) BatchPublisher {
-		publisher := NewMockBatchPublisher(ctrl)
-		publisher.EXPECT().Publish(gomock.Any(), testTopic, gomock.Len(1)).DoAndReturn(
-			func(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
-				mu.Lock()
-				defer mu.Unlock()
-				nodes = append(nodes, messages[0].Node())
-				if messages[0].Node() == "data-1" {
-					return nil, NotSent(errors.New("failed to get client for node data-1"))
-				}
-				return nil, nil
-			})
-		publisher.EXPECT().Close().Return(nil, nil)
-		return publisher
-	}).Times(2)
+	publisher := NewMockBatchPublisher(ctrl)
+	var node string
+	client.EXPECT().NewBatchPublisher(time.Second).Return(publisher)
+	publisher.EXPECT().Publish(gomock.Any(), testTopic, gomock.Len(1)).DoAndReturn(
+		func(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+			node = messages[0].Node()
+			return nil, nil
+		})
+	publisher.EXPECT().Close().Return(nil, nil)
+	located := []string{"", "liaison-2"}
 	attempt := 0
-	p.Start(NewRemoteDelivery(client, testTopic, func() (string, error) {
-		node := located[min(attempt, len(located)-1)]
+	p.Start(NewNodeDelivery(client, testTopic, func() (string, error) {
+		n := located[min(attempt, len(located)-1)]
 		attempt++
-		return node, nil
+		return n, nil
 	}, time.Second))
 	req := newTracked("event", 10)
 	offerAll(t, p, req)
 	require.Eventually(t, req.settled, 3*time.Second, time.Millisecond)
 	p.Close()
 	outcomes, _ := req.state()
-	assert.True(t, outcomes[0].Delivered, "the retry was not delivered: %+v", outcomes[0])
-	mu.Lock()
-	defer mu.Unlock()
-	assert.Equal(t, []string{"data-1", "data-2"}, nodes)
+	assert.True(t, outcomes[0].Delivered, "the batch was not delivered: %+v", outcomes[0])
+	assert.Equal(t, "liaison-2", node)
+	assert.Equal(t, 2, attempt)
 }

@@ -85,12 +85,13 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	}
 }
 
-// TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage covers a log event a
-// liaison sent: it arrives over the cluster server without the mark its
-// context carried on the liaison. What the callback logs about it must still
-// reach the console and not native storage; the same refusal for an event of
-// another group is stored as usual.
-func TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage(t *testing.T) {
+// TestWriteQueueCallbackKeepsLogEventsOffNativeStorage covers a liaison's
+// write queue. A log event arrives over the cluster server without the mark
+// its context carried on the sending liaison. What the callback logs about it
+// must still reach the console and not native storage, where it would be
+// written, and refused, again; the same refusal for an event of another group
+// is stored as usual.
+func TestWriteQueueCallbackKeepsLogEventsOffNativeStorage(t *testing.T) {
 	printed := len(console.String())
 	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
 	require.NoError(t, logger.Init(logger.Logging{
@@ -100,13 +101,13 @@ func TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage(t *testing.T) {
 	sink := &nativeLines{}
 	defer logger.AttachNativeSink(sink)()
 
-	w := &writeCallback{l: logger.GetLogger("stream")}
-	// A timestamp before the epoch is refused before the callback reads any
-	// schema, so the callback logs "cannot handle write event".
+	w := &writeQueueCallback{l: logger.GetLogger("stream")}
+	// A timestamp finer than a millisecond is refused before the callback
+	// reads any queue, so the callback logs "cannot handle write event".
 	refused := func(group string) bus.Message {
 		return bus.NewMessage(1, []any{&streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
 			Metadata: &commonv1.Metadata{Group: group, Name: "log"},
-			Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(time.Unix(-1, 0)), TagFamilies: []*modelv1.TagFamilyForWrite{}},
+			Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(time.Unix(1, 1)), TagFamilies: []*modelv1.TagFamilyForWrite{}},
 		}}})
 	}
 
