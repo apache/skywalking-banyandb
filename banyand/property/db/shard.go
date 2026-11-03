@@ -111,11 +111,11 @@ type shard struct {
 	testBeforeNativeRead func()
 	location             string
 	group                string
-	expireToDeleteSec    int64
 	// repairLocks serialize repairs of one entity, striped by entity: repair reads the
 	// entity's revisions and then writes, and two concurrent repairs of the entity would
 	// otherwise both decide from the same read. Update and delete do not take them.
 	repairLocks        [repairLockStripes]repairStripe
+	expireToDeleteSec  int64
 	id                 common.ShardID
 	waitForPersistence bool
 }
