@@ -95,7 +95,7 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 			}
 
 			for _, colMeta := range bm.field.columns {
-				fieldValues, fErr := readFieldValues(decoder, colMeta.dataBlock, colMeta.name, int(bm.count), p.fieldValues, colMeta.valueType, nil)
+				fieldValues, fErr := readColumnValues(decoder, colMeta.dataBlock, int(bm.count), p.fieldValues, colMeta.valueType, nil)
 				require.NoError(t, fErr, "should read field %s for series %d", colMeta.name, bm.seriesID)
 				assert.Len(t, fieldValues, int(bm.count), "field %s should have value for each data point", colMeta.name)
 			}
@@ -110,7 +110,7 @@ func TestDecodeMeasurePartFormat(t *testing.T) {
 
 				for _, colMeta := range cfm.columns {
 					fullTagName := tagFamilyName + "." + colMeta.name
-					tagValues, tErr := dump.ReadTagValues(decoder, colMeta.dataBlock.offset, colMeta.dataBlock.size, int(bm.count), p.tagFamilies[tagFamilyName], colMeta.valueType, nil)
+					tagValues, tErr := readColumnValues(decoder, colMeta.dataBlock, int(bm.count), p.tagFamilies[tagFamilyName], colMeta.valueType, nil)
 					require.NoError(t, tErr, "should read tag %s for series %d", fullTagName, bm.seriesID)
 					assert.Len(t, tagValues, int(bm.count), "tag %s should have value for each data point", fullTagName)
 				}

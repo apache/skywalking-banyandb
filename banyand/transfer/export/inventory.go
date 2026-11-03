@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/csv"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 )
 
@@ -55,9 +56,8 @@ type partReadFunc func(partDir string) (queue.StreamingPartData, error)
 // statTSDBGroup lists <groupDir>/seg-*/shard-*/<partID>/metadata.json for stream,
 // measure and trace groups. indexMode turns on the native-index document count of the
 // segment-level series index, which is the only place index-mode measures store rows.
-// The numbers describe the directory as it is: parts that are on disk but not yet
-// published, or left behind by an interrupted merge, are counted too, so the
-// live-directory inventory is an estimate. A segment that vanishes mid-walk, or whose
+// Only the parts a shard's newest readable snapshot names are counted, so on a live
+// directory a flush or merge in flight can make the numbers briefly low. A segment that vanishes mid-walk, or whose
 // metadata is still being written by a rollover, is skipped as a whole.
 func statTSDBGroup(groupDir string, catalog commonv1.Catalog, group string, indexMode bool, read partReadFunc) ([]*transferv1.UnitInventory, error) {
 	segEntries, err := readDirOrEmpty(groupDir)
@@ -161,7 +161,7 @@ func statSegment(segDir, suffix string, catalog commonv1.Catalog, group string, 
 // parts is added to both byte estimates: a stream's idx/ is copied as-is, so its size counts
 // on both sides; a trace's sidx/<rule>/<part> carries its own manifest.json sizes.
 func statShard(shardDir string, shardID uint32, catalog commonv1.Catalog, read partReadFunc) (*transferv1.ShardStat, error) {
-	partIDs, err := dump.DiscoverPartIDs(shardDir)
+	partIDs, err := csv.LivePartIDs(shardDir)
 	if err != nil {
 		return nil, err
 	}

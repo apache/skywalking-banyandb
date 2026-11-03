@@ -19,6 +19,7 @@ syntax = "proto3";
 
 package banyandb.cluster.v1;
 
+import "banyandb/common/v1/trace.proto";
 import "banyandb/model/v1/write.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1";
@@ -71,6 +72,40 @@ message SendResponse {
   model.v1.Status status = 4;
   // version_compatibility contains version compatibility information when status indicates version issues
   VersionCompatibility version_compatibility = 5;
+}
+
+// ScanRequest opens a server-streaming scan on a data node.
+message ScanRequest {
+  string topic = 1;
+  uint64 message_id = 2;
+  bytes body = 3;
+  VersionInfo version_info = 4;
+  string group = 5;
+  string sender_node = 6;
+  string sender_role = 7;
+  string sender_tier = 8;
+  // max_chunk_bytes is the liaison's cap for one chunk body.
+  uint64 max_chunk_bytes = 9;
+  // max_chunk_rows is the liaison's cap for one chunk's rows.
+  uint32 max_chunk_rows = 10;
+  // idle_timeout_ms is how long the liaison lets the scan stay silent, neither a chunk nor a heartbeat, before it
+  // fails the stream. The data node heartbeats well within it. Zero selects the data node's default.
+  uint32 idle_timeout_ms = 11;
+}
+
+// ScanResponse is one chunk. The last chunk has last = true and may carry an
+// empty body; an error chunk ends the stream. A response with an empty body and
+// last = false is a heartbeat: the node is still scanning and has nothing to send.
+message ScanResponse {
+  uint64 message_id = 1;
+  uint32 seq = 2;
+  bytes body = 3;
+  bool last = 4;
+  string error = 5;
+  model.v1.Status status = 6;
+  // trace carries the data node's query trace on the last chunk when tracing is on.
+  common.v1.Trace trace = 7;
+  VersionCompatibility version_compatibility = 8;
 }
 
 message HealthCheckRequest {
@@ -188,6 +223,8 @@ enum SyncStatus {
 service Service {
   rpc Send(stream SendRequest) returns (stream SendResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  // Scan streams the chunks of one query result from a data node.
+  rpc Scan(ScanRequest) returns (stream ScanResponse);
 }
 
 // ChunkedSyncService provides streaming sync capabilities for chunked data transfer.

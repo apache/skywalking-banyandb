@@ -250,6 +250,7 @@ func GlobalMethodPolicies() MethodPolicyTable {
 		permissionPolicy("/banyandb.database.v1.SnapshotService/Snapshot", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.transfer.v1.ExportService/Plan", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.transfer.v1.ExportService/Sessions", auth.PermissionClusterAdmin, ScopeGlobal),
+		permissionPolicy("/banyandb.transfer.v1.ExportService/Export", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.stream.v1.StreamService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.measure.v1.MeasureService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),
 		permissionPolicy("/banyandb.trace.v1.TraceService/DeleteExpiredSegments", auth.PermissionClusterAdmin, ScopeGlobal),

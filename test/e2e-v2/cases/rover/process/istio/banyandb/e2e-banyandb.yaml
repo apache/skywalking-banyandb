@@ -27,8 +27,8 @@ setup:
       - apache/skywalking-banyandb:${TAG}-testing
     expose-ports:
       - namespace: istio-system
-        resource: service/skywalking-ui
-        port: 80
+        resource: service/skywalking-oap
+        port: 12800
   steps:
     - name: set PATH
       command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
@@ -72,8 +72,7 @@ setup:
           --set eckOperator.enabled=false \
           --set elasticsearch.enabled=false \
           --set oap.replicas=1 \
-          --set ui.image.repository=ghcr.io/apache/skywalking/ui \
-          --set ui.image.tag=${SW_OAP_COMMIT} \
+          --set ui.enabled=false \
           --set oap.image.tag=${SW_OAP_COMMIT} \
           --set oap.image.repository=ghcr.io/apache/skywalking/oap \
           --set oap.storageType=banyandb \
@@ -100,13 +99,13 @@ verify:
     count: 20
     interval: 10s
   cases:
-    - query: swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql service ls
+    - query: swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql service ls
       expected: expected/service.yml
-    - query: swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql instance list --service-name=productpage.default
+    - query: swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql instance list --service-name=productpage.default
       expected: expected/service-instance.yml
     - query: |
-        swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql process list --service-name=productpage.default --instance-name=$( \
-          swctl --display yaml --base-url=http://${service_skywalking_ui_host}:${service_skywalking_ui_80}/graphql instance list --service-name=productpage.default | yq e '.[0].name' - \
+        swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql process list --service-name=productpage.default --instance-name=$( \
+          swctl --display yaml --base-url=http://${service_skywalking_oap_host}:${service_skywalking_oap_12800}/graphql instance list --service-name=productpage.default | yq e '.[0].name' - \
         )
       expected: expected/process.yml
 

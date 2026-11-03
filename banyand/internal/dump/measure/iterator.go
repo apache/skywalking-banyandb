@@ -115,7 +115,7 @@ func (p *PartReader) decodeColumns(decoder *encoding.BytesBlockDecoder, bm *bloc
 	fieldsByDataPoint := make(map[string][][]byte, len(bm.field.columns))
 	fieldTypes := make(map[string]pbv1.ValueType, len(bm.field.columns))
 	for _, colMeta := range bm.field.columns {
-		values, fieldErr := readFieldValues(decoder, colMeta.dataBlock, colMeta.name, count, p.fieldValues, colMeta.valueType, p.reuseScratch)
+		values, fieldErr := readColumnValues(decoder, colMeta.dataBlock, count, p.fieldValues, colMeta.valueType, p.reuseScratch)
 		if fieldErr != nil {
 			return nil, fmt.Errorf("cannot read field %s for series %d: %w", colMeta.name, bm.seriesID, fieldErr)
 		}
@@ -143,7 +143,7 @@ func (p *PartReader) decodeColumns(decoder *encoding.BytesBlockDecoder, bm *bloc
 		}
 		for _, colMeta := range cfm.columns {
 			fullTagName := tagFamilyName + "." + colMeta.name
-			values, tagErr := dump.ReadTagValues(decoder, colMeta.dataBlock.offset, colMeta.dataBlock.size, count, valueReader, colMeta.valueType, p.reuseScratch)
+			values, tagErr := readColumnValues(decoder, colMeta.dataBlock, count, valueReader, colMeta.valueType, p.reuseScratch)
 			if tagErr != nil {
 				return nil, fmt.Errorf("cannot read tag %s for series %d: %w", fullTagName, bm.seriesID, tagErr)
 			}

@@ -105,16 +105,16 @@ jobs:
   # tests) that a single CI pass would miss. Fails on the first failing run.
   canopy:
     if: github.repository == 'apache/skywalking-banyandb'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
       run:
         working-directory: canopy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version-file: 'canopy/package.json'
           cache: 'npm'

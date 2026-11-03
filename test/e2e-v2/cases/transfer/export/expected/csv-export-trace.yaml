@@ -1,0 +1,131 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/csv-export.sh <liaison> trace (see csv-export-stream.yaml for the checks). The
+# trace-mocker traces are older than the hot TTL, so sw_trace lives on the warm node after the
+# lifecycle run; every mocker service has spans with its own latency, error flag and tags.
+exitCode: 0
+catalog: trace
+format: csv
+compress: gzip
+groups:
+{{- contains .groups }}
+- name: sw_trace
+  nodes:
+  {{- contains .nodes }}
+  - data-warm1:17912
+  {{- end }}
+  fixedColumns: _name,trace_id,span_id,_span
+  files: {{ gt .files 0 }}
+  rows: {{ gt .rows 0 }}
+  storedRows: {{ .rows }}
+  header: ok
+  cells: ok
+  rowCounts: ok
+  data:
+    segment:
+    {{- contains .data.segment }}
+    - _name: segment
+      trace_id: {{ notEmpty .trace_id }}
+      span_id: {{ notEmpty .span_id }}
+      _span: {{ notEmpty ._span }}
+      service_id: bW9ja19hX3NlcnZpY2U=.1
+      service_instance_id: bW9ja19hX3NlcnZpY2U=.1_bW9ja19hX3NlcnZpY2VfaW5zdGFuY2U=
+      endpoint_id: {{ notEmpty .endpoint_id }}
+      start_time: {{ gt .start_time 0 }}
+      latency: 6000
+      is_error: 0
+      tags: '["http.method=get","http.status_code=404","http.status_code=200"]'
+    - _name: segment
+      trace_id: {{ notEmpty .trace_id }}
+      span_id: {{ notEmpty .span_id }}
+      _span: {{ notEmpty ._span }}
+      service_id: bW9ja19iX3NlcnZpY2U=.1
+      service_instance_id: bW9ja19iX3NlcnZpY2U=.1_bW9ja19iX3NlcnZpY2VfaW5zdGFuY2U=
+      endpoint_id: {{ notEmpty .endpoint_id }}
+      start_time: {{ gt .start_time 0 }}
+      latency: 4500
+      is_error: 1
+      tags: '["db.type=mongodb"]'
+    - _name: segment
+      trace_id: {{ notEmpty .trace_id }}
+      span_id: {{ notEmpty .span_id }}
+      _span: {{ notEmpty ._span }}
+      service_id: bW9ja19jX3NlcnZpY2U=.1
+      service_instance_id: bW9ja19jX3NlcnZpY2U=.1_bW9ja19jX3NlcnZpY2VfaW5zdGFuY2U=
+      endpoint_id: {{ notEmpty .endpoint_id }}
+      start_time: {{ gt .start_time 0 }}
+      latency: 2000
+      is_error: 0
+    {{- end }}
+{{- end }}
+countMismatches: []
+schema:
+  counts:
+    group: {{ gt .schema.counts.group 0 }}
+    stream: 0
+    measure: 0
+    trace: {{ gt .schema.counts.trace 0 }}
+    property: 0
+    indexRule: {{ gt .schema.counts.indexRule 0 }}
+    indexRuleBinding: {{ gt .schema.counts.indexRuleBinding 0 }}
+    topNAggregation: 0
+  groups:
+    {{- contains .schema.groups }}
+    - name: sw_trace
+      catalog: trace
+      shardNum: 2
+      replicas: 0
+      segmentInterval: 1d
+      ttl: 1d
+      defaultStages: ["hot", "warm"]
+      stages:
+        - name: warm
+          shardNum: 2
+          replicas: 0
+          segmentInterval: 1d
+          ttl: 7d
+          nodeSelector: "type=warm"
+          close: false
+    - name: sw_zipkinTrace
+      catalog: trace
+      shardNum: 2
+      replicas: 0
+      segmentInterval: 1d
+      ttl: 3d
+      defaultStages: ["hot"]
+      stages: []
+    {{- end }}
+  resources:
+    {{- contains .schema.resources }}
+    - kind: trace
+      group: sw_trace
+      name: segment
+      traceIdTag: trace_id
+      spanIdTag: segment_id
+      timestampTag: start_time
+      tags: ["segment_id:STRING", "trace_id:STRING", "service_id:STRING", "service_instance_id:STRING", "endpoint_id:STRING", "start_time:TIMESTAMP", "latency:INT", "is_error:INT", "tags:STRING_ARRAY"]
+      indexRules: ["latency", "start_time"]
+    {{- end }}
+checks:
+  artifactVersion: ok
+  onlyThisCatalog: ok
+  schemaFiles: ok
+  filesMatchManifest: ok
+  noWarnings: ok
+  schemaLayouts: ok
+  schemaRefs: ok
+leftoverSnapshots: []
+checkerExitCode: 0

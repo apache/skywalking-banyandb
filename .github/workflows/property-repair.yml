@@ -27,12 +27,12 @@ jobs:
 
   property-repair:
     name: Property Repair Tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [prepare]
     timeout-minutes: 480
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Setup build environment
@@ -41,7 +41,7 @@ jobs:
           download-artifacts: 'true'
           setup-docker: 'false'
       - name: Cache tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin

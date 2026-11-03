@@ -27,7 +27,7 @@ import { registerAuth } from './routes/auth.js';
 const config = loadConfig();
 
 const app = Fastify({
-  // TLS is commonly terminated by an ingress. This lets secure-session's
+  // TLS is commonly terminated by an ingress. This lets the session cookie's
   // secure: 'auto' option use the proxy's X-Forwarded-Proto value.
   trustProxy: true,
   logger: {

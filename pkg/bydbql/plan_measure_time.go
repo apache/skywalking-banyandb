@@ -70,7 +70,18 @@ func bindTimeComparison(run *transformRun, now time.Time, comparison *GrammarCom
 		var text string
 		switch {
 		case value.Param:
-			text = run.bound[value.ParamIndex].timeStr
+			parameter := run.bound[value.ParamIndex]
+			text = parameter.timeStr
+			if parameter.expression != nil {
+				switch parameter.expression.Type {
+				case ql.ExpressionString:
+					text = parameter.expression.Literal.String
+				case ql.ExpressionTimestamp:
+					text = time.Unix(0, parameter.expression.Literal.Int64).UTC().Format(time.RFC3339Nano)
+				default:
+					return nil, fmt.Errorf("time comparison requires timestamp strings or timestamp parameters")
+				}
+			}
 		case value.String != nil:
 			text = *value.String
 		default:

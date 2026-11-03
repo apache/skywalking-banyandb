@@ -23,6 +23,7 @@ import (
 	"math"
 	"slices"
 
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
@@ -31,23 +32,41 @@ type SlotID uint32
 
 // Slot describes the source and visible response identity of a typed projection.
 type Slot struct {
-	Source   vectorized.ColumnDef
-	Output   vectorized.ColumnDef
-	ID       SlotID
-	Nullable bool
+	Source    vectorized.ColumnDef
+	Output    vectorized.ColumnDef
+	ID        SlotID
+	Nullable  bool
+	Timestamp bool // Timestamp marks an int64 nanosecond value for final timestamp-tag encoding.
 }
 
 // MillisRange is a half-open timestamp interval in Unix milliseconds.
 type MillisRange struct{ Begin, End int64 }
 
-// RawPlan is the immutable bound recipe for raw measure batch execution.
+// RawPlan is the immutable bound recipe for a complete native measure scan and QL operators.
 type RawPlan struct {
-	Limit    *uint32
-	Slots    []Slot
-	Ranges   []MillisRange
-	Offset   uint32
-	Residual bool
-	Empty    bool
+	NativeAggregate *NativeAggregatePlan
+	Aggregate       *AggregatePlan
+	Expressions     *ExpressionPlan
+	Filter          *Expression
+	Having          *HavingPlan
+	Sort            *SortPlan
+	Limit           *uint32
+	Slots           []Slot
+	Ranges          []MillisRange
+	Patterns        []model.IndexedPattern
+	Offset          uint32
+	Residual        bool
+	Distinct        bool
+	Ordered         bool // Ordered records an explicit ORDER BY requiring complete DISTINCT input.
+	Empty           bool
+}
+
+// HavingPlan filters completed aggregate groups and then projects visible slots.
+// Outputs must explicitly select the visible result; nil is rejected, while an
+// empty non-nil slice selects no visible values.
+type HavingPlan struct {
+	Predicate *Expression
+	Outputs   []Slot
 }
 
 type rawOperator struct {
@@ -72,7 +91,29 @@ type rawOperator struct {
 
 // WrapRaw takes ownership of source, including on failure, and resolves projection indices once.
 // Its output lends immutable source columns until the next pull or Close.
-func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
+func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (vectorized.PullOperator, error) {
+	if plan != nil && plan.Sort != nil {
+		return wrapSortQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Distinct {
+		return wrapDistinctQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Filter != nil {
+		return wrapFilterQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Expressions != nil {
+		return wrapExpressionQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Aggregate != nil {
+		return wrapAggregateQuery(ctx, source, plan)
+	}
+	if plan != nil && plan.Having != nil {
+		return wrapHavingQuery(ctx, source, plan)
+	}
+	return wrapRawProjection(ctx, source, plan)
+}
+
+func wrapRawProjection(ctx context.Context, source vectorized.PullOperator, plan *RawPlan) (_ vectorized.PullOperator, err error) {
 	defer func() {
 		if err != nil && source != nil {
 			_ = source.Close()
@@ -124,7 +165,7 @@ func WrapRaw(ctx context.Context, source vectorized.PullOperator, plan *RawPlan)
 		}
 		def := slot.Output
 		def.Type = schema.Columns[index].Type
-		if slot.Source.Role == vectorized.RoleTimestamp && slot.Output.Role == vectorized.RoleTag {
+		if slot.Timestamp || slot.Source.Role == vectorized.RoleTimestamp && slot.Output.Role == vectorized.RoleTag {
 			op.timestampAliases = append(op.timestampAliases, len(defs))
 		}
 		op.indices = append(op.indices, index)

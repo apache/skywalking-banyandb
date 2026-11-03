@@ -29,6 +29,8 @@ import (
 
 // Progress tracks the lifecycle migration progress to support resume after crash.
 type Progress struct {
+	samplingOwnedGroups         map[string]bool
+	TraceSamplingReports        map[string]samplingReport                                `json:"trace_sampling_reports,omitempty"`
 	logger                      *logger.Logger                                           `json:"-"`
 	CompletedGroups             map[string]bool                                          `json:"completed_groups"`
 	DeletedStreamGroups         map[string]bool                                          `json:"deleted_stream_groups"`
@@ -57,7 +59,6 @@ type Progress struct {
 	CompletedTraceSeries map[string]map[string]map[common.ShardID]bool `json:"completed_trace_series"`
 	TraceSeriesCounts    map[string]int                                `json:"trace_series_counts"`
 	TraceSeriesProgress  map[string]int                                `json:"trace_series_progress"`
-
 	// Per-source completion tracking (advances *Progress idempotently once per source item).
 	SourceCompletedStreamParts        map[string]map[string]map[common.ShardID]map[uint64]bool `json:"source_completed_stream_parts"`
 	SourceCompletedStreamSeries       map[string]map[string]map[common.ShardID]bool            `json:"source_completed_stream_series"`
@@ -66,7 +67,6 @@ type Progress struct {
 	SourceCompletedMeasureSeries      map[string]map[string]map[common.ShardID]bool            `json:"source_completed_measure_series"`
 	SourceCompletedTraceShards        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_shards"`
 	SourceCompletedTraceSeries        map[string]map[string]map[common.ShardID]bool            `json:"source_completed_trace_series"`
-
 	// Sync-mode breakdown per group: how many parts (measure/stream) or shards
 	// (trace) were migrated via chunk-sync vs row-replay, plus the real number
 	// of rows replayed. Accumulated across resume cycles, fed into the report's
@@ -80,26 +80,24 @@ type Progress struct {
 	TraceChunkSyncShards  map[string]uint64 `json:"trace_chunk_sync_shards"`
 	TraceRowReplayParts   map[string]uint64 `json:"trace_row_replay_parts"`
 	TraceRowReplayRows    map[string]uint64 `json:"trace_row_replay_rows"`
-
 	// OrphanRows reports, per catalog -> group -> deleted measure/stream subject,
 	// how many rows were archived or discarded because the schema was deleted from
 	// the registry. Accumulated across resume cycles (orphan parts are marked
 	// completed, so each row is counted once), fed into the report's orphans.
-	OrphanRows map[string]map[string]map[string]uint64 `json:"orphan_rows"`
-
+	OrphanRows         map[string]map[string]map[string]uint64 `json:"orphan_rows"`
+	progressFilePath   string                                  `json:"-"`
+	SnapshotStreamDir  string                                  `json:"snapshot_stream_dir"`
+	SnapshotMeasureDir string                                  `json:"snapshot_measure_dir"`
+	SnapshotTraceDir   string                                  `json:"snapshot_trace_dir"`
 	// MigrationErrors is the single source of structured migration errors for both
 	// the report (stage/group/catalog/scope/segment/interval/location/message) and
 	// the per-resource error counts. Reset by ClearErrors at the start of each run
 	// so the report reflects the current attempt; persisted only for crash
 	// durability within a run.
-	MigrationErrors []MigrationError `json:"migration_errors"`
-
-	progressFilePath   string     `json:"-"`
-	SnapshotStreamDir  string     `json:"snapshot_stream_dir"`
-	SnapshotMeasureDir string     `json:"snapshot_measure_dir"`
-	SnapshotTraceDir   string     `json:"snapshot_trace_dir"`
-	GroupsToProcess    []string   `json:"groups_to_process"`
-	mu                 sync.Mutex `json:"-"`
+	MigrationErrors     []MigrationError `json:"migration_errors"`
+	GroupsToProcess     []string         `json:"groups_to_process"`
+	mu                  sync.Mutex       `json:"-"`
+	legacyTraceSnapshot bool
 }
 
 // SetGroupsToProcess records the set of groups picked up by this migration cycle.

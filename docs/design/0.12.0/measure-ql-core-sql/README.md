@@ -1,29 +1,56 @@
 # Measure QL Catalog B: Core SQL Implementation Plan
 
-This branch delivers **PR 1 of 4**: the shared execution foundation, typed raw
-measure QL and compiled-plan reuse. See the [PR 1 verification record](pr1-verification.md)
-for its isolated scope and current evidence. Subsequent PRs deliver aggregation,
-expressions/filtering, and complete grouping/output composition.
+The current follow-up combines three capabilities on merged PR #1438 (`b54a9fc76`):
 
-Status: **T02 shared batch execution, T03 typed raw queries and T05 compiled-plan
-reuse are implemented in [PR #1417](https://github.com/apache/skywalking-banyandb/pull/1417);
-eight later capability tickets are outside this PR.** The isolated branch passes
-451 independent measure/QL cases in each topology, unit/race checks and the focused
-planning benchmark. The latest single RPC comparison has higher cache-on latency
-and CPU despite lower allocated bytes; no end-to-end latency gain is established.
-See the [PR 1 verification record](pr1-verification.md) for the current results.
+- Scalar expressions around aggregate results and computed aggregate inputs,
+  including `COALESCE(SUM(value), 0)` and `SUM(value + 1)`.
+- Exact bounded decimal sums through `SUM(DECIMAL_FROM_SCALED(value, 10))`,
+  with numeric comparison and ordering before final decimal-text serialization.
+- [Indexed LIKE and ILIKE](indexed-patterns.md), backed by the shared native
+  wildcard engine with tracked allocations and bounded work.
 
-The T01/T02/T03/T05 verification documents retain historical ticket-stage evidence.
-T05's earlier five-run comparison recorded modest median savings and mixed tails;
-T03's additional compatibility comparison was stopped without a verdict. T02's
-inconclusive/stopped statistical acceptance is preserved. These historical records
-are not measurements of the latest PR head, and the PR 1 refresh does not turn
-those outcomes into passes.
+The [combined verification record](follow-up-verification.md) distinguishes
+current checks from the historical benchmarks accompanying each capability.
+Protobuf definitions and persisted formats are unchanged. Calendar rollups are
+deferred to upstream pipeline design; calendar TIME_BUCKET syntax, disk spilling,
+retained-result sessions and the withdrawn index-recovery experiment are not
+included. The original PR 4 scope and verification below remain historical records.
 
-The delivered foundation includes Go-only native buffering, ownership and indexed
-array/empty-selector compatibility repairs, listed in the PR 1 verification
-record. Native requests, frame versions, protobuf definitions and persisted
-formats remain compatible. SQL operators continue to run on the liaison.
+## Original PR 4 scope
+
+Merged **PR 4 of 4 (#1438)** delivered visible-tuple DISTINCT, computed/ordinal
+grouping, selectable time buckets, multi-key ordering, compact top-k pagination
+and exact count-distinct composition (T15/T16/T17 and the composition follow-up).
+It used [PR #1432](https://github.com/apache/skywalking-banyandb/pull/1432)
+for expressions and filtering, with main at `86659118` as its integration baseline.
+See the [PR 4 verification record](pr4-verification.md) for isolated scope and
+current validation status.
+
+Status: **all original Catalog B capabilities are merged.**
+PRs #1417 and #1424 provide the merged foundation and aggregation; PR #1432
+provides expressions, raw WHERE and HAVING. PR 4 completes grouping and output
+composition. This does not fulfill all SQL requirements in DPO #81/#79: relational
+joins, CTEs, aggregate FILTER and additional string functions were outside that
+PR. Computed aggregate arguments and bounded decimal sums belong to the current
+follow-up described above; this does not promise general PostgreSQL NUMERIC support.
+
+DISTINCT keys the visible tuple, computed grouping evaluates keys before
+aggregation, and sorting runs after HAVING and deduplication. Finite LIMIT uses
+at most OFFSET + LIMIT owned candidates; unlimited sorting and exact distinct
+sets remain bounded by the query budget. Hidden sort inputs are removed at egress.
+All stages use immutable cached recipes and fresh execution state.
+
+Historical measurements retain their original source revisions and limitations.
+The [PR 1](pr1-verification.md), [PR 2](pr2-verification.md) and
+[PR 3](pr3-verification.md) records do not certify this PR's head. T02's original
+performance acceptance remains inconclusive/stopped. Successful 100k/1m owning-query
+throughput remains explicitly deferred; bounded rejection and recovery are resource
+evidence, not throughput passes. See the [revised acceptance contract](implementation-tickets.md#large-input-acceptance-revised-2026-10-19).
+
+This PR changes QL planning and liaison operators without changing protobufs,
+native requests, frame versions or persisted formats. The shared native buffering
+and compatibility repairs were already delivered in PR 1. Memory protection stays
+enabled; disk spilling and retained-result pagination sessions remain deferred.
 
 The [DataFusion-inspired engine design](datafusion-engine.md) defines the batch
 execution architecture and revised delivery order. Its [source research](datafusion-research.md)
@@ -62,10 +89,9 @@ specifications are:
   infrastructure, which QL reuses rather than replaces.
 
 `012115c5` is the historical design-review baseline. PR #1412 merged as
-`15635181b`; PR 1 is rebased onto main at `f9424047d`, including the documentation
-fixes from #1415 and native aggregation optimization from #1413. The benchmark
-refresh predates #1413; its measured source and later rebase checks are recorded
-separately in the PR 1 verification record.
+`15635181b`; PR 4 integrates main at `86659118` and PR #1432, inheriting PR #1417's
+foundation and PR #1424's aggregation. Historical benchmark bases remain in their
+verification documents, separate from current PR 4 validation.
 
 The gaps document proposes results as columns and rows but does not specify their
 wire encoding. For this scope, that is an **Arrow-style columnar representation**

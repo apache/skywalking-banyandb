@@ -76,13 +76,6 @@ services:
       timeout: 120s
       retries: 120
 
-  ui:
-    image: "ghcr.io/apache/skywalking/ui:${SW_OAP_COMMIT}"
-    expose:
-      - 8080
-    environment:
-      - SW_OAP_ADDRESS=http://oap:12800
-
   provider:
     image: "ghcr.io/apache/skywalking/e2e-service-provider:${SW_AGENT_E2E_SERVICE_PROVIDER_COMMIT}"
     volumes:

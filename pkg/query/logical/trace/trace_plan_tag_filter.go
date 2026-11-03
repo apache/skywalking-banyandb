@@ -157,10 +157,14 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 		tagFilterMatcher = logical.NewTagFilterMatcher(tagFilter, conditionSchema, decoder)
 	}
 
-	plan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal, tagFilterMatcher)
+	scan := uis.selectTraceScanner(ctx, uis.ec, traceIDs, minVal, maxVal, tagFilterMatcher)
+	var plan logical.Plan = scan
 	if uis.criteria != nil {
 		spanIDFilter := buildSpanIDFilter(uis.criteria, uis.spanIDTagName)
 		if len(traceIDs) > 0 || tagFilter != logical.DummyFilter || spanIDFilter != nil {
+			// A residual filter may reject the first offset+limit candidates.
+			// Keep pagination above it instead of truncating the storage scan.
+			scan.hasPostFilter = tagFilter != logical.DummyFilter || spanIDFilter != nil
 			// create filter with a projected view
 			plan = newTraceTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter, spanIDFilter)
 		}
@@ -170,7 +174,7 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 
 func (uis *unresolvedTraceTagFilter) selectTraceScanner(ctx *traceAnalyzeContext,
 	ec executor.TraceExecutionContext, traceIDs []string, minVal, maxVal int64, tagFilterMatcher model.TagFilterMatcher,
-) logical.Plan {
+) *localScan {
 	return &localScan{
 		timeRange:         timestamp.NewInclusiveTimeRange(uis.startTime, uis.endTime),
 		schema:            ctx.s,

@@ -19,13 +19,15 @@ package trace
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"time"
+	"io"
+	"sync"
 
-	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
@@ -39,8 +41,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
-
-const defaultQueryTimeout = 5 * time.Second
 
 var _ logical.UnresolvedPlan = (*unresolvedTraceDistributed)(nil)
 
@@ -154,31 +154,54 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 			}
 		}()
 	}
-	ff, err := dctx.Broadcast(defaultQueryTimeout, data.TopicTraceQuery,
-		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest))
+	// The scan streams live as long as the caller's context; each node stream is
+	// bounded by the scatter idle timeout and its heartbeats rather than a fixed deadline.
+	scanCtx, cancelScan := context.WithCancel(ctx)
+	defer cancelScan()
+	streams, err := dctx.Scatter(scanCtx, data.TopicTraceQuery,
+		bus.NewMessageWithNodeSelectors(bus.MessageID(dctx.TimeRange().Begin.Nanos), dctx.NodeSelectors(), dctx.TimeRange(), queryRequest),
+		bus.ScatterOptions{})
 	if err != nil {
 		return iter.Empty[model.TraceResult](), err
 	}
-	var allErr error
+	defer func() {
+		for _, ns := range streams {
+			ns.Close()
+		}
+	}()
+	nodes := make([]nodeTraceResults, len(streams))
+	var wg sync.WaitGroup
+	var errOnce sync.Once
+	var firstErr error
+	for idx := range streams {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			nodes[idx] = p.readNodeStream(scanCtx, streams[idx])
+			if nodes[idx].err != nil {
+				errOnce.Do(func() {
+					firstErr = nodes[idx].err
+					cancelScan()
+				})
+			}
+		}()
+	}
+	wg.Wait()
+	if firstErr != nil {
+		err = firstErr
+		return iter.Empty[model.TraceResult](), firstErr
+	}
 	var responseCount int
 	var st []sort.Iterator[*comparableTraceResult]
-	for _, f := range ff {
-		m, getErr := f.Get()
-		if getErr != nil {
-			allErr = multierr.Append(allErr, getErr)
-			continue
-		}
-		d := m.Data()
-		if d == nil {
-			continue
-		}
-		nodeResults, decodeErr := p.decodeNodeResults(d, span)
-		if decodeErr != nil {
-			allErr = multierr.Append(allErr, decodeErr)
+	for idx := range nodes {
+		if !nodes[idx].responded {
 			continue
 		}
 		responseCount++
-		st = append(st, newSortableTraceResults(iter.FromSlice(nodeResults), p.sortByTraceID))
+		if span != nil {
+			span.AddSubTrace(nodes[idx].subTrace)
+		}
+		st = append(st, newSortableTraceResults(iter.FromSlice(nodes[idx].results), p.sortByTraceID))
 	}
 	if span != nil {
 		span.Tagf("response_count", "%d", responseCount)
@@ -202,34 +225,69 @@ func (p *distributedPlan) Execute(ctx context.Context) (iter.Iterator[model.Trac
 	return &distributedTraceResultIterator{
 		traces: result,
 		index:  0,
-		err:    allErr,
 	}, nil
 }
 
-// decodeNodeResults converts a single node response into columnar
+// nodeTraceResults is everything one node stream delivered.
+type nodeTraceResults struct {
+	err       error
+	subTrace  *commonv1.Trace
+	results   []model.TraceResult
+	responded bool
+}
+
+// readNodeStream reads a node stream to its end, decoding one chunk at a time, so
+// only the decoded results of the node are held, never its encoded chunks.
+func (p *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeTraceResults {
+	var out nodeTraceResults
+	for {
+		m, nextErr := ns.Next(ctx)
+		if errors.Is(nextErr, io.EOF) {
+			return out
+		}
+		if nextErr != nil {
+			out.err = fmt.Errorf("trace query on node %s: %w", ns.Node(), nextErr)
+			return out
+		}
+		d := m.Data()
+		if d == nil {
+			continue
+		}
+		chunk, subTrace, decodeErr := p.decodeNodeResults(d)
+		if decodeErr != nil {
+			out.err = fmt.Errorf("trace query on node %s: %w", ns.Node(), decodeErr)
+			return out
+		}
+		out.responded = true
+		out.results = append(out.results, chunk...)
+		if subTrace != nil {
+			out.subTrace = subTrace
+		}
+	}
+}
+
+// decodeNodeResults converts a single node chunk into columnar
 // []model.TraceResult, accepting either the proto *tracev1.InternalQueryResponse
 // (flag-off / tracing path) or the native columnar frame ([]byte). The proto
 // branch is converted via internalTraceToResult so both paths feed a unified
 // model.TraceResult merge.
-func (p *distributedPlan) decodeNodeResults(d any, span *query.Span) ([]model.TraceResult, error) {
+// The proto branch also returns the data node's query trace, which rides on its last chunk.
+func (p *distributedPlan) decodeNodeResults(d any) ([]model.TraceResult, *commonv1.Trace, error) {
 	switch payload := d.(type) {
 	case *tracev1.InternalQueryResponse:
-		if span != nil {
-			span.AddSubTrace(payload.TraceQueryResult)
-		}
 		results := make([]model.TraceResult, 0, len(payload.InternalTraces))
 		for _, internalTrace := range payload.InternalTraces {
 			results = append(results, internalTraceToResult(internalTrace))
 		}
-		return results, nil
+		return results, payload.TraceQueryResult, nil
 	case []byte:
 		results, decodeErr := DecodeTraceResultFrame(payload)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("decode trace result frame: %w", decodeErr)
+			return nil, nil, fmt.Errorf("decode trace result frame: %w", decodeErr)
 		}
-		return results, nil
+		return results, nil, nil
 	default:
-		return nil, fmt.Errorf("unexpected trace query response type %T", d)
+		return nil, nil, fmt.Errorf("unexpected trace query response type %T", d)
 	}
 }
 

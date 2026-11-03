@@ -63,3 +63,13 @@ func TestMessageToRequestGroup(t *testing.T) {
 		require.Empty(t, r.GetGroup())
 	})
 }
+
+func TestPatternMessageRetainsOpaqueGroup(t *testing.T) {
+	body := []byte("bounded envelope")
+	msg := bus.NewMessageWithSelectorsAndGroup(7, map[string][]string{"g": {"role=data"}}, nil, "g", body)
+	request, err := messageToRequest(data.TopicInternalMeasurePatternQuery, msg)
+	require.NoError(t, err)
+	require.Equal(t, "g", request.Group)
+	require.Equal(t, body, request.Body)
+	require.Equal(t, data.OperationQueryValue, data.OperationOf(data.TopicInternalMeasurePatternQuery))
+}

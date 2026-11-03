@@ -33,7 +33,21 @@ type suiteBuilder struct {
 // Generate expands the finite measure-QL model into executable QL-only cases.
 // Expected results come from fixture rows, never from native requests or captures.
 func Generate() (Suite, error) {
+	shardReadiness, readinessErr := P2ContributionReadiness()
+	if readinessErr != nil {
+		return Suite{}, readinessErr
+	}
+	shardScenarios, shardErr := generateP2()
+	if shardErr != nil {
+		return Suite{}, shardErr
+	}
+	capacityReadiness, capacityScenarios, capacityErr := generateP1()
+	if capacityErr != nil {
+		return Suite{}, capacityErr
+	}
 	b := &suiteBuilder{features: make(map[string]bool)}
+	b.features["p2.shard_aggregates"] = true
+	b.features["p1.directory_lists"], b.features["p1.case_maps"] = true, true
 	b.add("generated_scan_all", baseQuery(), "source.explicit", "projection.mixed", "values.nulls")
 	indexed := baseQuery()
 	indexed.Where = &Predicate{Op: "IN", Column: "host", Values: []any{"a", "b", "c", "d"}}
@@ -47,8 +61,60 @@ func Generate() (Suite, error) {
 	pairs := generateInteractions(b)
 	generateRejections(b)
 	generateT03(b)
+	aggregateReadiness, aggregateScenarios, aggregateErr := generateT07(b)
+	if aggregateErr != nil {
+		return Suite{}, aggregateErr
+	}
+	aggregateRejections := generateT07Rejections(b)
+	nativeReadiness, nativeScenarios, nativeErr := generateT08(b)
+	if nativeErr != nil {
+		return Suite{}, nativeErr
+	}
+	nativeRejections := generateT08Rejections(b)
+	expressionReadiness, expressionScenarios, expressionRejections, expressionErr := generateT10(b)
+	if expressionErr != nil {
+		return Suite{}, expressionErr
+	}
+	filterReadiness, filterScenarios, filterRejections, filterErr := generateT12(b)
+	if filterErr != nil {
+		return Suite{}, filterErr
+	}
+	legacyReadiness, legacyScenarios, legacyErr := generateT12Legacy()
+	if legacyErr != nil {
+		return Suite{}, legacyErr
+	}
+	b.features["t12.legacy_schema_fixture"], b.features["t12.legacy_schema_compatibility"] = true, true
+	havingLegacy, havingLegacyErr := generateT14Legacy()
+	if havingLegacyErr != nil {
+		return Suite{}, havingLegacyErr
+	}
+	b.features["t14.legacy_membership"], b.features["t14.membership_duplicates"] = true, true
+	havingReadiness, havingScenarios, havingRejections, havingErr := generateT14(b)
+	if havingErr != nil {
+		return Suite{}, havingErr
+	}
+	havingReview, havingReviewErr := generateT14Review(b)
+	if havingReviewErr != nil {
+		return Suite{}, havingReviewErr
+	}
+	distinctReadiness, distinctScenarios, distinctRejections, distinctErr := generateT15(b)
+	if distinctErr != nil {
+		return Suite{}, distinctErr
+	}
+	groupingReadiness, groupingScenarios, groupingRejections, groupingErr := generateT16(b)
+	if groupingErr != nil {
+		return Suite{}, groupingErr
+	}
+	sortingReadiness, sortingScenarios, sortingRejections, sortingResources, sortingErr := generateT17(b)
+	if sortingErr != nil {
+		return Suite{}, sortingErr
+	}
 	if b.err != nil {
 		return Suite{}, b.err
+	}
+	patternReadiness, patternScenarios, patternErr := generatePatterns(b)
+	if patternErr != nil {
+		return Suite{}, patternErr
 	}
 	features := make([]Feature, 0, len(b.features))
 	for _, id := range slices.Sorted(maps.Keys(b.features)) {
@@ -67,8 +133,29 @@ func Generate() (Suite, error) {
 	if reuseReadinessErr != nil {
 		return Suite{}, reuseReadinessErr
 	}
+	parentChildReadiness, parentChildScenarios, parentChildErr := generateParentChild()
+	if parentChildErr != nil {
+		return Suite{}, parentChildErr
+	}
 	suite := Suite{
-		ReuseScenarios: reuseScenarios, ReuseReadiness: reuseReadiness, Version: 1, Seed: 1412,
+		PatternReadiness: patternReadiness, PatternScenarios: patternScenarios,
+		ShardAggregateScenarios: shardScenarios,
+		ShardAggregateReadiness: []AggregateFixture{{Name: P1FixtureName, Cases: []Case{shardReadiness}}},
+		CapacityReadiness:       capacityReadiness, CapacityScenarios: capacityScenarios, CapacityFixtureDigest: P1FixtureDigest(),
+		ParentChildReadiness: parentChildReadiness, ParentChildScenarios: parentChildScenarios,
+		SortingReadiness: sortingReadiness, SortingScenarios: sortingScenarios, SortingRejections: sortingRejections, SortingResources: sortingResources,
+		GroupingReadiness: groupingReadiness, GroupingScenarios: groupingScenarios, GroupingRejections: groupingRejections,
+		DistinctReadiness: distinctReadiness, DistinctScenarios: distinctScenarios, DistinctRejections: distinctRejections,
+		HavingReviewScenarios: havingReview,
+		HavingLegacyScenarios: havingLegacy, HavingReadiness: havingReadiness, HavingScenarios: havingScenarios, HavingRejections: havingRejections,
+		LegacyCompatibilityReadiness: legacyReadiness, LegacyCompatibilityScenarios: legacyScenarios,
+		FilterReadiness: filterReadiness, FilterScenarios: filterScenarios, FilterRejections: filterRejections,
+		ExpressionReadiness: expressionReadiness, ExpressionScenarios: expressionScenarios, ExpressionRejections: expressionRejections,
+		NativeAggregateReadiness: nativeReadiness, NativeAggregateScenarios: nativeScenarios,
+		NativeAggregateRejections: nativeRejections,
+		AggregateReadiness:        aggregateReadiness, AggregateScenarios: aggregateScenarios,
+		AggregateRejections: aggregateRejections,
+		ReuseScenarios:      reuseScenarios, ReuseReadiness: reuseReadiness, Version: 1, Seed: 1412,
 		FixtureDigest: FixtureDigest(), Features: features, Cases: b.cases, Pairs: pairs,
 	}
 	return suite, suite.Validate()

@@ -38,6 +38,13 @@ service ExportService {
   // Sessions runs one lifecycle action (list, heartbeat, release) on every data node and
   // streams one frame per node, stamped with node_id by the liaison.
   rpc Sessions(SessionsRequest) returns (stream SessionsResponse);
+  // Export streams the files of one data node's units out of an export session snapshot.
+  // The first request frame is init (session, target node, format, limits); every later
+  // frame carries exactly one unit, and the client sends the next unit only after it has
+  // received unit_finished for the previous one. The liaison forwards the stream to
+  // init.target_node; it may split a chunk into smaller ones with the same rows to apply its
+  // byte rate. Export neither creates nor removes the snapshot.
+  rpc Export(stream ExportRequest) returns (stream ExportResponse);
 }
 
 // Selector names a catalog and optionally its groups. Empty groups means every group of
@@ -74,8 +81,9 @@ message SegmentUnit {
   // hour segments.
   string segment_suffix = 3 [(validate.rules).string.pattern = "^([0-9]{8}|[0-9]{10})$"];
   // Shards that hold at least one part. Empty means the unit only carries segment-level
-  // artifacts (index-mode measure, or a segment whose shards have not flushed yet).
-  repeated uint32 shard_ids = 4;
+  // artifacts (index-mode measure, or a segment whose shards have not flushed yet). No
+  // shard is listed twice.
+  repeated uint32 shard_ids = 4 [(validate.rules).repeated.unique = true];
 }
 
 // UnitInventory is one unit on one node together with its statistics. Property groups have
@@ -300,4 +308,147 @@ message SessionLease {
   int64 expires_at = 3;
   int64 last_heartbeat_at = 4;
   repeated common.v1.Catalog catalogs = 5;
+}
+
+// Format is the artifact format of one export.
+enum Format {
+  FORMAT_UNSPECIFIED = 0;
+  // FORMAT_NATIVE packs the engine files byte for byte into .bnc containers. Not implemented
+  // yet: data nodes answer UNIMPLEMENTED.
+  FORMAT_NATIVE = 1;
+  // FORMAT_CSV writes logical rows, one CSV stream per unit and shard.
+  FORMAT_CSV = 2;
+}
+
+// Compress is the on-disk compression of exported files. The client always names one.
+enum Compress {
+  COMPRESS_UNSPECIFIED = 0;
+  COMPRESS_NONE = 1;
+  COMPRESS_GZIP = 2;
+}
+
+// RateLimit caps what one data node produces for one Export stream; 0 means unlimited.
+// The node enforces it: only the producer knows how many rows it has written.
+message RateLimit {
+  // Bytes written to the stream per second, for both formats.
+  uint64 bytes_per_second = 1;
+  // Rows encoded per second; CSV only, native ignores it.
+  uint64 rows_per_second = 2;
+}
+
+// PropertyUnit keys the property shards one node holds for one group. Property groups have
+// no segments, so the unit is the group itself.
+message PropertyUnit {
+  string group = 1 [(validate.rules).string.min_len = 1];
+  repeated uint32 shard_ids = 2 [(validate.rules).repeated.unique = true];
+}
+
+// ExportRequest is one client frame of an Export stream.
+message ExportRequest {
+  // Init is the first frame of a stream.
+  message Init {
+    // Session created by Plan; every unit is read from its snapshot.
+    string session_id = 1 [(validate.rules).string.pattern = "^[0-9a-f]{32}$"];
+    // Data node the liaison forwards the stream to: a node_id from the Plan frames.
+    string target_node = 2 [(validate.rules).string.min_len = 1];
+    Format format = 3 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    Compress compress = 4 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    // Soft upper bound of one produced file in on-disk bytes; 0 means no split.
+    uint64 max_file_size = 5;
+    RateLimit rate_limit = 6;
+    // CSV only: write a #datatype line before the header of every file.
+    bool csv_annotations = 7;
+    // Byte rate of the relaying liaison, shared by every Export stream that liaison relays:
+    // the liaison applies the value of the stream opened last, 0 meaning unlimited, and waits
+    // on it before it forwards each chunk. Data nodes ignore it.
+    uint64 liaison_bytes_per_second = 8;
+  }
+  oneof frame {
+    option (validate.required) = true;
+    Init init = 1;
+    // A stream, measure or trace unit: the SegmentInventory.unit of a segment, with the
+    // shard_ids of all its pieces when the inventory split it.
+    SegmentUnit segment = 2;
+    // A property unit, built from PropertyInventory.
+    PropertyUnit property = 3;
+  }
+}
+
+// ExportResponse is one server frame of an Export stream. Order:
+// ready, then per unit: unit_started, (file_started, chunk*, file_finished)*, unit_finished.
+message ExportResponse {
+  oneof frame {
+    Ready ready = 1;
+    UnitStarted unit_started = 2;
+    FileStarted file_started = 3;
+    DataChunk chunk = 4;
+    FileFinished file_finished = 5;
+    UnitFinished unit_finished = 6;
+  }
+}
+
+// Ready answers init once per stream: the node located the session and renewed its lease,
+// so the client may send units.
+message Ready {}
+
+// UnitStarted opens one unit and carries its progress denominators.
+message UnitStarted {
+  // Number of shards in the unit; 0 for units that only have segment-level data.
+  uint32 total_shards = 1;
+  // Native only: files the unit will produce. CSV cannot know it in advance and sends 0.
+  uint32 total_files = 2;
+  // Native only: bytes the unit will produce. CSV sends 0.
+  uint64 estimated_total_bytes = 3;
+  // Live parts of the unit's shards in the snapshot; 0 for units without parts (property,
+  // segment-level data only).
+  uint32 total_parts = 4;
+}
+
+// FileStarted opens one produced file.
+message FileStarted {
+  // Path relative to the node subtree, e.g. "stream/sw_record/seg-20260907/shard-0-00001.csv.gz".
+  string relative_path = 1 [(validate.rules).string.min_len = 1];
+  // Shard the file belongs to; meaningless when segment_level is set.
+  uint32 shard_id = 2;
+  // The file belongs to the segment rather than to one shard (index-mode measure rows).
+  bool segment_level = 3;
+  // Index of shard_id in the unit's shard list; segment-level files use total_shards.
+  uint32 shard_index = 4;
+  // Split sequence within the shard, starting at 1.
+  uint32 seq = 5;
+}
+
+// DataChunk carries the next bytes of the open file.
+message DataChunk {
+  bytes content = 1;
+  // CSV only: rows the node has written into the open file so far, including rows still
+  // buffered by the compressor; file_finished.row_counts holds the final count. Native sends 0.
+  uint64 rows = 2;
+}
+
+// FileFinished closes the open file.
+message FileFinished {
+  // Size and crc32 (IEEE) of the file as written to disk.
+  uint64 bytes = 1;
+  uint32 crc32 = 2;
+  // Native only: entries in the container footer. CSV sends 0.
+  uint32 entry_count = 3;
+  // Rows per resource name in this file.
+  map<string, uint64> row_counts = 4;
+  // CSV only: schema mod revision of every resource the node built the group's column
+  // layout from, whether or not it wrote rows. The client checks that the set and the
+  // revisions match the schema it saved, because columns are bound by position.
+  map<string, int64> schema_mod_revisions = 5;
+}
+
+// UnitFinished closes one unit; the client sends the next unit after it.
+message UnitFinished {
+  // Non-fatal findings, such as dropped rows or columns that are empty for a resource.
+  repeated string warnings = 1;
 }

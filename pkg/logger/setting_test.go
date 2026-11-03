@@ -17,7 +17,10 @@
 
 package logger
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestEarlyLogging(t *testing.T) {
 	tests := []struct {
@@ -137,6 +140,57 @@ func TestEarlyLogging(t *testing.T) {
 			}
 			if cfg.Level != tt.wantLevel {
 				t.Errorf("Level = %q, want %q", cfg.Level, tt.wantLevel)
+			}
+		})
+	}
+}
+
+// TestEarlyNative covers the native settings read before the command tree
+// exists. They set the admission floor of the loggers built while it forms,
+// so a native level below the console level reaches those loggers too.
+func TestEarlyNative(t *testing.T) {
+	tests := []struct {
+		env         map[string]string
+		name        string
+		wantLevel   string
+		args        []string
+		wantModules []string
+		wantEnabled bool
+	}{
+		{name: "off by default", args: []string{"data"}},
+		{
+			name: "enabled by flag", args: []string{"data", "--logging-native-enabled", "--logging-native-level=debug"},
+			wantEnabled: true, wantLevel: "debug",
+		},
+		{
+			name: "enabled by environment", env: map[string]string{envNativeEnabled: "true"},
+			wantEnabled: true, wantLevel: "info",
+		},
+		{
+			name: "a flag wins over the environment", env: map[string]string{envNativeEnabled: "true"},
+			args: []string{"data", "--logging-native-enabled=false"},
+		},
+		{
+			name: "module overrides are read",
+			args: []string{
+				"data", "--logging-native-enabled", "--logging-native-modules=measure.block", "--logging-native-levels=debug",
+			},
+			wantEnabled: true, wantLevel: "info", wantModules: []string{"measure.block"},
+		},
+		{
+			name: "an unusable level keeps the default", args: []string{"data", "--logging-native-enabled", "--logging-native-level=loud"},
+			wantEnabled: true, wantLevel: "info",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			getenv := func(key string) string { return tt.env[key] }
+			native := earlyLogging(tt.args, getenv).Native
+			if native.Enabled != tt.wantEnabled || native.Level != tt.wantLevel {
+				t.Fatalf("native = %+v, want enabled %v at %q", native, tt.wantEnabled, tt.wantLevel)
+			}
+			if strings.Join(native.Modules, ",") != strings.Join(tt.wantModules, ",") {
+				t.Fatalf("modules = %v, want %v", native.Modules, tt.wantModules)
 			}
 		})
 	}
