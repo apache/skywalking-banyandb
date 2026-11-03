@@ -46,7 +46,7 @@ jobs:
       TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Setup build environment
@@ -55,7 +55,7 @@ jobs:
           download-artifacts: 'false'
           setup-docker: 'true'
       - name: Cache Tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin
@@ -106,7 +106,7 @@ jobs:
           make -C mcp docker || make -C mcp docker
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         if: github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.HUB }}
@@ -153,7 +153,7 @@ jobs:
       TAG: ${{ github.sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Setup build environment
@@ -162,7 +162,7 @@ jobs:
           download-artifacts: 'false'
           setup-docker: 'true'
       - name: Cache Tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin
@@ -193,7 +193,7 @@ jobs:
           make -C banyand docker.plugins-carrier || make -C banyand docker.plugins-carrier
           docker image ls
       - name: Log in to the Container registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         if: github.ref == 'refs/heads/main'
         with:
           registry: ${{ env.HUB }}

@@ -40,6 +40,7 @@ Release Notes.
 
 ### Chores
 
+- Bump `go-chi/chi/v5` to v5.4.0, `go-jose/go-jose/v4` to v4.1.7 and `golang.org/x/net` to v0.62.0, and the canopy and MCP npm dependencies (`fastify` 5.12.8, `undici` 7.30.1, `fast-uri` 3.1.9 / 4.2.3, `@modelcontextprotocol/sdk` 1.32.2, `zod` 4.6.7, `hono` 4.13.16, `@hono/node-server` 2.1.6, `body-parser` 2.4.0, `qs` 6.17.1, `ip-address` 10.7.5, and the `vite` / `vitest` dev dependencies) to clear the Dependabot and OSV CVEs, regenerate `dist/LICENSE`, `mcp/LICENSE` and `canopy/LICENSE`, and move the E2E workflows to skywalking-infra-e2e 56ac8be.
 - Bump the canopy and MCP npm dependencies to clear the open Dependabot CVEs: `fast-uri` 4.2.1, `fastify` 5.12.1, `js-yaml` 4.3.2, `hono` 4.13.7, `ip-address` 10.7.3, `proxy-addr` 2.0.8 and `brace-expansion` 5.0.12. The committed `canopy/LICENSE`, `mcp/LICENSE` and the dependency license texts are regenerated to match.
 - Drop the platform-pinned native build bindings from the Canopy web dependencies and declare the rolldown bindings as optional per-platform dependencies, so `npm ci` resolves a binding for the host platform instead of failing on a foreign one. Canopy now builds natively on macOS ARM64.
 - Bump the pinned skywalking-cli to a commit that builds against the current goapi. The previously pinned commit no longer compiles (`api.PprofTaskCreationRequest` is undefined), so the e2e harness failed to install swctl and every e2e case failed at setup.

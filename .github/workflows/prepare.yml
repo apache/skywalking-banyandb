@@ -25,16 +25,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Check out code into the Go module directory
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Cache Tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin
           key: ${{ runner.os }}-${{ runner.arch }}-generate-tool-${{ hashFiles('scripts/build/version.mk') }}
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.6.0
           cache: 'npm'
@@ -42,7 +42,7 @@ jobs:
             ui/package-lock.json
             mcp/package-lock.json
       - name: Install Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: 'go.mod'
           cache: true
