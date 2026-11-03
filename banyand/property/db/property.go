@@ -61,6 +61,12 @@ func DecodeStoredDocument(doc native.StoredDocument) (*propertyv1.Property, int6
 				return false
 			}
 			deleteTime = convert.BytesToInt64(value)
+			// The writer stores a deletion time only when it is positive; Repair would treat
+			// anything else as a live property.
+			if deleteTime <= 0 {
+				decodeErr = fmt.Errorf("non-positive deletion timestamp %d: %w", deleteTime, native.ErrCorrupt)
+				return false
+			}
 		}
 		return true
 	}); err != nil {

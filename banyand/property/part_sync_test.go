@@ -476,10 +476,12 @@ func TestDecodeStoredDocumentRejectsCorruptDocuments(t *testing.T) {
 	nameless := newPartSyncProperty("entity", 1)
 	nameless.Metadata.Name = ""
 	cases := map[string]fakeStoredDocument{
-		"missing source":        {{"_deleted", string(convert.Int64ToBytes(1))}},
-		"malformed source":      {{"_source", "{not json"}},
-		"short deletion time":   {{"_source", source(newPartSyncProperty("entity", 1))}, {"_deleted", "1234"}},
-		"source without a name": {{"_source", source(nameless)}},
+		"missing source":         {{"_deleted", string(convert.Int64ToBytes(1))}},
+		"malformed source":       {{"_source", "{not json"}},
+		"short deletion time":    {{"_source", source(newPartSyncProperty("entity", 1))}, {"_deleted", "1234"}},
+		"zero deletion time":     {{"_source", source(newPartSyncProperty("entity", 1))}, {"_deleted", string(convert.Int64ToBytes(0))}},
+		"negative deletion time": {{"_source", source(newPartSyncProperty("entity", 1))}, {"_deleted", string(convert.Int64ToBytes(-1))}},
+		"source without a name":  {{"_source", source(nameless)}},
 	}
 	for name, doc := range cases {
 		t.Run(name, func(t *testing.T) {
