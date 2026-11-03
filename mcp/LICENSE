@@ -35,8 +35,8 @@ BSD-2-Clause licenses
 BSD-3-Clause licenses
 ========================================================================
 
-    fast-uri 4.2.1 BSD-3-Clause
-    qs 6.16.0 BSD-3-Clause
+    fast-uri 4.2.3 BSD-3-Clause
+    qs 6.17.1 BSD-3-Clause
 
 ========================================================================
 ISC licenses
@@ -54,12 +54,12 @@ ISC licenses
 MIT licenses
 ========================================================================
 
-    @hono/node-server 2.1.1 MIT
-    @modelcontextprotocol/sdk 1.30.0 MIT
+    @hono/node-server 2.1.6 MIT
+    @modelcontextprotocol/sdk 1.32.2 MIT
     accepts 2.0.0 MIT
     ajv 8.20.0 MIT
     ajv-formats 3.0.1 MIT
-    body-parser 2.3.0 MIT
+    body-parser 2.4.0 MIT
     body-parser/node_modules/content-type 2.1.0 MIT
     bytes 3.1.2 MIT
     call-bind-apply-helpers 1.0.2 MIT
@@ -94,10 +94,10 @@ MIT licenses
     gopd 1.2.0 MIT
     has-symbols 1.1.0 MIT
     hasown 2.0.4 MIT
-    hono 4.13.7 MIT
+    hono 4.13.16 MIT
     http-errors 2.0.1 MIT
     iconv-lite 0.7.3 MIT
-    ip-address 10.7.3 MIT
+    ip-address 10.7.5 MIT
     ipaddr.js 1.9.1 MIT
     is-promise 4.0.0 MIT
     jose 6.2.12 MIT
@@ -137,4 +137,4 @@ MIT licenses
     type-is/node_modules/content-type 2.1.0 MIT
     unpipe 1.0.0 MIT
     vary 1.1.2 MIT
-    zod 4.6.2 MIT
+    zod 4.6.7 MIT

@@ -53,7 +53,7 @@ jobs:
     timeout-minutes: ${{ inputs.timeout-minutes }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set timezone
         run: sudo timedatectl set-timezone ${{ inputs.timezone || 'UTC' }}
       - name: Setup build environment
@@ -63,7 +63,7 @@ jobs:
           setup-node: 'false'
           setup-docker: 'false'
       - name: Cache tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin

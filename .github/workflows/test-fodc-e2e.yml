@@ -50,7 +50,7 @@ jobs:
     continue-on-error: true
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
 
@@ -158,7 +158,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
 
@@ -192,6 +192,6 @@ jobs:
         run: docker image ls | grep -E 'skywalking-banyandb' || true
 
       - name: Run FODC memory-pressure pprof e2e
-        uses: apache/skywalking-infra-e2e@c45db2743ea32d911ad1f0801b305f1c9fe15bfe
+        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/fodc-pressure/e2e.yaml
