@@ -24,6 +24,7 @@ import (
 	"path"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -38,6 +39,36 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
+
+// repairLockStripes is the number of locks a shard spreads its entity repairs over.
+const repairLockStripes = 64
+
+// repairStripe is a mutex whose acquisition can be abandoned when the waiter's context ends.
+// Its zero value is unlocked and ready to use.
+type repairStripe struct {
+	sem  chan struct{}
+	once sync.Once
+}
+
+// lock acquires the stripe, or returns the context's error if it ends first.
+func (r *repairStripe) lock(ctx context.Context) error {
+	r.once.Do(func() { r.sem = make(chan struct{}, 1) })
+	// Do not take a free stripe once the context has already ended.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case r.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// unlock releases a stripe acquired by lock.
+func (r *repairStripe) unlock() {
+	<-r.sem
+}
 
 const (
 	shardTemplate = "shard-%d"
@@ -80,9 +111,13 @@ type shard struct {
 	testBeforeNativeRead func()
 	location             string
 	group                string
-	expireToDeleteSec    int64
-	id                   common.ShardID
-	waitForPersistence   bool
+	// repairLocks serialize repairs of one entity, striped by entity: repair reads the
+	// entity's revisions and then writes, and two concurrent repairs of the entity would
+	// otherwise both decide from the same read. Update and delete do not take them.
+	repairLocks        [repairLockStripes]repairStripe
+	expireToDeleteSec  int64
+	id                 common.ShardID
+	waitForPersistence bool
 }
 
 func (s *shard) close() error {
@@ -275,6 +310,11 @@ func (s *shard) searchNative(ctx context.Context, request *propertyv1.QueryReque
 }
 
 func (s *shard) repair(ctx context.Context, id []byte, property *propertyv1.Property, deleteTime int64) (updated bool, selfNewer *queryProperty, err error) {
+	stripe := &s.repairLocks[convert.HashStr(GetEntity(property))%repairLockStripes]
+	if err = stripe.lock(ctx); err != nil {
+		return false, nil, fmt.Errorf("wait for the repair lock: %w", err)
+	}
+	defer stripe.unlock()
 	start := time.Now()
 	var (
 		search1Elapsed     time.Duration

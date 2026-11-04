@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
@@ -116,13 +117,12 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			resp = bus.NewMessage(bus.MessageID(time.Now().UnixNano()), common.NewError("panic"))
 		}
 	}()
-	plan, err := p.buildStreamPlan(queryCriteria)
+	scopedQuery, plan, err := p.buildStreamPlan(queryCriteria)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "%v", err))
 		return
 	}
-
-	if p.log.Debug().Enabled() {
+	if plan != nil && p.log.Debug().Enabled() {
 		p.log.Debug().Str("plan", plan.String()).Msg("query plan")
 	}
 	var tracer *query.Tracer
@@ -130,7 +130,9 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag(tracelabels.TagPlan, plan.String())
+		if plan != nil {
+			span.Tag(tracelabels.TagPlan, plan.String())
+		}
 		defer func() {
 			data := resp.Data()
 			switch d := data.(type) {
@@ -148,13 +150,19 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 			}
 		}()
 	}
+	if plan == nil {
+		// No requested group is available on this node. Answer with an empty successful
+		// response, so the liaison can still merge the parts other nodes serve.
+		resp = bus.NewMessage(bus.MessageID(now), &streamv1.QueryResponse{})
+		return
+	}
 
 	// Vec dispatch is the only stream execution path; the row path was removed in
 	// 0.12.0. Every analyzed plan shape must therefore be vec-eligible, so a decline
 	// is a hard error rather than a silent proto fallback (same no-silent-fallback
 	// discipline as measure and trace). When tracing is on we MUST return a proto
 	// QueryResponse (it carries common.v1.Trace); the frame emit is gated on tracer == nil.
-	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, queryCriteria, tracer != nil)
+	handled, vecResp := p.tryStreamVecDispatch(ctx, plan, scopedQuery, tracer != nil)
 	// Read the decline reason off the plan before Close, so this does not depend on
 	// Close staying a no-op for every stream node.
 	var declineReason string
@@ -175,34 +183,82 @@ func (p *streamQueryProcessor) Rev(ctx context.Context, message bus.Message) (re
 }
 
 // buildStreamPlan resolves the stream in every requested group and analyzes the request.
+//
+// On a distributed data node a group whose schema is not known locally is skipped:
+// schema propagation can lag behind the liaison, and a node-local missing schema must
+// not discard the results the rest of the cluster can still serve. The returned
+// request carries only the groups that resolved locally, so the plan, the metadata,
+// the schemas and the execution contexts stay aligned.
+//
+// A nil plan with a nil error means no requested group is available locally; the
+// caller answers with an empty successful response.
+//
 // Its errors carry the message the client sees and wrap the cause, so a typed resource
 // failure keeps its identity.
-func (p *streamQueryProcessor) buildStreamPlan(queryCriteria *streamv1.QueryRequest) (logical.Plan, error) {
-	var metadata []*commonv1.Metadata
-	var schemas []logical.Schema
-	var ecc []executor.StreamExecutionContext
-	for i := range queryCriteria.Groups {
+func (p *streamQueryProcessor) buildStreamPlan(queryCriteria *streamv1.QueryRequest) (*streamv1.QueryRequest, logical.Plan, error) {
+	groups, err := p.resolveStreamGroups(queryCriteria, p.distributed)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(groups.contexts) == 0 {
+		return groups.request, nil, nil
+	}
+	plan, err := logical_stream.Analyze(groups.request, groups.metadata, groups.schemas, groups.contexts)
+	if err != nil {
+		return nil, nil, fmt.Errorf("fail to analyze the query request for stream %s: %w", queryCriteria.GetName(), err)
+	}
+	return groups.request, plan, nil
+}
+
+// streamGroups holds the groups of a stream query that resolved on this node. The
+// request, the metadata, the schemas and the execution contexts are aligned: the i-th
+// entry of each describes the same group.
+type streamGroups struct {
+	request  *streamv1.QueryRequest
+	metadata []*commonv1.Metadata
+	schemas  []logical.Schema
+	contexts []executor.StreamExecutionContext
+}
+
+// resolveStreamGroups resolves the stream in each requested group and returns the
+// request scoped to the resolved groups, together with the aligned metadata, schemas
+// and execution contexts.
+//
+// tolerateMissing skips a group whose schema is unknown on this node instead of
+// failing the whole query. It is set only on a distributed data node, where such a
+// schema is a node-local propagation gap rather than a client error; a standalone node
+// and the liaison still report it as an error.
+func (p *streamQueryProcessor) resolveStreamGroups(queryCriteria *streamv1.QueryRequest, tolerateMissing bool) (streamGroups, error) {
+	// Clone the request instead of copying it by value: a protobuf message embeds a
+	// mutex, and the protobuf runtime forbids copying one.
+	scoped := proto.CloneOf(queryCriteria)
+	scoped.Groups = nil
+	var groups streamGroups
+	for _, group := range queryCriteria.GetGroups() {
 		meta := &commonv1.Metadata{
-			Name:  queryCriteria.Name,
-			Group: queryCriteria.Groups[i],
+			Name:  queryCriteria.GetName(),
+			Group: group,
 		}
 		ec, err := p.streamService.Stream(meta)
 		if err != nil {
-			return nil, fmt.Errorf("fail to get execution context for stream %s: %w", meta.GetName(), err)
+			if tolerateMissing && errors.Is(err, stream.ErrStreamNotExist) {
+				p.log.Warn().Str("stream", meta.GetName()).Str("group", group).
+					Msg("skip the group whose stream schema is unknown on this node")
+				continue
+			}
+			return streamGroups{}, fmt.Errorf("fail to get execution context for stream %s: %w", meta.GetName(), err)
 		}
-		ecc = append(ecc, ec)
 		s, err := logical_stream.BuildSchema(ec.GetSchema(), ec.GetIndexRules())
 		if err != nil {
-			return nil, fmt.Errorf("fail to build schema for stream %s: %w", meta.GetName(), err)
+			return streamGroups{}, fmt.Errorf("fail to build schema for stream %s: %w", meta.GetName(), err)
 		}
-		schemas = append(schemas, s)
-		metadata = append(metadata, meta)
+		scoped.Groups = append(scoped.Groups, group)
+		groups.metadata = append(groups.metadata, meta)
+		groups.schemas = append(groups.schemas, s)
+		groups.contexts = append(groups.contexts, ec)
 	}
-	plan, err := logical_stream.Analyze(queryCriteria, metadata, schemas, ecc)
-	if err != nil {
-		return nil, fmt.Errorf("fail to analyze the query request for stream %s: %w", queryCriteria.GetName(), err)
-	}
-	return plan, nil
+	groups.request = scoped
+	return groups, nil
 }
 
 // tryStreamVecDispatch runs the native columnar (vec) path for a stream query.
