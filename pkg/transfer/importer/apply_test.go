@@ -18,7 +18,10 @@
 package importer
 
 import (
+	"context"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -40,4 +43,26 @@ func TestBarrierKeySkipsOnlyPropertyGroups(t *testing.T) {
 		barrierKey(&SchemaAction{Kind: schemasync.KindIndexRule, Group: "g", Name: "r", Spec: &databasev1.IndexRule{}}))
 	assert.Equal(t, &schemav1.SchemaKey{Kind: "property", Group: "g", Name: "p"},
 		barrierKey(&SchemaAction{Kind: schemasync.KindProperty, Group: "g", Name: "p", Spec: &databasev1.Property{}}))
+}
+
+func TestAwaitSchemaSplitsKeysUnderTheBarrierCap(t *testing.T) {
+	f := newFakeLiaison()
+	li := f.serve(t)
+	n := 2*awaitSchemaMaxKeys + 1
+	req := &schemav1.AwaitSchemaAppliedRequest{}
+	for i := 0; i < n; i++ {
+		req.Keys = append(req.Keys, &schemav1.SchemaKey{Kind: "measure", Group: "g", Name: fmt.Sprintf("m%d", i)})
+		req.MinRevisions = append(req.MinRevisions, int64(i))
+	}
+	assert.NoError(t, AwaitSchema(context.Background(), li.Conn, req, time.Minute))
+	if assert.Len(t, f.awaits, 3) {
+		var seen int
+		for _, a := range f.awaits {
+			assert.LessOrEqual(t, len(a.GetKeys()), awaitSchemaMaxKeys)
+			assert.Len(t, a.GetMinRevisions(), len(a.GetKeys()), "each key keeps its revision")
+			assert.Equal(t, int64(seen), a.GetMinRevisions()[0], "the keys are awaited in order")
+			seen += len(a.GetKeys())
+		}
+		assert.Equal(t, n, seen)
+	}
 }

@@ -161,14 +161,36 @@ func modRevision[R interface{ GetModRevision() int64 }](resp R, err error) (int6
 	return resp.GetModRevision(), err
 }
 
+// awaitSchemaMaxKeys is the most keys one AwaitSchemaApplied call may carry; the barrier
+// refuses a longer request with InvalidArgument.
+const awaitSchemaMaxKeys = 10000
+
 // AwaitSchema blocks until every key of req is applied on every node (SchemaBarrierService),
 // or timeout elapses: a timeout or failure is a runtime error (exit 3) naming the laggards.
+// The keys are awaited in requests of at most awaitSchemaMaxKeys keys that share timeout.
 func AwaitSchema(ctx context.Context, conn *grpc.ClientConn, req *schemav1.AwaitSchemaAppliedRequest, timeout time.Duration) error {
-	if len(req.GetKeys()) == 0 {
-		return nil
+	keys, revs := req.GetKeys(), req.GetMinRevisions()
+	deadline := time.Now().Add(timeout)
+	for start := 0; start < len(keys); start += awaitSchemaMaxKeys {
+		end := min(start+awaitSchemaMaxKeys, len(keys))
+		chunk := &schemav1.AwaitSchemaAppliedRequest{Keys: keys[start:end]}
+		if start < len(revs) {
+			chunk.MinRevisions = revs[start:min(end, len(revs))]
+		}
+		if err := awaitSchemaChunk(ctx, conn, chunk, time.Until(deadline), timeout); err != nil {
+			return err
+		}
 	}
-	req.Timeout = durationpb.New(timeout)
-	callCtx, cancel := context.WithTimeout(ctx, timeout+30*time.Second)
+	return nil
+}
+
+// awaitSchemaChunk awaits one request of at most awaitSchemaMaxKeys keys for at most remaining,
+// but checks it at least once: the barrier takes a timeout of 0 as its default. timeout is the
+// whole wait, named in the error.
+func awaitSchemaChunk(ctx context.Context, conn *grpc.ClientConn, req *schemav1.AwaitSchemaAppliedRequest, remaining, timeout time.Duration) error {
+	remaining = max(remaining, time.Second)
+	req.Timeout = durationpb.New(remaining)
+	callCtx, cancel := context.WithTimeout(ctx, remaining+30*time.Second)
 	defer cancel()
 	resp, err := schemav1.NewSchemaBarrierServiceClient(conn).AwaitSchemaApplied(callCtx, req)
 	if err != nil {
