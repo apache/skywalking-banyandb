@@ -36,12 +36,8 @@ function parsePositiveInteger(rawValue: string | undefined, defaultValue: string
   return parsedValue;
 }
 
-const mcpPortRaw = process.env.MCP_PORT === undefined || process.env.MCP_PORT === '' ? '3000' : process.env.MCP_PORT;
-if (!/^\d+$/.test(mcpPortRaw)) {
-  throw new Error(`Invalid MCP_PORT value "${process.env.MCP_PORT}": must be an integer between 1 and 65535.`);
-}
-const mcpPort = parseInt(mcpPortRaw, 10);
-if (!Number.isFinite(mcpPort) || mcpPort <= 0 || mcpPort > 65535) {
+const mcpPort = parsePositiveInteger(process.env.MCP_PORT, '3000', 'MCP_PORT');
+if (mcpPort > 65535) {
   throw new Error(`Invalid MCP_PORT value "${process.env.MCP_PORT}": must be an integer between 1 and 65535.`);
 }
 
