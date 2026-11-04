@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path"
 	"path/filepath"
 	"sync"
@@ -68,6 +69,7 @@ type service struct {
 	pm                       protector.Memory
 	db                       db.Database
 	closer                   *run.Closer
+	partSync                 *partSyncHandler
 	l                        *logger.Logger
 	repairScheduler          *repairScheduler
 	snapshotDir              string
@@ -235,8 +237,16 @@ func (s *service) PreRun(ctx context.Context) error {
 		s.repairScheduler = scheduler
 	}
 	s.metadata.RegisterHandler("property", schema.KindGroup, &propertyGroupEventHandler{svc: s})
+	updateLis := &updateListener{s: s, l: s.l, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}
+	// Parts staged before a crash never reach FinishSync or Close; drop them before receiving new ones.
+	partTempRoot := filepath.Join(path, externalPartTempDirName)
+	if cleanErr := os.RemoveAll(partTempRoot); cleanErr != nil {
+		return fmt.Errorf("clean property part staging directory: %w", cleanErr)
+	}
+	s.partSync = &partSyncHandler{db: s.db, checkDisk: updateLis.CheckHealth, tempRoot: partTempRoot}
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicPropertyPartSync, s.partSync)
 	return multierr.Combine(
-		s.pipeline.Subscribe(data.TopicPropertyUpdate, &updateListener{s: s, l: s.l, path: path, maxDiskUsagePercent: s.maxDiskUsagePercent}),
+		s.pipeline.Subscribe(data.TopicPropertyUpdate, updateLis),
 		s.pipeline.Subscribe(data.TopicPropertyDelete, &deleteListener{s: s}),
 		s.pipeline.Subscribe(data.TopicPropertyQuery, &queryListener{s: s}),
 		s.pipeline.Subscribe(data.TopicSnapshot, snapshotLis),
