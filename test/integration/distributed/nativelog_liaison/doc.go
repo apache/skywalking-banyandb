@@ -16,6 +16,7 @@
 // under the License.
 
 // Package nativelogliaison runs the native self-stored log cases against a
-// liaison, which stores its own logs on a data node, and checks where they
-// are stored. The liaison and two data nodes run in this process.
+// liaison, whose write queue stores its own logs on a data node. The liaison
+// and one data node run in this process; where the logs are placed is checked
+// by nativelogfailover.
 package nativelogliaison

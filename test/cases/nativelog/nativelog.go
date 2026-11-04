@@ -79,11 +79,6 @@ const (
 )
 
 var (
-	// NativeFlags turns native logging on with the thresholds the cases
-	// assume: the console at error and native storage at info, so an info line
-	// is stored and not printed.
-	NativeFlags = []string{"--logging-native-enabled", "--logging-native-level=info", "--logging-level=error"}
-
 	// DisabledFlags leaves native logging off, its default, and prints info
 	// lines, so a case can see that a node logged a line it did not store.
 	DisabledFlags = []string{"--logging-level=info"}

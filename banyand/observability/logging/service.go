@@ -68,10 +68,6 @@ const (
 // been established.
 var errSchemaUnavailable = errors.New("the native log schema is not established yet")
 
-// errLocateFailed is the delivery failure of a liaison that located no
-// liaison for the log group.
-var errLocateFailed = errors.New("no liaison located for the native log group")
-
 // NodeLocator locates the node that takes a shard of a group, as a liaison's
 // node registry does.
 type NodeLocator interface {
@@ -219,14 +215,8 @@ func (s *Service) delivery() queue.Delivery {
 // every event is written to. It runs for every attempt, so a batch held while
 // no liaison was located goes to the one located by then.
 func (s *Service) locate() (string, error) {
-	node, err := s.nodes.Locate(GroupName, StreamName, shardID, 0)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", errLocateFailed, err)
-	}
-	if node == "" {
-		return "", errLocateFailed
-	}
-	return node, nil
+	// The queue counts an error or an empty node as a failed locate.
+	return s.nodes.Locate(GroupName, StreamName, shardID, 0)
 }
 
 // bindPressure makes the sink drop while the memory protector reports high

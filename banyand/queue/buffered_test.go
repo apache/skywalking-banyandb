@@ -853,7 +853,7 @@ func TestNodeDeliveryReportsWhatTheNodeDid(t *testing.T) {
 }
 
 // TestNodeDeliveryRetriesAFailedLocate covers a failed locate: it is
-// retryable, keeps its cause, and publishes nothing.
+// retryable, is ErrNoNodeLocated, keeps its cause, and publishes nothing.
 func TestNodeDeliveryRetriesAFailedLocate(t *testing.T) {
 	cause := errors.New("no nodes available")
 	client := NewMockClient(gomock.NewController(t))
@@ -864,6 +864,7 @@ func TestNodeDeliveryRetriesAFailedLocate(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			err := NewNodeDelivery(client, testTopic, locate, time.Second).Deliver(context.Background(), []any{"a"})
 			assert.ErrorIs(t, err, ErrRetryable)
+			assert.ErrorIs(t, err, ErrNoNodeLocated)
 		})
 	}
 	err := NewNodeDelivery(client, testTopic, func() (string, error) { return "", cause }, time.Second).

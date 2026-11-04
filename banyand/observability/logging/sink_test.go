@@ -270,7 +270,7 @@ func TestOutcomesAreCountedByTheirReason(t *testing.T) {
 			reason:  reasonDestinationUnready,
 		},
 		"no liaison located": {
-			outcome: queue.Outcome{Reason: queue.OutcomeRetriesExhausted, Err: queue.Retryable(fmt.Errorf("%w: no nodes available", errLocateFailed))},
+			outcome: queue.Outcome{Reason: queue.OutcomeRetriesExhausted, Err: queue.Retryable(fmt.Errorf("%w: no nodes available", queue.ErrNoNodeLocated))},
 			reason:  reasonLocateFailed,
 		},
 		"no liaison reached": {

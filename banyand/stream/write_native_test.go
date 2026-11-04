@@ -52,6 +52,21 @@ func (n *nativeLines) count() int {
 	return len(n.lines)
 }
 
+// nativeLoggingAtWarn turns native logging on at warn and returns the sink
+// that receives what is stored natively. Logging is initialized again when the
+// test ends, so later tests do not inherit native logging.
+func nativeLoggingAtWarn(t *testing.T) *nativeLines {
+	t.Helper()
+	t.Cleanup(func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) })
+	require.NoError(t, logger.Init(logger.Logging{
+		Env: "prod", Level: "warn",
+		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
+	}))
+	sink := &nativeLines{}
+	t.Cleanup(logger.AttachNativeSink(sink))
+	return sink
+}
+
 // TestWriteCallbackKeepsNativeWritesOffNativeStorage is the falsifying
 // assertion for the feedback protection on the write path. The callback logs
 // a refused write: for a native log write that line must reach the console
@@ -59,15 +74,7 @@ func (n *nativeLines) count() int {
 // same refusal for any other write is stored as usual.
 func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	printed := len(console.String())
-	// Logging is initialized again afterwards, so later tests do not inherit
-	// native logging.
-	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
-	require.NoError(t, logger.Init(logger.Logging{
-		Env: "prod", Level: "warn",
-		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
-	}))
-	sink := &nativeLines{}
-	defer logger.AttachNativeSink(sink)()
+	sink := nativeLoggingAtWarn(t)
 
 	w := &writeCallback{l: logger.GetLogger("stream")}
 	malformed := bus.NewMessage(1, "not a batch")
@@ -93,13 +100,7 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 // is stored as usual.
 func TestWriteQueueCallbackKeepsLogEventsOffNativeStorage(t *testing.T) {
 	printed := len(console.String())
-	defer func() { _ = logger.Init(logger.Logging{Env: "prod", Level: "info"}) }()
-	require.NoError(t, logger.Init(logger.Logging{
-		Env: "prod", Level: "warn",
-		Native: logger.NativeLogging{Enabled: true, Level: "warn", TTLDays: 1},
-	}))
-	sink := &nativeLines{}
-	defer logger.AttachNativeSink(sink)()
+	sink := nativeLoggingAtWarn(t)
 
 	w := &writeQueueCallback{l: logger.GetLogger("stream")}
 	// A timestamp finer than a millisecond is refused before the callback

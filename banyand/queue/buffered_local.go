@@ -27,6 +27,11 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
+// ErrNoNodeLocated is the delivery failure of a batch that no node was located
+// for: the locate failed, or it returned no node. Its cause, if any, is
+// wrapped with it.
+var ErrNoNodeLocated = errors.New("no node located for the batch")
+
 type localDelivery struct {
 	client Client
 	// node is nil on the local pipeline, which has a single destination.
@@ -55,11 +60,11 @@ func (l *localDelivery) Deliver(ctx context.Context, batch []any) error {
 	var target string
 	if l.node != nil {
 		located, err := l.node()
-		if err == nil && located == "" {
-			err = errors.New("no node located for the batch")
-		}
 		if err != nil {
-			return Retryable(err)
+			return Retryable(fmt.Errorf("%w: %w", ErrNoNodeLocated, err))
+		}
+		if located == "" {
+			return Retryable(ErrNoNodeLocated)
 		}
 		target = located
 	}

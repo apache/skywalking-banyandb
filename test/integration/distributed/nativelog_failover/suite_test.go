@@ -32,7 +32,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
@@ -47,14 +46,6 @@ func TestNativeLogFailover(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Native Self-Stored Logs Liaison Failover Suite", Label(integration_distributed.Labels...))
 }
-
-// fastSchemaSync shortens schema convergence, as in the data node suite: the
-// liaison creates the log group after the data nodes have started.
-const fastSchemaSync = "--schema-property-client-sync-interval=1s"
-
-// nativeFlags turns native logging on at info, as the shared cases do. They
-// are not imported here: importing them would run them in this suite.
-var nativeFlags = []string{"--logging-native-enabled", "--logging-native-level=info", "--logging-level=error"}
 
 var (
 	console *test.CapturedStderr
@@ -79,29 +70,20 @@ var _ = BeforeSuite(func() {
 	// logs a node to move to when the one that owns shard 0 stops.
 	config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(newSpace()))
 	for range 2 {
-		addr, _, _, stop := setup.DataNodeWithAddrAndDir(config, fastSchemaSync)
+		addr, _, _, stop := setup.DataNodeWithAddrAndDir(config, setup.FastSchemaSync)
 		stops = append(stops, stop)
 		// The launcher sets --node-host=127.0.0.1, and a node's id is its host
 		// and gRPC port.
 		dataNodes["127.0.0.1:"+port(addr)] = stop
 	}
-	liaisonAddr, stopLiaison := setup.LiaisonNode(config, append(append([]string{}, nativeFlags...), fastSchemaSync)...)
+	liaisonAddr, stopLiaison := setup.LiaisonNode(config, append(append([]string{}, setup.NativeLogFlags...), setup.FastSchemaSync)...)
 	stops = append(stops, stopLiaison)
 
 	conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	stops = append(stops, func() { _ = conn.Close() })
 
-	// A liaison's id is its host and internal port, which the launcher does
-	// not return. The liaison lists itself in its own tier-1 route table.
-	Eventually(func(g Gomega) {
-		state, stateErr := databasev1.NewClusterStateServiceClient(conn).
-			GetClusterState(context.Background(), &databasev1.GetClusterStateRequest{})
-		g.Expect(stateErr).NotTo(HaveOccurred())
-		liaisons := state.GetRouteTables()["tire1"].GetRegistered()
-		g.Expect(liaisons).To(HaveLen(1))
-		liaisonID = liaisons[0].GetMetadata().GetName()
-	}, flags.EventuallyTimeout, time.Second).Should(Succeed())
+	liaisonID = setup.LiaisonID(conn)
 })
 
 var _ = AfterSuite(func() {

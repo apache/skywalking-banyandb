@@ -155,19 +155,6 @@ func (w *writeQueueCallback) prepareElementsInTable(eq *elementsInQueue, writeEv
 	return et, nil
 }
 
-// logForGroup returns the logger for what is logged about an event of group.
-// An event of the native log group is a native log write wherever it came
-// from, so its lines log under the native log service and never reach native
-// storage: a failed write would otherwise log a line that is written, and
-// fails, again. A liaison receives the event over the network, without the
-// mark the sender's context carried.
-func logForGroup(ctx context.Context, l *logger.Logger, group string) *logger.Logger {
-	if group == logger.NativeLogGroup {
-		return logger.FetchOrDefault(logger.WithNativeWrite(ctx), "stream", l)
-	}
-	return l
-}
-
 func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
@@ -205,7 +192,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			logForGroup(ctx, w.l, metadata.GetGroup()).Error().Err(handleErr).Msg("cannot handle write event")
+			logForGroup(w.l, metadata.GetGroup()).Error().Err(handleErr).Msg("cannot handle write event")
 			continue
 		}
 		groups = newGroups
@@ -220,7 +207,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				var marshalErr error
 				seriesMetadataBytes, marshalErr = es.seriesDocs.docs.Marshal()
 				if marshalErr != nil {
-					logForGroup(ctx, w.l, g.name).Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					logForGroup(w.l, g.name).Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
 					// Continue without series metadata, but log the error
 				}
 			}
@@ -231,7 +218,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {
-				logForGroup(ctx, w.l, g.name).Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
+				logForGroup(w.l, g.name).Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
 				continue
 			}
 			// Process series documents independently
@@ -247,12 +234,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					message := bus.NewMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), node, g.name, combinedData)
 					future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
 					if publishErr != nil {
-						logForGroup(ctx, w.l, g.name).Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						logForGroup(w.l, g.name).Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
 						continue
 					}
 					_, err := future.Get()
 					if err != nil {
-						logForGroup(ctx, w.l, g.name).Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
+						logForGroup(w.l, g.name).Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
 						continue
 					}
 				}
@@ -262,7 +249,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			if len(es.docs) > 0 {
 				docData, marshalErr := es.docs.Marshal()
 				if marshalErr != nil {
-					logForGroup(ctx, w.l, g.name).Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal documents")
+					logForGroup(w.l, g.name).Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal documents")
 				} else {
 					// Encode group name, shardID and prepend to docData
 					combinedData := make([]byte, 0, len(docData)+len(g.name)+4)
@@ -275,12 +262,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 						message := bus.NewMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), node, g.name, combinedData)
 						future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamLocalIndexWrite, message)
 						if publishErr != nil {
-							logForGroup(ctx, w.l, g.name).Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
+							logForGroup(w.l, g.name).Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
 							continue
 						}
 						_, getErr := future.Get()
 						if getErr != nil {
-							logForGroup(ctx, w.l, g.name).Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish local index")
+							logForGroup(w.l, g.name).Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish local index")
 							continue
 						}
 					}

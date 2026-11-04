@@ -899,27 +899,33 @@ func TestLiaisonWritesToTheLiaisonOfShardZero(t *testing.T) {
 // liaison: the batch is held for the bounded retries, publishes nothing, and
 // is then counted as locate_failed, never as written.
 func TestLiaisonCountsWhatNoLiaisonTook(t *testing.T) {
-	client := &fakeClient{}
-	locator := &fakeLocator{err: errors.New("no nodes available")}
-	_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })
+	for name, locator := range map[string]*fakeLocator{
+		"locate failed":  {err: errors.New("no nodes available")},
+		"no node to use": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			client := &fakeClient{}
+			_, sink := testService(t, client, nil, func(s *Service) { s.nodes = locator })
 
-	const admitted = 5
-	for i := 0; i < admitted; i++ {
-		sink.Admit(zerolog.InfoLevel, "LIAISON-GRPC", []byte(sampleLine))
+			const admitted = 5
+			for i := 0; i < admitted; i++ {
+				sink.Admit(zerolog.InfoLevel, "LIAISON-GRPC", []byte(sampleLine))
+			}
+			waitFor(t, "the batch to be counted as locate_failed", func() bool {
+				return sink.Dropped(reasonLocateFailed) == admitted
+			})
+			// The interval may split the events into more than one batch, and each
+			// batch is located once per attempt.
+			if got := locator.calls.Load(); got < destinationRetries+1 {
+				t.Fatalf("located %d times, want at least the first attempt and %d retries", got, destinationRetries)
+			}
+			if got := client.published.Load(); got != 0 {
+				t.Fatalf("published %d events with no node located", got)
+			}
+			if got := sink.Written(); got != 0 {
+				t.Fatalf("%d events counted as written with no node located", got)
+			}
+			waitSettled(t, sink)
+		})
 	}
-	waitFor(t, "the batch to be counted as locate_failed", func() bool {
-		return sink.Dropped(reasonLocateFailed) == admitted
-	})
-	// The interval may split the events into more than one batch, and each
-	// batch is located once per attempt.
-	if got := locator.calls.Load(); got < destinationRetries+1 {
-		t.Fatalf("located %d times, want at least the first attempt and %d retries", got, destinationRetries)
-	}
-	if got := client.published.Load(); got != 0 {
-		t.Fatalf("published %d events with no node located", got)
-	}
-	if got := sink.Written(); got != 0 {
-		t.Fatalf("%d events counted as written with no node located", got)
-	}
-	waitSettled(t, sink)
 }

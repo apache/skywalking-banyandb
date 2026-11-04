@@ -18,7 +18,6 @@
 package nativelogliaison_test
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -27,7 +26,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -41,10 +39,6 @@ func TestNativeLogLiaison(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Native Self-Stored Logs Liaison Suite", Label(integration_distributed.Labels...))
 }
-
-// fastSchemaSync shortens schema convergence, as in the data node suite: the
-// liaison creates the log group after the data nodes have started.
-const fastSchemaSync = "--schema-property-client-sync-interval=1s"
 
 var (
 	console *test.CapturedStderr
@@ -65,25 +59,16 @@ var _ = BeforeSuite(func() {
 	// be the last role to configure the logger; a liaison also needs a data
 	// node's schema server to start.
 	config := setup.PropertyClusterConfig(setup.NewDiscoveryFileWriter(newSpace()))
-	_, _, _, stopData := setup.DataNodeWithAddrAndDir(config, fastSchemaSync)
+	_, _, _, stopData := setup.DataNodeWithAddrAndDir(config, setup.FastSchemaSync)
 	stops = append(stops, stopData)
-	liaisonAddr, stopLiaison := setup.LiaisonNode(config, append(append([]string{}, cases.NativeFlags...), fastSchemaSync)...)
+	liaisonAddr, stopLiaison := setup.LiaisonNode(config, append(append([]string{}, setup.NativeLogFlags...), setup.FastSchemaSync)...)
 	stops = append(stops, stopLiaison)
 
 	conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	Expect(err).NotTo(HaveOccurred())
 	stops = append(stops, func() { _ = conn.Close() })
 
-	// A liaison's id is its host and internal port, which the launcher does
-	// not return. The liaison lists itself in its own tier-1 route table.
-	Eventually(func(g Gomega) {
-		state, stateErr := databasev1.NewClusterStateServiceClient(conn).
-			GetClusterState(context.Background(), &databasev1.GetClusterStateRequest{})
-		g.Expect(stateErr).NotTo(HaveOccurred())
-		liaisons := state.GetRouteTables()["tire1"].GetRegistered()
-		g.Expect(liaisons).To(HaveLen(1))
-		liaisonID = liaisons[0].GetMetadata().GetName()
-	}, flags.EventuallyTimeout, time.Second).Should(Succeed())
+	liaisonID = setup.LiaisonID(conn)
 
 	node := cases.Node{Conn: conn, NodeID: liaisonID, NodeType: "liaison"}
 	shared := func(_ ...string) (cases.Node, func()) { return node, func() {} }

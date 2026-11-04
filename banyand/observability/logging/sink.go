@@ -358,7 +358,7 @@ func lossReason(err error) string {
 		return reasonSchemaIncompatible
 	case errors.Is(err, bus.ErrTopicNotExist):
 		return reasonDestinationUnready
-	case errors.Is(err, errLocateFailed):
+	case errors.Is(err, queue.ErrNoNodeLocated):
 		return reasonLocateFailed
 	default:
 		return reasonPublishFailed
