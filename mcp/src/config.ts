@@ -15,13 +15,13 @@
  * limitations under the License.
  */
 
-export const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
-export const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
-export const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN?.trim() || '';
-
 import dotenv from 'dotenv';
 
 dotenv.config({ quiet: true });
+
+export const BANYANDB_ADDRESS = process.env.BANYANDB_ADDRESS || 'localhost:17900';
+export const MCP_HOST = process.env.MCP_HOST || '127.0.0.1';
+export const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN?.trim() || '';
 
 function parsePositiveInteger(rawValue: string | undefined, defaultValue: string, fieldName: string): number {
   const value = rawValue === undefined || rawValue === '' ? defaultValue : rawValue;

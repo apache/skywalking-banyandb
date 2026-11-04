@@ -97,3 +97,49 @@ describe('config environment parsing', () => {
     expect(config.TRANSPORT).toBe('stdio');
   });
 });
+
+describe('dotenv loading', () => {
+  const originalCwd = process.cwd();
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+  });
+
+  it('reads BANYANDB_ADDRESS, MCP_HOST, and MCP_AUTH_TOKEN from a .env file', async () => {
+    const tmpDir = await import('node:fs/promises').then((fs) => fs.mkdtemp('banyandb-mcp-env-'));
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(
+      `${tmpDir}/.env`,
+      ['BANYANDB_ADDRESS=banyandb.example:17910', 'MCP_HOST=0.0.0.0', 'MCP_AUTH_TOKEN=env-file-token'].join('\n'),
+      'utf-8',
+    );
+    for (const key of ['BANYANDB_ADDRESS', 'MCP_HOST', 'MCP_AUTH_TOKEN']) {
+      delete process.env[key];
+    }
+    process.chdir(tmpDir);
+    try {
+      const config = await loadConfig();
+      expect(config.BANYANDB_ADDRESS).toBe('banyandb.example:17910');
+      expect(config.MCP_HOST).toBe('0.0.0.0');
+      expect(config.MCP_AUTH_TOKEN).toBe('env-file-token');
+    } finally {
+      process.chdir(originalCwd);
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers an already-set process environment variable over the .env file', async () => {
+    const tmpDir = await import('node:fs/promises').then((fs) => fs.mkdtemp('banyandb-mcp-env-'));
+    const fs = await import('node:fs/promises');
+    await fs.writeFile(`${tmpDir}/.env`, 'MCP_AUTH_TOKEN=env-file-token', 'utf-8');
+    process.env.MCP_AUTH_TOKEN = 'process-env-token';
+    process.chdir(tmpDir);
+    try {
+      const config = await loadConfig();
+      expect(config.MCP_AUTH_TOKEN).toBe('process-env-token');
+    } finally {
+      process.chdir(originalCwd);
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
