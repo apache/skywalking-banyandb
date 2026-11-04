@@ -37,9 +37,9 @@ type metricWithLabelValues struct {
 
 type metricVec struct {
 	nodeInfo    NodeInfo
-	tags        scopeTags
 	metrics     map[string]metricWithLabelValues
 	measureName string
+	tags        scopeTags
 	mutex       sync.Mutex
 }
 
