@@ -19,12 +19,17 @@
 # calls with the liaison's HTTP address; it prints one YAML document for the
 # runner to compare with its expected file, and reports progress on stderr.
 
-# producers are the data nodes started with native logging on, and disabled the
-# one left at the default, off. A node's id is its host and gRPC port.
-producers=(data0:17912 data1:17912 data2:17912 data3:17912 data4:17912)
+# data_producers are the data nodes started with native logging on, and
+# disabled the one left at the default, off. The liaison is a producer too, but
+# not a data node. A node's id is its host and gRPC port.
+data_producers=(data0:17912 data1:17912 data2:17912 data3:17912 data4:17912)
 disabled=data5:17912
 # refusing collects with native logging on, and its storage refuses every write.
 refusing=data6:17912
+# liaison collects with native logging on. It has no storage, so it sends its
+# logs to the data node that owns shard 0. Its id is its host and internal
+# gRPC port.
+liaison=liaison:18912
 
 # Above about a thousand rows a query is refused by the memory budget.
 limit=900
