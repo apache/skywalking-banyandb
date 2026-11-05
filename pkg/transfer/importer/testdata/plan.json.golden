@@ -1,0 +1,368 @@
+{
+  "entries": [
+    {
+      "key": "measure/sw_metric/hot/20261018/shard-0",
+      "targetStage": "hot",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_metric",
+        "stage": "hot",
+        "segment": "20261018",
+        "sources": [
+          {
+            "node": "data-b",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-b/measure/sw_metric/seg-20261018/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 100,
+            "minTimestamp": 1792281600000000000,
+            "maxTimestamp": 1792299600000000000
+          }
+        ],
+        "shard": 0,
+        "kind": "shard"
+      },
+      "copies": 1,
+      "rows": 100
+    },
+    {
+      "key": "measure/sw_metric/hot/20261018/shard-1",
+      "targetStage": "hot",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_metric",
+        "stage": "hot",
+        "segment": "20261018",
+        "sources": [
+          {
+            "node": "data-a",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-a/measure/sw_metric/seg-20261018/shard-1-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 50,
+            "minTimestamp": 1792285200000000000,
+            "maxTimestamp": 1792292400000000000
+          }
+        ],
+        "shard": 1,
+        "kind": "shard"
+      },
+      "copies": 1,
+      "rows": 50
+    },
+    {
+      "key": "measure/sw_metric/hot/20261018/segment",
+      "targetStage": "hot",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_metric",
+        "stage": "hot",
+        "segment": "20261018",
+        "sources": [
+          {
+            "rowCounts": {
+              "idx": 7
+            },
+            "node": "data-a",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-a/measure/sw_metric/seg-20261018/segment-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 7,
+            "minTimestamp": 1792281600000000000,
+            "maxTimestamp": 1792367999999999999
+          },
+          {
+            "rowCounts": {
+              "idx": 7
+            },
+            "node": "data-b",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-b/measure/sw_metric/seg-20261018/segment-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 7,
+            "minTimestamp": 1792281600000000000,
+            "maxTimestamp": 1792367999999999999
+          }
+        ],
+        "shard": 0,
+        "kind": "segment"
+      },
+      "copies": 1,
+      "rows": 14
+    },
+    {
+      "key": "measure/sw_metric/warm/20261010/shard-0",
+      "targetStage": "warm",
+      "targetNodes": [
+        "dst-warm1"
+      ],
+      "item": {
+        "group": "sw_metric",
+        "stage": "warm",
+        "segment": "20261010",
+        "sources": [
+          {
+            "node": "data-c",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-c/measure/sw_metric/seg-20261010/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 80,
+            "minTimestamp": 1791590400000000000,
+            "maxTimestamp": 1791763200000000000
+          }
+        ],
+        "shard": 0,
+        "kind": "shard"
+      },
+      "copies": 2,
+      "rows": 80
+    },
+    {
+      "key": "property/sw_prop/shard-0",
+      "targetStage": "",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_prop",
+        "stage": "",
+        "sources": [
+          {
+            "node": "data-a",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-a/property/sw_prop/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 3,
+            "minTimestamp": 0,
+            "maxTimestamp": 0
+          },
+          {
+            "node": "data-b",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-b/property/sw_prop/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 3,
+            "minTimestamp": 0,
+            "maxTimestamp": 0
+          }
+        ],
+        "shard": 0,
+        "kind": "property"
+      },
+      "copies": 1,
+      "rows": 6
+    },
+    {
+      "key": "property/sw_prop/shard-1",
+      "targetStage": "",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_prop",
+        "stage": "",
+        "sources": [
+          {
+            "node": "data-a",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-a/property/sw_prop/shard-1-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 4,
+            "minTimestamp": 0,
+            "maxTimestamp": 0
+          }
+        ],
+        "shard": 1,
+        "kind": "property"
+      },
+      "copies": 1,
+      "rows": 4
+    },
+    {
+      "key": "stream/sw_stream/cold/20261018/shard-0",
+      "targetStage": "hot",
+      "targetNodes": [],
+      "item": {
+        "group": "sw_stream",
+        "stage": "cold",
+        "segment": "20261018",
+        "sources": [
+          {
+            "node": "data-c",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-c/stream/sw_stream/seg-20261018/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 2000,
+            "minTimestamp": 1792281600000000000,
+            "maxTimestamp": 1792364400000000000
+          }
+        ],
+        "shard": 0,
+        "kind": "shard"
+      },
+      "copies": 1,
+      "rows": 2000
+    }
+  ],
+  "rejected": [
+    {
+      "key": "measure/sw_metric/hot/20261012/shard-0",
+      "gate": "TTL",
+      "reason": "every row is older than the target stage's retention",
+      "targetStage": "hot",
+      "targetNodes": [
+        "dst-hot1"
+      ],
+      "item": {
+        "group": "sw_metric",
+        "stage": "hot",
+        "segment": "20261012",
+        "sources": [
+          {
+            "node": "data-a",
+            "timezone": "UTC",
+            "files": [
+              {
+                "path": "nodes/data-a/measure/sw_metric/seg-20261012/shard-0-00001.csv.gz",
+                "crc32": "0x00000001",
+                "bytes": 10
+              }
+            ],
+            "rows": 30,
+            "minTimestamp": 1791763200000000000,
+            "maxTimestamp": 1791799200000000000
+          }
+        ],
+        "shard": 0,
+        "kind": "shard"
+      },
+      "rows": 30
+    }
+  ],
+  "multiSource": [
+    {
+      "key": "measure/sw_metric/hot/20261018/shard-0",
+      "decisions": [
+        {
+          "node": "data-a",
+          "reason": "subset",
+          "ref": "data-b",
+          "chosen": false
+        },
+        {
+          "node": "data-b",
+          "reason": "gap",
+          "chosen": true
+        }
+      ]
+    }
+  ],
+  "schema": [
+    {
+      "kind": "group",
+      "group": "sw_metric",
+      "disposition": "CREATE",
+      "match": "group/sw_metric"
+    },
+    {
+      "kind": "group",
+      "group": "sw_prop",
+      "disposition": "CREATE",
+      "match": "group/sw_prop"
+    },
+    {
+      "kind": "group",
+      "group": "sw_stream",
+      "disposition": "CREATE",
+      "match": "group/sw_stream"
+    },
+    {
+      "kind": "stream",
+      "group": "sw_stream",
+      "name": "log",
+      "disposition": "CREATE",
+      "match": "stream/sw_stream/log"
+    },
+    {
+      "kind": "measure",
+      "group": "sw_metric",
+      "name": "cpm",
+      "disposition": "CREATE",
+      "match": "measure/sw_metric/cpm"
+    },
+    {
+      "kind": "property",
+      "group": "sw_prop",
+      "name": "ui",
+      "disposition": "CREATE",
+      "match": "property/sw_prop/ui"
+    }
+  ],
+  "gateDetails": [
+    "measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target retention (newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it"
+  ],
+  "warnings": [
+    "group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row is written to every one of them",
+    "group sw_stream: the target has no stage \"cold\"; its units go to hot"
+  ],
+  "header": {
+    "endpoint": "liaison-dst:17912 (ROLE_LIAISON)",
+    "input": "./artifact",
+    "format": "csv",
+    "exportedAt": "2026-10-19T08:00:00Z",
+    "artifactVersion": 1,
+    "dataNodes": 2,
+    "standalone": false
+  }
+}

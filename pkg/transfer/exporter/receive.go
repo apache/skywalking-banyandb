@@ -39,6 +39,8 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
@@ -154,14 +156,14 @@ type nodeExport struct {
 	log      io.Writer
 	root     string // <output>/nodes/<node-dir>
 	relRoot  string // nodes/<node-dir>
-	liaisons []*Liaison
+	liaisons []*cluster.Liaison
 	next     int
 	retryFor time.Duration
 	idleFor  time.Duration
 }
 
 // liaison is the liaison the next open attempt goes through.
-func (n *nodeExport) liaison() *Liaison { return n.liaisons[n.next%len(n.liaisons)] }
+func (n *nodeExport) liaison() *cluster.Liaison { return n.liaisons[n.next%len(n.liaisons)] }
 
 // run opens the stream, exports every unit in order and closes it cleanly.
 func (n *nodeExport) run(ctx context.Context) error {
@@ -172,7 +174,7 @@ func (n *nodeExport) run(ctx context.Context) error {
 	defer n.idle.stop()
 	err := n.export(streamCtx)
 	if err != nil && context.Cause(streamCtx) == errIdle { //nolint:errorlint // identity of our own sentinel
-		return Exit(ExitRuntime, "%w", errIdle)
+		return exitcode.Exit(exitcode.ExitRuntime, "%w", errIdle)
 	}
 	return err
 }
@@ -201,7 +203,7 @@ func (n *nodeExport) export(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("node %s: end of export stream: %w", n.job.nodeID, err)
 	}
-	return Exit(ExitRuntime, "node %s: unexpected %T frame after the last unit", n.job.nodeID, resp.GetFrame())
+	return exitcode.Exit(exitcode.ExitRuntime, "node %s: unexpected %T frame after the last unit", n.job.nodeID, resp.GetFrame())
 }
 
 // streamErr turns a Send failure into the stream's status: Send reports io.EOF when the
@@ -237,12 +239,8 @@ func (n *nodeExport) open(ctx context.Context) (transferv1.ExportService_ExportC
 		n.next++
 		fmt.Fprintf(n.log, "node %s is busy or unreachable via %s (%s); retrying via %s in %s\n", n.job.nodeID, via.Addr, code, n.liaison().Addr, backoff)
 		n.idle.pause()
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, fmt.Errorf("node %s: waiting to retry the export stream: %w", n.job.nodeID, context.Cause(ctx))
-		case <-timer.C:
+		if err = transfer.SleepCtx(ctx, backoff); err != nil {
+			return nil, fmt.Errorf("node %s: waiting to retry the export stream: %w", n.job.nodeID, err)
 		}
 		n.idle.resume()
 		backoff = min(backoff*2, exportRetryMax)
@@ -250,24 +248,24 @@ func (n *nodeExport) open(ctx context.Context) (transferv1.ExportService_ExportC
 }
 
 // openOnce opens the stream through one liaison and waits for the ready frame.
-func (n *nodeExport) openOnce(ctx context.Context, via *Liaison) (transferv1.ExportService_ExportClient, error) {
+func (n *nodeExport) openOnce(ctx context.Context, via *cluster.Liaison) (transferv1.ExportService_ExportClient, error) {
 	n.idle.touch()
 	stream, err := transferv1.NewExportServiceClient(via.Conn).Export(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("node %s: open export stream via %s: %w", n.job.nodeID, via.Addr, unsupported(err))
+		return nil, fmt.Errorf("node %s: open export stream via %s: %w", n.job.nodeID, via.Addr, cluster.Unsupported(err))
 	}
 	if err = stream.Send(&transferv1.ExportRequest{Frame: &transferv1.ExportRequest_Init_{Init: n.init}}); err != nil {
-		return nil, n.streamErr(stream, "send init via "+via.Addr, unsupported(err))
+		return nil, n.streamErr(stream, "send init via "+via.Addr, cluster.Unsupported(err))
 	}
 	resp, err := stream.Recv()
 	if err != nil {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("stream ended before ready")
 		}
-		return nil, fmt.Errorf("node %s: export init via %s: %w", n.job.nodeID, via.Addr, unsupported(err))
+		return nil, fmt.Errorf("node %s: export init via %s: %w", n.job.nodeID, via.Addr, cluster.Unsupported(err))
 	}
 	if resp.GetReady() == nil {
-		return nil, Exit(ExitRuntime, "node %s: the first export frame must be ready, got %T", n.job.nodeID, resp.GetFrame())
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "node %s: the first export frame must be ready, got %T", n.job.nodeID, resp.GetFrame())
 	}
 	n.idle.touch()
 	return stream, nil
@@ -285,13 +283,13 @@ func (n *nodeExport) receiveUnit(stream transferv1.ExportService_ExportClient, u
 	started := false
 	var start time.Time
 	orderErr := func(frame any) error {
-		return Exit(ExitRuntime, "node %s unit %s: unexpected %T frame", n.job.nodeID, u.label(), frame)
+		return exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: unexpected %T frame", n.job.nodeID, u.label(), frame)
 	}
 	for {
 		resp, recvErr := stream.Recv()
 		if recvErr != nil {
 			if errors.Is(recvErr, io.EOF) {
-				return Exit(ExitRuntime, "node %s unit %s: the stream ended before unit_finished", n.job.nodeID, u.label())
+				return exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: the stream ended before unit_finished", n.job.nodeID, u.label())
 			}
 			return fmt.Errorf("node %s unit %s: %w", n.job.nodeID, u.label(), recvErr)
 		}
@@ -305,7 +303,7 @@ func (n *nodeExport) receiveUnit(stream transferv1.ExportService_ExportClient, u
 			// The session Plan inventoried the same snapshot, so a different part count means a
 			// part vanished from it (or appeared) in between: a consistency check, not a guarantee.
 			if got, want := f.UnitStarted.GetTotalParts(), u.plannedParts(); u.segment != nil && got != want {
-				return Exit(ExitRuntime, "node %s unit %s: the snapshot holds %d parts, the session plan counted %d; export again",
+				return exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: the snapshot holds %d parts, the session plan counted %d; export again",
 					n.job.nodeID, u.label(), got, want)
 			}
 			n.progress.unitStarted(u, f.UnitStarted.GetTotalShards(), f.UnitStarted.GetTotalParts())
@@ -398,15 +396,15 @@ func safeRelativePath(raw, prefix string) (string, error) {
 func (n *nodeExport) startFile(u *plannedUnit, fs *transferv1.FileStarted) (*partialFile, error) {
 	rel, err := safeRelativePath(fs.GetRelativePath(), u.pathPrefix())
 	if err != nil {
-		return nil, Exit(ExitRuntime, "node %s unit %s: %w", n.job.nodeID, u.label(), err)
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: %w", n.job.nodeID, u.label(), err)
 	}
 	if !fs.GetSegmentLevel() && !slices.Contains(u.shardIDs(), fs.GetShardId()) {
-		return nil, Exit(ExitRuntime, "node %s unit %s: file %s is of shard %d, which the unit did not ask for",
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: file %s is of shard %d, which the unit did not ask for",
 			n.job.nodeID, u.label(), rel, fs.GetShardId())
 	}
 	final := filepath.Join(n.root, filepath.FromSlash(rel))
 	if _, statErr := os.Lstat(final); !errors.Is(statErr, os.ErrNotExist) {
-		return nil, Exit(ExitRuntime, "node %s unit %s: %s already exists", n.job.nodeID, u.label(), final)
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: %s already exists", n.job.nodeID, u.label(), final)
 	}
 	if err = os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
 		return nil, fmt.Errorf("node %s: %w", n.job.nodeID, err)
@@ -426,7 +424,7 @@ func (n *nodeExport) startFile(u *plannedUnit, fs *transferv1.FileStarted) (*par
 // revisions the node encoded with, then makes the file durable under its final name.
 func (n *nodeExport) finishFile(u *plannedUnit, p *partialFile, ff *transferv1.FileFinished) (receivedFile, error) {
 	if ff.GetBytes() != p.size || ff.GetCrc32() != p.crc.Sum32() {
-		return receivedFile{}, Exit(ExitRuntime, "node %s: %s is corrupt: received %d bytes crc32 %s, the node announced %d bytes crc32 %s",
+		return receivedFile{}, exitcode.Exit(exitcode.ExitRuntime, "node %s: %s is corrupt: received %d bytes crc32 %s, the node announced %d bytes crc32 %s",
 			n.job.nodeID, p.rel, p.size, manifest.FormatCRC32(p.crc.Sum32()), ff.GetBytes(), manifest.FormatCRC32(ff.GetCrc32()))
 	}
 	if err := n.checkSchemaRevisions(u, p, ff); err != nil {
@@ -478,7 +476,7 @@ func (n *nodeExport) checkSchemaRevisions(u *plannedUnit, p *partialFile, ff *tr
 		if exported && encoded && wantRev == gotRev {
 			continue
 		}
-		return Exit(ExitRuntime,
+		return exitcode.Exit(exitcode.ExitRuntime,
 			"schema of %s %s/%s changed during export: the node encoded %s with mod revision %s, the exported schema has %s; export again",
 			transfer.CatalogName(u.catalog()), u.group(), name, p.rel, revisionLabel(gotRev, encoded), revisionLabel(wantRev, exported))
 	}
@@ -505,3 +503,38 @@ func syncDir(dir string) error {
 	}
 	return err
 }
+
+// idleTimer fires when no frame was received for its duration (--node-idle-timeout). The
+// caller pauses it only while it backs off before reopening a refused stream. A zero duration
+// disables it.
+type idleTimer struct {
+	t *time.Timer
+	d time.Duration
+}
+
+func newIdleTimer(d time.Duration, fire func()) *idleTimer {
+	if d <= 0 {
+		return &idleTimer{}
+	}
+	return &idleTimer{d: d, t: time.AfterFunc(d, fire)}
+}
+
+// touch records progress and restarts the countdown.
+func (it *idleTimer) touch() {
+	if it.t != nil {
+		it.t.Reset(it.d)
+	}
+}
+
+// pause stops the countdown until resume.
+func (it *idleTimer) pause() {
+	if it.t != nil {
+		it.t.Stop()
+	}
+}
+
+// resume restarts the countdown after a pause.
+func (it *idleTimer) resume() { it.touch() }
+
+// stop releases the timer.
+func (it *idleTimer) stop() { it.pause() }

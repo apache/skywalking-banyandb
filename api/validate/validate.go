@@ -433,6 +433,103 @@ func TraceUpdate(prevTrace, newTrace *databasev1.Trace) error {
 	return nil
 }
 
+// tagFamiliesUpdate rejects deletion of entity tags or of tag families that hold them.
+func tagFamiliesUpdate(prevTFs, newTFs []*databasev1.TagFamilySpec, entityTagNames []string) error {
+	entityTagSet := make(map[string]struct{}, len(entityTagNames))
+	for _, tagName := range entityTagNames {
+		entityTagSet[tagName] = struct{}{}
+	}
+	newTagFamilyMap := make(map[string]map[string]struct{}, len(newTFs))
+	for _, tf := range newTFs {
+		tagMap := make(map[string]struct{}, len(tf.GetTags()))
+		for _, tag := range tf.GetTags() {
+			tagMap[tag.GetName()] = struct{}{}
+		}
+		newTagFamilyMap[tf.GetName()] = tagMap
+	}
+	for _, prevTagFamily := range prevTFs {
+		newTagMap, familyExists := newTagFamilyMap[prevTagFamily.GetName()]
+		if !familyExists {
+			for _, tag := range prevTagFamily.GetTags() {
+				if _, isEntity := entityTagSet[tag.GetName()]; isEntity {
+					return fmt.Errorf("cannot delete tag family %s: it contains entity tag %s", prevTagFamily.GetName(), tag.GetName())
+				}
+			}
+			continue
+		}
+		for _, prevTag := range prevTagFamily.GetTags() {
+			if _, tagExists := newTagMap[prevTag.GetName()]; tagExists {
+				continue
+			}
+			if _, isEntity := entityTagSet[prevTag.GetName()]; isEntity {
+				return fmt.Errorf("cannot delete entity tag %s in tag family %s", prevTag.GetName(), prevTagFamily.GetName())
+			}
+		}
+	}
+	return nil
+}
+
+// StreamUpdate validates the provided Stream update operation: the entity is immutable and
+// entity tags cannot be deleted.
+func StreamUpdate(prevStream, newStream *databasev1.Stream) error {
+	if prevStream.GetEntity().String() != newStream.GetEntity().String() {
+		return fmt.Errorf("entity is different: %s != %s", prevStream.GetEntity().String(), newStream.GetEntity().String())
+	}
+	return tagFamiliesUpdate(prevStream.GetTagFamilies(), newStream.GetTagFamilies(), newStream.GetEntity().GetTagNames())
+}
+
+// MeasureUpdate validates the provided Measure update operation: the interval, entity and
+// index mode are immutable, entity tags cannot be deleted and existing fields cannot change.
+func MeasureUpdate(prevMeasure, newMeasure *databasev1.Measure) error {
+	if prevMeasure.GetInterval() != newMeasure.GetInterval() {
+		return fmt.Errorf("interval is different: %s != %s", prevMeasure.GetInterval(), newMeasure.GetInterval())
+	}
+	if prevMeasure.GetEntity().String() != newMeasure.GetEntity().String() {
+		return fmt.Errorf("entity is different: %s != %s", prevMeasure.GetEntity().String(), newMeasure.GetEntity().String())
+	}
+	if prevMeasure.GetIndexMode() != newMeasure.GetIndexMode() {
+		return fmt.Errorf("index mode is different: %v != %v", prevMeasure.GetIndexMode(), newMeasure.GetIndexMode())
+	}
+	if err := tagFamiliesUpdate(prevMeasure.GetTagFamilies(), newMeasure.GetTagFamilies(), newMeasure.GetEntity().GetTagNames()); err != nil {
+		return err
+	}
+	newFieldMap := make(map[string]*databasev1.FieldSpec, len(newMeasure.GetFields()))
+	for _, field := range newMeasure.GetFields() {
+		newFieldMap[field.GetName()] = field
+	}
+	for _, prevField := range prevMeasure.GetFields() {
+		newField, fieldExists := newFieldMap[prevField.GetName()]
+		if !fieldExists {
+			continue
+		}
+		if prevField.String() != newField.String() {
+			return fmt.Errorf("field %s is different: %s != %s", prevField.GetName(), prevField.String(), newField.String())
+		}
+	}
+	return nil
+}
+
+// PipelineHasSampler reports whether an enabled trace pipeline declares at least one sampler
+// plugin. A group with such a pipeline may hold at most one trace.
+func PipelineHasSampler(cfg *commonv1.TracePipelineConfig) bool {
+	if cfg == nil || !cfg.GetEnabled() {
+		return false
+	}
+	for _, plugin := range cfg.GetPlugins() {
+		if plugin.GetSampler() != nil {
+			return true
+		}
+	}
+	for _, stage := range cfg.GetStages() {
+		for _, plugin := range stage.GetPlugins() {
+			if plugin.GetSampler() != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func tagFamily(tagFamilies []*databasev1.TagFamilySpec) error {
 	if len(tagFamilies) > 32 {
 		return fmt.Errorf("tag families count %d exceeds maximum 32", len(tagFamilies))

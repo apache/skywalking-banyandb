@@ -35,7 +35,7 @@ import (
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
@@ -45,24 +45,7 @@ func streamRows() uint64 {
 	frames := transfertest.MustPlan(conn, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{
 		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{transfertest.StreamGroup}},
 	}})
-	return groupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
-}
-
-// groupRows sums the total_count of the shards of one catalog and group in a plan.
-func groupRows(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) uint64 {
-	var n uint64
-	for _, f := range transfertest.UnitFrames(frames) {
-		for _, u := range f.GetUnits() {
-			seg := u.GetSegment()
-			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
-				continue
-			}
-			for _, sh := range seg.GetShards() {
-				n += sh.GetTotalCount()
-			}
-		}
-	}
-	return n
+	return transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
 }
 
 // expectNoSession asserts that the process holds no export session and no snapshot.
@@ -76,7 +59,7 @@ func expectNoSession() {
 var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, func() {
 	var self string
 	suiteData := func() transfertest.SuiteData {
-		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: writeInterval}
+		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: transfertest.WriteInterval}
 	}
 	allOnOneNode := func(string) bool { return true }
 
@@ -91,8 +74,8 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.BeNumerically(">", 0))
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).To(gomega.BeNumerically(">", 0))
 			// The written points and at least one _top_n_result row the Top-N processor wrote.
-			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
-				To(gomega.BeNumerically(">", measureRows+topNSourcePoints), "Top-N results")
+			g.Expect(transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
+				To(gomega.BeNumerically(">", transfertest.MeasureRows+transfertest.TopNSourcePoints), "Top-N results")
 			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.BeNumerically(">", 0))
 			g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
 			prop := propertyUnit(frames, transfertest.PropertyGroup)
@@ -163,7 +146,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		out := ginkgo.GinkgoT().TempDir()
 		gomega.Expect(os.WriteFile(filepath.Join(out, "leftover"), []byte("x"), 0o600)).To(gomega.Succeed())
 		run := transfertest.RunExport(context.Background(), grpcAddr, transfertest.DefaultExportOptions(out), nil)
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitUsage), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), run.Log)
 		expectNoSession()
 	})
 
@@ -177,7 +160,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 				return
 			}
 			wrote = true
-			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), writeInterval)
+			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), transfertest.WriteInterval)
 			gomega.Eventually(streamRows, flags.EventuallyTimeout, time.Second).Should(gomega.BeNumerically(">", before),
 				"the late rows reach the live parts while the export runs")
 		})
@@ -212,7 +195,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		gomega.Expect(holder).NotTo(gomega.BeEmpty())
 
 		refused := transfertest.RunExport(context.Background(), grpcAddr, transfertest.DefaultExportOptions(filepath.Join(ginkgo.GinkgoT().TempDir(), "second")), nil)
-		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exporter.ExitPreflight), refused.Log)
+		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exitcode.ExitPreflight), refused.Log)
 		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring(holder))
 		expectSingleSession(holder)
 
@@ -226,7 +209,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 
 		var first transfertest.ExportRun
 		gomega.Eventually(firstDone, flags.EventuallyTimeout).Should(gomega.Receive(&first))
-		gomega.Expect(first.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), first.Log)
+		gomega.Expect(first.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), first.Log)
 		gomega.Expect(first.SessionID()).To(gomega.Equal(holder))
 		transfertest.ExpectAbortedOutput(firstOut)
 		expectNoSession()
@@ -244,7 +227,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 				once.Do(func() { time.AfterFunc(2*time.Second, cancel) })
 			}
 		})
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), run.Log)
 		id := run.SessionID()
 		gomega.Expect(id).NotTo(gomega.BeEmpty())
 		gomega.Expect(run.Log).To(gomega.ContainSubstring("bydbctl data release-session --id " + id))

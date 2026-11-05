@@ -757,7 +757,7 @@ func (r *SchemaRegistry) UpdateStream(ctx context.Context, stream *databasev1.St
 	stream.Metadata.ModRevision = now
 	stream.UpdatedAt = timestamppb.Now()
 	return updateResource(ctx, r, schema.KindStream, stream, func(prev *databasev1.Stream) error {
-		if err := validateStreamUpdate(prev, stream); err != nil {
+		if err := validate.StreamUpdate(prev, stream); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
 		return nil
@@ -821,7 +821,7 @@ func (r *SchemaRegistry) UpdateMeasure(ctx context.Context, measure *databasev1.
 	measure.Metadata.ModRevision = now
 	measure.UpdatedAt = timestamppb.Now()
 	return updateResource(ctx, r, schema.KindMeasure, measure, func(prev *databasev1.Measure) error {
-		if err := validateMeasureUpdate(prev, measure); err != nil {
+		if err := validate.MeasureUpdate(prev, measure); err != nil {
 			return fmt.Errorf("validation failed: %w", err)
 		}
 		return nil
@@ -858,29 +858,6 @@ func (r *SchemaRegistry) ListTrace(ctx context.Context, opt schema.ListOpt) ([]*
 	return listResources[*databasev1.Trace](ctx, r, schema.KindTrace, opt.Group, true)
 }
 
-// pipelineEnabledWithSampler reports whether an enabled trace pipeline declares
-// at least one sampler plugin. The single-trace-per-group constraint applies
-// only to such groups.
-func pipelineEnabledWithSampler(cfg *commonv1.TracePipelineConfig) bool {
-	if cfg == nil || !cfg.GetEnabled() {
-		return false
-	}
-	for _, plugin := range cfg.GetPlugins() {
-		if plugin.GetSampler() != nil {
-			return true
-		}
-	}
-	for _, stage := range cfg.GetStages() {
-		for _, plugin := range stage.GetPlugins() {
-			if plugin.GetSampler() != nil {
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // checkTraceAgainstPipeline enforces, at registration time, that a group whose
 // trace pipeline is enabled with a sampler plugin holds at most one trace. It
 // rejects a create/update that would introduce a second, differently-named
@@ -894,7 +871,7 @@ func (r *SchemaRegistry) checkTraceAgainstPipeline(ctx context.Context, trace *d
 		// masking it. Skip the cross-entity check when the group can't be read.
 		return nil
 	}
-	if !pipelineEnabledWithSampler(g.GetPipeline()) {
+	if !validate.PipelineHasSampler(g.GetPipeline()) {
 		return nil
 	}
 	traces, listErr := r.ListTrace(ctx, schema.ListOpt{Group: groupName})
@@ -915,7 +892,7 @@ func (r *SchemaRegistry) checkTraceAgainstPipeline(ctx context.Context, trace *d
 // checkPipelineAgainstTraces enforces the inverse constraint: a sampler pipeline
 // may be enabled on a group only while the group holds at most one trace.
 func (r *SchemaRegistry) checkPipelineAgainstTraces(ctx context.Context, group *commonv1.Group) error {
-	if !pipelineEnabledWithSampler(group.GetPipeline()) {
+	if !validate.PipelineHasSampler(group.GetPipeline()) {
 		return nil
 	}
 	groupName := group.GetMetadata().GetName()
@@ -1680,6 +1657,9 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 	req := &syncRequest{
 		tagProjection: basicTagKeys,
 	}
+	// Snapshot the cache before the servers take theirs: an entry the watch delivers while
+	// the sync runs may be missing from the digests, and must not be taken for a deleted one.
+	cachedEntries := r.cache.GetAllEntries()
 	allDigests, err := r.sendSyncRequest(ctx, sessions, req)
 	if allDigests == nil {
 		return
@@ -1693,7 +1673,6 @@ func (r *SchemaRegistry) performFullSync(ctx context.Context) {
 	}
 
 	merged := r.mergeDigests(allDigests)
-	cachedEntries := r.cache.GetAllEntries()
 	r.l.Debug().Int("respondedNodes", len(allDigests)).Int("mergedCount", len(merged)).Int("cachedCount", len(cachedEntries)).
 		Msg("performFullSync: comparing server digests with local cache")
 
