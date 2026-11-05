@@ -395,6 +395,89 @@ func TestRepairSchema(t *testing.T) {
 		require.Len(t, responses, 1)
 		assert.Len(t, responses[0].Properties, 1)
 	})
+	t.Run("same revision live does not resurrect tombstone", func(t *testing.T) {
+		mgmt, _ := startTestServer(t)
+		insertProperty(t, mgmt, "svc", "id1")
+		revision, _ := latestSchemaState(t, mgmt)
+		resp, rpcErr := mgmt.DeleteSchema(context.Background(), &schemav1.DeleteSchemaRequest{
+			Delete: &propertyv1.DeleteRequest{Group: schema.SchemaGroup, Name: "svc", Id: "id1"}, UpdateAt: timestamppb.Now(),
+		})
+		require.NoError(t, rpcErr)
+		require.True(t, resp.Found)
+		deletedRevision, deleteTime := latestSchemaState(t, mgmt)
+		require.Equal(t, revision, deletedRevision)
+		require.Positive(t, deleteTime)
+
+		repairSchema(t, mgmt, revision, 0)
+		gotRevision, gotDeleteTime := latestSchemaState(t, mgmt)
+		assert.Equal(t, revision, gotRevision)
+		assert.Equal(t, deleteTime, gotDeleteTime)
+	})
+	t.Run("same revision tombstone overrides live", func(t *testing.T) {
+		mgmt, _ := startTestServer(t)
+		insertProperty(t, mgmt, "svc", "id1")
+		revision, liveDeleteTime := latestSchemaState(t, mgmt)
+		require.Zero(t, liveDeleteTime)
+		tombstoneTime := time.Now().Add(-time.Minute).UnixNano()
+
+		repairSchema(t, mgmt, revision, tombstoneTime)
+		gotRevision, gotDeleteTime := latestSchemaState(t, mgmt)
+		assert.Equal(t, revision, gotRevision)
+		assert.Equal(t, tombstoneTime, gotDeleteTime)
+	})
+	t.Run("same revision tombstones keep the smaller deleteTime", func(t *testing.T) {
+		mgmt, _ := startTestServer(t)
+		insertProperty(t, mgmt, "svc", "id1")
+		revision, _ := latestSchemaState(t, mgmt)
+		now := time.Now()
+		t1 := now.Add(-3 * time.Minute).UnixNano()
+		t2 := now.Add(-2 * time.Minute).UnixNano()
+		t3 := now.Add(-time.Minute).UnixNano()
+
+		repairSchema(t, mgmt, revision, t2)
+		_, gotDeleteTime := latestSchemaState(t, mgmt)
+		require.Equal(t, t2, gotDeleteTime)
+		repairSchema(t, mgmt, revision, t1)
+		_, gotDeleteTime = latestSchemaState(t, mgmt)
+		assert.Equal(t, t1, gotDeleteTime)
+		repairSchema(t, mgmt, revision, t3)
+		_, gotDeleteTime = latestSchemaState(t, mgmt)
+		assert.Equal(t, t1, gotDeleteTime)
+		repairSchema(t, mgmt, revision, 0)
+		_, gotDeleteTime = latestSchemaState(t, mgmt)
+		assert.Equal(t, t1, gotDeleteTime)
+	})
+}
+
+// repairSchema repairs the "svc"/"id1" test property at the given revision and delete time.
+func repairSchema(t *testing.T, mgmt schemav1.SchemaManagementServiceClient, revision, deleteTime int64) {
+	t.Helper()
+	property := testProperty("svc", "id1")
+	property.Metadata.ModRevision = revision
+	_, rpcErr := mgmt.RepairSchema(context.Background(), &schemav1.RepairSchemaRequest{Property: property, DeleteTime: deleteTime})
+	require.NoError(t, rpcErr)
+}
+
+// latestSchemaState returns the revision and delete time of the newest stored document of the "svc"/"id1" test property.
+func latestSchemaState(t *testing.T, mgmt schemav1.SchemaManagementServiceClient) (revision, deleteTime int64) {
+	t.Helper()
+	stream, streamErr := mgmt.ListSchemas(context.Background(), &schemav1.ListSchemasRequest{
+		Query: &propertyv1.QueryRequest{Groups: []string{schema.SchemaGroup}, Name: "svc", Ids: []string{"id1"}},
+	})
+	require.NoError(t, streamErr)
+	responses, recvErr := collectListResponses(stream)
+	require.NoError(t, recvErr)
+	found := false
+	for _, resp := range responses {
+		require.Len(t, resp.DeleteTimes, len(resp.Properties))
+		for i, p := range resp.Properties {
+			if !found || p.Metadata.ModRevision > revision {
+				revision, deleteTime, found = p.Metadata.ModRevision, resp.DeleteTimes[i], true
+			}
+		}
+	}
+	require.True(t, found, "schema property svc/id1 not found")
+	return revision, deleteTime
 }
 
 func TestWatchSchemas_BiDirReplay(t *testing.T) {

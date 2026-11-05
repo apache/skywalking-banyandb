@@ -123,7 +123,7 @@ func TestFrameSink_ByteRateChunksAndPace(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			limiter := newByteLimiter(uint64(tc.bytesPerSecond))
+			limiter := newBucket(uint64(tc.bytesPerSecond))
 			require.Equal(t, tc.wantChunk, chunkLimit(limiter))
 			// 64 KiB rows: about 1.5s beyond the one-second burst at every rate.
 			elapsed, file, chunks := newRateStream(t, limiter, nil, false).write(t, tc.rows, 64<<10)
@@ -158,7 +158,7 @@ func TestFileWriter_LowRowRateSendsEveryRow(t *testing.T) {
 				if rowsPerSecond == 5 {
 					n = 6
 				}
-				elapsed, _, chunks := newRateStream(t, nil, drained(newRowLimiter(rowsPerSecond)), gzip).write(t, n, 8)
+				elapsed, _, chunks := newRateStream(t, nil, drained(newBucket(rowsPerSecond)), gzip).write(t, n, 8)
 				var carried []uint64
 				for _, c := range chunks {
 					carried = append(carried, c.GetRows())
@@ -181,7 +181,7 @@ func TestFileWriter_HighRowRateDoesNotFlushPerRow(t *testing.T) {
 	for name, gzip := range map[string]bool{"plain": false, "gzip": true} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			elapsed, _, chunks := newRateStream(t, nil, drained(newRowLimiter(rowsPerSecond)), gzip).write(t, n, 8)
+			elapsed, _, chunks := newRateStream(t, nil, drained(newBucket(rowsPerSecond)), gzip).write(t, n, 8)
 			require.LessOrEqual(t, len(chunks), 10, "a high row rate must not send a chunk per row")
 			require.Equal(t, uint64(n), chunks[len(chunks)-1].GetRows())
 			assertTook(t, elapsed, time.Duration(n)*time.Second/rowsPerSecond)
@@ -195,7 +195,7 @@ func TestFileWriter_LowerOfByteAndRowRateGoverns(t *testing.T) {
 		t.Parallel()
 		// 4 small rows at 4 rows/s take about a second; 1 MiB/s alone would not wait at all.
 		const rowsPerSecond, n = 4, 4
-		elapsed, _, chunks := newRateStream(t, newByteLimiter(1<<20), drained(newRowLimiter(rowsPerSecond)), false).write(t, n, 8)
+		elapsed, _, chunks := newRateStream(t, newBucket(1<<20), drained(newBucket(rowsPerSecond)), false).write(t, n, 8)
 		assertTook(t, elapsed, time.Second)
 		var carried []uint64
 		for _, c := range chunks {
@@ -207,7 +207,7 @@ func TestFileWriter_LowerOfByteAndRowRateGoverns(t *testing.T) {
 		t.Parallel()
 		// 5 rows of 64 KiB at 128 KiB/s take about 1.5s; 50000 rows/s alone would not wait.
 		const bytesPerSecond = 128 << 10
-		elapsed, file, chunks := newRateStream(t, newByteLimiter(bytesPerSecond), newRowLimiter(50000), false).write(t, 5, 64<<10)
+		elapsed, file, chunks := newRateStream(t, newBucket(bytesPerSecond), newBucket(50000), false).write(t, 5, 64<<10)
 		for _, c := range chunks {
 			require.LessOrEqual(t, len(c.GetContent()), bytesPerSecond)
 		}

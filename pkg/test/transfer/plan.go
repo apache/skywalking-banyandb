@@ -105,6 +105,57 @@ func IndexModeDocs(frames []*transferv1.PlanResponse, group string) uint64 {
 	return docs
 }
 
+// PropertyDocs adds up the documents the inventory reports for a property group, on every
+// node.
+func PropertyDocs(frames []*transferv1.PlanResponse, group string) uint64 {
+	var docs uint64
+	for _, f := range UnitFrames(frames) {
+		for _, u := range f.GetUnits() {
+			if p := u.GetProperty(); p != nil && p.GetGroup() == group {
+				for _, sh := range p.GetShards() {
+					docs += sh.GetDocCount()
+				}
+			}
+		}
+	}
+	return docs
+}
+
+// GroupRows sums the total_count of one catalog and group's shards on every node.
+func GroupRows(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) uint64 {
+	var n uint64
+	for _, byNode := range RowsByStageNode(frames, catalog, group) {
+		for _, rows := range byNode {
+			n += rows
+		}
+	}
+	return n
+}
+
+// RowsByStageNode sums the total_count of one catalog and group's shards per node stage ("" is
+// the default stage) and node; nodes without rows are left out.
+func RowsByStageNode(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) map[string]map[string]uint64 {
+	out := map[string]map[string]uint64{}
+	for _, f := range UnitFrames(frames) {
+		for _, u := range f.GetUnits() {
+			seg := u.GetSegment()
+			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
+				continue
+			}
+			for _, sh := range seg.GetShards() {
+				if sh.GetTotalCount() == 0 {
+					continue
+				}
+				if out[f.GetStage()] == nil {
+					out[f.GetStage()] = map[string]uint64{}
+				}
+				out[f.GetStage()][f.GetNodeId()] += sh.GetTotalCount()
+			}
+		}
+	}
+	return out
+}
+
 // Sessions runs one ExportService.Sessions call and drains every frame it streams: one per
 // data node through a liaison, a single one straight from a data node.
 func Sessions(conn *grpc.ClientConn, req *transferv1.SessionsRequest) ([]*transferv1.SessionsResponse, error) {

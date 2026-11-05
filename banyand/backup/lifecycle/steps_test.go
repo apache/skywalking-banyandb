@@ -96,7 +96,7 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 // Note: parseGroup's (senderNode, senderRole, senderTier) return is
 // driven by resolveSelfIdentity, which is exhaustively covered by
 // TestResolveSelfIdentity below. The full parseGroup body requires a
-// real metadata.Repo for nodeSel.OnInit (steps.go:335) and a real
+// real metadata.Repo for node.NewStageSelector (steps.go) and a real
 // clusterStateMgr for the route table, so calling parseGroup from a
 // unit test requires an integration harness — that coverage lives in
 // test/cases/lifecycle/lifecycle.go.

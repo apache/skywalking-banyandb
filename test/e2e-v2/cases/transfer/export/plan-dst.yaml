@@ -1,0 +1,35 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+# plan.yaml of the import cases (`bydbctl data import --plan`). connection.nodes is static, so
+# docker-compose.yml pins liaison_dst's gRPC port to 27912 on the host. The artifact directory is
+# created at run time and passed with --input. scripts/import-conflict.sh pre-creates
+# sw_records/event on the destination with one extra tag: without a rule the import refuses it
+# (exit 2); this rule overwrites it with the artifact's definition. The group rule only matters if
+# the pre-created group, built from the artifact, ever differs from it. Nothing that a dry run
+# ignores (verify, batching, parallelism) is set here, so the dry run prints no note about it and
+# its table stays byte-identical to the real import's.
+connection:
+  nodes:
+    - 127.0.0.1:27912
+import:
+  schemaConflictPolicy:
+    default: error
+    rules:
+      - match: stream/sw_records/event
+        policy: overwrite
+      - match: group/sw_records
+        policy: overwrite
