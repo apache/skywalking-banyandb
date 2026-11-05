@@ -91,8 +91,8 @@ func newMeasureWriteHarness(t *testing.T, cfg writeSessionConfig) *measureWriteH
 	return &measureWriteHarness{client: measurev1.NewMeasureServiceClient(conn), fake: fake, service: svc, conn: conn}
 }
 
-// measureRow builds a data point whose single tag is the entity, so rows with the same entity share a node.
-func measureRow(messageID uint64, withMetadata bool, spec *measurev1.DataPointSpec) *measurev1.WriteRequest {
+// measureWriteRow builds a data point whose single tag is the entity, so rows with the same entity share a node.
+func measureWriteRow(messageID uint64, withMetadata bool, spec *measurev1.DataPointSpec) *measurev1.WriteRequest {
 	req := &measurev1.WriteRequest{
 		MessageId: messageID,
 		DataPoint: &measurev1.DataPointValue{
@@ -138,7 +138,7 @@ func TestMeasureWriteSendThenReadClientDoesNotDeadlock(t *testing.T) {
 		if id == 1 {
 			rowSpec = spec
 		}
-		require.NoError(t, stream.Send(measureRow(id, id == 1, rowSpec)))
+		require.NoError(t, stream.Send(measureWriteRow(id, id == 1, rowSpec)))
 	}
 	require.NoError(t, stream.CloseSend())
 	t.Logf("sent %d rows before reading in %s", total, time.Since(start))
@@ -169,8 +169,8 @@ func TestMeasureWriteAcknowledgesEachSealedBatchWhileStreamStaysOpen(t *testing.
 	require.NoError(t, err)
 	for round := uint64(0); round < 3; round++ {
 		first, second := round*2+1, round*2+2
-		require.NoError(t, stream.Send(measureRow(first, round == 0, measureSpecFor(round == 0))))
-		require.NoError(t, stream.Send(measureRow(second, false, nil)))
+		require.NoError(t, stream.Send(measureWriteRow(first, round == 0, measureSpecFor(round == 0))))
+		require.NoError(t, stream.Send(measureWriteRow(second, false, nil)))
 		// The client has not half-closed: both acknowledgements must arrive on their own.
 		got := map[uint64]modelv1.Status{}
 		for i := 0; i < 2; i++ {
@@ -198,8 +198,8 @@ func TestMeasureWriteHalfCloseAcknowledgesRowsHeldInTheOpenBatch(t *testing.T) {
 	defer cancel()
 	stream, err := h.client.Write(ctx)
 	require.NoError(t, err)
-	require.NoError(t, stream.Send(measureRow(1, true, measureSpec("svc"))))
-	require.NoError(t, stream.Send(measureRow(2, false, nil)))
+	require.NoError(t, stream.Send(measureWriteRow(1, true, measureSpec("svc"))))
+	require.NoError(t, stream.Send(measureWriteRow(2, false, nil)))
 	require.NoError(t, stream.CloseSend())
 	got := map[uint64]modelv1.Status{}
 	for i := 0; i < 2; i++ {
@@ -223,7 +223,7 @@ func TestMeasureWriteRepeatedMetadataAndSpecShareOneBatch(t *testing.T) {
 	// all rows go to one node, so they must stay in one batch.
 	const rows = 10
 	for id := uint64(1); id <= rows; id++ {
-		require.NoError(t, stream.Send(measureRow(id, true, measureSpec("svc", "k"))))
+		require.NoError(t, stream.Send(measureWriteRow(id, true, measureSpec("svc", "k"))))
 	}
 	require.NoError(t, stream.CloseSend())
 	for i := 0; i < rows; i++ {
@@ -247,10 +247,10 @@ func TestMeasureWriteSpecSwitchLandsOnNextBatch(t *testing.T) {
 	specA := measureSpec("svc", "k")
 	specB := measureSpec("k", "svc")
 	// Rows 1-2 use specA; row 3 switches to specB, so it cannot share a batch with them.
-	require.NoError(t, stream.Send(measureRow(1, true, specA)))
-	require.NoError(t, stream.Send(measureRow(2, false, nil)))
-	require.NoError(t, stream.Send(measureRow(3, false, specB)))
-	require.NoError(t, stream.Send(measureRow(4, false, nil)))
+	require.NoError(t, stream.Send(measureWriteRow(1, true, specA)))
+	require.NoError(t, stream.Send(measureWriteRow(2, false, nil)))
+	require.NoError(t, stream.Send(measureWriteRow(3, false, specB)))
+	require.NoError(t, stream.Send(measureWriteRow(4, false, nil)))
 	require.NoError(t, stream.CloseSend())
 	for i := 0; i < 4; i++ {
 		resp, recvErr := stream.Recv()
@@ -284,10 +284,10 @@ func TestMeasureWriteKeysAcknowledgementByMessageIDAndDerivesVersion(t *testing.
 	defer cancel()
 	stream, err := h.client.Write(ctx)
 	require.NoError(t, err)
-	explicit := measureRow(42, true, measureSpec("svc"))
+	explicit := measureWriteRow(42, true, measureSpec("svc"))
 	explicit.DataPoint.Version = 7
 	require.NoError(t, stream.Send(explicit))
-	derived := measureRow(43, false, nil)
+	derived := measureWriteRow(43, false, nil)
 	require.NoError(t, stream.Send(derived))
 	require.NoError(t, stream.CloseSend())
 	got := map[uint64]*measurev1.WriteResponse{}
@@ -325,8 +325,8 @@ func TestMeasureWriteBusyBatchIsRetriedAndAcknowledgedOnce(t *testing.T) {
 	defer cancel()
 	stream, err := h.client.Write(ctx)
 	require.NoError(t, err)
-	require.NoError(t, stream.Send(measureRow(1, true, measureSpec("svc"))))
-	require.NoError(t, stream.Send(measureRow(2, false, nil)))
+	require.NoError(t, stream.Send(measureWriteRow(1, true, measureSpec("svc"))))
+	require.NoError(t, stream.Send(measureWriteRow(2, false, nil)))
 	got := map[uint64]modelv1.Status{}
 	for i := 0; i < 2; i++ {
 		resp, recvErr := stream.Recv()
@@ -356,7 +356,7 @@ func TestMeasureWritePressureTimeoutEndsStreamWithResourceExhausted(t *testing.T
 		if id == 1 {
 			spec = measureSpec("svc")
 		}
-		require.NoError(t, stream.Send(measureRow(id, id == 1, spec)))
+		require.NoError(t, stream.Send(measureWriteRow(id, id == 1, spec)))
 	}
 	// The client keeps the stream open and only reads: the server must end it by itself.
 	var got []*measurev1.WriteResponse
@@ -387,11 +387,11 @@ func TestMeasureWriteLiaisonMemoryPressureSetsRetryAfterWhileStreamStaysOpen(t *
 		if first {
 			spec = measureSpec("svc")
 		}
-		require.NoError(t, stream.Send(measureRow(id, first, spec)))
+		require.NoError(t, stream.Send(measureWriteRow(id, first, spec)))
 	}
 	// A row for an unknown measure with a schema revision is rejected on its own, so it exercises the per-row reply path.
 	sendMissing := func(id uint64) {
-		row := measureRow(id, true, nil)
+		row := measureWriteRow(id, true, nil)
 		row.Metadata = &commonv1.Metadata{Group: "g", Name: "missing", ModRevision: 5}
 		require.NoError(t, stream.Send(row))
 	}
@@ -451,7 +451,7 @@ func TestMeasureWriteMetadataRequiredEndsStream(t *testing.T) {
 	defer cancel()
 	stream, err := h.client.Write(ctx)
 	require.NoError(t, err)
-	require.NoError(t, stream.Send(measureRow(7, false, nil)))
+	require.NoError(t, stream.Send(measureWriteRow(7, false, nil)))
 	// The reply has no metadata to carry, so the handler ends the stream with an error instead.
 	_, recvErr := stream.Recv()
 	require.Error(t, recvErr)
