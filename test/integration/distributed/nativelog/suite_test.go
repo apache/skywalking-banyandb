@@ -44,13 +44,6 @@ func TestNativeLogDistributed(t *testing.T) {
 // their console is the stderr of the test binary.
 var console *test.CapturedStderr
 
-// fastSchemaSync shortens schema convergence. The producing data node creates
-// the log group after the other nodes have started, and a node that does not
-// know a group fails the whole distributed query rather than returning what
-// the others hold (apache/skywalking#14104). With the default 30s interval the
-// full reconcile that repairs it is 150s away.
-const fastSchemaSync = "--schema-property-client-sync-interval=1s"
-
 var stops []func()
 
 var _ = BeforeSuite(func() {
@@ -77,12 +70,12 @@ var _ = BeforeSuite(func() {
 	// fails the whole distributed query rather than returning what the others
 	// hold (apache/skywalking#14104); with the default 30s interval its full
 	// reconcile is 150s away.
-	_, _, _, stopSchema := setup.DataNodeWithAddrAndDir(config, fastSchemaSync)
+	_, _, _, stopSchema := setup.DataNodeWithAddrAndDir(config, setup.FastSchemaSync)
 	stops = append(stops, stopSchema)
-	liaisonAddr, stopLiaison := setup.LiaisonNode(config, fastSchemaSync)
+	liaisonAddr, stopLiaison := setup.LiaisonNode(config, setup.FastSchemaSync)
 	stops = append(stops, stopLiaison)
 	dataAddr, _, _, stopData := setup.DataNodeWithAddrAndDir(config,
-		append(append([]string{}, cases.NativeFlags...), fastSchemaSync)...)
+		append(append([]string{}, setup.NativeLogFlags...), setup.FastSchemaSync)...)
 	stops = append(stops, stopData)
 
 	conn, err := grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
