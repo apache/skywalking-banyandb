@@ -207,6 +207,7 @@ var _ = ginkgo.Describe("vec independent verification (distributed)", ginkgo.Ord
 	}
 	casesmeasure.RegisterQLTable("QL measure RPC verification", observeQLFixture)
 	casesmeasure.RegisterQLBatchTable("QL shared batch execution", observeQLFixture)
+	casesmeasure.RegisterMultiGroupAggTable("Multi-group measure aggregation")
 	casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
 	casestopn.RegisterTable("Vec (distributed): TopN")
 })
