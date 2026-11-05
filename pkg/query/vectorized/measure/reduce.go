@@ -97,7 +97,7 @@ func ReduceRawFrames(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
-	return ReduceRawFramesToSchema(frames, nil, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
+	return ReduceRawFramesToSchema(frames, nil, nil, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReduceRawFramesToSchema is ReduceRawFrames for partials that may come
@@ -105,9 +105,13 @@ func ReduceRawFrames(
 // target before reducing (see checkPartialLayouts), so target, not whichever
 // partials happen to arrive, decides the reduced layout. A nil target
 // requires every partial to share one layout, like ReduceRawFrames.
+// scopes, when set, holds one replica-dedup scope per frame, in the same
+// order as frames (its storage group, see BatchAggregation.SetDedupScope);
+// len(scopes) must equal len(frames). nil puts every frame in one scope.
 func ReduceRawFramesToSchema(
 	frames [][]byte,
 	target *vectorized.BatchSchema,
+	scopes []int64,
 	keyTagFamily string,
 	keyTagNames []string,
 	bucketed bool,
@@ -115,6 +119,9 @@ func ReduceRawFramesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
+	if scopes != nil && len(scopes) != len(frames) {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReduceRawFrames: %d scopes for %d frames", len(scopes), len(frames))
+	}
 	decoded := make([]*vectorized.RecordBatch, 0, len(frames))
 	// A columnar partial borrows its frame; the reduce copies the keys and values it keeps
 	// (the aggregation inserts by copy), so the partials can go once it returns.
@@ -123,6 +130,7 @@ func ReduceRawFramesToSchema(
 			b.ReleaseOwners()
 		}
 	}()
+	var decodedScopes []int64
 	for i, body := range frames {
 		if len(body) == 0 {
 			continue
@@ -132,8 +140,11 @@ func ReduceRawFramesToSchema(
 			return nil, AggValuePathUnresolved, fmt.Errorf("ReduceRawFrames: decode partial %d: %w", i, decodeErr)
 		}
 		decoded = append(decoded, b)
+		if scopes != nil {
+			decodedScopes = append(decodedScopes, scopes[i])
+		}
 	}
-	return ReducePartialBatchesToSchema(decoded, target, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
+	return ReducePartialBatchesToSchema(decoded, target, decodedScopes, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReducePartialBatches is the in-memory counterpart of ReduceRawFrames —
@@ -153,15 +164,18 @@ func ReducePartialBatches(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
-	return ReducePartialBatchesToSchema(partials, nil, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
+	return ReducePartialBatchesToSchema(partials, nil, nil, keyTagFamily, keyTagNames, bucketed, aggSpecs, batchSize, tracker)
 }
 
 // ReducePartialBatchesToSchema is ReducePartialBatches with every
 // non-empty partial first reshaped onto target (see checkPartialLayouts). A nil
-// target keeps ReducePartialBatches' behavior.
+// target keeps ReducePartialBatches' behavior. scopes, when set, holds one
+// replica-dedup scope per partial, in the same order as partials;
+// len(scopes) must equal len(partials). nil puts every partial in one scope.
 func ReducePartialBatchesToSchema(
 	partials []*vectorized.RecordBatch,
 	target *vectorized.BatchSchema,
+	scopes []int64,
 	keyTagFamily string,
 	keyTagNames []string,
 	bucketed bool,
@@ -169,6 +183,9 @@ func ReducePartialBatchesToSchema(
 	batchSize int,
 	tracker *vectorized.MemoryTracker,
 ) ([]*vectorized.RecordBatch, AggValuePath, error) {
+	if scopes != nil && len(scopes) != len(partials) {
+		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %d scopes for %d partials", len(scopes), len(partials))
+	}
 	if layoutErr := checkPartialLayouts(partials, target, keyTagFamily, keyTagNames); layoutErr != nil {
 		return nil, AggValuePathUnresolved, fmt.Errorf("ReducePartialBatches: %w", layoutErr)
 	}
@@ -207,6 +224,9 @@ func ReducePartialBatchesToSchema(
 	for i, b := range partials {
 		if b == nil || b.Len == 0 {
 			continue
+		}
+		if scopes != nil {
+			op.SetDedupScope(scopes[i])
 		}
 		if target != nil && !slices.Equal(b.Schema.Columns, target.Columns) {
 			if wideScratch == nil {
