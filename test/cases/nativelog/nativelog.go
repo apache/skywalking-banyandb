@@ -79,11 +79,6 @@ const (
 )
 
 var (
-	// NativeFlags turns native logging on with the thresholds the cases
-	// assume: the console at error and native storage at info, so an info line
-	// is stored and not printed.
-	NativeFlags = []string{"--logging-native-enabled", "--logging-native-level=info", "--logging-level=error"}
-
 	// DisabledFlags leaves native logging off, its default, and prints info
 	// lines, so a case can see that a node logged a line it did not store.
 	DisabledFlags = []string{"--logging-level=info"}
@@ -224,23 +219,20 @@ var _ = g.Describe("Native self-stored logs", func() {
 				stop()
 			}
 		}()
-		// The process keeps one metrics registry, so a counter carries what
-		// earlier cases left behind; every assertion here is on the change.
-		droppedBefore, _ := metric(node.MetricsURL, droppedPublishFailed)
-		writtenBefore, ok := metric(node.MetricsURL, writtenTotal)
-		gm.Expect(ok).To(gm.BeTrue(), "%s not published", writtenTotal)
 		// The node's own startup lines drive the sink here. Nothing else is
 		// created: a nonce group would outlive this phase, and a stream group
 		// without a stream stops the next start, because the launcher waits
-		// for every stream group to hold one.
+		// for every stream group to hold one. Each start has its own sink and
+		// metrics registry, so the counters start at zero; they are published
+		// from the first report, a flush interval after the start.
 		gm.Eventually(func(inner gm.Gomega) {
 			v, found := metric(node.MetricsURL, droppedPublishFailed)
 			inner.Expect(found).To(gm.BeTrue(), "%s not published", droppedPublishFailed)
-			inner.Expect(v).To(gm.BeNumerically(">", droppedBefore))
+			inner.Expect(v).To(gm.BeNumerically(">", 0))
 		}, flags.EventuallyTimeout, time.Second).Should(gm.Succeed())
 		written, ok := metric(node.MetricsURL, writtenTotal)
 		gm.Expect(ok).To(gm.BeTrue(), "%s not published", writtenTotal)
-		gm.Expect(written).To(gm.Equal(writtenBefore), "batches were counted as written while the storage refused them")
+		gm.Expect(written).To(gm.BeZero(), "batches were counted as written while the storage refused them")
 		// Checked before the restart, and on every line the node logged: with
 		// the storage refusing writes, it has no row at all.
 		rows, err := query(node.Conn, nodeEq(node.NodeID), nil)

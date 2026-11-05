@@ -27,13 +27,14 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
 
 const (
 	// GroupName holds BanyanDB's own log events. It cannot be _monitoring:
 	// group names are unique across catalogs and that one is a measure group,
 	// while log events are elements of a stream.
-	GroupName = "_monitoring_log"
+	GroupName = logger.NativeLogGroup
 	// StreamName is the single stream every role writes to. The node_type tag
 	// separates the roles, so one schema serves all of them.
 	StreamName = "log"
