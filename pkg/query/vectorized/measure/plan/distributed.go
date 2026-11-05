@@ -638,7 +638,7 @@ func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, re
 			}
 			frames++
 			// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
-			consumeErr := reducer.Consume(batch)
+			consumeErr := reducer.ConsumeScoped(batch, int64(src.group))
 			batch.ReleaseOwners()
 			if consumeErr != nil {
 				return nil, p.failReduce(reduceSpan, fmt.Errorf("vec distributed plan: reduce raw frames: %w", consumeErr))

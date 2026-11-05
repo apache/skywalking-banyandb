@@ -236,6 +236,7 @@ func registerDistributedMeasureSuite(describe, suffix string, tinyChunks bool) {
 		}
 		casesmeasure.RegisterQLTable("QL measure RPC verification"+suffix, observeQLFixture)
 		casesmeasure.RegisterQLBatchTable("QL shared batch execution"+suffix, observeQLFixture)
+		casesmeasure.RegisterMultiGroupAggTable("Multi-group measure aggregation" + suffix)
 		if !tinyChunks {
 			casesmeasure.RegisterGeneratedQLTable("Generated QL-only measure RPC verification")
 			casestopn.RegisterTable("Vec (distributed): TopN")
