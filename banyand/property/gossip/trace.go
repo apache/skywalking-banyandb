@@ -29,6 +29,7 @@ import (
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -43,7 +44,7 @@ import (
 )
 
 var (
-	internalTraceGroupName  = "_property_gossip"
+	internalTraceGroupName  = common.PropertyGossipGroup
 	internalTraceStreamName = "_property_gossip_trace_stream"
 
 	traceSavingTimeout     = time.Second * 10

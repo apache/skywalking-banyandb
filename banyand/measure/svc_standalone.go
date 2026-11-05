@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 var (
@@ -348,6 +349,9 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	}
 	err = s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 	if err != nil {
+		return err
+	}
+	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
 		return err
 	}
 	// Register chunked sync handler for measure data.

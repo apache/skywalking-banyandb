@@ -1,0 +1,29 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Output of scripts/import-dryrun.sh: with plan-dst.yaml and --force-ttl the dry run and the real
+# import both exit 0 and print the same decision table byte for byte (it ends with the RESULT
+# line), the dry run leaves the destination schema unchanged, and the table rows whose STATUS is expired
+# (units older than the destination's TTL, imported anyway because of --force-ttl) are exactly the
+# ttlExpected rows the importer's TTL gate predicts from artifact A's manifest. Whether the
+# source's hour/day metrics are still on the hot node, past the one-day hot TTL, depends on the
+# day the run crosses their segment boundary, so the count is computed, not pinned.
+dryRunExitCode: 0
+importExitCode: 0
+tablesIdentical: true
+tableHasResult: true
+schemaUnchangedByDryRun: true
+ttlRows: {{ .ttlExpected }}
+ttlExpected: {{ ge .ttlExpected 0 }}

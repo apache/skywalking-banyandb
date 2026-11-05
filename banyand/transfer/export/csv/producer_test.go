@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
 // recordingRun returns a unit run whose frames are recorded.
@@ -264,24 +265,24 @@ func TestReadOnlyFSReportsMissingDirectory(t *testing.T) {
 }
 
 func TestLimiters(t *testing.T) {
-	require.Nil(t, newByteLimiter(0))
-	require.Nil(t, newRowLimiter(0))
-	require.Equal(t, 1, newByteLimiter(1).Burst(), "one second's worth")
-	require.Equal(t, 4*chunkSize, newByteLimiter(4*chunkSize).Burst())
-	require.Equal(t, 1, newRowLimiter(1).Burst())
+	require.Nil(t, newBucket(0))
+	require.Nil(t, newBucket(0))
+	require.Equal(t, 1, newBucket(1).Burst(), "one second's worth")
+	require.Equal(t, 4*chunkSize, newBucket(4*chunkSize).Burst())
+	require.Equal(t, 1, newBucket(1).Burst())
 	// A chunk always fits the burst: a rate below chunkSize sends one second's worth at a time.
 	require.Equal(t, chunkSize, chunkLimit(nil))
-	require.Equal(t, 1, chunkLimit(newByteLimiter(1)))
-	require.Equal(t, 64<<10, chunkLimit(newByteLimiter(64<<10)))
-	require.Equal(t, chunkSize, chunkLimit(newByteLimiter(4*chunkSize)))
-	require.NoError(t, waitN(context.Background(), newByteLimiter(1), chunkLimit(newByteLimiter(1))))
+	require.Equal(t, 1, chunkLimit(newBucket(1)))
+	require.Equal(t, 64<<10, chunkLimit(newBucket(64<<10)))
+	require.Equal(t, chunkSize, chunkLimit(newBucket(4*chunkSize)))
+	require.NoError(t, ratelimit.Wait(context.Background(), newBucket(1), chunkLimit(newBucket(1))))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	require.Equal(t, codes.Canceled, status.Code(waitN(ctx, newRowLimiter(1), 1)))
+	require.Equal(t, codes.Canceled, status.Code(ratelimit.Wait(ctx, newBucket(1), 1)))
 
 	// A full row bucket does not wait; an empty one at 1 row/s waits about a second.
-	rows := newRowLimiter(1)
+	rows := newBucket(1)
 	require.Zero(t, rowWait(rows))
-	require.NoError(t, waitN(context.Background(), rows, 1))
+	require.NoError(t, ratelimit.Wait(context.Background(), rows, 1))
 	require.InDelta(t, time.Second, rowWait(rows), float64(100*time.Millisecond))
 }

@@ -20,6 +20,7 @@ syntax = "proto3";
 package banyandb.transfer.v1;
 
 import "banyandb/common/v1/common.proto";
+import "banyandb/transfer/v1/common.proto";
 import "validate/validate.proto";
 
 option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1";
@@ -325,15 +326,6 @@ enum Compress {
   COMPRESS_UNSPECIFIED = 0;
   COMPRESS_NONE = 1;
   COMPRESS_GZIP = 2;
-}
-
-// RateLimit caps what one data node produces for one Export stream; 0 means unlimited.
-// The node enforces it: only the producer knows how many rows it has written.
-message RateLimit {
-  // Bytes written to the stream per second, for both formats.
-  uint64 bytes_per_second = 1;
-  // Rows encoded per second; CSV only, native ignores it.
-  uint64 rows_per_second = 2;
 }
 
 // PropertyUnit keys the property shards one node holds for one group. Property groups have
