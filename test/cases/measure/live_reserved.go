@@ -23,6 +23,7 @@ import (
 	gm "github.com/onsi/gomega"
 
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -31,4 +32,11 @@ import (
 // the query returns, so the check must allow for that.
 func expectLiveReservedBytes(want int64) {
 	gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(want))
+}
+
+// expectLiveResults waits for the live native batch results of this process to return to want. The data nodes close
+// their results when the liaison cancels their streams, so a query that ends early leaves them open for a moment after
+// it returns.
+func expectLiveResults(want int64) {
+	gm.Eventually(func() int64 { return vmeasure.BatchExecutionStats().LiveResults }, flags.EventuallyTimeout, 10*time.Millisecond).Should(gm.Equal(want))
 }

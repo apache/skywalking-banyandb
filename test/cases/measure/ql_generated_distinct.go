@@ -109,7 +109,7 @@ func verifyGeneratedDistinctCall(base time.Time, c qlgen.Case) {
 		after := vmeasure.BatchExecutionStats()
 		distinctAfter := ql.DistinctExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+		expectLiveResults(before.LiveResults)
 		gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "all readiness and verification use the QL endpoint")
 		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(distinctAfter.LiveBytes).To(gm.Equal(distinctBefore.LiveBytes))

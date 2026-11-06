@@ -159,7 +159,7 @@ func verifyGeneratedHavingCall(base time.Time, c qlgen.Case, branches uint64, fo
 	defer func() {
 		after := vmeasure.BatchExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+		expectLiveResults(before.LiveResults)
 		gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "readiness and verification issue only QL query RPCs")
 		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		for _, pair := range [][2]ql.FilterStats{{filterBefore, ql.FilterExecutionStats()}, {havingBefore, ql.HavingExecutionStats()}} {
