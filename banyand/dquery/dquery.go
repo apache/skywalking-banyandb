@@ -46,9 +46,10 @@ const (
 	moduleName   = "distributed-query"
 	hotStageName = "hot"
 
-	defaultMaxChunkRowsTrace  = 256
-	defaultMaxChunkRowsStream = 4096
-	defaultMaxChunkBytes      = 4 << 20
+	defaultMaxChunkRowsTrace   = 256
+	defaultMaxChunkRowsStream  = 4096
+	defaultMaxChunkRowsMeasure = 4096
+	defaultMaxChunkBytes       = 4 << 20
 )
 
 var _ run.Service = (*queryService)(nil)
@@ -73,14 +74,6 @@ type queryService struct {
 	nodeID               string
 	hotStageNodeSelector string
 	slowQuery            time.Duration
-	// broadcastTimeout bounds how long the liaison waits for each measure
-	// query broadcast (per-group fanout under multi-group). Both the row
-	// distributed plan and the vec distributed plan inherit this value;
-	// the default matches their historical hard-coded 15 s. Operators
-	// running large non-paginated scans should raise it to a value that
-	// lets the slow query complete instead of returning DeadlineExceeded
-	// mid-merge.
-	broadcastTimeout time.Duration
 	// maxChunkBytes caps the size of one scan chunk a data node sends. The caps are constants; only a test hook
 	// changes them, for the next service.
 	maxChunkBytes run.Bytes
@@ -88,6 +81,8 @@ type queryService struct {
 	maxChunkRowsTrace uint32
 	// maxChunkRowsStream caps the elements in one stream scan chunk.
 	maxChunkRowsStream uint32
+	// maxChunkRowsMeasure caps the rows in one measure scan chunk.
+	maxChunkRowsMeasure uint32
 }
 
 // NewService return a new query service.
@@ -95,13 +90,14 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster qu
 	streamSchemaSVC stream.Service, measureSchemaSVC measure.Service, traceSchemaSVC trace.Service,
 ) (Service, error) {
 	svc := &queryService{
-		metaService:        metaService,
-		closer:             run.NewCloser(1),
-		pipeline:           pipeline,
-		omr:                omr,
-		maxChunkBytes:      defaultMaxChunkBytes,
-		maxChunkRowsTrace:  defaultMaxChunkRowsTrace,
-		maxChunkRowsStream: defaultMaxChunkRowsStream,
+		metaService:         metaService,
+		closer:              run.NewCloser(1),
+		pipeline:            pipeline,
+		omr:                 omr,
+		maxChunkBytes:       defaultMaxChunkBytes,
+		maxChunkRowsTrace:   defaultMaxChunkRowsTrace,
+		maxChunkRowsStream:  defaultMaxChunkRowsStream,
+		maxChunkRowsMeasure: defaultMaxChunkRowsMeasure,
 	}
 	applyNextChunkLimits(svc)
 	svc.sqp = &streamQueryProcessor{
@@ -114,6 +110,7 @@ func NewService(metaService metadata.Repo, pipeline queue.Server, broadcaster qu
 		queryService:   svc,
 		measureService: measureSchemaSVC,
 		broadcaster:    broadcaster,
+		scatterer:      broadcaster,
 	}
 	svc.nqp = &topNQueryProcessor{
 		queryService: svc,
@@ -135,8 +132,6 @@ func (q *queryService) Name() string {
 func (q *queryService) FlagSet() *run.FlagSet {
 	fs := run.NewFlagSet("distributed-query")
 	fs.DurationVar(&q.slowQuery, "dst-slow-query", 5*time.Second, "distributed slow query threshold, 0 means no slow query log")
-	fs.DurationVar(&q.broadcastTimeout, "dst-broadcast-timeout", 15*time.Second,
-		"per-broadcast wait when fanning a measure query out to data nodes; raise it for clusters that legitimately scan large non-paginated result sets")
 	return fs
 }
 

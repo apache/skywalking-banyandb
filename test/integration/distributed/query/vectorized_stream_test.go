@@ -97,7 +97,7 @@ func registerDistributedStreamSuite(describe, table string, tinyChunks bool) {
 			config.AddLoadedKinds(schema.KindStream, schema.KindMeasure, schema.KindTrace)
 			if tinyChunks {
 				// The liaison created next asks the data nodes for chunks of one row or about 1 KiB.
-				dquery.SetNextChunkLimits(1, 1, 1<<10)
+				dquery.SetNextChunkLimits(1, 1, 1, 1<<10)
 			}
 			liaisonAddr, closerLiaisonNode := setup.LiaisonNode(config)
 			stopFn = func() {

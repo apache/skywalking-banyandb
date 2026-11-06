@@ -116,6 +116,12 @@ func (h *hiddenTagsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 	return vmeasure.SerializeDataPointsToFrame(idps)
 }
 
+// EmitFrames implements vmeasure.FrameStreamEmitter: it drains the wrapper like EmitFrame does, a frame per
+// limits.MaxRows rows.
+func (h *hiddenTagsMIterator) EmitFrames(ctx context.Context, limits vmeasure.FrameLimits, emit func([]byte) error) error {
+	return emitDataPointFrames(ctx, h, limits, emit)
+}
+
 // hiddenFieldsMIterator wraps an MIterator and strips a single hidden field
 // from each Current() result. It is the Phase 4 parallel of hiddenTagsMIterator:
 // when Top.FieldName is not in the user-visible FieldProjection, the analyzer
@@ -155,6 +161,66 @@ func (h *hiddenFieldsMIterator) EmitFrame(_ context.Context) ([]byte, error) {
 		}
 	}
 	return vmeasure.SerializeDataPointsToFrame(idps)
+}
+
+// EmitFrames implements vmeasure.FrameStreamEmitter — mirrors hiddenTagsMIterator.EmitFrames.
+func (h *hiddenFieldsMIterator) EmitFrames(ctx context.Context, limits vmeasure.FrameLimits, emit func([]byte) error) error {
+	return emitDataPointFrames(ctx, h, limits, emit)
+}
+
+// defaultWrapperFrameRows is the rows of one frame when the requester set no row cap.
+const defaultWrapperFrameRows = 4096
+
+// emitDataPointFrames drains iter row by row and emits its data points in frames of at most limits.MaxRows rows
+// and about limits.MaxBytes bytes. A wrapper iterator keeps its row-side semantics as the source of truth, so its
+// frames are rebuilt from the data points it yields.
+func emitDataPointFrames(ctx context.Context, iter executor.MIterator, limits vmeasure.FrameLimits, emit func([]byte) error) error {
+	maxRows := limits.MaxRows
+	if maxRows <= 0 {
+		maxRows = defaultWrapperFrameRows
+	}
+	var idps []*measurev1.InternalDataPoint
+	var size uint64
+	flush := func() error {
+		if len(idps) == 0 {
+			return nil
+		}
+		body, err := vmeasure.SerializeDataPointsToFrame(idps)
+		idps, size = idps[:0], 0
+		if err != nil {
+			return err
+		}
+		return emit(body)
+	}
+	for iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for _, dp := range iter.Current() {
+			if dp == nil {
+				continue
+			}
+			if limits.MaxBytes > 0 {
+				est := uint64(proto.Size(dp))
+				if len(idps) > 0 && size+est > limits.MaxBytes {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+				size += est
+			}
+			idps = append(idps, dp)
+			if len(idps) >= maxRows {
+				if err := flush(); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if failed, ok := iter.(interface{ Err() error }); ok && failed.Err() != nil {
+		return failed.Err()
+	}
+	return flush()
 }
 
 // stripHiddenField removes the field named hiddenField from a slice of

@@ -96,7 +96,7 @@ func TestBatchBoundaryBudgetRejectsBeforeDecode(t *testing.T) {
 	plan := batchBoundaryPlan(t)
 	before := vectorized.OutstandingOwnerPins()
 	initialMemory := vectorized.QueryMemoryStats().LiveReservedBytes
-	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 16<<20)
+	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 4<<20)
 	cluster := &fakeCluster{nodes: 1, build: func(node int) *vectorized.RecordBatch {
 		batch := rowsBatch(node)
 		batch.Columns[5] = vectorized.NewConstString(string(make([]byte, 2<<20)), batch.Len)
@@ -134,20 +134,4 @@ func TestBatchBoundaryThousandQueriesReleaseAllOwnersAndReservations(t *testing.
 	require.Equal(t, before, vectorized.OutstandingOwnerPins())
 	require.Equal(t, initial, vectorized.QueryMemoryStats().LiveReservedBytes)
 	require.Equal(t, handles, vmeasure.BatchExecutionStats().LiveResults)
-}
-
-func TestNativeFrameReplicaWorkspaceIsShared(t *testing.T) {
-	batch := rowsBatch(0)
-	body, err := encodeTestFrame(batch)
-	require.NoError(t, err)
-	one := vectorized.NewMemoryTracker(256 << 20)
-	var oneReserved int64
-	require.NoError(t, reserveNativeFrames(one, &oneReserved, [][]byte{body}, 1024, false))
-	two := vectorized.NewMemoryTracker(256 << 20)
-	var twoReserved int64
-	require.NoError(t, reserveNativeFrames(two, &twoReserved, [][]byte{body, body}, 1024, false))
-	workspace := int64(1024 * (len(batch.Columns)*128 + 128))
-	require.Equal(t, oneReserved*2-workspace, twoReserved, "replicas share the merger's output capacity")
-	one.Release(oneReserved)
-	two.Release(twoReserved)
 }

@@ -27,18 +27,19 @@ import (
 // and cannot reach the liaison's query service, so it announces the chunk caps the next service takes.
 
 type chunkLimits struct {
-	maxBytes      uint64
-	maxRowsTrace  uint32
-	maxRowsStream uint32
+	maxBytes       uint64
+	maxRowsTrace   uint32
+	maxRowsStream  uint32
+	maxRowsMeasure uint32
 }
 
 var nextChunkLimits atomic.Pointer[chunkLimits]
 
 // SetNextChunkLimits makes the next query service created by NewService ask data nodes for scan chunks of at most
-// the given rows and bytes, so that a test can force every result to be split. Services created later keep the
+// the given rows and bytes per model, so that a test can force every result to be split. Services created later keep the
 // defaults. It is intended for tests.
-func SetNextChunkLimits(maxRowsTrace, maxRowsStream uint32, maxBytes uint64) {
-	nextChunkLimits.Store(&chunkLimits{maxRowsTrace: maxRowsTrace, maxRowsStream: maxRowsStream, maxBytes: maxBytes})
+func SetNextChunkLimits(maxRowsTrace, maxRowsStream, maxRowsMeasure uint32, maxBytes uint64) {
+	nextChunkLimits.Store(&chunkLimits{maxRowsTrace: maxRowsTrace, maxRowsStream: maxRowsStream, maxRowsMeasure: maxRowsMeasure, maxBytes: maxBytes})
 }
 
 // applyNextChunkLimits gives svc the caps requested by SetNextChunkLimits, if any.
@@ -47,5 +48,6 @@ func applyNextChunkLimits(svc *queryService) {
 	if limits == nil {
 		return
 	}
-	svc.maxChunkRowsTrace, svc.maxChunkRowsStream, svc.maxChunkBytes = limits.maxRowsTrace, limits.maxRowsStream, run.Bytes(limits.maxBytes)
+	svc.maxChunkRowsTrace, svc.maxChunkRowsStream, svc.maxChunkRowsMeasure = limits.maxRowsTrace, limits.maxRowsStream, limits.maxRowsMeasure
+	svc.maxChunkBytes = run.Bytes(limits.maxBytes)
 }
