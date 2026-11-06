@@ -70,10 +70,14 @@ func NewCommandWithRegistry() (*cobra.Command, observability.MetricsRegistry) {
 	// instead of opening the observability :2121 listener.
 	metricSvc := services.NewMetricServiceWithoutListener(metaSvc, metricsClient, "lifecycle", nodeRegistry)
 	svc := NewService(metaSvc, metricSvc, metricsClient)
+	// The lifecycle's own logs, stored on the data node it serves.
+	logUnit := newNativeLogUnit(&logging.Native, svc.(*lifecycleService), metricSvc)
 	group := run.NewGroup("lifecycle")
 	// metricSvc is registered before svc so its PreRun (building the providers)
-	// runs first; svc.PreRun then safely derives its proof counter from it.
-	group.Register(new(signal.Handler), metaSvc, metricSvc, svc)
+	// runs first; svc.PreRun then safely derives its proof counter from it. The
+	// log unit comes after both: its gauges come from metricSvc and its
+	// destination from svc's flags.
+	group.Register(new(signal.Handler), metaSvc, metricSvc, svc, logUnit)
 	cmd := &cobra.Command{
 		Short:             "Run lifecycle migration",
 		DisableAutoGenTag: true,
@@ -109,6 +113,7 @@ func NewCommandWithRegistry() (*cobra.Command, observability.MetricsRegistry) {
 	}
 	cmd.Flags().AddFlagSet(group.RegisterFlags().FlagSet)
 	logger.RegisterFlags(cmd.Flags(), &logging)
+	logger.RegisterNativeFlags(cmd.Flags(), &logging.Native)
 	crashOutputCfg.RegisterFlags(cmd.Flags())
 	return cmd, metricSvc
 }

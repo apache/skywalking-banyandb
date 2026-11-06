@@ -39,6 +39,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/apache/skywalking-banyandb/banyand/backup/snapshot"
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	cfg "github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote"
 	"github.com/apache/skywalking-banyandb/pkg/fs/remote/aws"
@@ -97,6 +98,23 @@ func NewBackupCommand() *cobra.Command {
 			if err := logger.Init(logging); err != nil {
 				return err
 			}
+			// Backup's own logs, stored on the data node it backs up. Stopped
+			// on return, so the last lines are delivered before the process
+			// exits; the drain is bounded.
+			producer, producerErr := nativelog.NewProducer(nativelog.ProducerConfig{
+				Native: &logging.Native,
+				Node:   nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID("", "backup"), NodeType: "backup"},
+				Destination: nativelog.Destination{
+					Addr:               backupOpts.gRPCAddr,
+					TLS:                backupOpts.enableTLS,
+					CACert:             backupOpts.cert,
+					InsecureSkipVerify: backupOpts.insecure,
+				},
+			})
+			if producerErr != nil {
+				return producerErr
+			}
+			defer nativelog.StartProducer(producer)()
 			if backupOpts.schedule == "" {
 				return backupAction(cmd.Context(), backupOpts)
 			}
@@ -139,6 +157,7 @@ func NewBackupCommand() *cobra.Command {
 	}
 
 	logger.RegisterFlags(cmd.Flags(), &logging)
+	logger.RegisterNativeFlags(cmd.Flags(), &logging.Native)
 	cmd.Flags().StringVar(&backupOpts.gRPCAddr, "grpc-addr", "127.0.0.1:17912", "gRPC address of the data node")
 	cmd.Flags().BoolVar(&backupOpts.enableTLS, "enable-tls", false, "Enable TLS for gRPC connection")
 	cmd.Flags().BoolVar(&backupOpts.insecure, "insecure", false, "Skip server certificate verification")

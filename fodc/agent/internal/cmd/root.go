@@ -32,6 +32,8 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/crashcollector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
@@ -102,6 +104,7 @@ var (
 	pressureMaxArtifacts               int
 	pressureMaxDiskBytes               int64
 	logging                            logger.Logging
+	nativeLogDestination               nativelog.Destination
 	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -174,6 +177,8 @@ func init() {
 	rootCmd.Flags().Int64Var(&pressureMaxDiskBytes, "pressure-profiler-max-disk-bytes", defaultPressureMaxDiskBytes,
 		"Maximum total on-disk bytes for retained capture events (0 disables the disk bound)")
 	logger.RegisterFlags(rootCmd.Flags(), &logging)
+	logger.RegisterNativeFlags(rootCmd.Flags(), &logging.Native)
+	nativelog.RegisterDestinationFlags(rootCmd.Flags(), &nativeLogDestination)
 }
 
 func calculateCapacity(log *logger.Logger) int64 {
@@ -315,6 +320,15 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
 
+	stopNativeLog, nativeLogErr := startNativeLog(reg, nodeRole)
+	if nativeLogErr != nil {
+		cluster.StopCollector(clusterCollector)
+		_ = metricsServer.Stop(ctx)
+		return nativeLogErr
+	}
+	// Deferred, so it stops last: what the teardown logs is still delivered.
+	defer stopNativeLog()
+
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
 	if clusterCollector != nil {
 		// Stamp the node role and labels live from the collector, which keeps resolving after
@@ -412,6 +426,25 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 		log.Warn().Err(shutdownErr).Msg("Error shutting down metrics server")
 	}
 	return nil
+}
+
+// startNativeLog stores the agent's own logs in BanyanDB. Beside a liaison it
+// writes through the liaison's public write API; beside a data node, or when
+// the role is not known, through the data node's cluster server. Its counters
+// are served with the agent's other metrics.
+func startNativeLog(reg *prometheus.Registry, nodeRole string) (stop func(), err error) {
+	dest := nativeLogDestination
+	dest.Public = nodeRole == databasev1.Role_name[int32(databasev1.Role_ROLE_LIAISON)]
+	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{
+		Native:      &logging.Native,
+		Node:        nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID(podName, "fodc-agent"), NodeType: "fodc-agent"},
+		Destination: dest,
+		Gauges:      prom.NewProvider(nativelog.Scope, reg).Gauge,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("native logging: %w", err)
+	}
+	return nativelog.StartProducer(producer), nil
 }
 
 func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.FlightRecorder) (func(), error) {
