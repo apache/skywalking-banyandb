@@ -26,7 +26,9 @@ import (
 	gm "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gleak"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -66,8 +68,15 @@ var _ = g.Describe("Disk", func() {
 			if errors.Is(err, io.EOF) {
 				return
 			}
-			gm.Expect(err).ShouldNot(gm.HaveOccurred())
-			gm.Expect(resp.GetStatus()).To(gm.Equal(modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)]))
+			if err != nil {
+				// A batch refused for a full disk is retried until the stream's deadline; then the stream ends with
+				// RESOURCE_EXHAUSTED and the batch is answered STATUS_SERVER_BUSY.
+				gm.Expect(status.Code(err)).To(gm.Equal(codes.ResourceExhausted))
+				return
+			}
+			gm.Expect(resp.GetStatus()).To(gm.BeElementOf(
+				modelv1.Status_name[int32(modelv1.Status_STATUS_DISK_FULL)],
+				modelv1.Status_name[int32(modelv1.Status_STATUS_SERVER_BUSY)]))
 		}
 	})
 	g.It(" is a cluster, blocking writing on node 0, with disk full", func() {
@@ -100,7 +109,11 @@ var _ = g.Describe("Disk", func() {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			gm.Expect(err).ShouldNot(gm.HaveOccurred())
+			if err != nil {
+				// The refused batches are retried until the stream's deadline, which ends the stream.
+				gm.Expect(status.Code(err)).To(gm.Equal(codes.ResourceExhausted))
+				break
+			}
 			if resp.Status == modelv1.Status_name[int32(modelv1.Status_STATUS_SUCCEED)] {
 				successNum++
 			} else {

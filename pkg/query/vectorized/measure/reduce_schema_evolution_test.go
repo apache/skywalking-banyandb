@@ -443,3 +443,41 @@ func TestReduceToSchema_RejectsScopesThatDontMatchTheFrames(t *testing.T) {
 		t.Fatal("ReducePartialBatchesToSchema with 2 scopes for 1 partial: want an error")
 	}
 }
+
+func TestPartialReducer_ConsumeScopedKeepsStorageGroupsApart(t *testing.T) {
+	// The streaming reducer takes partials one at a time; the scope must reach the replica dedup per partial.
+	schema := evolvedRawSchema(vectorized.ColumnTypeString, 0)
+	fromA := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 5}}, AggSum)
+	fromB := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 18}}, AggSum)
+	sum := func(scopes []int64) string {
+		t.Helper()
+		reducer := NewPartialReducer(nil, "default", []string{"svc"}, false,
+			[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, vectorized.NewMemoryTracker(1<<30))
+		defer reducer.Close()
+		for i, body := range [][]byte{fromA, fromB} {
+			partial, decodeErr := frame.Decode(body)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			consumeErr := reducer.ConsumeScoped(partial, scopes[i])
+			partial.ReleaseOwners()
+			if consumeErr != nil {
+				t.Fatalf("ConsumeScoped: %v", consumeErr)
+			}
+		}
+		got, _, finishErr := reducer.Finish()
+		if finishErr != nil {
+			t.Fatal(finishErr)
+		}
+		if len(got) != 1 || got[0].Len != 1 {
+			t.Fatalf("want one api row, got %d batches", len(got))
+		}
+		return columnStringAt(got[0].Columns[got[0].Schema.FieldColumns[0]], 0)
+	}
+	if got := sum([]int64{0, 1}); got != "23" {
+		t.Fatalf("two groups: sum = %s, want 23", got)
+	}
+	if got := sum([]int64{0, 0}); got != "5" {
+		t.Fatalf("one group: same shard and key is a replica, sum = %s, want 5", got)
+	}
+}

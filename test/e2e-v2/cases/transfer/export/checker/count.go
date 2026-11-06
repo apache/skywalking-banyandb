@@ -41,15 +41,21 @@ import (
 // countQueryTimeout bounds one count query.
 const countQueryTimeout = time.Minute
 
-// unitRows are the rows a unit exported for one resource and the latest of their timestamps.
+// unitRows are the rows a unit exported for one resource, the points they make up and the latest of
+// their timestamps. A point is one row, except for a _top_n_result series: its processor writes each
+// flush into the shard of the last source row it saw, so one series at one timestamp can be stored
+// in several shards and is exported once from each, while a query merges them into one point.
 type unitRows struct {
-	n     uint64
-	maxTS int64
+	seen   map[string]struct{}
+	n      uint64
+	points uint64
+	maxTS  int64
 }
 
 // track counts an exported row of a resource in its unit; a row without a valid time was
-// reported already and is left out.
-func (g *groupResult) track(u *manifest.Unit, resource, tsCell string) {
+// reported already and is left out. A non-empty series identifies the row's series, so rows of
+// one series and time count as one point.
+func (g *groupResult) track(u *manifest.Unit, resource, tsCell, series string) {
 	ts, err := strconv.ParseInt(tsCell, 10, 64)
 	if err != nil {
 		return
@@ -66,13 +72,26 @@ func (g *groupResult) track(u *manifest.Unit, resource, tsCell string) {
 	}
 	r.n++
 	r.maxTS = max(r.maxTS, ts)
+	if series == "" {
+		r.points++
+		return
+	}
+	if r.seen == nil {
+		r.seen = map[string]struct{}{}
+	}
+	key := series + "\x00" + tsCell
+	if _, dup := r.seen[key]; !dup {
+		r.seen[key] = struct{}{}
+		r.points++
+	}
 }
 
 // queryCountMismatches asks the cluster, through the liaison at addr, how many points every
 // measure of every exported unit holds, with a COUNT over the measure's first entity tag (set
 // on every point) in the unit's stage and time range, and compares it with the rows exported.
 // A query answers the latest version of a point, as the export writes it, so the two are
-// equal. The manifest's time range is that of the data the snapshot held, so points written
+// equal once the rows of one series and time that several shards hold are taken as one point.
+// The manifest's time range is that of the data the snapshot held, so points written
 // later at the current time stay out of it. An index-mode unit records no time range: it is
 // counted from the start of its segment, so a point missing before the first exported one is
 // found, to its last exported point, so points written after the snapshot stay out; a missing
@@ -117,8 +136,9 @@ func queryCountMismatches(addr, dir string, m *manifest.Manifest, results map[st
 					continue
 				}
 				g.queried += count
-				if count != rows.n {
-					out = append(out, fmt.Sprintf("%s: exported %d rows, a count query answers %d", label, rows.n, count))
+				g.points += rows.points
+				if count != rows.points {
+					out = append(out, fmt.Sprintf("%s: exported %d rows of %d points, a count query answers %d", label, rows.n, rows.points, count))
 				}
 			}
 		}

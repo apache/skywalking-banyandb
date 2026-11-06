@@ -62,6 +62,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
@@ -283,8 +284,8 @@ type groupSchema struct {
 
 // groupResult is what the checks found in one group: data holds the rows of known sources by
 // resource as printed, units the rows exported per unit and resource for the count queries,
-// stored the rows the snapshot stored in the group's shards and queried the points the count
-// queries answer.
+// stored the rows the snapshot stored in the group's shards, points the points the exported rows
+// make up and queried the points the count queries answer.
 type groupResult struct {
 	nodes        map[string]bool
 	data         map[string][][]printedValue
@@ -297,6 +298,7 @@ type groupResult struct {
 	rows         uint64
 	stored       uint64
 	queried      uint64
+	points       uint64
 }
 
 func checkCatalog(dir string, m *manifest.Manifest, catalog commonv1.Catalog, liaison string) {
@@ -412,7 +414,7 @@ func checkCatalog(dir string, m *manifest.Manifest, catalog commonv1.Catalog, li
 		// 0 for a group of segment-level files only, which have no stored count.
 		fmt.Printf("    storedRows: %d\n", g.stored)
 		if counted {
-			fmt.Printf("    queriedRows: %d\n", g.queried)
+			fmt.Printf("    points: %d\n    queriedRows: %d\n", g.points, g.queried)
 		}
 		var gr report
 		gr.check("header", g.header)
@@ -572,7 +574,7 @@ func scanFile(path string, f groupFile, s *groupSchema, g *groupResult) {
 		perResource[resource]++
 		g.rows++
 		if tsColumn >= 0 {
-			g.track(f.unit, resource, row[tsColumn])
+			g.track(f.unit, resource, row[tsColumn], seriesOf(columns, row, resource))
 		}
 		if !s.resources[resource] {
 			g.cells = append(g.cells, fmt.Sprintf("%s line %d: _name %q is not a resource of group %s", rel, line, resource, f.group))
@@ -598,6 +600,23 @@ func scanFile(path string, f groupFile, s *groupSchema, g *groupResult) {
 	for name, n := range perResource {
 		f.counts.got[name] += n
 	}
+}
+
+// seriesOf identifies the series of a _top_n_result row by its entity tags, which the Top-N
+// result measure keeps in one tag family; it is empty for every other resource, whose rows are
+// each a point because a series is stored in the one shard its entity hashes to.
+func seriesOf(columns []csvfmt.Column, row []string, resource string) string {
+	if resource != topnschema.Name {
+		return ""
+	}
+	var series strings.Builder
+	for i, c := range columns {
+		if c.Family == topnschema.TagFamily {
+			series.WriteString(row[i])
+			series.WriteByte(0)
+		}
+	}
+	return series.String()
 }
 
 func openData(path string) (io.ReadCloser, error) {

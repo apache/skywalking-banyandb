@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	measurebudget "github.com/apache/skywalking-banyandb/test/cases/measure/budget"
 	"github.com/apache/skywalking-banyandb/test/cases/stream/budget"
 	integration_standalone "github.com/apache/skywalking-banyandb/test/integration/standalone"
 )
@@ -43,33 +44,46 @@ func TestStandaloneQueryBudget(t *testing.T) {
 	g.RunSpecs(t, "Standalone Stream Query Budget Suite", g.Label(integration_standalone.Labels...))
 }
 
-var _ = g.Describe("stream query budget (standalone)", func() {
-	var (
-		goods []gleak.Goroutine
-		conn  *grpc.ClientConn
-		stop  func()
-	)
-	g.BeforeEach(func() {
-		goods = gleak.Goroutines()
-		gm.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gm.Succeed())
-		// The pool is pinned for the protector that the standalone node creates next.
-		protector.SetNextQueryPool(budget.QueryPoolBytes)
-		addr, _, closeFn := setup.Standalone(nil)
-		stop = closeFn
-		var err error
-		conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		gm.Expect(err).NotTo(gm.HaveOccurred())
-	})
-	g.AfterEach(func() {
-		gm.Expect(conn.Close()).To(gm.Succeed())
-		stop()
-		gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
-	})
-
-	g.It("reports a query over its memory allowance as RESOURCE_EXHAUSTED", func() {
-		ns := timestamp.NowMilli().UnixNano()
-		base := time.Unix(0, ns-ns%int64(time.Minute))
+func init() {
+	registerBudgetSuite("stream query budget (standalone)", budget.QueryPoolBytes, func(conn *grpc.ClientConn, base time.Time) {
 		budget.Write(conn, base)
 		budget.ExpectFitsAndExceeds(conn, base)
 	})
-})
+	registerBudgetSuite("measure query budget (standalone)", measurebudget.QueryPoolBytes, func(conn *grpc.ClientConn, base time.Time) {
+		measurebudget.Write(conn, base)
+		measurebudget.ExpectFitsAndExceeds(conn, base)
+	})
+}
+
+// registerBudgetSuite runs one budget case on a node whose query pool is pool bytes.
+func registerBudgetSuite(describe string, pool uint64, run func(*grpc.ClientConn, time.Time)) {
+	g.Describe(describe, func() {
+		var (
+			goods []gleak.Goroutine
+			conn  *grpc.ClientConn
+			stop  func()
+		)
+		g.BeforeEach(func() {
+			goods = gleak.Goroutines()
+			gm.Expect(logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel})).To(gm.Succeed())
+			// The pool is pinned for the protector that the standalone node creates next.
+			protector.SetNextQueryPool(pool)
+			addr, _, closeFn := setup.Standalone(nil)
+			stop = closeFn
+			var err error
+			conn, err = grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
+			gm.Expect(err).NotTo(gm.HaveOccurred())
+		})
+		g.AfterEach(func() {
+			gm.Expect(conn.Close()).To(gm.Succeed())
+			stop()
+			gm.Eventually(gleak.Goroutines, flags.EventuallyTimeout).ShouldNot(gleak.HaveLeaked(goods))
+		})
+
+		g.It("reports a query over its memory allowance as RESOURCE_EXHAUSTED", func() {
+			ns := timestamp.NowMilli().UnixNano()
+			base := time.Unix(0, ns-ns%int64(time.Minute))
+			run(conn, base)
+		})
+	})
+}

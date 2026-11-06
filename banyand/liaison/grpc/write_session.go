@@ -132,7 +132,7 @@ func (c writeSessionConfig) withDefaults() writeSessionConfig {
 // writeAck identifies one client message awaiting acknowledgement.
 type writeAck struct {
 	metadata *commonv1.Metadata
-	// id is the key the client correlates the acknowledgement with: the version of a trace row, the message_id of a stream element.
+	// id is the key the client correlates the acknowledgement with: the version of a trace row, the message_id of a stream element or a measure data point.
 	id uint64
 }
 

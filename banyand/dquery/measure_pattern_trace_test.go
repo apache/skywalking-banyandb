@@ -18,9 +18,9 @@
 package dquery
 
 import (
+	"context"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -47,28 +47,24 @@ func (patternTraceContext) GetIndexRules() []*databasev1.IndexRule {
 	return []*databasev1.IndexRule{{Metadata: &commonv1.Metadata{Name: "service", Id: 7}, Tags: []string{"service_id"}, Type: databasev1.IndexRule_TYPE_INVERTED}}
 }
 
-type patternRejectedFuture struct {
-	bus.Future
-	err error
-}
-
-func (f patternRejectedFuture) Get() (bus.Message, error) { return bus.Message{}, f.err }
-
 type patternMixedWorkers struct {
 	body  []byte
 	topic bus.Topic
 }
 
-func (b *patternMixedWorkers) Broadcast(_ time.Duration, topic bus.Topic, _ bus.Message) ([]bus.Future, error) {
+func (b *patternMixedWorkers) Scatter(_ context.Context, topic bus.Topic, _ bus.Message, _ bus.ScatterOptions) ([]bus.NodeStream, error) {
 	b.topic = topic
-	return []bus.Future{traceMeasureFuture{body: b.body}, patternRejectedFuture{err: errors.New("invalid topic")}}, nil
+	return []bus.NodeStream{
+		&fakeNodeStream{node: "node-a", chunks: [][]byte{b.body}},
+		&fakeNodeStream{node: "node-b", err: errors.New("invalid topic")},
+	}, nil
 }
 
 func TestPatternTracedOldWorkerRejectsWholeQuery(t *testing.T) {
 	processor, request := newTraceMeasureProcessor(t, nil)
 	processor.measureService = patternTraceService{}
 	workers := &patternMixedWorkers{body: processor.broadcaster.(traceMeasureBroadcaster).body}
-	processor.broadcaster = workers
+	processor.scatterer = workers
 	tracer, ctx := query.NewTracer(t.Context(), t.Name())
 	ctx = vectorized.WithQueryMemoryTracker(ctx, 4<<20)
 	response := processor.Rev(ctx, bus.NewMessage(1, &vmeasure.BatchQueryRequest{
