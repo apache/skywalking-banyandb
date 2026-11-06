@@ -61,7 +61,7 @@ func TestDistributedAlignmentChargesRemainOnQueryLease(t *testing.T) {
 			lease := &distributedAccountingLease{failOn: failOn}
 			fake := &fakeDistributedContext{streams: []*fakeNodeStream{
 				{name: "one", chunks: []any{projectedFrameChunk(t, []nodeRow{{ts: 1, elementID: 1}}, []string{"svc"})}},
-				{name: "two", chunks: []any{projectedFrameChunk(t, []nodeRow{{ts: 2, elementID: 2}}, []string{"svc"})}},
+				{name: "two", chunks: []any{projectedFrameChunk(t, []nodeRow{{ts: 2, elementID: 2}}, []string{"other"})}},
 			}}
 			ctx := query.WithBudgetLease(context.Background(), lease)
 			got, err := newBatchMergePlan(false, 0, 2).Execute(executor.WithDistributedExecutionContext(ctx, fake))

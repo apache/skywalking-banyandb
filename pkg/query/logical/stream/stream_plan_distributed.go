@@ -379,7 +379,7 @@ func (t *distributedPlan) mergeBatchReplies(ctx context.Context, staged []*vecto
 		}
 	}()
 	offset, limit := t.window()
-	merged, mergeErr := groups.Merge(ctx, t.desc, offset, limit)
+	merged, mergeErr := groups.MergeCapped(ctx, t.desc, offset, limit)
 	if mergeErr != nil {
 		return nil, fmt.Errorf("merge the stream frame replies: %w", mergeErr)
 	}

@@ -20,6 +20,8 @@ package stream
 import (
 	"context"
 	"fmt"
+	"math"
+	"slices"
 
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
@@ -43,7 +45,8 @@ type tagColumnKey struct {
 // validates batch schemas by pointer, and batches decoded from separate wire frames each
 // carry their own schema instance.
 //
-// Every staged batch is copied onto the union schema and stamped with a hidden source column;
+// Batches with matching layouts and no borrowed owners share a schema and keep their columns.
+// Other batches are copied onto the union schema and stamped with a hidden source column;
 // defined and sourceIdx then record which tags each source may return, so materializing
 // Elements can drop a tag a batch never carried instead of emitting it as null. Each copy is
 // charged against the query budget before it is allocated, so a copy the lease cannot cover
@@ -62,7 +65,7 @@ type AlignedStreamBatches struct {
 //
 // Variable-sized cells may still reference the source batches. Keep the staged batches
 // and their owners alive through merge and materialization, then release both sets.
-// Alignment charges stay on the enclosing query reservation through response/transport
+// Only copied alignment is charged. Those charges stay on the query reservation through response/transport
 // completion: the returned Elements may retain source tag values. Merge.Close refunds
 // only SortedMerge's separate retention charges. Without an admitted lease, charging
 // is a no-op.
@@ -77,6 +80,22 @@ func AlignStreamBatches(ctx context.Context, staged []*vectorized.RecordBatch,
 	}
 	if len(nonEmpty) == 0 {
 		return &AlignedStreamBatches{sourceIdx: -1}, nil
+	}
+	// Rebind owner-free batches with identical layouts without copying their columns.
+	// Time ordering must still drop any OrderKey, as the union alignment does.
+	schema := nonEmpty[0].Schema
+	canRebind := !sortByTime || schema.OrderKeyIndex() < 0
+	for _, batch := range nonEmpty {
+		if batch.Owners.Len() != 0 || !slices.Equal(schema.Columns, batch.Schema.Columns) {
+			canRebind = false
+			break
+		}
+	}
+	if canRebind {
+		for _, batch := range nonEmpty {
+			batch.Schema = schema
+		}
+		return &AlignedStreamBatches{Schema: schema, Batches: nonEmpty, sourceIdx: -1}, nil
 	}
 	return copyOntoUnionSchema(ctx, nonEmpty, sortByTime)
 }
@@ -198,12 +217,23 @@ func copyOntoUnionSchemaBatch(target *vectorized.BatchSchema, src *vectorized.Re
 // Merge runs the shared merge → distinct → limit pipeline over the aligned batches and returns
 // the batches of the client window, in output order. A nil or empty alignment returns nil.
 func (a *AlignedStreamBatches) Merge(ctx context.Context, desc bool, offset, limit uint32) ([]*vectorized.RecordBatch, error) {
+	return a.merge(ctx, desc, offset, limit, 0)
+}
+
+// MergeCapped uses the distinct client window as the merge cap. The ordinary Merge
+// entry point keeps local multi-group queries uncapped. Neither method bounds bytes.
+func (a *AlignedStreamBatches) MergeCapped(ctx context.Context, desc bool, offset, limit uint32) ([]*vectorized.RecordBatch, error) {
+	maxRows := int(min(uint64(offset)+uint64(limit), uint64(math.MaxInt)))
+	return a.merge(ctx, desc, offset, limit, maxRows)
+}
+
+func (a *AlignedStreamBatches) merge(ctx context.Context, desc bool, offset, limit uint32, maxRows int) ([]*vectorized.RecordBatch, error) {
 	if a == nil || a.Schema == nil || len(a.Batches) == 0 {
 		return nil, nil
 	}
 	pipeline, buildErr := BuildStreamMergePipeline(
 		NewBatchSource(a.Schema, a.Batches),
-		a.Schema, desc, offset, limit, mergeOutputBatchSize(offset, limit), 0)
+		a.Schema, desc, offset, limit, mergeOutputBatchSize(offset, limit), maxRows)
 	if buildErr != nil {
 		return nil, buildErr
 	}
