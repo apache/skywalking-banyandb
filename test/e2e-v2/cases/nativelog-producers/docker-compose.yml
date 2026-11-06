@@ -77,7 +77,12 @@ services:
     environment:
       POD_NAME: backup0
     entrypoint: ["/backup"]
-    command: --grpc-addr=data0:17912 --dest=file:///tmp/backups-e2e --schedule=@every 5s --logging-native-enabled --logging-native-level=info
+    command:
+      - "--grpc-addr=data0:17912"
+      - "--dest=file:///tmp/backups-e2e"
+      - "--schedule=@every 5s"
+      - "--logging-native-enabled"
+      - "--logging-native-level=info"
     networks:
       - e2e
     depends_on:
@@ -91,7 +96,10 @@ services:
     environment:
       POD_NAME: backup1
     entrypoint: ["/backup"]
-    command: --grpc-addr=data0:17912 --dest=file:///tmp/backups-off --schedule=@every 5s
+    command:
+      - "--grpc-addr=data0:17912"
+      - "--dest=file:///tmp/backups-off"
+      - "--schedule=@every 5s"
     networks:
       - e2e
     depends_on:
@@ -105,7 +113,13 @@ services:
     environment:
       POD_NAME: lifecycle0
     entrypoint: ["/lifecycle"]
-    command: --grpc-addr=data1:17912 --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schedule=@every 1h --logging-native-enabled --logging-native-level=info
+    command:
+      - "--grpc-addr=data1:17912"
+      - "--node-discovery-mode=file"
+      - "--node-discovery-file-path=/etc/banyandb/nodes.yaml"
+      - "--schedule=@every 1h"
+      - "--logging-native-enabled"
+      - "--logging-native-level=info"
     # Its HTTP port serves /metrics while it runs on a schedule.
     ports:
       - 17915
