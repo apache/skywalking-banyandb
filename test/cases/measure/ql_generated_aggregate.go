@@ -69,15 +69,12 @@ func registerGeneratedQLAggregateScenarios(suite qlgen.Suite, base *time.Time) {
 }
 
 func prepareGeneratedAggregateFixtures(base time.Time, fixtures []qlgen.AggregateFixture) {
-	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
-	defer cancel()
 	registry := databasev1.NewMeasureRegistryServiceClient(SharedContext.Connection)
 	for _, fixture := range fixtures {
 		schema := qlgen.T07FixtureSchema(fixture.Name)
-		_, createErr := registry.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: schema})
-		gm.Expect(createErr).NotTo(gm.HaveOccurred())
-		registered, getErr := registry.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: schema.GetMetadata()})
-		gm.Expect(getErr).NotTo(gm.HaveOccurred())
+		fixtureStart := time.Now()
+		registered := createGeneratedAggregateFixtureSchema(registry, schema)
+		logGeneratedAggregatePhase(fixture.Name, "schema create+get", fixtureStart, nil)
 		writes := qlgen.T07FixtureWrites(fixture.Name, base)
 		for ordinal, request := range writes {
 			request.Metadata = nil
@@ -85,17 +82,49 @@ func prepareGeneratedAggregateFixtures(base time.Time, fixtures []qlgen.Aggregat
 				request.Metadata = registered.GetMeasure().GetMetadata()
 			}
 		}
+		writePhaseStart := time.Now()
 		gm.Eventually(func(inner gm.Gomega) {
 			writeCtx, writeCancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer writeCancel()
-			inner.Expect(writeGeneratedQLFixture(writeCtx, SharedContext.Connection, writes)).To(gm.Succeed())
+			attemptStart := time.Now()
+			writeErr := writeGeneratedQLFixture(writeCtx, SharedContext.Connection, writes)
+			logGeneratedAggregatePhase(fixture.Name, "write attempt", attemptStart, writeErr)
+			inner.Expect(writeErr).To(gm.Succeed())
 		}, flags.EventuallyTimeout, 100*time.Millisecond).Should(gm.Succeed())
+		logGeneratedAggregatePhase(fixture.Name, "write phase", writePhaseStart, nil)
 		for _, c := range fixture.Cases {
+			readyPhaseStart := time.Now()
 			gm.Eventually(func() error {
-				return executeGeneratedReuseCall(ctx, base, c)
+				// Each attempt derives its own deadline: a context shared with the schema and write
+				// phases is already expired once a slow phase has used the whole budget.
+				attemptStart := time.Now()
+				queryErr := executeGeneratedReuseCall(context.Background(), base, c)
+				logGeneratedAggregatePhase(fixture.Name, "readiness attempt", attemptStart, queryErr)
+				return queryErr
 			}, flags.EventuallyTimeout, 100*time.Millisecond).Should(gm.Succeed())
+			logGeneratedAggregatePhase(fixture.Name, "readiness phase", readyPhaseStart, nil)
 		}
 	}
+}
+
+// logGeneratedAggregatePhase records how long a fixture setup phase took, so a slow or stalled
+// step shows up in the Ginkgo output of a failed run instead of only as a later timeout.
+func logGeneratedAggregatePhase(fixture, phase string, start time.Time, err error) {
+	if err != nil {
+		g.GinkgoWriter.Printf("fixture %s: %s failed after %s: %v\n", fixture, phase, time.Since(start).Round(time.Millisecond), err)
+		return
+	}
+	g.GinkgoWriter.Printf("fixture %s: %s took %s\n", fixture, phase, time.Since(start).Round(time.Millisecond))
+}
+
+func createGeneratedAggregateFixtureSchema(registry databasev1.MeasureRegistryServiceClient, schema *databasev1.Measure) *databasev1.MeasureRegistryServiceGetResponse {
+	ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+	defer cancel()
+	_, createErr := registry.Create(ctx, &databasev1.MeasureRegistryServiceCreateRequest{Measure: schema})
+	gm.Expect(createErr).NotTo(gm.HaveOccurred())
+	registered, getErr := registry.Get(ctx, &databasev1.MeasureRegistryServiceGetRequest{Metadata: schema.GetMetadata()})
+	gm.Expect(getErr).NotTo(gm.HaveOccurred())
+	return registered
 }
 
 func verifyGeneratedAggregateCall(base time.Time, c qlgen.Case) {
