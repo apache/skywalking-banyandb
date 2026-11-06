@@ -1,0 +1,121 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+version: '2.1'
+
+# Phases 3 and 4: producers with no storage engine. backup0 sits beside data0
+# and lifecycle0 beside data1; each writes its own logs to that node's cluster
+# server. Both data nodes keep the log schema with
+# --logging-native-receiver-enabled alone and collect nothing of their own, so
+# every stored row is a producer's. backup1 runs with native logging off, its
+# default. POD_NAME is each producer's node_id.
+#
+# The FODC agent and proxy write through a liaison's public write API; they
+# are covered by the FODC kind case, which runs their images.
+services:
+  data0:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data0
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-receiver-enabled
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  data1:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: data
+    hostname: data1
+    mem_limit: 1g
+    command: data --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s --logging-native-receiver-enabled
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+
+  liaison:
+    extends:
+      file: ../../script/docker-compose/base-compose.yml
+      service: liaison
+    mem_limit: 512m
+    command: liaison --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schema-property-client-sync-interval=1s
+    # Declared here so the e2e runner exports ${liaison_host} and
+    # ${liaison_17913}.
+    ports:
+      - 17913
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+    depends_on:
+      data0:
+        condition: service_healthy
+      data1:
+        condition: service_healthy
+
+  # Scheduled every 5 seconds, so it keeps logging: each run fails, because
+  # the snapshot files are on data0's disk, and logs that it failed.
+  backup0:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    hostname: backup0
+    mem_limit: 256m
+    environment:
+      POD_NAME: backup0
+    entrypoint: ["/backup"]
+    command: --grpc-addr=data0:17912 --dest=file:///tmp/backups-e2e --schedule=@every 5s --logging-native-enabled --logging-native-level=info
+    networks:
+      - e2e
+    depends_on:
+      liaison:
+        condition: service_healthy
+
+  backup1:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    hostname: backup1
+    mem_limit: 256m
+    environment:
+      POD_NAME: backup1
+    entrypoint: ["/backup"]
+    command: --grpc-addr=data0:17912 --dest=file:///tmp/backups-off --schedule=@every 5s
+    networks:
+      - e2e
+    depends_on:
+      liaison:
+        condition: service_healthy
+
+  lifecycle0:
+    image: "apache/skywalking-banyandb:${TAG}-testing"
+    hostname: lifecycle0
+    mem_limit: 512m
+    environment:
+      POD_NAME: lifecycle0
+    entrypoint: ["/lifecycle"]
+    command: --grpc-addr=data1:17912 --node-discovery-mode=file --node-discovery-file-path=/etc/banyandb/nodes.yaml --schedule=@every 1h --logging-native-enabled --logging-native-level=info
+    # Its HTTP port serves /metrics while it runs on a schedule.
+    ports:
+      - 17915
+    volumes:
+      - ./nodes.yaml:/etc/banyandb/nodes.yaml
+    networks:
+      - e2e
+    depends_on:
+      liaison:
+        condition: service_healthy
+
+networks:
+  e2e:
