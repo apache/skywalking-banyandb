@@ -58,7 +58,15 @@ if docker logs "$(container_of backup1)" 2>&1 | grep -F "backups-off will run" >
 fi
 disabled_rows=$(query_log "$(node_eq "$disabled")" false "$since" | rows | jq -s 'if any(.[]; .error) then "query failed" else length end')
 
-lifecycle_written=$(curl -s -m 10 "http://${lifecycle_addr}/metrics" | awk '$1 == "banyandb_logging_native_log_written_total" { print ($2 > 0) ? "true" : "false" }')
+# Polled too: the counters are published once a second, so the first rows can
+# be queryable before the counter that counts them.
+while :; do
+	lifecycle_written=$(curl -s -m 10 "http://${lifecycle_addr}/metrics" | awk '$1 == "banyandb_logging_native_log_written_total" { print ($2 > 0) ? "true" : "false" }')
+	[[ "$lifecycle_written" == true ]] && break
+	echo "lifecycle written: ${lifecycle_written:-missing}" >&2
+	[[ $SECONDS -ge $deadline ]] && break
+	sleep 2
+done
 
 echo "producers:"
 echo "$identities" | jq -r '.[] | "  - " + .'
