@@ -106,7 +106,7 @@ func verifyGeneratedAggregateCall(base time.Time, c qlgen.Case) {
 		after := vmeasure.BatchExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
 		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(ql.AggregateExecutionStats().LiveBytes).To(gm.Equal(aggregateBefore.LiveBytes))
 		if c.NoScan {
 			gm.Expect(after.NativeLeafCalls).To(gm.Equal(before.NativeLeafCalls))

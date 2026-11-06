@@ -353,10 +353,29 @@ func TestScatterPartialOpenFailureClosesOpenedStreams(t *testing.T) {
 	// Nodes open in name order: "a" opens before "b".
 	p := newScatterPub(t, map[string]string{"a": addrA, "b": addrB})
 	stopB()
-	_, err := p.Scatter(context.Background(), data.TopicTraceQuery, bus.NewMessage(1, &tracev1.QueryRequest{}),
-		queue.ScatterOptions{IdleTimeout: 300 * time.Millisecond})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "b")
+	const idleTimeout = 300 * time.Millisecond
+	streams, err := p.Scatter(context.Background(), data.TopicTraceQuery, bus.NewMessage(1, &tracev1.QueryRequest{}),
+		queue.ScatterOptions{IdleTimeout: idleTimeout})
+	if err == nil {
+		// Opening a stream does not prove the node is reachable: gRPC may return the stream
+		// before the client notices that "b" is gone, and the failure then surfaces on the
+		// first Next, bounded by the idle timeout. The caller closes every stream it got.
+		var nextErr error
+		for _, s := range streams {
+			if s.Node() == "b" {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*idleTimeout)
+				_, nextErr = s.Next(ctx)
+				cancel()
+			}
+		}
+		for _, s := range streams {
+			s.Close()
+		}
+		require.Error(t, nextErr, "a stopped node must fail its stream")
+		assert.False(t, errors.Is(nextErr, context.DeadlineExceeded), "the idle timeout, not the test deadline, must end the stream: %v", nextErr)
+	} else {
+		assert.Contains(t, err.Error(), "b")
+	}
 	<-started
 	<-firstCtxDone // the stream opened to "a" was closed
 }
