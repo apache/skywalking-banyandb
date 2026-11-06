@@ -55,6 +55,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -97,7 +98,7 @@ type lifecycleService struct {
 	metadata            metadata.Repo
 	l                   *logger.Logger
 	clusterStateMgr     *clusterStateManager
-	metricsKeeperStop   chan struct{}
+	stopMetricsKeeper   func()
 	sch                 *timestamp.Scheduler
 	stopCh              chan struct{}
 	clientCloser        context.CancelFunc
@@ -328,9 +329,9 @@ func (l *lifecycleService) GracefulStop() {
 	// client. The metric service may still attempt a final flush concurrently
 	// during shutdown; native metrics are best-effort, so a flush that loses the
 	// race to the closing client simply logs and is dropped.
-	if l.metricsKeeperStop != nil {
-		close(l.metricsKeeperStop)
-		l.metricsKeeperStop = nil
+	if l.stopMetricsKeeper != nil {
+		l.stopMetricsKeeper()
+		l.stopMetricsKeeper = nil
 	}
 	if l.metricsClient != nil {
 		l.metricsClient.GracefulStop()
@@ -384,18 +385,9 @@ func (l *lifecycleService) Name() string {
 }
 
 // buildLocalNodeMD builds the schema metadata registered on the native metrics
-// pub client for the co-located data node. The ROLE_DATA role is REQUIRED: the
-// pub client's role gate (allowedRoles=[ROLE_DATA]) silently drops a node whose
-// roles do not intersect, which would make native metrics a silent no-op.
+// pub client for the co-located data node.
 func buildLocalNodeMD(grpcAddr string) schema.Metadata {
-	return schema.Metadata{
-		TypeMeta: schema.TypeMeta{Kind: schema.KindNode},
-		Spec: &databasev1.Node{
-			Metadata:    &commonv1.Metadata{Name: metricsLocalNodeName},
-			GrpcAddress: grpcAddr,
-			Roles:       []databasev1.Role{databasev1.Role_ROLE_DATA},
-		},
-	}
+	return pub.DataNode(metricsLocalNodeName, grpcAddr)
 }
 
 // buildHTTPRouter assembles the lifecycle's HTTP routes: the gRPC-gateway API
@@ -411,40 +403,10 @@ func (l *lifecycleService) buildHTTPRouter(apiHandler http.Handler) *chi.Mux {
 }
 
 // startMetricsNodeKeeper registers the co-located data node on the native
-// metrics pub client and keeps the connection active. The pub connManager runs a
-// synchronous health check at registration and does NOT auto-retry an evicted
-// node (NewWithoutMetadata leaves healthCheckInterval==0), so the keeper
-// re-registers whenever the node is not locatable — covering both an initial
-// dial that failed (data node not ready yet) and a later failover eviction.
+// metrics pub client and keeps the connection active.
 func (l *lifecycleService) startMetricsNodeKeeper() {
 	l.localNodeMD = buildLocalNodeMD(l.gRPCAddr)
-	l.metricsKeeperStop = make(chan struct{})
-	// Initial registration dials the local data node so native flushes route there.
-	l.metricsClient.OnAddOrUpdate(l.localNodeMD)
-	run.Go(context.Background(), "backup.lifecycle.metrics-node-keeper", l.l, func(_ context.Context) {
-		ticker := time.NewTicker(metricsNodeKeeperInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-l.metricsKeeperStop:
-				return
-			case <-ticker.C:
-				// HealthyNodes reflects the pub's active-connection state directly.
-				// connMgr.OnAddOrUpdate fans out OnActive synchronously (which seeds
-				// the native selector), so an empty set means the local data node is
-				// not connected and native flushes would drop; force a fresh dial.
-				if len(l.metricsClient.HealthyNodes()) == 0 {
-					// connMgr.OnAddOrUpdate short-circuits an evictable node, so drop
-					// it first to force a fresh dial. queue.Client does not expose
-					// OnDelete, hence the type assertion.
-					if deleter, ok := l.metricsClient.(interface{ OnDelete(schema.Metadata) }); ok {
-						deleter.OnDelete(l.localNodeMD)
-					}
-					l.metricsClient.OnAddOrUpdate(l.localNodeMD)
-				}
-			}
-		}
-	})
+	l.stopMetricsKeeper = pub.KeepNode(l.metricsClient, l.localNodeMD, metricsNodeKeeperInterval, l.l)
 }
 
 func (l *lifecycleService) Serve() run.StopNotify {
