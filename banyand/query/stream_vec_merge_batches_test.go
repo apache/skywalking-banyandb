@@ -355,7 +355,7 @@ func TestStreamVecDispatch_MultiGroupBatchMergeBoundaries(t *testing.T) {
 	pinnedGroups := func(owner *countingOwner) []*mergeScan {
 		scans := []*mergeScan{
 			newMergeScan([]string{mergeNameTag}, "", "", []mergeRow{mergeNamed("A", 1, 0, 1)}, false),
-			newMergeScan([]string{mergeNameTag}, "", "", []mergeRow{mergeNamed("B", 2, 0, 2)}, false),
+			newMergeScan([]string{mergeNameTag, mergeExtra}, "", "", []mergeRow{mergeNamed("B", 2, 0, 2)}, false),
 		}
 		for _, scan := range scans {
 			for _, batch := range scan.batches {

@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -38,6 +39,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
@@ -83,19 +86,17 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Limit:      uint32(window),
 		OrderBy:    ud.originalQuery.OrderBy,
 	}
+	result := &distributedPlan{
+		queryTemplate: temp,
+		s:             s,
+		sortByTime:    true,
+		offset:        ud.originalQuery.Offset,
+		limit:         limit,
+	}
 	if ud.originalQuery.OrderBy == nil {
-		return &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
-		}, nil
+		return result, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
-		result := &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
-		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
 		}
@@ -112,12 +113,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if sortTagSpec == nil {
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
-	result := &distributedPlan{
-		queryTemplate: temp,
-		s:             s,
-		sortByTime:    false,
-		sortTagSpec:   *sortTagSpec,
-	}
+	result.sortByTime = false
+	result.sortTagSpec = *sortTagSpec
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
 	}
@@ -127,12 +124,19 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 var _ executor.StreamExecutable = (*distributedPlan)(nil)
 
 type distributedPlan struct {
-	s              logical.Schema
+	// Overrides used by tests and instrumentation. Nil means the native frame decoder
+	// (streamframe.Decode) or the shared aligned-batch egress
+	// (vstream.BuildElementsFromBatch).
+	decodeFrame    func([]byte) (*vectorized.RecordBatch, error)
+	buildElements  vstream.ElementBuilder
 	queryTemplate  *streamv1.QueryRequest
+	s              logical.Schema
 	sortTagSpec    logical.TagSpec
+	maxElementSize uint32
+	offset         uint32
+	limit          uint32
 	sortByTime     bool
 	desc           bool
-	maxElementSize uint32
 }
 
 func (t *distributedPlan) Close() {}
@@ -173,7 +177,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			ns.Close()
 		}
 	}()
-	nodes := make([]nodeStreamElements, len(streams))
+	nodes := make([]nodeStreamResult, len(streams))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
@@ -191,12 +195,13 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 		}()
 	}
 	wg.Wait()
-	if firstErr != nil {
-		err = firstErr
-		return nil, firstErr
-	}
-	var see []sort.Iterator[*comparableElement]
+	// Frames require distributed execution, raw wire mode and no tracing. Multi-group
+	// queries still return proto replies, and so does a node that does not host a
+	// requested group (an empty body). Any proto reply keeps the row merge for the whole
+	// execution, including mixed replies during a rolling upgrade.
+	var staged []*vectorized.RecordBatch
 	var responseCount int
+	rowPath := false
 	for idx := range nodes {
 		if !nodes[idx].responded {
 			continue
@@ -205,38 +210,53 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 		if span != nil {
 			span.AddSubTrace(nodes[idx].subTrace)
 		}
-		see = append(see, newSortableElements(nodes[idx].elements, t.sortByTime, t.sortTagSpec))
-	}
-	iter := sort.NewItemIter(see, t.desc)
-	var result []*streamv1.Element
-	seen := make(map[string]bool)
-	for iter.Next() {
-		element := iter.Val().Element
-		if !seen[element.ElementId] {
-			seen[element.ElementId] = true
-			result = append(result, element)
+		for _, chunk := range nodes[idx].chunks {
+			if chunk.batch != nil {
+				staged = append(staged, chunk.batch)
+			}
+		}
+		if nodes[idx].proto {
+			rowPath = true
 		}
 	}
-	if span != nil {
-		span.Tagf("response_count", "%d", responseCount)
-		span.Tagf("element_id_count", "%d", len(seen))
+	// Release every reply batch on every exit, including a decode or scatter error, a merge
+	// error and cancellation. ReleaseOwners is idempotent, so the pipeline releasing a batch it
+	// consumed does not conflict with this.
+	defer func() {
+		for _, batch := range staged {
+			batch.ReleaseOwners()
+		}
+	}()
+	if firstErr != nil {
+		err = firstErr
+		return nil, firstErr
 	}
-
-	return result, nil
+	if rowPath {
+		return t.mergeRowReplies(nodes, responseCount, span)
+	}
+	return t.mergeBatchReplies(ctx, staged, responseCount, span)
 }
 
-// nodeStreamElements is everything one node stream delivered.
-type nodeStreamElements struct {
+// nodeStreamResult is everything one node stream delivered.
+type nodeStreamResult struct {
 	err       error
 	subTrace  *commonv1.Trace
-	elements  []*streamv1.Element
+	chunks    []nodeStreamChunk
+	proto     bool
 	responded bool
 }
 
-// readNodeStream reads a node stream to its end, decoding one chunk at a time, so
-// only the decoded elements of the node are held, never its encoded chunks.
-func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeStreamElements {
-	var out nodeStreamElements
+// nodeStreamChunk preserves wire order even when a node mixes proto and frame replies.
+type nodeStreamChunk struct {
+	batch    *vectorized.RecordBatch
+	elements []*streamv1.Element
+}
+
+// readNodeStream reads a node stream to its end, decoding one chunk at a time. A proto chunk
+// is kept as Elements; a native frame chunk is kept as the batch it decodes to, because the
+// frame merge must never materialize rows it may discard.
+func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeStreamResult {
+	var out nodeStreamResult
 	for {
 		m, nextErr := ns.Next(ctx)
 		if errors.Is(nextErr, io.EOF) {
@@ -250,50 +270,183 @@ func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream)
 		if d == nil {
 			continue
 		}
-		chunk, subTrace, decodeErr := t.decodeNodeElements(d)
+		decodeErr := t.decodeNodeChunk(d, &out)
 		if decodeErr != nil {
 			out.err = fmt.Errorf("stream query on node %s: %w", ns.Node(), decodeErr)
 			return out
 		}
 		out.responded = true
-		out.elements = append(out.elements, chunk...)
-		if subTrace != nil {
-			out.subTrace = subTrace
-		}
 	}
 }
 
-// decodeNodeElements converts a single node chunk into []*streamv1.Element,
-// accepting either the proto *streamv1.QueryResponse (flag-off / tracing / a data
-// node that has not rolled onto the vec path) or the native columnar frame
-// ([]byte, only when the raw wire mode is on). Both feed the SAME
-// sortableElements/comparableElement k-way merge + seen-dedup + distributedLimit
-// downstream, so mixed proto/frame bodies in one broadcast (rolling deploy) merge
-// correctly.
-func (t *distributedPlan) decodeNodeElements(d any) ([]*streamv1.Element, *commonv1.Trace, error) {
+// decodeNodeChunk appends a single node chunk to out: the proto *streamv1.QueryResponse
+// (flag-off / tracing / a data node that has not rolled onto the vec path) as Elements, and
+// the native columnar frame ([]byte, only when the raw wire mode is on) as a batch. A frame
+// is NOT materialized here; only the merge or the row fallback decides what reaches Elements.
+// An index-ordered frame without the order-key column is rejected: sorting it by timestamp
+// would silently change the order the client asked for.
+func (t *distributedPlan) decodeNodeChunk(d any, out *nodeStreamResult) error {
 	switch payload := d.(type) {
 	case *streamv1.QueryResponse:
-		return payload.Elements, payload.Trace, nil
+		out.proto = true
+		out.chunks = append(out.chunks, nodeStreamChunk{elements: payload.Elements})
+		if payload.Trace != nil {
+			out.subTrace = payload.Trace
+		}
+		return nil
 	case []byte:
 		if !data.StreamWireModeRaw() {
-			return nil, nil, fmt.Errorf("unexpected raw stream frame body while wire mode is off")
+			return fmt.Errorf("unexpected raw stream frame body while wire mode is off")
 		}
-		batch, decodeErr := streamframe.Decode(payload)
+		decode := t.decodeFrame
+		if decode == nil {
+			decode = streamframe.Decode
+		}
+		batch, decodeErr := decode(payload)
 		if decodeErr != nil {
-			return nil, nil, fmt.Errorf("decode stream result frame: %w", decodeErr)
+			return fmt.Errorf("decode stream result frame: %w", decodeErr)
 		}
-		elements, buildErr := vstream.BuildElementsFromBatch(batch, vstream.ProjectionFromBatchSchema(batch))
-		if buildErr != nil {
-			return nil, nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
+		if !t.sortByTime && batch.Schema.OrderKeyIndex() < 0 {
+			batch.ReleaseOwners()
+			return fmt.Errorf("index-ordered stream frame lacks an order key column")
 		}
-		return elements, nil, nil
+		out.chunks = append(out.chunks, nodeStreamChunk{batch: batch})
+		return nil
 	default:
-		return nil, nil, fmt.Errorf("unexpected stream query response type %T", d)
+		return fmt.Errorf("unexpected stream query response type %T", d)
 	}
+}
+
+// mergeRowReplies handles proto and mixed replies, including traced and multi-group
+// queries. Frame chunks are materialized here in wire order because the row merge
+// cannot consume batches.
+func (t *distributedPlan) mergeRowReplies(nodes []nodeStreamResult, responseCount int,
+	span *query.Span,
+) ([]*streamv1.Element, error) {
+	var see []sort.Iterator[*comparableElement]
+	for idx := range nodes {
+		if !nodes[idx].responded {
+			continue
+		}
+		var elements []*streamv1.Element
+		for _, chunk := range nodes[idx].chunks {
+			if chunk.batch != nil {
+				batch := chunk.batch
+				batchElements, buildErr := t.materialize(batch, vstream.ProjectionFromBatchSchema(batch))
+				if buildErr != nil {
+					return nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
+				}
+				elements = append(elements, batchElements...)
+			} else {
+				elements = append(elements, chunk.elements...)
+			}
+		}
+		see = append(see, newSortableElements(elements, t.sortByTime, t.sortTagSpec))
+	}
+	iter := sort.NewItemIter(see, t.desc)
+	var merged []*streamv1.Element
+	seen := make(map[string]bool)
+	for iter.Next() {
+		element := iter.Val().Element
+		if !seen[element.ElementId] {
+			seen[element.ElementId] = true
+			merged = append(merged, element)
+		}
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+		span.Tagf("element_id_count", "%d", len(seen))
+	}
+	return t.applyWindow(merged), nil
+}
+
+// mergeBatchReplies is the frame-only path: the replies of every node are rebuilt onto one
+// schema, merged, deduplicated and windowed as batches, and only the surviving rows are
+// materialized into Elements.
+func (t *distributedPlan) mergeBatchReplies(ctx context.Context, staged []*vectorized.RecordBatch, responseCount int,
+	span *query.Span,
+) ([]*streamv1.Element, error) {
+	groups, alignErr := vstream.AlignStreamBatches(ctx, staged, t.sortByTime)
+	if alignErr != nil {
+		return nil, fmt.Errorf("align the stream frame replies: %w", alignErr)
+	}
+	// BatchSource drops its reference to a batch as it yields it, so keep a copy of the slice
+	// to release the aligned batches, including any the pipeline never pulled.
+	aligned := append([]*vectorized.RecordBatch(nil), groups.Batches...)
+	defer func() {
+		for _, batch := range aligned {
+			batch.ReleaseOwners()
+		}
+	}()
+	offset, limit := t.window()
+	merged, mergeErr := groups.MergeCapped(ctx, t.desc, offset, limit)
+	if mergeErr != nil {
+		return nil, fmt.Errorf("merge the stream frame replies: %w", mergeErr)
+	}
+	elements, buildErr := groups.BuildElements(merged, t.materialize)
+	if buildErr != nil {
+		return nil, fmt.Errorf("materialize the merged stream batches: %w", buildErr)
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", responseCount)
+		// Keep the pre-pagination distinct count, including when a frame is supplied
+		// under tracing. Normal traced replies use the row path.
+		seen := make(map[int64]struct{})
+		for _, batch := range staged {
+			ids := batch.Columns[batch.Schema.ElementIDIndex()].(*vectorized.TypedColumn[int64]).Data()
+			if batch.Selection == nil {
+				for _, id := range ids[:batch.Len] {
+					seen[id] = struct{}{}
+				}
+			} else {
+				for _, row := range batch.Selection {
+					seen[ids[row]] = struct{}{}
+				}
+			}
+		}
+		span.Tagf("element_id_count", "%d", len(seen))
+	}
+	return elements, nil
+}
+
+// materialize is the single batch-to-Element entry point for both reply paths.
+func (t *distributedPlan) materialize(batch *vectorized.RecordBatch, projection []model.TagProjection) ([]*streamv1.Element, error) {
+	build := t.buildElements
+	if build == nil {
+		build = vstream.BuildElementsFromBatch
+	}
+	return build(batch, projection)
+}
+
+// window returns the pipeline's offset/limit. A plan built without Analyze carries no limit,
+// which must mean unbounded rather than the pipeline's "emit nothing".
+func (t *distributedPlan) window() (uint32, uint32) {
+	if t.limit == 0 {
+		return 0, math.MaxUint32
+	}
+	return t.offset, t.limit
+}
+
+// applyWindow slices the row path's merged result, which is the same offset/limit the batch
+// path applies in its pipeline. The batch path owns the window there, so the two never both
+// slice one result.
+func (t *distributedPlan) applyWindow(merged []*streamv1.Element) []*streamv1.Element {
+	if t.limit == 0 {
+		return merged
+	}
+	start := int(t.offset)
+	if start > len(merged) {
+		return []*streamv1.Element{}
+	}
+	end := start + int(t.limit)
+	if end > len(merged) {
+		end = len(merged)
+	}
+	return merged[start:end]
 }
 
 func (t *distributedPlan) String() string {
-	return fmt.Sprintf("distributed:%s", t.queryTemplate.String())
+	return fmt.Sprintf("distributed:%s offset:%d limit:%d", t.queryTemplate.String(), t.offset, t.limit)
 }
 
 func (t *distributedPlan) Children() []logical.Plan {
@@ -380,65 +533,4 @@ func (s *sortableElements) iter(fn func(*streamv1.Element) (*comparableElement, 
 	}
 	s.cur = cur
 	return s.index <= len(s.elements)
-}
-
-var _ executor.StreamExecutable = (*distributedLimit)(nil)
-
-type distributedLimit struct {
-	*Parent
-	limit  uint32
-	offset uint32
-}
-
-func (l *distributedLimit) Close() {
-	l.Parent.Input.(executor.StreamExecutable).Close()
-}
-
-func (l *distributedLimit) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
-	if err != nil {
-		return nil, err
-	}
-
-	start := int(l.offset)
-	if start > len(entities) {
-		return []*streamv1.Element{}, nil
-	}
-
-	end := start + int(l.limit)
-	if end > len(entities) {
-		end = len(entities)
-	}
-	return entities[start:end], nil
-}
-
-func (l *distributedLimit) Analyze(s logical.Schema) (logical.Plan, error) {
-	var err error
-	l.Input, err = l.UnresolvedInput.Analyze(s)
-	if err != nil {
-		return nil, err
-	}
-	return l, nil
-}
-
-func (l *distributedLimit) Schema() logical.Schema {
-	return l.Input.Schema()
-}
-
-func (l *distributedLimit) String() string {
-	return fmt.Sprintf("%s Distributed Limit: %d, %d", l.Input.String(), l.offset, l.limit)
-}
-
-func (l *distributedLimit) Children() []logical.Plan {
-	return []logical.Plan{l.Input}
-}
-
-func newDistributedLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
-	return &distributedLimit{
-		Parent: &Parent{
-			UnresolvedInput: input,
-		},
-		offset: offset,
-		limit:  limit,
-	}
 }

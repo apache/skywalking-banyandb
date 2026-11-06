@@ -125,7 +125,9 @@ func DistributedAnalyze(criteria *streamv1.QueryRequest, ss []logical.Schema) (l
 	if _, validWindow := query.AddWindow(limitParameter, criteria.GetOffset()); !validWindow {
 		return nil, fmt.Errorf("query limit and offset exceed supported range")
 	}
-	plan = newDistributedLimit(plan, criteria.Offset, limitParameter)
+	// The distributed plan owns the client offset/limit window because it also owns the merge:
+	// the batch path applies the window inside the merge pipeline and the row path slices the
+	// merged rows, so no separate limit node may slice the same result again.
 	return plan.Analyze(s)
 }
 
