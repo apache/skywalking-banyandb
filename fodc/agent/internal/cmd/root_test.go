@@ -195,3 +195,28 @@ func TestValidateFlags_NegativeMemoryPercent(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "max-metrics-memory-usage-percentage must be between 0 and 100")
 }
+
+func TestNativeLogRouteDefaultsToCluster(t *testing.T) {
+	route := rootCmd.Flags().Lookup("logging-native-route")
+	if assert.NotNil(t, route) {
+		assert.Equal(t, nativeLogRouteCluster, route.DefValue)
+	}
+	assert.False(t, nativeLogDestinationFor(nativeLogRouteCluster).Public)
+	assert.True(t, nativeLogDestinationFor(nativeLogRoutePublic).Public)
+}
+
+func TestValidateFlags_NativeLogRoute(t *testing.T) {
+	origRoute := nativeLogRoute
+	defer func() { nativeLogRoute = origRoute }()
+
+	for _, route := range []string{nativeLogRouteCluster, nativeLogRoutePublic} {
+		nativeLogRoute = route
+		assert.NoError(t, validateFlags(), route)
+	}
+	// A role name is not a route: the agent beside a liaison would otherwise
+	// fall back to the cluster route, which the liaison refuses.
+	nativeLogRoute = "liaison"
+	err := validateFlags()
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "logging-native-route must be cluster or public")
+}

@@ -47,15 +47,15 @@ The `standalone`, `data` and `liaison` roles support it. A standalone or data no
 | Producer | Writes to | Connection |
 |---|---|---|
 | `backup`, `lifecycle` | the data node they serve, its cluster server | their `--grpc-addr`, `--enable-tls`, `--insecure` and `--cert` |
-| FODC agent beside a data node | that data node's cluster server | `--logging-native-addr`, for example `127.0.0.1:17912` |
-| FODC agent beside a liaison, FODC proxy | a liaison's gRPC port, through the public write API, as any client writes | `--logging-native-addr`, for example `liaison:17912`; the agent takes this route when its node role, read through `--cluster-state-ports`, is a liaison |
+| FODC agent beside a data node | that data node's cluster server | `--logging-native-addr`, for example `127.0.0.1:17912`, with `--logging-native-route=cluster`, the default |
+| FODC agent beside a liaison, FODC proxy | a liaison's gRPC port, through the public write API, as any client writes | `--logging-native-addr`, for example `liaison:17912`; the agent beside a liaison also needs `--logging-native-route=public` |
 
 The node they write to needs `--logging-native-receiver-enabled`. It creates the `_monitoring_log` group and stream and keeps checking them, as a node with `--logging-native-enabled` does, but it collects none of its own logs unless `--logging-native-enabled` is set too:
 
 ```sh
 banyand data --logging-native-receiver-enabled
 lifecycle --grpc-addr=127.0.0.1:17912 --logging-native-enabled
-fodc-agent --logging-native-enabled --logging-native-addr=127.0.0.1:17912 --cluster-state-ports=17912
+fodc-agent --logging-native-enabled --logging-native-addr=127.0.0.1:17912
 ```
 
 A row carries the producer's identity: `node_type` is `backup`, `lifecycle`, `fodc-agent` or `fodc-proxy`, and `node_id` is `POD_NAME`, else the host name; the FODC agent uses `--pod-name`. The receiving node applies no level or module filter of its own: each producer filters with its own `--logging-native-*` flags.
@@ -65,6 +65,7 @@ The FODC binaries have no other connection to reuse, so they take their own:
 | Flag | Default | Meaning |
 |---|---|---|
 | `--logging-native-addr` | – | where to write; needed by `--logging-native-enabled`, which is refused at startup without it |
+| `--logging-native-route` | `cluster` | FODC agent only: `cluster` writes to a data node's cluster server, `public` through a liaison's public write API. A liaison refuses the cluster route, so an agent beside a liaison drops every event as `publish_failed` without `public` |
 | `--logging-native-tls` / `--logging-native-ca-cert` | `false` / – | TLS for that connection only; without a CA file the system roots verify the server |
 | `--logging-native-username` / `--logging-native-password` | – | the credentials sent to a liaison whose authentication is on; the user needs write permission on `_monitoring_log` |
 

@@ -231,10 +231,12 @@ spec:
             - --pod-name=$(POD_NAME)
             - --lifecycle-port=18912
             - --schema-registry-port=17912
-            # Its own logs, through the liaison's public write API: its node
-            # role resolves to liaison from --cluster-state-ports.
+            # Its own logs, through the liaison's public write API. The route
+            # is set, not taken from the node role: the role is not known
+            # while the liaison is still starting.
             - --logging-native-enabled
             - --logging-native-addr=127.0.0.1:17912
+            - --logging-native-route=public
           env:
             - name: POD_NAME
               valueFrom:

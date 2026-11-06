@@ -337,7 +337,7 @@ The producer encodes and stamps each event as a node does, with its own identity
 
 | Rule | Behaviour |
 |---|---|
-| Destination | One address per producer. Backup and lifecycle use their existing `--grpc-addr`, the data node they already serve. The FODC binaries get `--logging-native-addr`, which `--logging-native-enabled` needs: without it the process refuses to start rather than drop every event. The FODC agent takes the route of the node it sits beside, from its node role; the proxy always takes the public route. |
+| Destination | One address per producer. Backup and lifecycle use their existing `--grpc-addr`, the data node they already serve. The FODC binaries get `--logging-native-addr`, which `--logging-native-enabled` needs: without it the process refuses to start rather than drop every event. The FODC agent takes the route that `--logging-native-route` names, `cluster` (default) beside a data node or `public` beside a liaison. The route is configured, not read from the node role: the role is not known while the node is still starting, and on the wrong route every write is refused. The proxy always takes the public route. |
 | Schema | A producer has no metadata client, so the cluster owns the schema. `--logging-native-receiver-enabled` (data and liaison nodes, default `false`) makes a node create and check the schema as section 3.4 describes, also when `--logging-native-enabled` is `false`. It does not attach the sink, so the node's own logs are not collected. |
 | Acceptance | Not gated by the flag: a write to `_monitoring_log/log` is an ordinary stream write, and fails as a write to any missing stream does. |
 | Back-pressure | The destination's own: the data node's write path, or the liaison's disk watermark. The producer's buffer stays in front, so admission never blocks. |
@@ -383,7 +383,7 @@ Every FODC dial is insecure today; the new flags cover only the native log conne
 |---|---|---|
 | lifecycle | `run.Group` | a unit of its group, stopped before the clients |
 | backup, FODC proxy | plain main loop | started after `logger.Init`, stopped last before exit: the drain is bounded by `5s`, so a one-shot backup ends at most `5s` later |
-| FODC agent | plain main loop | started once its node role is known, which chooses its route, and stopped last before exit |
+| FODC agent | plain main loop | started after the node role is resolved, which does not choose its route, and stopped last before exit |
 
 #### Failure handling
 
@@ -439,6 +439,7 @@ Every dashed flag binds to `BYDB_<UPPER_SNAKE>`, and the env value applies only 
 | `--logging-native-ttl-days` | `7` | retention, proposed when the group is created |
 | `--logging-native-receiver-enabled` | `false` | data and liaison nodes: create and check the schema for the producers that write here, independent of collection (section 3.7) |
 | `--logging-native-addr` | empty | FODC agent and proxy: where to write, a data node's cluster server or a liaison's public port (section 3.7); empty disables native logging |
+| `--logging-native-route` | `cluster` | FODC agent: `cluster`, the data node's cluster server, or `public`, a liaison's public write API (section 3.7) |
 | `--logging-native-tls` / `--logging-native-ca-cert` | `false` / empty | FODC agent and proxy: TLS for that connection only |
 | `--logging-native-username` / `--logging-native-password` | empty | FODC agent beside a liaison and proxy: credentials for the liaison's RBAC, when it is on |
 
