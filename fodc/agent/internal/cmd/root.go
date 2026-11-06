@@ -32,6 +32,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/crashcollector"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/exporter"
@@ -50,6 +51,13 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
+)
+
+// The routes of the agent's own logs: to the data node it sits beside, or
+// through the liaison it sits beside.
+const (
+	nativeLogRouteCluster = "cluster"
+	nativeLogRoutePublic  = "public"
 )
 
 const (
@@ -102,6 +110,8 @@ var (
 	pressureMaxArtifacts               int
 	pressureMaxDiskBytes               int64
 	logging                            logger.Logging
+	nativeLogDestination               nativelog.Destination
+	nativeLogRoute                     string
 	rootCmd                            = &cobra.Command{
 		Use:     "fodc",
 		Short:   "First Occurrence Data Collection (FODC) agent",
@@ -174,6 +184,11 @@ func init() {
 	rootCmd.Flags().Int64Var(&pressureMaxDiskBytes, "pressure-profiler-max-disk-bytes", defaultPressureMaxDiskBytes,
 		"Maximum total on-disk bytes for retained capture events (0 disables the disk bound)")
 	logger.RegisterFlags(rootCmd.Flags(), &logging)
+	logger.RegisterNativeFlags(rootCmd.Flags(), &logging.Native)
+	nativelog.RegisterDestinationFlags(rootCmd.Flags(), &nativeLogDestination)
+	rootCmd.Flags().StringVar(&nativeLogRoute, "logging-native-route", nativeLogRouteCluster,
+		"how --logging-native-addr is reached: cluster, a data node's cluster server (the agent beside a data node); "+
+			"public, a liaison's gRPC write API (the agent beside a liaison)")
 }
 
 func calculateCapacity(log *logger.Logger) int64 {
@@ -315,6 +330,15 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
 
+	stopNativeLog, nativeLogErr := startNativeLog(reg)
+	if nativeLogErr != nil {
+		cluster.StopCollector(clusterCollector)
+		_ = metricsServer.Stop(ctx)
+		return nativeLogErr
+	}
+	// Deferred, so it stops last: what the teardown logs is still delivered.
+	defer stopNativeLog()
+
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
 	if clusterCollector != nil {
 		// Stamp the node role and labels live from the collector, which keeps resolving after
@@ -414,6 +438,32 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// startNativeLog stores the agent's own logs in BanyanDB, by the route of
+// --logging-native-route. The route is configured, not taken from the node
+// role: the role is not known while the node is still starting, and a wrong
+// route refuses every write. Its counters are served with the agent's other
+// metrics.
+func startNativeLog(reg *prometheus.Registry) (stop func(), err error) {
+	dest := nativeLogDestinationFor(nativeLogRoute)
+	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{
+		Native:      &logging.Native,
+		Node:        nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID(podName, "fodc-agent"), NodeType: "fodc-agent"},
+		Destination: dest,
+		Gauges:      prom.NewProvider(nativelog.Scope, reg).Gauge,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("native logging: %w", err)
+	}
+	return nativelog.StartProducer(producer), nil
+}
+
+// nativeLogDestinationFor is the destination of the agent's own logs on route.
+func nativeLogDestinationFor(route string) nativelog.Destination {
+	dest := nativeLogDestination
+	dest.Public = route == nativeLogRoutePublic
+	return dest
+}
+
 func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.FlightRecorder) (func(), error) {
 	if ktmInterval <= 0 {
 		return nil, fmt.Errorf("ktm-interval must be positive, got %v", ktmInterval)
@@ -492,6 +542,9 @@ func validateFlags() error {
 	}
 	if pressureProfilerEnabled && (pressureTriggerPercent < 1 || pressureTriggerPercent > 100) {
 		return fmt.Errorf("pressure-profiler-trigger-percent must be between 1 and 100, got %d", pressureTriggerPercent)
+	}
+	if nativeLogRoute != nativeLogRouteCluster && nativeLogRoute != nativeLogRoutePublic {
+		return fmt.Errorf("logging-native-route must be %s or %s, got %q", nativeLogRouteCluster, nativeLogRoutePublic, nativeLogRoute)
 	}
 	return nil
 }

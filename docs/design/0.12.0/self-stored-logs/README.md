@@ -1,6 +1,6 @@
 # Self-Stored Logs
 
-Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **implemented** and under review.
+Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **implemented**; phases 3 and 4 (the other producers, section 3.7) are **implemented** and under review.
 
 BanyanDB self-stores its metrics into the `_monitoring` group but has no equivalent for its own
 logs: `pkg/logger` writes to a single `io.Writer` fixed at `logger.Init` time, so logs leave the
@@ -32,8 +32,8 @@ This feature adds a second, optional destination for logs: native self-storage i
 | | Roles | Rationale |
 |---|---|---|
 | In scope | standalone, data, liaison | reach stream storage directly |
-| In scope | lifecycle, backup | colocated producers, using the receiver on their host's data node |
-| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy | a generic receiver/forwarder serves it, so BanyanDB imports nothing from FODC |
+| In scope | lifecycle, backup | colocated producers, writing to their host's data node |
+| In scope | FODC — the on-demand diagnostics collector, agents plus a proxy | writing to a data node or a liaison as any producer does, so BanyanDB imports nothing from FODC |
 | Out of scope | restore, migration | they run when the data tier is unavailable |
 
 The sections that follow go roles, approach, configuration, failure modes.
@@ -53,7 +53,7 @@ One binary, several roles. One property decides the destination: whether the pro
 
 > A liaison has local disk: it runs a two-tier write queue whose normal `StreamService/Write` route ends in part files, synced to the data nodes. What it lacks is the storage engine, so it holds a batch until a data node has it but can never be where logs are read back from.
 
-Three shapes: in-process; the liaison writing through its write queue, as a stream write does; and every other producer publishing into the generic receiver, subscribed on data nodes' cluster server and on the liaison.
+Three shapes: in-process; the liaison writing through its write queue, as a stream write does; and every other producer writing to the data node beside it, or through a liaison's public write API (section 3.7).
 
 > Restore and migration use normal logging only by construction, not as a gap to close later: a tool that runs while the database is down cannot log into it. The native flags are registered only by the server, backup, lifecycle and FODC binaries.
 
@@ -103,21 +103,19 @@ The buffered publisher of the queue module owns the buffer (section 3.5). Its de
 
 Phase 1 follows native metrics. A standalone or data node writes its own events through its local write pipeline, always to shard `0` of `_monitoring_log`, which is created with one shard. No entity hash selects a shard and no event goes to another node, so each node's logs stay on that node. A group created by an earlier build with more shards still works, because every group has shard `0`. This aligns the first implementation with native metrics; it does not define node-local, non-replicated shards as a general contract.
 
-> **Decided: the liaison writes its logs as a stream write.** A liaison sends `_monitoring_log/log` through the normal liaison stream write path: the tier-1 client, a liaison's write queue, and the part sync to the data nodes. The write queue already provides buffering, capacity control, persistence and delivery, the role the bounded buffer has on a single node, so the liaison adds no delivery or retry path of its own. An earlier version bypassed the queue for a memory-only route over the tier-2 client; review replaced it with this one. The new native log topic serves the receiver's foreign producers, not the liaison's own route.
+> **Decided: the liaison writes its logs as a stream write.** A liaison sends `_monitoring_log/log` through the normal liaison stream write path: the tier-1 client, a liaison's write queue, and the part sync to the data nodes. The write queue already provides buffering, capacity control, persistence and delivery, the role the bounded buffer has on a single node, so the liaison adds no delivery or retry path of its own. An earlier version bypassed the queue for a memory-only route over the tier-2 client; review replaced it with this one. The other producers use the same paths, so no new topic is added (section 3.7).
 
 Section 3.6 applies this decision to the single-shard group of phase 1.
 
-The receiver of phase 3 is deliberately thin.
+Other producers receive no special path: they write to one data node or one liaison as a stream write (section 3.7).
 
 | Rule | Behaviour |
 |---|---|
-| Validation | `InvalidArgument` on a nil or non-millisecond timestamp, empty `element_id` or `node_id`, oversized body, out-of-enum level, oversized batch |
-| Back-pressure | `ResourceExhausted` when its own ring is full; never blocks |
-| Filtering | no local level, no module override — what arrives is what is stored |
+| Filtering | the receiving node applies no level and no module override of its own — what arrives is what is stored |
 | Echo | received events never enter its own logging path |
-| Identity | `element_id` and identity tags pass through unchanged; identity must live in the element |
+| Identity | `element_id` and identity tags pass through unchanged; identity lives in the element |
 
-`--logging-native-enabled` governs only a process's own collection: a node with it `false` still accepts, routes and persists forwarded writes.
+`--logging-native-enabled` governs only a process's own collection. `--logging-native-receiver-enabled` makes a node own the schema for the producers that write to it, with or without its own collection.
 
 ### 3.4 Schema
 
@@ -320,6 +318,107 @@ The buffer, its bounds, the memory policy of section 5.1, the schema, the entity
 
 Each new assertion is checked to fail when its change is reverted.
 
+### 3.7 Phases 3 and 4: the other producers
+
+Status: **implemented**, under review. Backup, lifecycle, the FODC agent and the FODC proxy store their own logs. None of them has a storage engine, and only lifecycle has a metadata client.
+
+> **Decided: no new receiver.** Each producer writes through a path that already exists, the one a process in its place already uses. A producer beside a data node publishes `TopicStreamWrite` to that node's cluster server, as lifecycle's migration does; the data node writes it to its local storage. A producer beside a liaison or outside the cluster writes through the liaison's public `StreamService/Write`, as any client does; the liaison writes it to its write queue, as for every stream write since phase 2. There is no new proto message, topic, gRPC method or method-policy row. This replaces the receiver of phase 3 that section 3.3 described before.
+
+```text
+backup, lifecycle, FODC agent beside a data node
+    --TopicStreamWrite (pub)--> that data node's cluster server, 127.0.0.1:17912 --> local storage
+FODC agent beside a liaison, FODC proxy
+    --StreamService/Write--> a liaison's public port, 17912 --> its write queue --> data node of shard 0
+```
+
+The producer encodes and stamps each event as a node does, with its own identity, and uses the code of the logging module, not a copy. On the cluster server route it also builds the internal request, shard `0` and entity `[node_id, level]`, as a data node does; on the public route the liaison does that, as for any client. Identity passes through unchanged, so a row tells which producer wrote it.
+
+#### Destination and schema
+
+| Rule | Behaviour |
+|---|---|
+| Destination | One address per producer. Backup and lifecycle use their existing `--grpc-addr`, the data node they already serve. The FODC binaries get `--logging-native-addr`, which `--logging-native-enabled` needs: without it the process refuses to start rather than drop every event. The FODC agent takes the route that `--logging-native-route` names, `cluster` (default) beside a data node or `public` beside a liaison. The route is configured, not read from the node role: the role is not known while the node is still starting, and on the wrong route every write is refused. The proxy always takes the public route. |
+| Schema | A producer has no metadata client, so the cluster owns the schema. `--logging-native-receiver-enabled` (data and liaison nodes, default `false`) makes a node create and check the schema as section 3.4 describes, also when `--logging-native-enabled` is `false`. It does not attach the sink, so the node's own logs are not collected. |
+| Acceptance | Not gated by the flag: a write to `_monitoring_log/log` is an ordinary stream write, and fails as a write to any missing stream does. |
+| Back-pressure | The destination's own: the data node's write path, or the liaison's disk watermark. The producer's buffer stays in front, so admission never blocks. |
+| Filtering | The producer filters with its own native flags. The receiving node applies no level or module filter of its own. |
+
+#### Connection, security and delivery
+
+| | Cluster server route | Public route |
+|---|---|---|
+| Client | its own `pub` client, the delivery of phase 2 addressed to one fixed node | a `StreamService/Write` stream per batch, one `WriteRequest` per event |
+| Reconnect | a `pub` client made without metadata dials once. Lifecycle's keeper loop for its metrics client, which registers the node again when no connection is healthy, moves to the queue module unchanged and serves both clients: one reconnect rule, not a second copy | gRPC reconnects by itself |
+| TLS | backup and lifecycle: the existing `--enable-tls` and `--cert`; the cluster server and the snapshot service share one port. FODC agent: `--logging-native-tls` and `--logging-native-ca-cert`. `pub` takes client TLS without its flag set | FODC: `--logging-native-tls` and `--logging-native-ca-cert` |
+| Auth | none, as for every cluster server client | the liaison's RBAC, as for any client: `--logging-native-username` and `--logging-native-password`, sent as the `username` and `password` metadata. Writing needs the data-write permission on `_monitoring_log` |
+| Outcome | a published batch is final, as in phase 2 | read per event from the write response: a missing stream is `schema_unavailable`, any other refusal `publish_failed` |
+
+Every FODC dial is insecure today; the new flags cover only the native log connection.
+
+#### Drop counters
+
+| Producer | Where the `native_log_*` counters are visible |
+|---|---|
+| lifecycle | its metrics registry, as its native metrics are |
+| FODC agent | its Prometheus registry, served on its metrics endpoint |
+| FODC proxy | its `/metrics`, appended as its schema-consistency series are |
+| backup | no endpoint: each loss on stderr as it happens, as on every producer, and one summary line at exit, written only when something was dropped |
+
+#### What phases 3 and 4 add
+
+| Part | Change |
+|---|---|
+| Logging module | A producer service: one of the two deliveries above, with the schema treated as established, because the producer cannot read it. The public-route delivery. One helper attaches the sink after `logger.Init` and starts and stops the service, for the binaries with no `run.Group`. The counters take any metrics factory, not only a registry. |
+| Server | `--logging-native-receiver-enabled`. The logging service creates and checks the schema when this flag or `--logging-native-enabled` is set, and starts delivery only for the latter. |
+| Data write path | The write callback logs about an event of `_monitoring_log` as a native write, as the liaison's write-queue callback does since phase 2. A remote write carries no context mark. |
+| Queue | The node keeper moves here from lifecycle. `pub` takes client TLS and a logger without its flag set. |
+| lifecycle, backup | native flags; `node_type` `lifecycle` or `backup`. |
+| FODC agent, FODC proxy | native flags and the connection flags above; `node_type` `fodc-agent` or `fodc-proxy`. |
+
+`node_id` is `POD_NAME`, else the host name, as lifecycle's native metrics use. The FODC agent uses `--pod-name` when it is set.
+
+#### Lifetime
+
+| Producer | Runs | Native delivery |
+|---|---|---|
+| lifecycle | `run.Group` | a unit of its group, stopped before the clients |
+| backup, FODC proxy | plain main loop | started after `logger.Init`, stopped last before exit: the drain is bounded by `5s`, so a one-shot backup ends at most `5s` later |
+| FODC agent | plain main loop | started after the node role is resolved, which does not choose its route, and stopped last before exit |
+
+#### Failure handling
+
+| Situation | Behaviour | Counted as |
+|---|---|---|
+| no connection to the destination | nothing is sent; retried once per interval, up to 10 times | `destination_unready` |
+| public route: the stream is missing on the liaison | the event is refused | `schema_unavailable` |
+| cluster server route: the data node has no schema, the flag is off there | the write fails on that node, but the data write callback reports success, so the producer counts the batch as written. This is the known gap of section 5, tracked in [apache/skywalking#14158](https://github.com/apache/skywalking/issues/14158); loss accounting for it stays partial until that fix lands | – |
+| the write fails, is refused, or times out | the batch, or the refused event, is dropped | `publish_failed` |
+| the liaison refuses the credentials | the batch is dropped, and one error is written to the console once | `publish_failed` |
+
+#### Feedback protection
+
+Received events never enter the receiving node's own logging. What its write path logs about them is a native write: the liaison's write-queue callback since phase 2, and the data write callback with this change. On the producer, the delivery runs under a context marked by `logger.WithNativeWrite`, as on every node. Its `pub` client logs under `NATIVE-LOG.CLIENT`, which the reserved exclusion covers, including the keeper loop on its own goroutine: a failed dial or a lost connection reaches the console and never native storage. The gRPC client of the public route does not log through BanyanDB's logger.
+
+#### Unchanged
+
+The schema, the buffer, its bounds and the memory policy. A producer with no memory protector relies on the fixed bound, as section 5.1 says. Restore and migration still offer no native flags.
+
+#### Tests
+
+Shared cases stay in `test/cases/nativelog` and run from each suite; deployment and role setup stay in the suites. Integration suites run in one process. Anything that needs separate processes, each with its own logger configuration, is in e2e. No suite is added to the flaky-test workflow.
+
+| Level | Test |
+|---|---|
+| Logging | a producer stamps its own identity and addresses every batch to its destination; with no connection it counts `destination_unready` after the retries, and delivers again once the connection is back; on the public route a missing stream counts `schema_unavailable` and a refused credential `publish_failed`; a node with only the receiver flag creates the schema and attaches no sink |
+| Queue | the keeper registers a node again when no connection is healthy, for both clients that use it; `pub` with client TLS set dials with TLS |
+| Recursion | the data write callback's log about a received `_monitoring_log` event is not stored, and the same log about another group is; a failed dial of either client is not stored |
+| Integration | two suites, one per route, each in one process: a producer writing to a data node with only the receiver flag, and one writing through a liaison with only the receiver flag. They run the shared cases with the producer as the node: the process's lines are stored under the producer's exact `node_id` and `node_type`, an info line is stored and not printed, and collection resumes after the log group is removed at runtime. The startup case is skipped, because the producer starts after the servers in the same process. Falsifier: with the receiver flag off, the log stream never becomes queryable |
+| E2E, compose | backup beside one data node and lifecycle beside another, both nodes with only the receiver flag. The case asserts the exact set of producer identities, a known event of each, and from the query trace that each producer's rows are on its own data node only. A backup started without `--logging-native-enabled` logs and stores nothing. Lifecycle reports its counters on `/metrics`. With backup's data node paused, backup reports the loss on stderr; once the node resumes, backup stores new lines without being restarted |
+| E2E, kind | the FODC case: an agent beside the data node, an agent beside the liaison and the proxy; the data node and the liaison have only the receiver flag. The case asserts that the stored identities are exactly the three pod names with their `node_type`, and that each process reports what it wrote on its `/metrics` |
+| Credentials | a fake liaison in the logging tests checks the credentials of every write and refuses them with `PermissionDenied`; the e2e cases run without authentication |
+
+Each new assertion is checked to fail when its change is reverted.
+
 ## 4. Parameters and configuration
 
 Two independent namespaces; neither inherits from the other.
@@ -338,7 +437,11 @@ Every dashed flag binds to `BYDB_<UPPER_SNAKE>`, and the env value applies only 
 | `--logging-native-modules` / `--logging-native-levels` | `nil` | per-module overrides on the complete module, most specific wins, length-checked; an override cannot lift an exclusion |
 | `--logging-native-exclude-modules` | `nil` | modules never sent natively, with their children; adds to the reserved `NATIVE-LOG` and `_MONITORING_LOG` and cannot remove them |
 | `--logging-native-ttl-days` | `7` | retention, proposed when the group is created |
-| `--logging-native-receiver-enabled` | `false` | accept forwarded writes, wherever hosted; independent of collection. Phase 3: nothing forwards before the receiver exists |
+| `--logging-native-receiver-enabled` | `false` | data and liaison nodes: create and check the schema for the producers that write here, independent of collection (section 3.7) |
+| `--logging-native-addr` | empty | FODC agent and proxy: where to write, a data node's cluster server or a liaison's public port (section 3.7); empty disables native logging |
+| `--logging-native-route` | `cluster` | FODC agent: `cluster`, the data node's cluster server, or `public`, a liaison's public write API (section 3.7) |
+| `--logging-native-tls` / `--logging-native-ca-cert` | `false` / empty | FODC agent and proxy: TLS for that connection only |
+| `--logging-native-username` / `--logging-native-password` | empty | FODC agent beside a liaison and proxy: credentials for the liaison's RBAC, when it is on |
 
 Level semantics are in section 3.1; the four existing `--logging-*` flags keep their names and defaults. Buffering, batching, write handling, shutdown and memory are internal: flush every `1s` or at `100` events, `5s` per publish, `5s` for the final drain, the bounds in section 3.2 and the memory protector's policy in section 5.1. None of them had an operator requirement that a flag would serve. The schema pass against metadata has its own internal timeout, separate from the write timeout: a slow destination is not a reason to wait longer on metadata.
 
