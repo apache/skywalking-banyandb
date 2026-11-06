@@ -23,9 +23,9 @@ import "github.com/apache/skywalking-banyandb/pkg/logger"
 // An event of the native log group is a native log write wherever it came
 // from, so its lines log under the native log service and never reach native
 // storage: a failed write would otherwise log a line that is written, and
-// fails, again. A liaison receives the event over the network, without the
-// mark the sender's context carried, and its write queue looks up nodes for
-// the group outside any request.
+// fails, again. A liaison or a data node receives the event over the
+// network, without the mark the sender's context carried, and a liaison's
+// write queue looks up nodes for the group outside any request.
 func logForGroup(l *logger.Logger, group string) *logger.Logger {
 	if group == logger.NativeLogGroup {
 		return logger.GetLogger(logger.NativeWriteModule).Named("stream")

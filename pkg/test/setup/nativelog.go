@@ -19,12 +19,15 @@ package setup
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/onsi/gomega"
 	grpclib "google.golang.org/grpc"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
 	testflags "github.com/apache/skywalking-banyandb/pkg/test/flags"
 )
 
@@ -39,6 +42,31 @@ const FastSchemaSync = "--schema-property-client-sync-interval=1s"
 // cases assume: the console at error and native storage at info, so an info
 // line is stored and not printed.
 var NativeLogFlags = []string{"--logging-native-enabled", "--logging-native-level=info", "--logging-level=error"}
+
+// ReceiverFlag makes a server keep the native log schema for the producers
+// that write to it, while it collects nothing of its own.
+const ReceiverFlag = "--logging-native-receiver-enabled"
+
+// StartNativeLogProducer stores this process's logs as a producer of nodeType,
+// such as backup or an FODC agent, writing to dest, with the thresholds of
+// NativeLogFlags. It returns the producer's node_id and the function that
+// stops it.
+//
+// Call it after the servers it writes to have started: the native sink is
+// process-global, and a server configures the logger when it starts.
+func StartNativeLogProducer(nodeType string, dest nativelog.Destination) (nodeID string, stop func()) {
+	native := logger.NativeLogging{Enabled: true, Level: "info", TTLDays: 7}
+	gomega.Expect(logger.Init(logger.Logging{Env: "dev", Level: "error", Native: native})).To(gomega.Succeed())
+	nodeID = fmt.Sprintf("%s-%d", nodeType, time.Now().UnixNano())
+	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{
+		Native:      &native,
+		Node:        nativelog.NodeInfo{NodeID: nodeID, NodeType: nodeType},
+		Destination: dest,
+	})
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	gomega.Expect(producer).NotTo(gomega.BeNil())
+	return nodeID, nativelog.StartProducer(producer)
+}
 
 // LiaisonID returns the id of the only liaison of the cluster that conn
 // reaches, which is the identity the liaison stamps on its native log events.

@@ -298,7 +298,9 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 // log returns the logger for one write. A native log write carries its own
 // logger in ctx, so what this write path logs about it reaches the console
-// and never native storage, where it would be written and logged again.
+// and never native storage, where it would be written and logged again. A
+// write from another process carries no such mark: what is logged about one
+// event of the log group goes through logForGroup.
 func (w *writeCallback) log(ctx context.Context) *logger.Logger {
 	return logger.FetchOrDefault(ctx, "stream", w.l)
 }
@@ -342,7 +344,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.log(ctx).Error().Err(handleErr).Msg("cannot handle write event")
+			logForGroup(w.log(ctx), metadata.GetGroup()).Error().Err(handleErr).Msg("cannot handle write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
@@ -360,14 +362,14 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				// if the request has been canceled since.
 				// A refused batch admits none of its documents, so the write may be retried.
 				if err := common.RetryWrite(ctx, func() error { return index.WriteContext(context.WithoutCancel(ctx), es.docs) }); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write element index")
+					logForGroup(w.log(ctx), groupName).Error().Err(err).Msg("cannot write element index")
 					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write element index: %w", groupName, err))
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
 				// Inserting a series that exists is a no-op, so the write may be retried.
 				if err := common.RetryWrite(ctx, func() error { return es.segment.IndexDB().Insert(es.seriesDocs.docs) }); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write series index")
+					logForGroup(w.log(ctx), groupName).Error().Err(err).Msg("cannot write series index")
 					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write series index: %w", groupName, err))
 				}
 			}

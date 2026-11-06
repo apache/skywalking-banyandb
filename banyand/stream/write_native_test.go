@@ -92,6 +92,41 @@ func TestWriteCallbackKeepsNativeWritesOffNativeStorage(t *testing.T) {
 	}
 }
 
+// refusedEvent is a write the callbacks refuse before they read any schema or
+// queue: a timestamp finer than a millisecond. Each logs "cannot handle write
+// event" about it.
+func refusedEvent(group string) bus.Message {
+	return bus.NewMessage(1, []any{&streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
+		Metadata: &commonv1.Metadata{Group: group, Name: "log"},
+		Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(time.Unix(1, 1)), TagFamilies: []*modelv1.TagFamilyForWrite{}},
+	}}})
+}
+
+// TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage covers a data node
+// that receives the log events of another process, such as backup or
+// lifecycle, over its cluster server. They arrive without the mark the
+// producer's context carried. What the callback logs about one must still
+// reach the console and not native storage; the same refusal for an event of
+// another group is stored as usual.
+func TestWriteCallbackKeepsReceivedLogEventsOffNativeStorage(t *testing.T) {
+	printed := len(console.String())
+	sink := nativeLoggingAtWarn(t)
+
+	w := &writeCallback{l: logger.GetLogger("stream")}
+
+	w.Rev(context.Background(), refusedEvent(logger.NativeLogGroup))
+	require.Eventually(t, func() bool { return strings.Contains(console.String()[printed:], "cannot handle write event") },
+		5*time.Second, 10*time.Millisecond, "the refused log event was not reported on the console")
+	if n := sink.count(); n != 0 {
+		t.Fatalf("the refusal of a received log event was stored natively %d times", n)
+	}
+
+	w.Rev(context.Background(), refusedEvent("sw_metric"))
+	if n := sink.count(); n != 1 {
+		t.Fatalf("the refusal of an ordinary event was stored %d times, want 1", n)
+	}
+}
+
 // TestWriteQueueCallbackKeepsLogEventsOffNativeStorage covers a liaison's
 // write queue. A log event arrives over the cluster server without the mark
 // its context carried on the sending liaison. What the callback logs about it
@@ -103,23 +138,15 @@ func TestWriteQueueCallbackKeepsLogEventsOffNativeStorage(t *testing.T) {
 	sink := nativeLoggingAtWarn(t)
 
 	w := &writeQueueCallback{l: logger.GetLogger("stream")}
-	// A timestamp finer than a millisecond is refused before the callback
-	// reads any queue, so the callback logs "cannot handle write event".
-	refused := func(group string) bus.Message {
-		return bus.NewMessage(1, []any{&streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
-			Metadata: &commonv1.Metadata{Group: group, Name: "log"},
-			Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(time.Unix(1, 1)), TagFamilies: []*modelv1.TagFamilyForWrite{}},
-		}}})
-	}
 
-	w.Rev(context.Background(), refused(logger.NativeLogGroup))
+	w.Rev(context.Background(), refusedEvent(logger.NativeLogGroup))
 	require.Eventually(t, func() bool { return strings.Contains(console.String()[printed:], "cannot handle write event") },
 		5*time.Second, 10*time.Millisecond, "the refused log event was not reported on the console")
 	if n := sink.count(); n != 0 {
 		t.Fatalf("the refusal of a received log event was stored natively %d times", n)
 	}
 
-	w.Rev(context.Background(), refused("sw_metric"))
+	w.Rev(context.Background(), refusedEvent("sw_metric"))
 	if n := sink.count(); n != 1 {
 		t.Fatalf("the refusal of an ordinary event was stored %d times, want 1", n)
 	}
