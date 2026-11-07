@@ -25,11 +25,14 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -40,6 +43,7 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/lifecycle"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/pressureprofiler"
+	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -49,6 +53,14 @@ import (
 // created without a positive reconnect interval. In practice c.reconnectInterval is always set from
 // the --reconnect-interval flag; this only guards a zero value.
 const defaultReconnectRetryInterval = 10 * time.Second
+
+const (
+	// maxMetricsChunkBytes bounds one metrics reply message. A reply over it is split into
+	// chunks so a long time window never exceeds the gRPC message limit (maxProxyCallMsgSize).
+	maxMetricsChunkBytes = 4 << 20
+	// metricsChunkEnvelopeBytes reserves room for a chunk's own timestamp and has_more fields.
+	metricsChunkEnvelopeBytes = 64
+)
 
 // MetricsRequestFilter defines filters for metrics requests.
 type MetricsRequestFilter struct {
@@ -90,7 +102,11 @@ type Client struct {
 	reconnectInterval time.Duration
 	streamsMu         sync.RWMutex   // Protects streams and stream operations
 	heartbeatWg       sync.WaitGroup // Tracks heartbeat goroutine
-	disconnected      bool
+	// reconnectPending records a reconnect skipped because the reconnect slot was busy. A
+	// metrics-stream restart rebuilds only that stream, so it runs a pending reconnect once it
+	// releases the slot; a successful full reconnect clears it.
+	reconnectPending atomic.Bool
+	disconnected     bool
 }
 
 // NewClient creates a new Client instance.
@@ -1237,15 +1253,38 @@ func (c *Client) sendLatestMetrics(
 		protoMetrics = append(protoMetrics, protoMetric)
 	}
 
-	req := &fodcv1.StreamMetricsRequest{
-		Metrics:   protoMetrics,
-		Timestamp: timestamppb.Now(),
-	}
+	return c.sendMetricsChunks(stream, protoMetrics)
+}
 
-	if sendErr := stream.Send(req); sendErr != nil {
+// sendMetricsChunks sends one metrics reply. A reply over maxMetricsChunkBytes is split into
+// several messages; every one but the last sets HasMore so the proxy merges them. A metric
+// that alone exceeds a chunk is left out, since no message within the budget can carry it.
+func (c *Client) sendMetricsChunks(stream fodcv1.FODCService_StreamMetricsClient, protoMetrics []*fodcv1.Metric) error {
+	const chunkBudget = maxMetricsChunkBytes - metricsChunkEnvelopeBytes
+	timestamp := timestamppb.Now()
+	start, chunkBytes := 0, 0
+	for idx, metric := range protoMetrics {
+		metricBytes := proto.Size(metric)
+		// A repeated message field costs its tag, its length prefix, and the message itself.
+		entryBytes := 1 + protowire.SizeVarint(uint64(metricBytes)) + metricBytes
+		oversized := entryBytes > chunkBudget
+		if idx > start && (oversized || chunkBytes+entryBytes > chunkBudget) {
+			if err := stream.Send(&fodcv1.StreamMetricsRequest{Metrics: protoMetrics[start:idx], Timestamp: timestamp, HasMore: true}); err != nil {
+				return fmt.Errorf("failed to send metrics chunk: %w", err)
+			}
+			start, chunkBytes = idx, 0
+		}
+		if oversized {
+			c.logger.Warn().Str("metric", metric.GetName()).Int("bytes", entryBytes).Int("limit_bytes", chunkBudget).
+				Msg("Metric exceeds the metrics chunk size, leaving it out of the reply")
+			start = idx + 1
+			continue
+		}
+		chunkBytes += entryBytes
+	}
+	if sendErr := stream.Send(&fodcv1.StreamMetricsRequest{Metrics: protoMetrics[start:], Timestamp: timestamp}); sendErr != nil {
 		return fmt.Errorf("failed to send metrics: %w", sendErr)
 	}
-
 	return nil
 }
 
@@ -1308,16 +1347,7 @@ func (c *Client) sendFilteredMetrics(
 		}
 	}
 
-	req := &fodcv1.StreamMetricsRequest{
-		Metrics:   protoMetrics,
-		Timestamp: timestamppb.Now(),
-	}
-
-	if sendErr := stream.Send(req); sendErr != nil {
-		return fmt.Errorf("failed to send metrics: %w", sendErr)
-	}
-
-	return nil
+	return c.sendMetricsChunks(stream, protoMetrics)
 }
 
 // SetNodeRoleProvider wires a live source of the node's resolved role (and labels),
@@ -1722,9 +1752,14 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 				c.logger.Debug().Err(recvErr).Msg("Metrics stream closed")
 				return
 			}
-			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
-			run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, func(ctx context.Context) {
-				c.reconnect(ctx)
+			if grpchelper.IsFailoverError(recvErr) {
+				c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, reconnecting...")
+				run.Go(ctx, "fodc.agent.proxy.reconnect", c.logger, c.reconnectNow)
+				return
+			}
+			c.logger.Error().Err(recvErr).Msg("Error receiving from metrics stream, restarting it...")
+			run.Go(ctx, "fodc.agent.proxy.metrics-stream-restart", c.logger, func(ctx context.Context) {
+				c.restartMetricsStream(ctx, stream)
 			})
 			return
 		}
@@ -1745,6 +1780,52 @@ func (c *Client) handleMetricsStream(ctx context.Context, stream fodcv1.FODCServ
 	}
 }
 
+// reconnectNow runs a full reconnect, through the test override when one is set.
+func (c *Client) reconnectNow(ctx context.Context) {
+	if c.reconnectFn != nil {
+		c.reconnectFn(ctx)
+		return
+	}
+	c.reconnect(ctx)
+}
+
+// restartMetricsStream reopens a metrics stream that failed on its own, such as a reply over
+// the message limit, on the existing connection, so the error does not tear down the agent's
+// other streams or its registration. It falls back to a full reconnect when the stream cannot
+// be reopened. It shares reconnect's slot so it never races a reconnect that is rebuilding
+// every stream.
+func (c *Client) restartMetricsStream(ctx context.Context, failed fodcv1.FODCService_StreamMetricsClient) {
+	startErr := c.reopenMetricsStream(ctx, failed)
+	if startErr != nil {
+		c.logger.Error().Err(startErr).Msg("Failed to restart metrics stream, reconnecting...")
+	}
+	if c.reconnectPending.Swap(false) || startErr != nil {
+		c.reconnectNow(ctx)
+	}
+}
+
+// reopenMetricsStream replaces failed with a new metrics stream while holding reconnect's slot,
+// waiting for the slot when it is busy. It does nothing when the client is disconnected or
+// failed was already replaced, such as by a reconnect that held the slot.
+func (c *Client) reopenMetricsStream(ctx context.Context, failed fodcv1.FODCService_StreamMetricsClient) error {
+	select {
+	case <-ctx.Done():
+		return nil
+	case c.reconnectCh <- struct{}{}:
+	}
+	defer func() { <-c.reconnectCh }()
+
+	c.streamsMu.Lock()
+	if c.disconnected || c.metricsStream != failed {
+		c.streamsMu.Unlock()
+		return nil
+	}
+	c.metricsStream = nil
+	c.streamsMu.Unlock()
+	_ = failed.CloseSend()
+	return c.StartMetricsStream(ctx)
+}
+
 // reconnect uses a buffered channel to ensure only one reconnect goroutine runs at a time.
 func (c *Client) reconnect(ctx context.Context) {
 	select {
@@ -1754,8 +1835,15 @@ func (c *Client) reconnect(ctx context.Context) {
 	case c.reconnectCh <- struct{}{}:
 		// Acquired the slot, proceed with reconnection
 	default:
-		c.logger.Debug().Msg("Reconnection already in progress, skipping...")
-		return
+		c.reconnectPending.Store(true)
+		// A metrics stream restart may have released the slot and checked reconnectPending
+		// before the Store above, so try once more rather than leave the request stranded.
+		select {
+		case c.reconnectCh <- struct{}{}:
+		default:
+			c.logger.Debug().Msg("Reconnection already in progress, skipping...")
+			return
+		}
 	}
 
 	defer func() {
@@ -1898,6 +1986,7 @@ func (c *Client) reconnect(ctx context.Context) {
 		}
 	}
 
+	c.reconnectPending.Store(false)
 	c.logger.Info().Msg("Successfully reconnected to Proxy")
 }
 
@@ -1925,14 +2014,9 @@ func (c *Client) scheduleReconnect(ctx context.Context) {
 	default:
 	}
 
-	reconnectFn := c.reconnect
-	if c.reconnectFn != nil {
-		reconnectFn = c.reconnectFn
-	}
-
 	c.logger.Info().Dur("retry_in", interval).Msg("Scheduling proxy reconnect retry")
 	time.AfterFunc(interval, func() {
-		reconnectFn(ctx)
+		c.reconnectNow(ctx)
 	})
 }
 
