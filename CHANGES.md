@@ -119,6 +119,7 @@ Release Notes.
 - Fix multi-group Measure aggregations dropping a group's contribution when two groups report the same shard id and group key. Replica dedup now keeps storage groups apart.
 - Report a query that hits the memory budget or an index limit on a standalone or data node as RESOURCE_EXHAUSTED instead of an internal error.
 - Fix native observability writing a scope label's value under another label's tag name: the tag family and the written tag values were both built by ranging over the scope's label map, in independently randomized orders. The label order is now resolved once per provider and instrument instead of on every metric update. Measures that already exist in the `_monitoring` group keep the tag order they were created with (`CreateMeasure` returns `ErrGRPCAlreadyExists` on upgrade), so they keep the old misalignment until they are recreated.
+- Fix FODC `/metrics-windows` failing when an agent's reply exceeds the gRPC message limit. The agent now sends replies in 4MiB chunks that the proxy merges, and a metrics stream error reopens only that stream instead of re-registering the agent. Upgrade the proxy before or with the agents.
 
 ### Document
 
