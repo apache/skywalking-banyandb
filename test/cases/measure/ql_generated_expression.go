@@ -103,7 +103,7 @@ func verifyGeneratedExpressionCall(base time.Time, c qlgen.Case) {
 		after := vmeasure.BatchExecutionStats()
 		expressionAfter := ql.ExpressionExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+		expectLiveResults(before.LiveResults)
 		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(expressionAfter.LiveBytes).To(gm.Equal(expressionBefore.LiveBytes))
 		gm.Expect(expressionAfter.ReservedBytes-expressionBefore.ReservedBytes).To(

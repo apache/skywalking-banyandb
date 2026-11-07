@@ -58,7 +58,7 @@ func registerGeneratedQLPatternScenarios(suite qlgen.Suite, base *time.Time) {
 					defer func() {
 						after := vmeasure.BatchExecutionStats()
 						gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-						gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+						expectLiveResults(before.LiveResults)
 						expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 					}()
 					query, expected := renderGeneratedQLCase(fixtureBase, c)
