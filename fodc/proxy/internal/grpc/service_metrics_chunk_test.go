@@ -108,6 +108,16 @@ func TestStreamMetrics_UnchunkedReplyFromOlderAgent(t *testing.T) {
 	assert.Equal(t, []string{"a", "b"}, names)
 }
 
+// The mock stream ends with io.EOF once it has nothing to deliver, so this reply stops after
+// its first chunk, as when the agent's stream fails part-way through a reply.
+func TestStreamMetrics_InterruptedReplyAnswersCollection(t *testing.T) {
+	service, testRegistry := newTestService(t)
+
+	names := collectWhileStreaming(t, service, testRegistry, metricsChunk(true, "a", "b"))
+
+	assert.Empty(t, names, "a reply cut off by the stream ending must answer the collection instead of leaving it to time out")
+}
+
 func TestStreamMetrics_DropsReplyOverPendingLimit(t *testing.T) {
 	original := maxPendingMetricsBytes
 	maxPendingMetricsBytes = 64

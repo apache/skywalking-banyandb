@@ -1253,23 +1253,32 @@ func (c *Client) sendLatestMetrics(
 		protoMetrics = append(protoMetrics, protoMetric)
 	}
 
-	return sendMetricsChunks(stream, protoMetrics)
+	return c.sendMetricsChunks(stream, protoMetrics)
 }
 
 // sendMetricsChunks sends one metrics reply. A reply over maxMetricsChunkBytes is split into
-// several messages; every one but the last sets HasMore so the proxy merges them.
-func sendMetricsChunks(stream fodcv1.FODCService_StreamMetricsClient, protoMetrics []*fodcv1.Metric) error {
+// several messages; every one but the last sets HasMore so the proxy merges them. A metric
+// that alone exceeds a chunk is left out, since no message within the budget can carry it.
+func (c *Client) sendMetricsChunks(stream fodcv1.FODCService_StreamMetricsClient, protoMetrics []*fodcv1.Metric) error {
+	const chunkBudget = maxMetricsChunkBytes - metricsChunkEnvelopeBytes
 	timestamp := timestamppb.Now()
 	start, chunkBytes := 0, 0
 	for idx, metric := range protoMetrics {
 		metricBytes := proto.Size(metric)
 		// A repeated message field costs its tag, its length prefix, and the message itself.
 		entryBytes := 1 + protowire.SizeVarint(uint64(metricBytes)) + metricBytes
-		if idx > start && chunkBytes+entryBytes > maxMetricsChunkBytes-metricsChunkEnvelopeBytes {
-			if sendErr := stream.Send(&fodcv1.StreamMetricsRequest{Metrics: protoMetrics[start:idx], Timestamp: timestamp, HasMore: true}); sendErr != nil {
-				return fmt.Errorf("failed to send metrics chunk: %w", sendErr)
+		oversized := entryBytes > chunkBudget
+		if idx > start && (oversized || chunkBytes+entryBytes > chunkBudget) {
+			if err := stream.Send(&fodcv1.StreamMetricsRequest{Metrics: protoMetrics[start:idx], Timestamp: timestamp, HasMore: true}); err != nil {
+				return fmt.Errorf("failed to send metrics chunk: %w", err)
 			}
 			start, chunkBytes = idx, 0
+		}
+		if oversized {
+			c.logger.Warn().Str("metric", metric.GetName()).Int("bytes", entryBytes).Int("limit_bytes", chunkBudget).
+				Msg("Metric exceeds the metrics chunk size, leaving it out of the reply")
+			start = idx + 1
+			continue
 		}
 		chunkBytes += entryBytes
 	}
@@ -1338,7 +1347,7 @@ func (c *Client) sendFilteredMetrics(
 		}
 	}
 
-	return sendMetricsChunks(stream, protoMetrics)
+	return c.sendMetricsChunks(stream, protoMetrics)
 }
 
 // SetNodeRoleProvider wires a live source of the node's resolved role (and labels),
@@ -1795,17 +1804,14 @@ func (c *Client) restartMetricsStream(ctx context.Context, failed fodcv1.FODCSer
 	}
 }
 
-// reopenMetricsStream replaces failed with a new metrics stream while holding reconnect's slot.
-// It does nothing when a reconnect holds the slot, the client is disconnected, or failed was
-// already replaced.
+// reopenMetricsStream replaces failed with a new metrics stream while holding reconnect's slot,
+// waiting for the slot when it is busy. It does nothing when the client is disconnected or
+// failed was already replaced, such as by a reconnect that held the slot.
 func (c *Client) reopenMetricsStream(ctx context.Context, failed fodcv1.FODCService_StreamMetricsClient) error {
 	select {
 	case <-ctx.Done():
 		return nil
 	case c.reconnectCh <- struct{}{}:
-	default:
-		c.logger.Debug().Msg("Reconnection in progress, it restarts the metrics stream")
-		return nil
 	}
 	defer func() { <-c.reconnectCh }()
 
@@ -1830,8 +1836,14 @@ func (c *Client) reconnect(ctx context.Context) {
 		// Acquired the slot, proceed with reconnection
 	default:
 		c.reconnectPending.Store(true)
-		c.logger.Debug().Msg("Reconnection already in progress, skipping...")
-		return
+		// A metrics stream restart may have released the slot and checked reconnectPending
+		// before the Store above, so try once more rather than leave the request stranded.
+		select {
+		case c.reconnectCh <- struct{}{}:
+		default:
+			c.logger.Debug().Msg("Reconnection already in progress, skipping...")
+			return
+		}
 	}
 
 	defer func() {

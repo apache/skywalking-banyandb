@@ -654,6 +654,14 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	s.connectionsMu.Unlock()
 
 	var assembler metricsReplyAssembler
+	defer func() {
+		// The agent does not resend a reply cut off by its stream ending, so answer the
+		// collection waiting for it instead of leaving it to time out.
+		if assembler.bytes > 0 {
+			s.logger.Warn().Str("agent_id", agentID).Msg("Metrics stream ended in the middle of a reply, answering the collection with no metrics")
+			s.deliverMetricsReply(context.WithoutCancel(ctx), agentID, &fodcv1.StreamMetricsRequest{})
+		}
+	}()
 	for {
 		req, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
@@ -691,21 +699,25 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			s.logger.Warn().Str("agent_id", agentID).Int("limit_bytes", maxPendingMetricsBytes).
 				Msg("Metrics reply exceeds the pending limit, answering the collection with no metrics")
 		}
+		s.deliverMetricsReply(ctx, agentID, reply)
+	}
+}
 
-		agentInfo, getErr := s.registry.GetAgentByID(agentID)
-		if getErr != nil {
-			s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info")
-			continue
-		}
-
-		if processErr := s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, reply); processErr != nil {
-			s.logger.Error().Err(processErr).Str("agent_id", agentID).Msg("Failed to process metrics")
-		}
+// deliverMetricsReply hands one whole metrics reply from agentID to the aggregator.
+func (s *FODCService) deliverMetricsReply(ctx context.Context, agentID string, reply *fodcv1.StreamMetricsRequest) {
+	agentInfo, err := s.registry.GetAgentByID(agentID)
+	if err != nil {
+		s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Failed to get agent info")
+		return
+	}
+	if err = s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, reply); err != nil {
+		s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Failed to process metrics")
 	}
 }
 
 // metricsReplyAssembler joins the chunks of one metrics reply received on a single stream.
-// It lives with the stream's receive loop, so a stream that ends drops its partial reply.
+// It lives with the stream's receive loop, so a stream that ends mid-reply answers the
+// collection with no metrics.
 type metricsReplyAssembler struct {
 	pending []*fodcv1.Metric
 	bytes   int

@@ -70,7 +70,7 @@ var _ = Describe("Metrics time window larger than one gRPC message", func() {
 		grpcServer = grpcproxy.NewServer(grpcService, proxyGRPCAddr, proxyMaxMsgSize, testLogger)
 		Expect(grpcServer.Start()).To(Succeed())
 
-		flightRecorder = testhelper.NewFlightRecorder(1 << 30)
+		flightRecorder = testhelper.NewFlightRecorder(16 << 20)
 		proxyClient = testhelper.NewProxyClientWrapper(proxyGRPCAddr, "liaison", "127.0.0.1", []string{"liaison"},
 			map[string]string{"env": "test"}, heartbeatInterval, time.Second, flightRecorder, testLogger, "")
 		Expect(proxyClient).NotTo(BeNil())

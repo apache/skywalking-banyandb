@@ -88,11 +88,12 @@ func sentMetricsRequests(stream *mockStreamMetricsClient) []*fodcv1.StreamMetric
 	return append([]*fodcv1.StreamMetricsRequest(nil), stream.sentRequests...)
 }
 
-// newChunkTestClient returns a client with a large flight recorder and a mock metrics stream
-// that records every reply chunk.
+// newChunkTestClient returns a client with a flight recorder that holds every test sample and a
+// mock metrics stream that records every reply chunk. The recorder allocates its whole capacity
+// up front, so it is kept small.
 func newChunkTestClient(t *testing.T) (*Client, *flightrecorder.FlightRecorder, *mockStreamMetricsClient) {
 	t.Helper()
-	fr := flightrecorder.NewFlightRecorder(1 << 30)
+	fr := flightrecorder.NewFlightRecorder(16 << 20)
 	pc := NewProxyClient("localhost:8080", "liaison", "192.168.1.1", []string{"liaison"}, nil, 5*time.Second, 10*time.Second, fr, nil, nil, nil, nil,
 		initTestLogger(t))
 	stream := newMockStreamMetricsClient(context.Background())
@@ -145,6 +146,29 @@ func TestProxyClient_RetrieveAndSendMetrics_SmallReplyIsOneMessage(t *testing.T)
 	require.Len(t, sent, 1)
 	assert.False(t, sent[0].GetHasMore())
 	assert.Len(t, sent[0].GetMetrics(), 30)
+}
+
+// A metric that alone exceeds the chunk budget cannot be sent within it, so it is left out
+// and the rest of the reply still arrives.
+func TestProxyClient_SendMetricsChunks_SkipsOversizedMetric(t *testing.T) {
+	pc, _, stream := newChunkTestClient(t)
+	protoMetrics := []*fodcv1.Metric{
+		{Name: "before", Value: 1},
+		{Name: "oversized", Description: strings.Repeat("x", maxMetricsChunkBytes), Value: 2},
+		{Name: "after", Value: 3},
+	}
+
+	require.NoError(t, pc.sendMetricsChunks(stream, protoMetrics))
+
+	sent := sentMetricsRequests(stream)
+	assertChunkedReply(t, sent)
+	var names []string
+	for _, req := range sent {
+		for _, metric := range req.GetMetrics() {
+			names = append(names, metric.GetName())
+		}
+	}
+	assert.Equal(t, []string{"before", "after"}, names)
 }
 
 // newStreamRestartClient returns a connected client whose registration stream is live and
@@ -252,6 +276,46 @@ func TestProxyClient_MetricsStreamRestart_KeepsConcurrentReconnect(t *testing.T)
 	<-restarted
 
 	assert.Equal(t, int32(1), reconnects.Load(), "the reconnect requested during the restart must not be lost")
+}
+
+// A restart started its replacement stream's receive loop while still holding the slot. If that
+// replacement fails at once, its own restart finds the slot busy and must wait for it rather
+// than give up and leave the stream without a receive loop.
+func TestProxyClient_MetricsStreamRestart_WaitsForBusySlot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	replacement := newMockStreamMetricsClient(ctx)
+	pc := newStreamRestartClient(t, func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error) {
+		return replacement, nil
+	})
+	pc.reconnectFn = func(context.Context) {}
+
+	failed := newMockStreamMetricsClient(ctx)
+	pc.streamsMu.Lock()
+	pc.metricsStream = failed
+	pc.streamsMu.Unlock()
+
+	pc.reconnectCh <- struct{}{} // the earlier restart still holds the slot
+	restarted := make(chan struct{})
+	go func() {
+		pc.restartMetricsStream(ctx, failed)
+		close(restarted)
+	}()
+	require.Never(t, func() bool {
+		select {
+		case <-restarted:
+			return true
+		default:
+			return false
+		}
+	}, 50*time.Millisecond, 5*time.Millisecond, "the restart must wait for the busy slot instead of giving up")
+	<-pc.reconnectCh
+	<-restarted
+
+	pc.streamsMu.RLock()
+	defer pc.streamsMu.RUnlock()
+	assert.Same(t, replacement, pc.metricsStream, "the failed stream must be reopened once the slot is free")
 }
 
 func TestProxyClient_MetricsStreamConnectionLost_Reconnects(t *testing.T) {
