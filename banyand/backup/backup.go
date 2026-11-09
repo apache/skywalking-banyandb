@@ -101,9 +101,9 @@ func NewBackupCommand() *cobra.Command {
 			// Backup's own logs, stored on the data node it backs up. Stopped
 			// on return, so the last lines are delivered before the process
 			// exits; the drain is bounded.
-			producer, producerErr := nativelog.NewProducer(nativelog.ProducerConfig{
-				Native: &logging.Native,
-				Node:   nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID("", "backup"), NodeType: "backup"},
+			stopProducer, producerErr := nativelog.RunProducer(nativelog.ProducerConfig{
+				Native:   &logging.Native,
+				NodeType: "backup",
 				Destination: nativelog.Destination{
 					Addr:               backupOpts.gRPCAddr,
 					TLS:                backupOpts.enableTLS,
@@ -114,7 +114,7 @@ func NewBackupCommand() *cobra.Command {
 			if producerErr != nil {
 				return producerErr
 			}
-			defer nativelog.StartProducer(producer)()
+			defer stopProducer()
 			if backupOpts.schedule == "" {
 				return backupAction(cmd.Context(), backupOpts)
 			}

@@ -60,7 +60,8 @@ func StartNativeLogProducer(nodeType string, dest nativelog.Destination) (nodeID
 	nodeID = fmt.Sprintf("%s-%d", nodeType, time.Now().UnixNano())
 	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{
 		Native:      &native,
-		Node:        nativelog.NodeInfo{NodeID: nodeID, NodeType: nodeType},
+		NodeType:    nodeType,
+		NodeName:    nodeID,
 		Destination: dest,
 	})
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

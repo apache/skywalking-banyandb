@@ -382,6 +382,47 @@ func TestNewProducerIsOffUntilEnabled(t *testing.T) {
 	}
 }
 
+// TestProducerIdentity covers the identity a producer stamps on its rows: the
+// name it is given, else its pod name, and its node type either way.
+func TestProducerIdentity(t *testing.T) {
+	t.Setenv("POD_NAME", "backup-7f9c")
+	if got := producerNodeID("", "backup"); got != "backup-7f9c" {
+		t.Fatalf("node_id with no name = %q, want POD_NAME backup-7f9c", got)
+	}
+	if got := producerNodeID("agent-0", "fodc-agent"); got != "agent-0" {
+		t.Fatalf("node_id with a name = %q, want the name agent-0", got)
+	}
+
+	s, err := NewProducer(ProducerConfig{
+		Native:      &logger.NativeLogging{Enabled: true, Level: "info"},
+		NodeType:    "fodc-agent",
+		NodeName:    "agent-0",
+		Destination: Destination{Addr: "127.0.0.1:1"},
+	})
+	if err != nil {
+		t.Fatalf("NewProducer: %v", err)
+	}
+	StartProducer(s)()
+	if want := (NodeInfo{NodeID: "agent-0", NodeType: "fodc-agent"}); s.node != want {
+		t.Fatalf("producer identity = %+v, want %+v", s.node, want)
+	}
+}
+
+// TestRunProducer covers the start of a producer for a process with no
+// run.Group: nothing runs when native logging is off, and a configuration it
+// cannot use is refused at startup, named as native logging's.
+func TestRunProducer(t *testing.T) {
+	stop, err := RunProducer(ProducerConfig{Native: &logger.NativeLogging{}, Destination: Destination{Addr: "127.0.0.1:1"}})
+	if err != nil {
+		t.Fatalf("RunProducer with native logging off: %v", err)
+	}
+	stop()
+	if _, err = RunProducer(ProducerConfig{Native: &logger.NativeLogging{Enabled: true}}); err == nil ||
+		!strings.HasPrefix(err.Error(), "native logging: ") {
+		t.Fatalf("RunProducer with no address = %v, want a native logging error", err)
+	}
+}
+
 // producerWithGauges serves a producer whose destination never takes a batch,
 // so every event ends as a drop, and stops it.
 func producerWithGauges(t *testing.T, gauges Gauges) {

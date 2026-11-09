@@ -282,12 +282,13 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 	if installErr := crashOutputCfg.InstallGlobalCrashOutput(); installErr != nil {
 		return fmt.Errorf("failed to install crash output: %w", installErr)
 	}
-	if loadErr := config.Load("logging", cmd.Flags()); loadErr != nil {
-		return fmt.Errorf("failed to load logging config: %w", loadErr)
+	reg := prometheus.NewRegistry()
+	stopNativeLog, loggingErr := startLogging(cmd, reg)
+	if loggingErr != nil {
+		return loggingErr
 	}
-	if initErr := logger.Init(logging); initErr != nil {
-		return fmt.Errorf("failed to initialize logger: %w", initErr)
-	}
+	// Deferred first, so it stops last: what the teardown logs is still delivered.
+	defer stopNativeLog()
 	log := logger.GetLogger("fodc")
 
 	if validateErr := validateFlags(); validateErr != nil {
@@ -300,7 +301,6 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 	fr := flightrecorder.NewFlightRecorder(capacitySize)
 	diagnosisCapacitySize := calculateDiagnosisCapacity(log)
 
-	reg := prometheus.NewRegistry()
 	panicScope := meter.NewHierarchicalScope("fodc_agent", "_")
 	panicdiag.SetDefaultPanicCounter(prom.NewProvider(panicScope, reg).Counter("panic_total", "component"))
 	panicStore := crashcollector.NewInProcessPanicStore(0)
@@ -329,15 +329,6 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 		nodeRole, nodeLabels = clusterCollector.ResolveNodeRole(ctx)
 		log.Info().Str("node_role", nodeRole).Int("labels_count", len(nodeLabels)).Msg("Node info fetched")
 	}
-
-	stopNativeLog, nativeLogErr := startNativeLog(reg)
-	if nativeLogErr != nil {
-		cluster.StopCollector(clusterCollector)
-		_ = metricsServer.Stop(ctx)
-		return nativeLogErr
-	}
-	// Deferred, so it stops last: what the teardown logs is still delivered.
-	defer stopNativeLog()
 
 	wd := watchdog.NewWatchdogWithConfig(fr, metricsEndpoints, metricsPollInterval, nodeRole, podName, containerNames)
 	if clusterCollector != nil {
@@ -438,30 +429,44 @@ func runFODC(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// startNativeLog stores the agent's own logs in BanyanDB, by the route of
-// --logging-native-route. The route is configured, not taken from the node
+// startLogging loads the logging flags, initializes logging and stores the
+// agent's own logs in BanyanDB, by the route of --logging-native-route, with
+// their counters in reg. The route is configured, not taken from the node
 // role: the role is not known while the node is still starting, and a wrong
-// route refuses every write. Its counters are served with the agent's other
-// metrics.
-func startNativeLog(reg *prometheus.Registry) (stop func(), err error) {
-	dest := nativeLogDestinationFor(nativeLogRoute)
-	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{
-		Native:      &logging.Native,
-		Node:        nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID(podName, "fodc-agent"), NodeType: "fodc-agent"},
-		Destination: dest,
-		Gauges:      prom.NewProvider(nativelog.Scope, reg).Gauge,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("native logging: %w", err)
+// route refuses every write. It returns the function that stops the native
+// logs, which does nothing when they are off.
+func startLogging(cmd *cobra.Command, reg prometheus.Registerer) (stop func(), err error) {
+	if loadErr := config.Load("logging", cmd.Flags()); loadErr != nil {
+		return nil, fmt.Errorf("failed to load logging config: %w", loadErr)
 	}
-	return nativelog.StartProducer(producer), nil
+	if initErr := logger.Init(logging); initErr != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", initErr)
+	}
+	cfg, cfgErr := nativeLogConfig(nativeLogRoute)
+	if cfgErr != nil {
+		return nil, cfgErr
+	}
+	cfg.Gauges = nativelog.PrometheusGauges(reg)
+	return nativelog.RunProducer(cfg)
 }
 
-// nativeLogDestinationFor is the destination of the agent's own logs on route.
-func nativeLogDestinationFor(route string) nativelog.Destination {
-	dest := nativeLogDestination
-	dest.Public = route == nativeLogRoutePublic
-	return dest
+// nativeLogConfig configures the agent's producer on route: its identity is
+// the pod it watches, and its destination the node beside it.
+func nativeLogConfig(route string) (nativelog.ProducerConfig, error) {
+	cfg := nativelog.ProducerConfig{
+		Native:      &logging.Native,
+		NodeType:    "fodc-agent",
+		NodeName:    podName,
+		Destination: nativeLogDestination,
+	}
+	switch route {
+	case nativeLogRouteCluster:
+	case nativeLogRoutePublic:
+		cfg.Destination.Public = true
+	default:
+		return cfg, fmt.Errorf("logging-native-route must be %s or %s, got %q", nativeLogRouteCluster, nativeLogRoutePublic, route)
+	}
+	return cfg, nil
 }
 
 func startKTM(ctx context.Context, log zerolog.Logger, fr *flightrecorder.FlightRecorder) (func(), error) {
@@ -542,9 +547,6 @@ func validateFlags() error {
 	}
 	if pressureProfilerEnabled && (pressureTriggerPercent < 1 || pressureTriggerPercent > 100) {
 		return fmt.Errorf("pressure-profiler-trigger-percent must be between 1 and 100, got %d", pressureTriggerPercent)
-	}
-	if nativeLogRoute != nativeLogRouteCluster && nativeLogRoute != nativeLogRoutePublic {
-		return fmt.Errorf("logging-native-route must be %s or %s, got %q", nativeLogRouteCluster, nativeLogRoutePublic, nativeLogRoute)
 	}
 	return nil
 }

@@ -85,6 +85,20 @@ func WithNativeWrite(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ContextKey, GetLogger(NativeWriteModule))
 }
 
+// ForGroup returns the logger for what a write path logs about an event of
+// group. An event of the native log group is a native log write wherever it
+// came from, so its lines log under NATIVE-LOG, as name, and never reach
+// native storage: a failed write would otherwise log a line that is written,
+// and fails, again. A node that receives the event over the network has no
+// mark from the sender's context, so its write path asks by group. Any other
+// group logs to l.
+func ForGroup(l *Logger, group, name string) *Logger {
+	if group == NativeLogGroup {
+		return GetLogger(NativeWriteModule).Named(name)
+	}
+	return l
+}
+
 var (
 	nativeSink   atomic.Pointer[NativeSink]
 	nativeConfig atomic.Pointer[nativeState]

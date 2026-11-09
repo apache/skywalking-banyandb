@@ -22,10 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -38,7 +38,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
+	"github.com/apache/skywalking-banyandb/pkg/host"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -94,8 +96,12 @@ type ProducerConfig struct {
 	Native *logger.NativeLogging
 	// Gauges publishes the counters; nil, a summary of what was dropped is
 	// written to stderr at exit instead.
-	Gauges      Gauges
-	Node        NodeInfo
+	Gauges Gauges
+	// NodeType is the producer's node_type, such as backup or fodc-agent.
+	NodeType string
+	// NodeName is its node_id. Empty, it is the pod name (host.PodName), else
+	// NodeType.
+	NodeName    string
 	Destination Destination
 }
 
@@ -118,7 +124,7 @@ func NewProducer(cfg ProducerConfig) (*Service, error) {
 		sink:   sink,
 		cfg:    cfg.Native,
 		gauges: cfg.Gauges,
-		node:   cfg.Node,
+		node:   NodeInfo{NodeID: producerNodeID(cfg.NodeName, cfg.NodeType), NodeType: cfg.NodeType},
 		closer: run.NewCloser(1),
 		timing: defaultTiming,
 	}
@@ -144,19 +150,33 @@ func StartProducer(s *Service) (stop func()) {
 	return func() { once.Do(s.GracefulStop) }
 }
 
-// ProducerNodeID is the node_id of a producer: name when it is set, else
-// POD_NAME, else the host name, else fallback.
-func ProducerNodeID(name, fallback string) string {
+// RunProducer builds the producer of cfg and runs it, for a process with no
+// run.Group. It returns the function that stops it, which does nothing when
+// native logging is off.
+func RunProducer(cfg ProducerConfig) (stop func(), err error) {
+	s, err := NewProducer(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("native logging: %w", err)
+	}
+	return StartProducer(s), nil
+}
+
+// PrometheusGauges publishes a producer's counters in reg, for a process
+// that serves a Prometheus registry of its own, such as an FODC agent or proxy.
+func PrometheusGauges(reg prometheus.Registerer) Gauges {
+	return prom.NewProvider(Scope, reg).Gauge
+}
+
+// producerNodeID is the node_id of a producer: name when it is set, else its
+// pod name, else nodeType.
+func producerNodeID(name, nodeType string) string {
 	if name != "" {
 		return name
 	}
-	if pod := os.Getenv("POD_NAME"); pod != "" {
+	if pod := host.PodName(); pod != "" {
 		return pod
 	}
-	if host, err := os.Hostname(); err == nil && host != "" {
-		return host
-	}
-	return fallback
+	return nodeType
 }
 
 // destination is a producer's connection and the delivery that uses it.

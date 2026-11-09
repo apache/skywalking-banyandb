@@ -15,20 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package stream
+package host
 
-import "github.com/apache/skywalking-banyandb/pkg/logger"
+import (
+	"os"
+	"testing"
+)
 
-// logForGroup returns the logger for what is logged about an event of group.
-// An event of the native log group is a native log write wherever it came
-// from, so its lines log under the native log service and never reach native
-// storage: a failed write would otherwise log a line that is written, and
-// fails, again. A liaison or a data node receives the event over the
-// network, without the mark the sender's context carried, and a liaison's
-// write queue looks up nodes for the group outside any request.
-func logForGroup(l *logger.Logger, group string) *logger.Logger {
-	if group == logger.NativeLogGroup {
-		return logger.GetLogger(logger.NativeWriteModule).Named("stream")
+func TestPodNamePrefersPodNameOverHostName(t *testing.T) {
+	t.Setenv("POD_NAME", "my-pod")
+	if got := PodName(); got != "my-pod" {
+		t.Fatalf("PodName() = %q, want POD_NAME my-pod", got)
 	}
-	return l
+
+	t.Setenv("POD_NAME", "")
+	want, err := os.Hostname()
+	if err != nil {
+		t.Skipf("no host name: %v", err)
+	}
+	if got := PodName(); got != want {
+		t.Fatalf("PodName() without POD_NAME = %q, want the host name %q", got, want)
+	}
 }

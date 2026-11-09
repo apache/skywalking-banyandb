@@ -54,8 +54,8 @@ func (u *nativeLogUnit) PreRun(ctx context.Context) error {
 	// The producer outlives PreRun's context: its buffer and delivery run
 	// until GracefulStop.
 	producer, err := nativelog.NewProducer(nativelog.ProducerConfig{ //nolint:contextcheck // see above
-		Native: u.cfg,
-		Node:   nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID("", lifecycleRoleName), NodeType: lifecycleRoleName},
+		Native:   u.cfg,
+		NodeType: lifecycleRoleName,
 		Destination: nativelog.Destination{
 			Addr:               u.svc.gRPCAddr,
 			TLS:                u.svc.enableTLS,

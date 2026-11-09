@@ -191,21 +191,3 @@ func TestResolveSelfIdentity_GRPCAddrDisambiguates(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, "warm", tier, "hostname-only matching is order-dependent — the flake this fix eliminates")
 }
-
-// TestSelfPodHostnamePrecedence checks that selfPodHostname() prefers
-// POD_NAME (the K8s downward API value) and falls back to os.Hostname()
-// when POD_NAME is unset.
-func TestSelfPodHostnamePrecedence(t *testing.T) {
-	t.Setenv("POD_NAME", "my-pod")
-	assert.Equal(t, "my-pod", selfPodHostname(),
-		"POD_NAME takes precedence (K8s downward API)")
-
-	t.Setenv("POD_NAME", "")
-	// Without POD_NAME, the function falls back to os.Hostname().
-	// The test host name is non-empty on Linux, so the result is
-	// either the test runner's hostname or "" if uname fails.
-	// Either way it must not panic and must not return "my-pod".
-	got := selfPodHostname()
-	assert.NotEqual(t, "my-pod", got,
-		"empty POD_NAME must fall back to os.Hostname(), not return the previous value")
-}

@@ -39,7 +39,6 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/config"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/version"
 )
@@ -133,17 +132,17 @@ func runProxy(cmd *cobra.Command, _ []string) error {
 	// sits beside no BanyanDB node. Its counters are served on /metrics.
 	selfMetrics := prometheus.NewRegistry()
 	nativeLogDest.Public = true
-	producer, producerErr := nativelog.NewProducer(nativelog.ProducerConfig{
+	stopProducer, producerErr := nativelog.RunProducer(nativelog.ProducerConfig{
 		Native:      &logging.Native,
-		Node:        nativelog.NodeInfo{NodeID: nativelog.ProducerNodeID("", "fodc-proxy"), NodeType: "fodc-proxy"},
+		NodeType:    "fodc-proxy",
 		Destination: nativeLogDest,
-		Gauges:      prom.NewProvider(nativelog.Scope, selfMetrics).Gauge,
+		Gauges:      nativelog.PrometheusGauges(selfMetrics),
 	})
 	if producerErr != nil {
-		return fmt.Errorf("native logging: %w", producerErr)
+		return producerErr
 	}
 	// Deferred first, so it stops last: what the teardown logs is still delivered.
-	defer nativelog.StartProducer(producer)()
+	defer stopProducer()
 
 	if cleanupTimeout <= heartbeatTimeout {
 		return fmt.Errorf("agent-cleanup-timeout (%v) must be greater than agent-heartbeat-timeout (%v)", cleanupTimeout, heartbeatTimeout)

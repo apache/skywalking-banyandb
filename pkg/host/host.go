@@ -29,6 +29,19 @@ func Name() (name string, err error) {
 	return os.Hostname()
 }
 
+// PodName returns the name of the pod this process runs in: POD_NAME, which
+// the Kubernetes downward API sets, else the host name, which is the pod name
+// in Kubernetes. It returns "" only when both are unknown.
+func PodName() string {
+	if pod := os.Getenv("POD_NAME"); pod != "" {
+		return pod
+	}
+	if name, err := os.Hostname(); err == nil {
+		return name
+	}
+	return ""
+}
+
 // IP returns the first non-loopback IP address of the host.
 func IP() (ip string, err error) {
 	ifaces, err := net.Interfaces()

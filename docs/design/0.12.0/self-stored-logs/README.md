@@ -383,7 +383,7 @@ Every FODC dial is insecure today; the new flags cover only the native log conne
 |---|---|---|
 | lifecycle | `run.Group` | a unit of its group, stopped before the clients |
 | backup, FODC proxy | plain main loop | started after `logger.Init`, stopped last before exit: the drain is bounded by `5s`, so a one-shot backup ends at most `5s` later |
-| FODC agent | plain main loop | started after the node role is resolved, which does not choose its route, and stopped last before exit |
+| FODC agent | plain main loop | started with logging, before the node role is resolved, which does not choose its route, and stopped last before exit |
 
 #### Failure handling
 
@@ -397,7 +397,7 @@ Every FODC dial is insecure today; the new flags cover only the native log conne
 
 #### Feedback protection
 
-Received events never enter the receiving node's own logging. What its write path logs about them is a native write: the liaison's write-queue callback since phase 2, and the data write callback with this change. On the producer, the delivery runs under a context marked by `logger.WithNativeWrite`, as on every node. Its `pub` client logs under `NATIVE-LOG.CLIENT`, which the reserved exclusion covers, including the keeper loop on its own goroutine: a failed dial or a lost connection reaches the console and never native storage. The gRPC client of the public route does not log through BanyanDB's logger.
+Received events never enter the receiving node's own logging. What its write path logs about them is a native write: the liaison's write-queue callback since phase 2, and with this change the data write callback and, for the public route, the liaison's `StreamService/Write` handler, its write session and the publisher that forwards the session's batches. Each asks `logger.ForGroup` by the event's group, because an event received over the network carries no mark from the sender's context. On the producer, the delivery runs under a context marked by `logger.WithNativeWrite`, as on every node. Its `pub` client logs under `NATIVE-LOG.CLIENT`, which the reserved exclusion covers, including the keeper loop on its own goroutine: a failed dial or a lost connection reaches the console and never native storage. The gRPC client of the public route does not log through BanyanDB's logger.
 
 #### Unchanged
 

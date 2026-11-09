@@ -57,6 +57,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/healthcheck"
+	"github.com/apache/skywalking-banyandb/pkg/host"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/run"
@@ -170,12 +171,7 @@ func NewService(
 // addresses are not computed until Validate (later, and only when scheduled), so
 // the address tags are left empty.
 func nativeNodeContext(ctx context.Context) context.Context {
-	nodeID := os.Getenv("POD_NAME")
-	if nodeID == "" {
-		if hostname, hostErr := os.Hostname(); hostErr == nil {
-			nodeID = hostname
-		}
-	}
+	nodeID := host.PodName()
 	if nodeID == "" {
 		nodeID = lifecycleRoleName
 	}
