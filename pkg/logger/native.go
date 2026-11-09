@@ -52,6 +52,9 @@ type NativeLogging struct {
 	Levels  []string
 	TTLDays uint32
 	Enabled bool
+	// ReceiverEnabled makes a server own the schema for the other processes
+	// that write their logs to it, whether or not it collects its own.
+	ReceiverEnabled bool
 }
 
 // NativeWriteModule names the logger of the native log service, and every
@@ -80,6 +83,20 @@ var reservedExcludedModules = []string{strings.ToUpper(NativeWriteModule), strin
 // affected.
 func WithNativeWrite(ctx context.Context) context.Context {
 	return context.WithValue(ctx, ContextKey, GetLogger(NativeWriteModule))
+}
+
+// ForGroup returns the logger for what a write path logs about an event of
+// group. An event of the native log group is a native log write wherever it
+// came from, so its lines log under NATIVE-LOG, as name, and never reach
+// native storage: a failed write would otherwise log a line that is written,
+// and fails, again. A node that receives the event over the network has no
+// mark from the sender's context, so its write path asks by group. Any other
+// group logs to l.
+func ForGroup(l *Logger, group, name string) *Logger {
+	if group == NativeLogGroup {
+		return GetLogger(NativeWriteModule).Named(name)
+	}
+	return l
 }
 
 var (
@@ -138,6 +155,16 @@ func RegisterNativeFlags(fs *pflag.FlagSet, cfg *NativeLogging) {
 		"the native level of each module in --logging-native-modules, one per module")
 	fs.Uint32Var(&cfg.TTLDays, "logging-native-ttl-days", 7,
 		"retention of the _monitoring_log group in days, used when the group is created")
+}
+
+// RegisterNativeReceiverFlag registers the flag that makes a server the
+// destination of other processes' native logs. Only the server offers it: a
+// producer such as backup or an FODC agent writes to a server, never the
+// other way round.
+func RegisterNativeReceiverFlag(fs *pflag.FlagSet, cfg *NativeLogging) {
+	fs.BoolVar(&cfg.ReceiverEnabled, "logging-native-receiver-enabled", false,
+		"create and keep the native log schema for the other processes that write their logs here, "+
+			"such as backup, lifecycle and FODC, whether or not --logging-native-enabled is set")
 }
 
 // applyNative validates the native configuration, resolves it and publishes

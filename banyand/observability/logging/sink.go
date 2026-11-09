@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -125,10 +126,15 @@ const maxRetainedFieldsBytes = 4 << 10
 // event owns.
 type request struct {
 	*streamv1.WriteRequest
-	data     *modelv1.TagValue
-	binary   *modelv1.TagValue_BinaryData
-	null     *modelv1.TagValue_Null
-	str      [searchableTagCount]*modelv1.Str
+	data   *modelv1.TagValue
+	binary *modelv1.TagValue_BinaryData
+	null   *modelv1.TagValue_Null
+	str    [searchableTagCount]*modelv1.Str
+	// refused is the reason a destination refused this event alone, set at
+	// delivery when a write reports a status per event, so the rest of its
+	// batch is still counted as written. It is atomic for the reason
+	// encodeFailed is.
+	refused  atomic.Pointer[string]
 	buffered queue.BufferedRequest
 	fields   bytes.Buffer
 	// seq is assigned at admission, so the identity stamped later at delivery
@@ -338,6 +344,8 @@ func (s *Sink) settle(r *request, o queue.Outcome) {
 	switch {
 	case r.encodeFailed.Load():
 		s.drop(reasonEncodeFailed)
+	case r.refused.Load() != nil:
+		s.drop(*r.refused.Load())
 	case o.Delivered:
 		s.written.Add(1)
 	case o.Reason == queue.OutcomeShutdownDeadline:
@@ -356,7 +364,7 @@ func lossReason(err error) string {
 		return reasonSchemaMissing
 	case errors.Is(err, errSchemaIncompatible):
 		return reasonSchemaIncompatible
-	case errors.Is(err, bus.ErrTopicNotExist):
+	case errors.Is(err, bus.ErrTopicNotExist), errors.Is(err, errDestinationUnready):
 		return reasonDestinationUnready
 	case errors.Is(err, queue.ErrNoNodeLocated):
 		return reasonLocateFailed
@@ -380,6 +388,20 @@ func (s *Sink) reportLoss(reason string, err error) {
 		return
 	}
 	reportf("native log events dropped as %s: %v", reason, err)
+}
+
+// reportDropped writes what the sink lost to stderr, once, when it lost
+// anything: the record a process with no metrics endpoint leaves of a loss.
+func reportDropped(s *Sink) {
+	var lost []string
+	for _, reason := range allReasons {
+		if n := s.Dropped(reason); n > 0 {
+			lost = append(lost, fmt.Sprintf("%s=%d", reason, n))
+		}
+	}
+	if len(lost) > 0 {
+		reportf("native log events dropped: %s; written: %d", strings.Join(lost, " "), s.Written())
+	}
 }
 
 // get takes a request from the pool.
@@ -414,6 +436,7 @@ func reset(r *request) {
 	r.MessageId = 0
 	r.seq = 0
 	r.encodeFailed.Store(false)
+	r.refused.Store(nil)
 }
 
 // build turns one encoded event into a write request taken from the pool.
