@@ -61,6 +61,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Reduce a standalone multi-group Measure aggregation across the groups instead of returning one row per group. MEAN, Top, LIMIT and time-bucketed results now match the distributed cluster: each group runs in partial mode and the partials are reduced with the liaison's reducer before Top, offset and limit are applied once.
 - Skip a stream group whose schema is unknown on a distributed data node instead of failing the whole query, so a stream schema that has not propagated to that node yet no longer discards the results the rest of the cluster serves. A standalone node and the liaison still report an unknown stream schema as an error.
 - Fix DictionaryFilter.ContainsAll mutating cached filter arrays during UnmarshalVarArray causing false-negative block skips, and harden trace query and sidx element decoding against in-place unescaping.
 - Guard shared empty posting list against in-place mutations in query filters without adding allocations to the empty-search path.

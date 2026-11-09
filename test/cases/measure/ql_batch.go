@@ -126,7 +126,6 @@ fields:
 }
 
 // RegisterMultiGroupAggTable verifies that one GROUP BY key from two groups is summed across them.
-// Only the distributed suite registers it: standalone still returns one row per group (#14069).
 func RegisterMultiGroupAggTable(description string) bool {
 	return g.Describe(description, g.Label("measure-ql"), func() {
 		g.It("multi-group-aggregate-same-shard-and-key", func() {

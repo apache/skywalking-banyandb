@@ -577,10 +577,9 @@ func testMultiGroupAgg(t *testing.T) {
 	for iter.Next() {
 		sums = append(sums, mgFieldNumber(iter.Current()[0].GetDataPoint()))
 	}
-	// One partial sum per group, in group order: A = 100+200, B = 300+250. Reducing them across
-	// groups is #14069.
-	if len(sums) != 2 || sums[0] != 300 || sums[1] != 550 {
-		t.Fatalf("sums = %v, want [300 550]", sums)
+	// The groups' sums are reduced into one: A = 100+200, B = 300+250.
+	if len(sums) != 1 || sums[0] != 850 {
+		t.Fatalf("sums = %v, want [850]", sums)
 	}
 }
 

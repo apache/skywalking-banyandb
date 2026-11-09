@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"google.golang.org/protobuf/proto"
 
@@ -41,13 +42,18 @@ import (
 // A result that keeps the series-id, timestamp and version columns (plain rows,
 // Top and raw GroupBy) is merged by sort key with version dedup. A time-bucketed
 // aggregate keeps only the timestamp, so it is merged by time without dedup. Any
-// other Agg output has no ordering column, so its per-group results are concatenated
-// in group order, as each group's plan already applied its own limit; reducing them
-// across groups is #14069.
+// other Agg output has no ordering column. Its groups are dispatched in partial mode
+// without Top, offset or limit and reduced across groups with the liaison's reducer;
+// Top, offset and limit are then applied once to the reduced rows. A caller that
+// itself emits partials (a distributed data node) opts out with ConcatAggregates, and
+// its per-group results are concatenated in group order, as each group's plan already
+// applied its own limit. COUNT_DISTINCT is not additive across groups, so it is always
+// concatenated.
 //
 // Every batch the groups hand over, the reshaped copies and the merged output are
 // charged to one memory tracker sized by the query memory budget.
 type MultiGroupMerge struct {
+	req       *measurev1.QueryRequest
 	groupReq  *measurev1.QueryRequest
 	orderBy   *resolvedOrderByTag
 	hidden    logical.HiddenTagSet
@@ -58,6 +64,20 @@ type MultiGroupMerge struct {
 	desc      bool
 	indexMode bool
 	plainRows bool
+	reduceAgg bool
+}
+
+// MultiGroupOption customizes NewMultiGroupMerge.
+type MultiGroupOption func(*multiGroupOptions)
+
+type multiGroupOptions struct {
+	concatAgg bool
+}
+
+// ConcatAggregates keeps each group's aggregation result as is and concatenates them,
+// for callers whose own result is itself a partial that is reduced elsewhere.
+func ConcatAggregates() MultiGroupOption {
+	return func(o *multiGroupOptions) { o.concatAgg = true }
 }
 
 // NewMultiGroupMerge resolves how the groups of req are merged. schemas and
@@ -68,8 +88,14 @@ func NewMultiGroupMerge(
 	schemas []logical.Schema,
 	measureSchemas []*databasev1.Measure,
 	cfg vmeasure.VectorizedConfig,
+	opts ...MultiGroupOption,
 ) (*MultiGroupMerge, error) {
+	var options multiGroupOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
 	merge := &MultiGroupMerge{
+		req:       req,
 		groupReq:  req,
 		cfg:       cfg,
 		hidden:    logical.NewHiddenTagSet(),
@@ -80,6 +106,16 @@ func NewMultiGroupMerge(
 		desc:      req.GetOrderBy().GetSort() == modelv1.Sort_SORT_DESC,
 	}
 	if req.GetAgg() != nil {
+		if !options.concatAgg && req.GetAgg().GetFunction() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT_DISTINCT {
+			merge.reduceAgg = true
+			groupReq := proto.Clone(req).(*measurev1.QueryRequest)
+			// A group cannot prune: a key's winner is only known after the groups are reduced.
+			groupReq.Top = nil
+			groupReq.Offset = 0
+			groupReq.Limit = math.MaxUint32
+			merge.groupReq = groupReq
+			merge.hideCriteriaOnlyKeys(req, schemas)
+		}
 		return merge, nil
 	}
 	merge.indexMode = len(measureSchemas) > 0
@@ -132,8 +168,36 @@ func resolveMultiGroupOrderBy(schemas []logical.Schema, measureSchemas []*databa
 	return resolvedOrderByTag{}, fmt.Errorf("index rule %s not found", indexRuleName)
 }
 
+// hideCriteriaOnlyKeys records the grouping keys that only the criteria names: they are projected for the reduce, and
+// the response leaves them out, as the per-group plan's hidden criteria tags were.
+func (m *MultiGroupMerge) hideCriteriaOnlyKeys(req *measurev1.QueryRequest, schemas []logical.Schema) {
+	criteriaTags := make(map[string]struct{})
+	logical.CollectCriteriaTagNames(req.GetCriteria(), criteriaTags)
+	projected := projectedNames(req.GetTagProjection())
+	for _, family := range req.GetGroupBy().GetTagProjection().GetTagFamilies() {
+		for _, tag := range family.GetTags() {
+			if _, named := criteriaTags[tag]; !named {
+				continue
+			}
+			if _, visible := projected[tag]; visible {
+				continue
+			}
+			for _, schema := range schemas {
+				if schema != nil && !slices.Contains(schema.EntityList(), tag) {
+					m.hidden.Add(tag)
+					break
+				}
+			}
+		}
+	}
+}
+
 // GroupRequest returns the request every group is dispatched with.
 func (m *MultiGroupMerge) GroupRequest() *measurev1.QueryRequest { return m.groupReq }
+
+// ReducesAggregates reports whether the groups must be dispatched in partial mode, because
+// MergeBatches reduces their aggregation partials across groups.
+func (m *MultiGroupMerge) ReducesAggregates() bool { return m.reduceAgg }
 
 // Tracker returns the shared query memory tracker used by collection and merging.
 func (m *MultiGroupMerge) Tracker() *vectorized.MemoryTracker { return m.tracker }
@@ -150,6 +214,9 @@ func (m *MultiGroupMerge) Merge(ctx context.Context, groups []*GroupBatches) (ex
 // MergeBatches takes ownership of groups and returns their merged native batches.
 // Groups and reservations are released on failure or when the result is closed.
 func (m *MultiGroupMerge) MergeBatches(ctx context.Context, groups []*GroupBatches) (*BatchResult, error) {
+	if m.reduceAgg {
+		return m.reduceGroups(ctx, groups)
+	}
 	var reserved int64
 	fail := func(err error) (*BatchResult, error) {
 		m.tracker.Release(reserved)
@@ -250,6 +317,188 @@ func (m *MultiGroupMerge) MergeBatches(ctx context.Context, groups []*GroupBatch
 		return NewBatchResult(ctx, projected, projected.OutputSchema(), m.cfg.BatchSize)
 	}
 	return result, nil
+}
+
+// partialAggRequest is the request a group of a multi-group aggregation is dispatched with in partial mode. The
+// projections name only what the group declares, so every group emits the partial layout a data node would and the
+// reduce can unify them. The GroupBy keys are projected, so a criteria-only tag that is also a key is not hidden
+// and stripped from the partial before the reduce needs it.
+func partialAggRequest(req *measurev1.QueryRequest, measureSchema *databasev1.Measure) *measurev1.QueryRequest {
+	out := proto.Clone(req).(*measurev1.QueryRequest)
+	families := slices.Clone(out.GetTagProjection().GetTagFamilies())
+	for _, keyFamily := range out.GetGroupBy().GetTagProjection().GetTagFamilies() {
+		idx := slices.IndexFunc(families, func(f *modelv1.TagProjection_TagFamily) bool { return f.GetName() == keyFamily.GetName() })
+		if idx < 0 {
+			families = append(families, &modelv1.TagProjection_TagFamily{Name: keyFamily.GetName(), Tags: slices.Clone(keyFamily.GetTags())})
+			continue
+		}
+		tags := slices.Clone(families[idx].GetTags())
+		for _, tag := range keyFamily.GetTags() {
+			if !slices.Contains(tags, tag) {
+				tags = append(tags, tag)
+			}
+		}
+		families[idx] = &modelv1.TagProjection_TagFamily{Name: keyFamily.GetName(), Tags: tags}
+	}
+	if len(families) > 0 {
+		out.TagProjection = &modelv1.TagProjection{TagFamilies: families}
+	}
+	out.TagProjection = intersectTagProjection(out.GetTagProjection(), measureSchema)
+	out.FieldProjection = intersectFieldProjection(out.GetFieldProjection(), measureSchema)
+	return out
+}
+
+// reduceGroups reduces the aggregation partials of the groups into one result, applies Top to it and then
+// paginates once. It takes ownership of groups, which are released when it returns or fails. The reduced rows are
+// charged to the tracker until the returned result is closed.
+func (m *MultiGroupMerge) reduceGroups(ctx context.Context, groups []*GroupBatches) (result *BatchResult, err error) {
+	defer func() {
+		for _, group := range groups {
+			group.Release()
+		}
+	}()
+	spec, specErr := newAggReduceSpec(m.req)
+	if specErr != nil {
+		return nil, specErr
+	}
+	// The per-group plans no longer carry Top, so its field is validated here, whether or not rows come back.
+	if spec.top != nil && spec.top.FieldName != spec.aggSpecs[0].OutputName {
+		return nil, fmt.Errorf("vec multi-group merge: plan.Top.Build: field %q not present in schema", spec.top.FieldName)
+	}
+	partialSchemas := make([]*vectorized.BatchSchema, 0, len(groups))
+	for _, group := range groups {
+		if group.Schema != nil {
+			partialSchemas = append(partialSchemas, group.Schema)
+		}
+	}
+	// The layout comes from the groups' schemas, not from whichever groups returned rows.
+	target, targetErr := multiGroupAggTarget(partialSchemas, len(groups), m.req.GetTagProjection())
+	if targetErr != nil {
+		return nil, fmt.Errorf("vec multi-group merge: %w", targetErr)
+	}
+	reducer := spec.newReducer(target, m.cfg.BatchSize, m.tracker)
+	defer reducer.Close()
+	for groupIdx, group := range groups {
+		for _, batch := range group.Batches {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, fmt.Errorf("vec multi-group merge: %w", ctxErr)
+			}
+			// nolint:contextcheck // pure in-memory reducer; no cancelable I/O downstream
+			if consumeErr := reducer.ConsumeScoped(batch, int64(groupIdx)); consumeErr != nil {
+				return nil, fmt.Errorf("vec multi-group merge: reduce group %d: %w", groupIdx, consumeErr)
+			}
+		}
+	}
+	// The hold is what this call keeps reserved until it hands it to the result; handing it over zeroes it, so a
+	// failure after that point is released once, by the result.
+	hold := &reduceHold{tracker: m.tracker}
+	defer func() { hold.release(hold.held) }()
+	// The reduced rows are reserved before they are materialized: a bound from the group count and the merged
+	// layout's width, replaced by what they actually hold.
+	width := 1
+	if target != nil {
+		width = max(width, len(target.Columns))
+	} else if len(partialSchemas) > 0 {
+		width = max(width, len(partialSchemas[0].Columns))
+	}
+	finishBound := int64(reducer.Groups()) * int64(width) * 16
+	if reserveErr := hold.reserve(finishBound); reserveErr != nil {
+		return nil, reserveErr
+	}
+	batches, _, reduceErr := reducer.FinishContext(ctx)
+	if reduceErr != nil {
+		return nil, fmt.Errorf("vec multi-group merge: %w", reduceErr)
+	}
+	schema := reducer.OutputSchema()
+	finished := reduceRowsBytes(batches)
+	if finished > finishBound {
+		if reserveErr := hold.reserve(finished - finishBound); reserveErr != nil {
+			return nil, reserveErr
+		}
+	} else {
+		hold.release(finishBound - finished)
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("vec multi-group merge: %w", ctxErr)
+	}
+	if spec.top != nil && len(batches) > 0 {
+		var topErr error
+		if batches, topErr = m.topReduced(ctx, *spec.top, batches, finished, hold); topErr != nil {
+			return nil, topErr
+		}
+	}
+	if schema == nil {
+		schema = target
+	}
+	if schema == nil {
+		schema = vectorized.NewBatchSchema(nil)
+	}
+	limit := m.limit
+	if limit == 0 {
+		limit = defaultLimit
+	}
+	owned := hold.held
+	hold.held = 0
+	built, buildErr := m.resultFromBatches(ctx, batches, schema, m.offset, limit, nil, owned)
+	if buildErr != nil {
+		return nil, buildErr
+	}
+	if m.hidden.IsEmpty() {
+		return built, nil
+	}
+	// The grouping keys that only the criteria named were projected for the reduce; the response omits them.
+	projected := newHiddenBatchProjection(built, m.hidden)
+	return NewBatchResult(ctx, projected, projected.OutputSchema(), m.cfg.BatchSize)
+}
+
+// reduceHold is the part of the tracker a reduce holds until it hands it to its result.
+type reduceHold struct {
+	tracker *vectorized.MemoryTracker
+	held    int64
+}
+
+func (h *reduceHold) reserve(size int64) error {
+	if reserveErr := h.tracker.Reserve(size); reserveErr != nil {
+		return fmt.Errorf("vec multi-group merge: %w", reserveErr)
+	}
+	h.held += size
+	return nil
+}
+
+func (h *reduceHold) release(size int64) {
+	h.tracker.Release(size)
+	h.held -= size
+}
+
+func reduceRowsBytes(rows []*vectorized.RecordBatch) int64 {
+	var size int64
+	for _, batch := range rows {
+		size += batchBytes(batch)
+	}
+	return size
+}
+
+// topReduced keeps the top rows of the reduced batches. A non-positive Top keeps none, as BatchTop does. The top
+// rows are at most the reduced rows, so that bound is held while both exist.
+func (m *MultiGroupMerge) topReduced(ctx context.Context, top vmeasure.ReduceTopSpec, batches []*vectorized.RecordBatch,
+	reducedBytes int64, hold *reduceHold,
+) ([]*vectorized.RecordBatch, error) {
+	var topped []*vectorized.RecordBatch
+	if top.N > 0 {
+		if reserveErr := hold.reserve(reducedBytes); reserveErr != nil {
+			return nil, reserveErr
+		}
+		var topErr error
+		topped, topErr = vmeasure.ApplyTopToReduceContext(ctx, batches, top, m.cfg.BatchSize)
+		if topErr != nil {
+			return nil, fmt.Errorf("vec multi-group merge: top reduced groups: %w", topErr)
+		}
+	}
+	hold.release(hold.held - min(reduceRowsBytes(topped), hold.held))
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("vec multi-group merge: %w", ctxErr)
+	}
+	return topped, nil
 }
 
 // sortKeyBytes estimates the sort keys the merge allocates: the order-by column's payload plus a
