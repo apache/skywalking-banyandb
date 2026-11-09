@@ -18,13 +18,20 @@ package nativeice
 import (
 	"encoding/binary"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sync"
 	"testing"
 )
 
-const regressionDictionaryTermCount = 300_000
+const (
+	regressionDictionaryTermCount = 300_000
+	// genericReadLimit is the 16 MiB bound the dictionary once shared with
+	// other section reads.
+	genericReadLimit = 16 << 20
+)
 
 func largeDictionarySegment(t testing.TB) ([]byte, []byte) {
 	t.Helper()
@@ -66,7 +73,7 @@ func TestReaderAcceptsDictionaryBetweenGenericReadLimitAndSelectionLimit(t *test
 	cursor := dictionaryOffset
 	dictionaryLength, lengthErr := storedReader.readUvarint(&cursor, storedReader.footer.docValueOffset)
 	requireNativeNoError(t, lengthErr)
-	requireNativef(t, dictionaryLength > uint64(maxStoredChunkTableSize), "dictionary length %d is not above generic read limit", dictionaryLength)
+	requireNativef(t, dictionaryLength > uint64(genericReadLimit), "dictionary length %d is not above generic read limit", dictionaryLength)
 	requireNativef(t, dictionaryLength <= uint64(maxSelectionDictionarySize), "dictionary length %d exceeds selection limit", dictionaryLength)
 
 	terms, termsErr := reader.Terms("large")
@@ -76,6 +83,62 @@ func TestReaderAcceptsDictionaryBetweenGenericReadLimitAndSelectionLimit(t *test
 	requireNativeNoError(t, documentsErr)
 	requireNativef(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
 	missing, missingErr := reader.TermDocuments("large", []byte("missing"))
+	requireNativeNoError(t, missingErr)
+	requireNativef(t, len(missing) == 0, "missing term matched %#v", missing)
+}
+
+// TestPersistedSegmentServesDictionaryAboveSelectionLimit covers a segment
+// whose single field holds long, almost-all-distinct terms (an unanalyzed log
+// body), so its dictionary outgrows the old fixed 64 MiB read bound. The
+// writer and merger emit such a segment, so the file-backed reader must open
+// and serve it instead of reporting corruption.
+func TestPersistedSegmentServesDictionaryAboveSelectionLimit(t *testing.T) {
+	const (
+		termCount  = 31_000
+		termLength = 2_300
+	)
+	terms := make([]EncodeTerm, termCount)
+	var state uint64 = 0x9e3779b97f4a7c15
+	var selected []byte
+	for termIndex := range terms {
+		term := make([]byte, termLength)
+		for byteIndex := range term {
+			state ^= state << 7
+			state ^= state >> 9
+			state ^= state << 8
+			term[byteIndex] = byte(state)
+		}
+		terms[termIndex] = EncodeTerm{Value: term, Frequency: 1}
+		if termIndex == termCount/2 {
+			selected = append([]byte(nil), term...)
+		}
+	}
+	payload, encodeErr := EncodeSegment(Generation{Documents: []EncodeDocument{{
+		Identifier: []byte("long-term-document"),
+		Fields:     []EncodeField{{Name: "content", Value: []byte("content"), Index: true, Terms: terms}},
+	}}})
+	requireNativeNoError(t, encodeErr)
+
+	path := filepath.Join(t.TempDir(), "0000000000000001.seg")
+	requireNativeNoError(t, os.WriteFile(path, payload, 0o600))
+	reader, openErr := OpenSegmentFile(path)
+	requireNativeNoError(t, openErr)
+	t.Cleanup(func() { requireNativeNoError(t, reader.Close()) })
+
+	storedReader, readerErr := newStoredSegmentReader(reader.segments[0].file, reader.segments[0].size, reader.segments[0].record)
+	requireNativeNoError(t, readerErr)
+	dictionaryOffset, found, offsetErr := storedReader.dictionaryOffset("content")
+	requireNativeNoError(t, offsetErr)
+	requireNativef(t, found, "content dictionary field was not found")
+	cursor := dictionaryOffset
+	dictionaryLength, lengthErr := storedReader.readUvarint(&cursor, storedReader.footer.docValueOffset)
+	requireNativeNoError(t, lengthErr)
+	requireNativef(t, dictionaryLength > uint64(maxSelectionDictionarySize), "dictionary length %d is not above the old selection limit", dictionaryLength)
+
+	documents, documentsErr := reader.TermDocuments("content", selected)
+	requireNativeNoError(t, documentsErr)
+	requireNativef(t, len(documents) == 1 && reflect.DeepEqual([]uint64{0}, documents[0].DocumentNumber), "documents = %#v", documents)
+	missing, missingErr := reader.TermDocuments("content", []byte("missing"))
 	requireNativeNoError(t, missingErr)
 	requireNativef(t, len(missing) == 0, "missing term matched %#v", missing)
 }

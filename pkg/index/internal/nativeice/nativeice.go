@@ -55,17 +55,23 @@ const (
 	segmentFooterLength = 60
 	segmentVersion      = 3
 	snapshotVersion     = 3
-	maxManifestSize     = 16 << 20
+	// maxManifestSize bounds the transient allocation that reads a manifest. A
+	// file's size is truthful, so the bound only matters for a manifest of
+	// thousands of large deletion masks; PublishSnapshot refuses to write one
+	// the reader would skip, so it is set far above any realistic manifest.
+	maxManifestSize     = 256 << 20
 	maxFieldsIndexCount = 1 << 20
 	maxDirectoryEntries = 1 << 16
 	directoryReadSize   = maxDirectoryEntries + 1
 	maxOpenAttempts     = 2
 
-	storedDocumentsPerChunk       = 128
-	maxStoredChunkCount           = 1 << 20
-	maxStoredChunkTableSize       = 16 << 20
-	maxStoredCompressedChunkSize  = 16 << 20
-	maxStoredDecodedChunkSize     = 64 << 20
+	storedDocumentsPerChunk = 128
+	// maxStoredDocumentSize is the largest stored document a segment may hold.
+	// EncodeSegment rejects a larger one, and the reader bounds a chunk's decoded
+	// length by its last document's offset plus this size, so a chunk the
+	// writer produced is always readable while a corrupt length header cannot
+	// reserve more than the data it sits beside.
+	maxStoredDocumentSize         = 64 << 20
 	maxStoredFieldNameLength      = 64 << 10
 	maxStoredFieldsPerDocument    = 1 << 20
 	segmentFooterPayloadLength    = segmentFooterLength - 4
@@ -87,6 +93,10 @@ var ErrCorrupt = errors.New("nativeice: corrupt index")
 var ErrNoSnapshot = errors.New("nativeice: no committed snapshot")
 
 var errManifestTooLarge = errors.New("nativeice: snapshot exceeds read limit")
+
+// manifestSizeLimit is the manifest size the reader loads and PublishSnapshot
+// refuses to exceed. It is a variable so tests can lower it.
+var manifestSizeLimit int64 = maxManifestSize
 
 // Reader is a bounded read-only handle on exactly one generation of an index
 // directory. The generation is chosen at Open and fixed for the Reader's
@@ -1911,7 +1921,11 @@ func (s *storedSegmentReader) loadChunkOffsets() error {
 	}
 	offsetLength := uint64(binary.BigEndian.Uint32(tableFooter[0:4]))
 	chunkCount := uint64(binary.BigEndian.Uint32(tableFooter[4:8]))
-	if offsetLength > maxStoredChunkTableSize || chunkCount == 0 || chunkCount > maxStoredChunkCount || chunkCount > offsetLength {
+	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
+	// The table holds one offset per data chunk, the terminal offset, and at
+	// most the duplicate a legacy merger wrote. Each offset is a varint, so
+	// the table's size follows from its count rather than from a fixed cap.
+	if chunkCount == 0 || chunkCount > dataChunks+2 || offsetLength < chunkCount || offsetLength > chunkCount*binary.MaxVarintLen64 {
 		return corruptError("segment %q has an invalid stored chunk table", s.path)
 	}
 	if offsetLength > s.footer.storedIndexOffset-storedChunkTableFooterLength {
@@ -1937,7 +1951,6 @@ func (s *storedSegmentReader) loadChunkOffsets() error {
 	if offsets[0] != 0 {
 		return corruptError("segment %q has a stored chunk table without a zero origin", s.path)
 	}
-	dataChunks := (s.footer.documentCount + storedDocumentsPerChunk - 1) / storedDocumentsPerChunk
 	expectedChunkCount := dataChunks + 1
 	// A legacy ICE merger at an exact 128-document boundary wrote one
 	// duplicated terminal offset. It describes no data chunk and is safe to
@@ -2068,9 +2081,8 @@ func (s *storedSegmentReader) loadChunkContext(ctx context.Context, chunkIndex u
 		return nil, corruptError("segment %q has invalid bounds for stored chunk %d", s.path, chunkIndex)
 	}
 	compressedLength := end - start
-	if compressedLength > maxStoredCompressedChunkSize {
-		return nil, corruptError("segment %q has an oversized stored chunk", s.path)
-	}
+	// The compressed length is the chunk's own extent in the file, already
+	// checked against the stored section, so it needs no separate cap.
 	if err := s.reserveChunkBuffers(ctx, int(compressedLength), 0, 0); err != nil {
 		return nil, err
 	}
@@ -2086,13 +2098,16 @@ func (s *storedSegmentReader) loadChunkContext(ctx context.Context, chunkIndex u
 	if lengthErr != nil {
 		return nil, corruptError("decode stored chunk length in segment %q: %w", s.path, lengthErr)
 	}
-	if decodedLength < 0 || decodedLength > maxStoredDecodedChunkSize {
-		return nil, corruptError("segment %q has an oversized decoded stored chunk", s.path)
-	}
-
 	firstDocument := chunkIndex * storedDocumentsPerChunk
 	documents := min(storedDocumentsPerChunk, s.footer.documentCount-firstDocument)
 	offsetsLength := int(documents * storedDocumentOffsetByteWidth)
+	lastOffset, lastOffsetErr := s.documentOffsetEntry(firstDocument + documents - 1)
+	if lastOffsetErr != nil {
+		return nil, lastOffsetErr
+	}
+	if decodedLength < 0 || uint64(decodedLength) > maxStoredChunkDecodedLength(lastOffset) {
+		return nil, corruptError("segment %q has an oversized decoded stored chunk", s.path)
+	}
 	if err := s.reserveChunkBuffers(ctx, int(compressedLength), decodedLength, offsetsLength); err != nil {
 		return nil, err
 	}
@@ -2234,9 +2249,6 @@ func (s *storedSegmentReader) loadDocumentOffsets() error {
 	if storedIndexEnd == math.MaxUint64 {
 		storedIndexEnd = s.footer.fieldsIndexOffset
 	}
-	if documentCount > maxStoredChunkTableSize/storedDocumentOffsetByteWidth {
-		return corruptError("segment %q has too many stored documents for its offset index", s.path)
-	}
 	tableLength := documentCount * storedDocumentOffsetByteWidth
 	if s.footer.storedIndexOffset > storedIndexEnd || tableLength > storedIndexEnd-s.footer.storedIndexOffset ||
 		s.footer.storedIndexOffset+tableLength > s.size {
@@ -2249,6 +2261,27 @@ func (s *storedSegmentReader) loadDocumentOffsets() error {
 // loaded chunk's offsets are read with the chunk (see loadChunk), so a walk
 // or a lookup decodes a document without another read; any other document
 // reads its eight-byte entry.
+// maxStoredChunkDecodedLength bounds a chunk's decoded length by what the file
+// itself shows: the chunk holds its last document at lastDocumentOffset and a
+// document is at most maxStoredDocumentSize, so a corrupt length header
+// cannot make the reader allocate more than that.
+func maxStoredChunkDecodedLength(lastDocumentOffset uint64) uint64 {
+	if lastDocumentOffset > math.MaxInt-maxStoredDocumentSize {
+		return math.MaxInt
+	}
+	return lastDocumentOffset + maxStoredDocumentSize
+}
+
+// documentOffsetEntry reads a document's eight-byte entry from the stored
+// offset index.
+func (s *storedSegmentReader) documentOffsetEntry(documentNumber uint64) (uint64, error) {
+	var entry [storedDocumentOffsetByteWidth]byte
+	if readErr := s.readInto(s.footer.storedIndexOffset+documentNumber*storedDocumentOffsetByteWidth, entry[:]); readErr != nil {
+		return 0, readErr
+	}
+	return binary.BigEndian.Uint64(entry[:]), nil
+}
+
 func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, error) {
 	if documentNumber >= s.footer.documentCount {
 		return 0, corruptError("segment %q has an out-of-range stored document number", s.path)
@@ -2259,16 +2292,12 @@ func (s *storedSegmentReader) documentOffset(documentNumber uint64) (uint64, err
 			return binary.BigEndian.Uint64(s.chunkDocumentOffsets[start:]), nil
 		}
 	}
-	var entry [storedDocumentOffsetByteWidth]byte
-	if readErr := s.readInto(s.footer.storedIndexOffset+documentNumber*storedDocumentOffsetByteWidth, entry[:]); readErr != nil {
-		return 0, readErr
-	}
-	return binary.BigEndian.Uint64(entry[:]), nil
+	return s.documentOffsetEntry(documentNumber)
 }
 
 func (s *storedSegmentReader) readBytes(offset, length uint64) ([]byte, error) {
-	if length > maxStoredChunkTableSize {
-		return nil, corruptError("segment %q requested an oversized read", s.path)
+	if offset > s.size || length > s.size-offset {
+		return nil, corruptError("segment %q read exceeds file bounds", s.path)
 	}
 	data := make([]byte, int(length))
 	if readErr := s.readInto(offset, data); readErr != nil {
@@ -2277,8 +2306,18 @@ func (s *storedSegmentReader) readBytes(offset, length uint64) ([]byte, error) {
 	return data, nil
 }
 
+// maxPostingsLength bounds one serialized posting bitmap by the segment's
+// document count: a roaring bitmap costs at most about a dozen bytes per
+// document (one document per container) plus a small header, and the footer
+// check keeps the count within the file, so the product cannot overflow. The
+// bound grows with the segment, so no document count the writer can produce
+// makes a valid bitmap oversized.
+func (s *storedSegmentReader) maxPostingsLength() uint64 {
+	return s.footer.documentCount*16 + 4096
+}
+
 func (s *storedSegmentReader) readPostingBytes(offset, length uint64) ([]byte, error) {
-	if length > maxSelectionPostingsSize {
+	if length > s.maxPostingsLength() {
 		return nil, corruptError("segment %q requested an oversized posting read", s.path)
 	}
 	if offset > s.size || length > s.size-offset {
@@ -2352,7 +2391,7 @@ func readManifest(path string) ([]byte, error) {
 	if size < 0 {
 		return nil, fmt.Errorf("unsupported snapshot file %q", path)
 	}
-	if size > maxManifestSize {
+	if size > manifestSizeLimit {
 		return nil, fmt.Errorf("%w: %q is %d bytes", errManifestTooLarge, path, size)
 	}
 	payload := make([]byte, int(size))
