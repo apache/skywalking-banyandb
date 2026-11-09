@@ -69,6 +69,7 @@ Release Notes.
 - Apply trace query limits after span-ID and other residual filters so older matching traces remain queryable.
 - Keep native index compaction progressing when persistence replaces unchanged in-memory segments with file-backed readers.
 - Upgrade the Go toolchain to 1.26.10 for the crypto/x509 security fix (GO-2026-6809).
+- Fix the native index reader rejecting valid segments as corrupt when a term dictionary exceeded 64 MiB (for example, unanalyzed log bodies indexed as single terms), which crash-looped the data node on startup. The reader no longer applies fixed size caps the writer and merger do not honor: dictionaries, stored chunk tables, stored-document counts per segment and posting bitmaps are bounded by the segment's own sections and document count, a stored chunk's decoded length is bounded by its last document's offset plus a 64 MiB per-document limit that `EncodeSegment` now enforces, and the exact term set a small segment retains is bounded by term count and bytes. `PublishSnapshot` now rejects a manifest the reader would refuse (limit raised from 16 MiB to 256 MiB) before writing any file.
 - Return zero for empty scalar QL `COUNT(DISTINCT)` and apply its pagination after the complete count instead of pruning native shard partials.
 - Preserve indexed-array measure values, empty-entity selector semantics and retained merge-tail buffers in shared batch execution.
 - Fix the liaison's distributed measure row merge wrapping borrowed frame strings into protobuf tag and field values without copying them.
