@@ -25,8 +25,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/cobra"
 
+	nativelog "github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/api"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/cluster"
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/diagnostics"
@@ -64,6 +66,7 @@ var (
 	httpWriteTimeout  time.Duration
 	heartbeatInterval time.Duration
 	logging           logger.Logging
+	nativeLogDest     nativelog.Destination
 	crashOutputCfg    = panicdiag.NewCrashOutputConfig()
 
 	rootCmd = &cobra.Command{
@@ -96,6 +99,8 @@ func init() {
 	rootCmd.Flags().DurationVar(&heartbeatInterval, "heartbeat-interval", defaultHeartbeatInterval,
 		"Default heartbeat interval for agents")
 	logger.RegisterFlags(rootCmd.Flags(), &logging)
+	logger.RegisterNativeFlags(rootCmd.Flags(), &logging.Native)
+	nativelog.RegisterDestinationFlags(rootCmd.Flags(), &nativeLogDest)
 	crashOutputCfg.RegisterFlags(rootCmd.Flags())
 }
 
@@ -122,6 +127,22 @@ func runProxy(cmd *cobra.Command, _ []string) error {
 	}
 
 	log := logger.GetLogger("fodc-proxy")
+
+	// The proxy's own logs, written through a liaison's public write API: it
+	// sits beside no BanyanDB node. Its counters are served on /metrics.
+	selfMetrics := prometheus.NewRegistry()
+	nativeLogDest.Public = true
+	stopProducer, producerErr := nativelog.RunProducer(nativelog.ProducerConfig{
+		Native:      &logging.Native,
+		NodeType:    "fodc-proxy",
+		Destination: nativeLogDest,
+		Gauges:      nativelog.PrometheusGauges(selfMetrics),
+	})
+	if producerErr != nil {
+		return producerErr
+	}
+	// Deferred first, so it stops last: what the teardown logs is still delivered.
+	defer stopProducer()
 
 	if cleanupTimeout <= heartbeatTimeout {
 		return fmt.Errorf("agent-cleanup-timeout (%v) must be greater than agent-heartbeat-timeout (%v)", cleanupTimeout, heartbeatTimeout)
@@ -161,6 +182,7 @@ func runProxy(cmd *cobra.Command, _ []string) error {
 
 	apiServer := api.NewServer(metricsAggregator, clusterStateMgr, lifecycleMgr, agentRegistry,
 		diagnosticsAggregator, pressureAggregator, grpcService, log)
+	apiServer.SetSelfMetrics(selfMetrics)
 	if startErr := apiServer.Start(httpListenAddr, httpReadTimeout, httpWriteTimeout); startErr != nil {
 		return fmt.Errorf("failed to start HTTP API server: %w", startErr)
 	}
