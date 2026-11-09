@@ -122,6 +122,11 @@ type Context struct {
 	// Distributed tells the cases that Start returns a data node whose rows
 	// are read through a liaison, and that the suite owns the node's lifetime.
 	Distributed bool
+	// Producer tells the cases that Start returns a producer with no storage
+	// engine, such as backup or an FODC agent, started in this process after
+	// the servers it writes to. The lines the process logs are stored under
+	// its identity, but the startup lines were logged before it started.
+	Producer bool
 }
 
 // SharedContext is set by the suite before the specs run.
@@ -192,6 +197,9 @@ var _ = g.Describe("Native self-stored logs", func() {
 	})
 
 	g.It("TC4a stores startup events under the node's identity", func() {
+		if SharedContext.Producer {
+			g.Skip("the producer starts after the servers in this process have logged their startup lines")
+		}
 		node, stop := SharedContext.Start()
 		defer stop()
 		gm.Eventually(func(inner gm.Gomega) {
