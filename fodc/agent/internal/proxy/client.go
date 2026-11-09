@@ -1266,7 +1266,7 @@ func (c *Client) sendMetricsChunks(stream fodcv1.FODCService_StreamMetricsClient
 	for idx, metric := range protoMetrics {
 		metricBytes := proto.Size(metric)
 		// A repeated message field costs its tag, its length prefix, and the message itself.
-		entryBytes := 1 + protowire.SizeVarint(uint64(metricBytes)) + metricBytes
+		entryBytes := 1 + protowire.SizeBytes(metricBytes)
 		oversized := entryBytes > chunkBudget
 		if idx > start && (oversized || chunkBytes+entryBytes > chunkBudget) {
 			if err := stream.Send(&fodcv1.StreamMetricsRequest{Metrics: protoMetrics[start:idx], Timestamp: timestamp, HasMore: true}); err != nil {
