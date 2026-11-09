@@ -455,3 +455,60 @@ func TestGroupAcceptsImplicitHotAndNonterminalStageSampling(t *testing.T) {
 	assert.NoError(t, Group(group))
 	assert.NoError(t, group.Validate())
 }
+
+func TestGroupPipelineExecutionSelection(t *testing.T) {
+	plugin := &commonv1.Plugin{Name: "sampler", Kind: &commonv1.Plugin_Sampler{Sampler: &commonv1.SamplerPlugin{
+		Path: "sampler.so", AbiVersion: 1,
+	}}}
+	for _, tc := range []struct {
+		name       string
+		events     []commonv1.PipelineEvent
+		staged     bool
+		emptyStage bool
+		disabled   bool
+		wantErr    bool
+	}{
+		{name: "enabled without execution", wantErr: true},
+		{name: "enabled empty stage", emptyStage: true, wantErr: true},
+		{name: "enabled empty events", events: []commonv1.PipelineEvent{}, wantErr: true},
+		{name: "disabled without execution", disabled: true},
+		{name: "merge", events: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}},
+		{name: "finalize", events: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}},
+		{name: "both events", events: []commonv1.PipelineEvent{
+			commonv1.PipelineEvent_PIPELINE_EVENT_MERGE, commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE,
+		}},
+		{name: "staged", staged: true},
+		{name: "merge and staged", staged: true, events: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}},
+		{name: "finalize and staged", staged: true, events: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}},
+		{name: "all", staged: true, events: []commonv1.PipelineEvent{
+			commonv1.PipelineEvent_PIPELINE_EVENT_MERGE, commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &commonv1.TracePipelineConfig{
+				Enabled: !tc.disabled, EnabledEvents: tc.events, Plugins: []*commonv1.Plugin{plugin},
+			}
+			if tc.staged || tc.emptyStage {
+				cfg.Stages = []*commonv1.StageRule{{Stage: "hot"}}
+			}
+			if tc.staged {
+				cfg.Stages[0].Plugins = []*commonv1.Plugin{plugin}
+			}
+			group := &commonv1.Group{
+				Metadata: &commonv1.Metadata{Name: "traces"}, Catalog: commonv1.Catalog_CATALOG_TRACE,
+				ResourceOpts: &commonv1.ResourceOpts{
+					ShardNum:        1,
+					SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+					Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
+				},
+				Pipeline: cfg,
+			}
+			err := Group(group)
+			if tc.wantErr {
+				assert.ErrorContains(t, err, "enabled pipeline must select MERGE or FINALIZE, or configure a stage sampler chain")
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

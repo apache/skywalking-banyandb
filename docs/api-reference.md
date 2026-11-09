@@ -1614,7 +1614,7 @@ Identity comes from the carrying Group; there is one config per group by constru
 | stages | [StageRule](#banyandb-common-v1-StageRule) | repeated | stages declares per-stage retention rules. |
 | schema_names | [string](#string) | repeated | schema_names lists explicit schema names to target within the Group. |
 | schema_name_regex | [string](#string) |  | schema_name_regex is an RE2 pattern matched against schema names. |
-| enabled_events | [PipelineEvent](#banyandb-common-v1-PipelineEvent) | repeated | enabled_events lists the pipeline-wide events to run. |
+| enabled_events | [PipelineEvent](#banyandb-common-v1-PipelineEvent) | repeated | enabled_events explicitly selects MERGE and/or FINALIZE for the plugins chain. Empty or omitted means neither event runs. Stage rules are independent. |
 
 
 
