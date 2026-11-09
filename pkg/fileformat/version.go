@@ -30,7 +30,7 @@ import (
 )
 
 // CurrentVersion is the version string a freshly-written segment must carry.
-const CurrentVersion = "1.5.0"
+const CurrentVersion = "1.6.0"
 
 const (
 	versionsFile = "versions.yml"

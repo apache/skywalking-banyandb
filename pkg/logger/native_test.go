@@ -495,6 +495,29 @@ func TestOnlyTheKeptFlagsAreRegistered(t *testing.T) {
 	}
 }
 
+// TestReceiverFlag covers the flag that makes a server the destination of
+// other processes' logs: its name, that it is off by default, and that it
+// sets ReceiverEnabled and nothing else.
+func TestReceiverFlag(t *testing.T) {
+	fs := pflag.NewFlagSet("receiver", pflag.ContinueOnError)
+	var cfg NativeLogging
+	RegisterNativeReceiverFlag(fs, &cfg)
+	var got []string
+	fs.VisitAll(func(f *pflag.Flag) { got = append(got, f.Name) })
+	if strings.Join(got, ",") != "logging-native-receiver-enabled" {
+		t.Fatalf("receiver flags = %v, want [logging-native-receiver-enabled]", got)
+	}
+	if cfg.ReceiverEnabled {
+		t.Fatal("the receiver is on by default")
+	}
+	if err := fs.Parse([]string{"--logging-native-receiver-enabled"}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if !cfg.ReceiverEnabled || cfg.Enabled {
+		t.Fatalf("after the flag: ReceiverEnabled=%v Enabled=%v, want true and false", cfg.ReceiverEnabled, cfg.Enabled)
+	}
+}
+
 // TestLoggerBuiltBeforeInitGetsNative is the falsifying assertion for the
 // package-level loggers. A var built with GetLogger while its package loads
 // exists before Init runs, and must still reach the sink after it, without

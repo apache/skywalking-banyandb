@@ -79,6 +79,12 @@ A cluster that mixes 0.12 nodes with nodes of an earlier release is not supporte
 
 **Rollback.** Rollback is a binary downgrade of the whole cluster, not a flag flip: stop every node and follow the [Rollback](#rollback) procedure below. Do not run a mixed cluster during rollback either. The on-disk format of the vectorized query paths is unchanged by this release.
 
+### Trace data written by 0.10 is unreadable (breaking)
+
+The on-disk encoding of trace block metadata changed in 0.11 without a file format version bump, so 0.10 and 0.11 trace parts both carry file version 1.5.0. 0.12 writes file version 1.6.0 and still lists 1.4.0 and 1.5.0 as compatible. BanyanDB does not detect or convert trace data written by 0.10: the server starts, but every trace query whose time range touches such a part fails with a `cannot skip timestamp bounds marker` error.
+
+Trace data written by 0.10 cannot be read by 0.11 or later. Delete the trace data written by 0.10 before upgrading. Measure, stream and property data written by 0.10 is unaffected. Trace data written by 0.11.0 or 0.11.1 uses the current layout and is readable.
+
 ### Row-based query path removed (breaking)
 
 The row-based query execution path is gone. Stream, measure and trace queries all execute through the vectorized columnar pipeline, and a distributed data node always answers with a native columnar frame. There is no runtime switch back to row execution or to the protobuf wire format.
