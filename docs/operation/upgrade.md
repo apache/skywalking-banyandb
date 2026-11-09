@@ -8,7 +8,7 @@ BanyanDB uses a separate version for the server and the file format. The server 
 
 You can use "banyand liaison/data/standalone -v" to check the server version. The file version is stored in "metadata" file laid in each ["segment"](../concept/tsdb.md#segment) folder.
 
-The server will check the file version when it starts. If the file version is not compatible with the supported version list in the server, the server will refuse to start. Please check the [CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that the new version is compatible with the existing data files.
+The server will check the file version when it starts. If the file version is not compatible with the supported version list in the server, the server will refuse to start. Please check the [CHANGELOG.md](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/CHANGES.md) to ensure that the new version is compatible with the existing data files.
 
 BanyanDB upgrade procedure is a rolling upgrade, except where a release says otherwise: **0.12 does not support rolling upgrades** (see [Upgrading to 0.12](#upgrading-to-012)). You can upgrade the BanyanDB cluster without downtime. But you need to follow the instructions carefully to avoid any data loss:
 
@@ -26,7 +26,7 @@ All node roles (liaison and data) can be upgraded using the same procedure.
 
 ## Rolling Strategy to Upgrade a Cluster
 
-Before upgrading the cluster, you should check CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that there are no breaking changes in the new version.
+Before upgrading the cluster, you should check CHANGELOG.md](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/CHANGES.md) to ensure that there are no breaking changes in the new version.
 
 - Upgrade the nodes one by one.
 - Wait for the node to join the cluster and become healthy before upgrading the next node.
@@ -75,7 +75,7 @@ BanyanDB 0.12.0 does **not** support rolling upgrades. Upgrade the whole cluster
 A cluster that mixes 0.12 nodes with nodes of an earlier release is not supported, whatever the node order. Two changes make the two sides unable to talk to each other:
 
 - The liaison and the data nodes exchange native columnar frames, and a 0.12 data node always sends them: measure frames are version 4 only, and a 0.12 liaison rejects a measure frame of any other version with an error. A liaison of an earlier release has no frame decoder for it. There is no negotiation and no fallback to protobuf or to the earlier row-oriented measure frame.
-- The series index cutover described in [CHANGES.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) changes data that all nodes read and write.
+- The series index cutover described in [CHANGES.md](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/CHANGES.md) changes data that all nodes read and write.
 
 **Rollback.** Rollback is a binary downgrade of the whole cluster, not a flag flip: stop every node and follow the [Rollback](#rollback) procedure below. Do not run a mixed cluster during rollback either. The on-disk format of the vectorized query paths is unchanged by this release.
 
@@ -214,4 +214,4 @@ The property background repair mechanism is now enabled by default. This automat
 
 ## Rollback
 
-If you encounter any issues during the upgrade process, you can rollback to the previous version by following the same procedure as the upgrade process. If file format is backward compatible, you can rollback to the previous version without any data loss. Please check the [CHANGELOG.md](https://github.com/apache/skywalking-banyandb/tree/master/CHANGES.md) to ensure that old version is compatible with the new data files.
+If you encounter any issues during the upgrade process, you can rollback to the previous version by following the same procedure as the upgrade process. If file format is backward compatible, you can rollback to the previous version without any data loss. Please check the [CHANGELOG.md](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/CHANGES.md) to ensure that old version is compatible with the new data files.

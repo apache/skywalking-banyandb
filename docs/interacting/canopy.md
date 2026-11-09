@@ -55,7 +55,7 @@ docker run --rm apache/skywalking-banyandb:<version>-canopy \
 
 ## Run from source
 
-The [Canopy README](https://github.com/apache/skywalking-banyandb/tree/main/canopy) covers running from a checkout in two shapes: the two-terminal dev setup (SPA dev server on `5173`, BFF on `4000`), and a production build where the BFF alone serves the built SPA on `4000`. Its [`.env.example`](https://github.com/apache/skywalking-banyandb/blob/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.
+The [Canopy README](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/canopy/README.md) covers running from a checkout in two shapes: the two-terminal dev setup (SPA dev server on `5173`, BFF on `4000`), and a production build where the BFF alone serves the built SPA on `4000`. Its [`.env.example`](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.
 
 ## Sampling pipelines
 
