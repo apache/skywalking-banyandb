@@ -64,7 +64,7 @@ The [Canopy README](https://raw.githubusercontent.com/apache/skywalking-banyandb
 Open **Pipelines → Sampling** to manage the optional retention pipeline on an
 existing TRACE group. Each group has at most one pipeline; its identity is the
 group name. **New sampling pipeline** selects a TRACE group without a pipeline. The detail
-page shows its events, grace periods, ordered sampler chain, schema targets and
+page shows its events, grace periods, ordered sampler chain, migration schema targets and
 lifecycle stage rules. **Edit** supports both Form and YAML views.
 
 Enable **MERGE** for sampling during compaction and **FINALIZE** for sampling at
@@ -102,7 +102,10 @@ pipeline:
 
 Durations use protobuf JSON notation (seconds with an `s` suffix). An omitted
 `mergeGrace` uses the engine's two-hour default; an omitted `finalizeGrace` uses
-five minutes. Empty schema targets apply to all trace schemas in the group.
+five minutes. **Migration targets** (`schemaNames` and `schemaNameRegex`) apply
+only to source-stage sampling during lifecycle migration; empty selectors target
+all trace schemas in the group. MERGE and FINALIZE apply to all trace schemas
+in the group regardless of these selectors.
 The YAML view contains the selected `group` and its `pipeline` mapping, using
 the camelCase keys shown above. Keep the group name unchanged.
 

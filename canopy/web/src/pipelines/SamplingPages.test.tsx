@@ -89,3 +89,9 @@ it('hides mutation controls for read-only users', async () => {
   mount(); await screen.findByRole('link', { name: 'traces' });
   expect(screen.queryByRole('button', { name: /New sampling|Edit|Remove|Configure/ })).not.toBeInTheDocument();
 });
+
+it.each([false, true])('labels schema targets as migration-only in list/detail (detail=%s)', async (detail) => {
+  mount(detail);
+  expect(await screen.findByText('Migration targets')).toBeInTheDocument();
+  expect(screen.getByText('Schema selectors apply only to stage sampling during lifecycle migration. MERGE and FINALIZE apply to all trace schemas in the group.')).toBeInTheDocument();
+});

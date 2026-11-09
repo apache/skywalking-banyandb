@@ -106,7 +106,7 @@ export function SamplingList() {
     </div>
     {(error || removal.error) && <p role="alert" className="form-error">{removal.error || error?.message}</p>}
     {isLoading ? <p role="status">Loading…</p> : <div className="sampling-table"><div className="sampling-list-head">
-      <span>Trace group</span><span>Status</span><span>Events</span><span>Targets</span><span>Sampler chain</span><span>Stage rules</span><span />
+      <span>Trace group</span><span>Status</span><span>Events</span><span>Migration targets</span><span>Sampler chain</span><span>Stage rules</span><span />
     </div>{filtered.map((group) => <div className="sampling-list-row" key={group.name}>
       <Link className="sampling-group" to={'/pipelines/sampling/' + encodeURIComponent(group.name)}>
         <span className="idx-ico"><IconTraces size={14} /></span><span className="mono">{group.name}</span></Link>
@@ -122,6 +122,7 @@ export function SamplingList() {
         <button className="idx-act is-danger" disabled={removal.pending} aria-label={'Remove sampling from ' + group.name}
           onClick={() => void removal.remove(group)}><IconTrash size={15} /></button></>}</span>
     </div>)}</div>}
+    <p className="sampling-footnote">Schema selectors apply only to stage sampling during lifecycle migration. MERGE and FINALIZE apply to all trace schemas in the group.</p>
     <p className="sampling-footnote">Only trace groups with a sampling pipeline are listed. Removing a pipeline clears <code>group.pipeline</code>; the group and its data are untouched.</p>
     {editor && <SamplingFormModal group={editor.group} onClose={(saved) => {
       setEditor(null); if (saved) navigate('/pipelines/sampling/' + encodeURIComponent(saved.name));
@@ -169,7 +170,7 @@ export function SamplingDetail() {
     {pipeline && <>
       <section><h2>Settings</h2><div className="sampling-settings">{settings.map(([label, value, help], index) =>
         <div className="sampling-setting" key={index}><span>{label}</span><strong className={value === 'on' ? 'is-on' : ''}>{value}</strong><span>{help}</span></div>)}</div></section>
-      <section><h2>Targets</h2><div className="sampling-targets"><div><span>Schema names</span><span className="sampling-chips">
+      <section><h2>Migration targets</h2><p>Schema selectors apply only to stage sampling during lifecycle migration. MERGE and FINALIZE apply to all trace schemas in the group.</p><div className="sampling-targets"><div><span>Schema names</span><span className="sampling-chips">
         {pipeline.schemaNames?.length ? pipeline.schemaNames.map((name) => <span className="sampling-chip" key={name}>{name}</span>) : 'All schemas'}</span></div>
         <div><span>Schema name regex</span><span className="mono">{pipeline.schemaNameRegex || '—'}</span></div></div></section>
       <section><div className="sampling-section-title"><h2>Sampler chain</h2><span>Hot phase · evaluated in order on enabled events</span></div>

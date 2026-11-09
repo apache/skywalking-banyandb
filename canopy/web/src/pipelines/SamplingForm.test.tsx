@@ -223,6 +223,9 @@ it('allows an inactive pipeline with neither events nor stages', async () => {
 
 it.each(['save', 'YAML'] as const)('includes a pending schema target on %s without requiring Enter', async (action) => {
   mount({ ...group, pipeline: { ...group.pipeline, schemaNames: ['existing'] } });
+  expect(screen.getByRole('group', { name: 'Migration targets' })).toHaveTextContent(
+    'Schema selectors apply only to stage sampling during lifecycle migration. MERGE and FINALIZE apply to all trace schemas in the group.',
+  );
   fireEvent.change(screen.getByLabelText('Schema names', { exact: true }), { target: { value: ' pending ' } });
   if (action === 'YAML') {
     fireEvent.click(screen.getByRole('tab', { name: 'YAML' }));
@@ -292,4 +295,38 @@ pipeline:
   expect(screen.getByLabelText('Config (JSON)')).toHaveValue(JSON.stringify({ first: [null, true, 2, { status: 'ERROR' }], second: [null, true, 2, { status: 'ERROR' }] }, null, 2));
   fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
   await waitFor(() => expect(apiDataSource.updateGroup).toHaveBeenCalled());
+});
+
+it.each(['form', 'yaml'])('rejects duplicate source stage rules in %s before saving', async (mode) => {
+  const onClose = mount(group);
+  if (mode === 'form') {
+    fireEvent.click(screen.getByRole('button', { name: '+ Add stage rule' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add stage rule' }));
+  } else {
+    fireEvent.click(screen.getByRole('tab', { name: 'YAML' }));
+    fireEvent.change(screen.getByLabelText('Pipeline YAML'), { target: { value: `group: traces
+pipeline:
+  enabled: true
+  enabledEvents: [PIPELINE_EVENT_MERGE]
+  stages:
+    - stage: hot
+      plugins: []
+    - stage: hot
+      plugins: []
+` } });
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Only one sampler chain is allowed for source stage "hot".');
+  expect(apiDataSource.updateGroup).not.toHaveBeenCalled();
+  expect(onClose).not.toHaveBeenCalled();
+
+  if (mode === 'yaml') fireEvent.click(screen.getByRole('tab', { name: 'Form' }));
+  expect(screen.getByLabelText('Stage 1')).toHaveValue('hot');
+  expect(screen.getByLabelText('Stage 2')).toHaveValue('hot');
+  fireEvent.change(screen.getByLabelText('Stage 2'), { target: { value: 'warm' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+  await waitFor(() => expect(apiDataSource.updateGroup).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(apiDataSource.updateGroup).mock.calls[0][1].group.pipeline?.stages).toEqual([
+    { stage: 'hot', plugins: [] }, { stage: 'warm', plugins: [] },
+  ]);
 });
