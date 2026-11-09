@@ -25,7 +25,7 @@
 #   make docker-license-dep                 # the canonical license generation
 #   make docker-run TARGET=<target>         # another target, in the same environment
 #   make docker-run TARGET="generate lint"  # several targets; `generate` first
-#   make bump-build-image                    # refresh the Debian digest and snapshot
+#   make bump-build-image                    # refresh the Debian digest
 #
 # `make docker-run TARGET=check` is deliberately NOT an example: the tree is
 # streamed in without .git, so `check` and `check-format` cannot run there. See
@@ -225,7 +225,6 @@ endif
 # environment, and a plain Make variable is not exported to it by default.
 print-build-args:
 	@echo "DEBIAN_IMAGE=$(DEBIAN_IMAGE)"
-	@echo "DEBIAN_SNAPSHOT=$(DEBIAN_SNAPSHOT)"
 	@echo "GO_VERSION=$(GO_VERSION)"
 	@echo "NODE_VERSION=$(NODE_VERSION)"
 	@echo "LICENSE_EYE_VERSION=$(LICENSE_EYE_VERSION)"
@@ -235,8 +234,7 @@ print-build-args:
 docker-image: ## Build the pinned build environment (digest- and checksum-verified)
 	@echo "buildx driver: $(if $(BUILDX_DRIVER),$(BUILDX_DRIVER),unknown)$(if $(BUILDKIT_CACHE_FLAGS), (local cache enabled), (no local cache: this driver cannot export one))"
 	@test -n "$(DEBIAN_IMAGE)" || { echo "scripts/build/version.mk is missing DEBIAN_IMAGE; run 'make bump-build-image'" >&2; exit 1; }
-	@test -n "$(DEBIAN_SNAPSHOT)" || { echo "scripts/build/version.mk is missing DEBIAN_SNAPSHOT; run 'make bump-build-image'" >&2; exit 1; }
-	@test -n "$(DEBIAN_DISTRO)" || { echo "DEBIAN_DISTRO is empty; check scripts/build/version.mk and that it is passed as a build arg" >&2; exit 1; }
+	@test -n "$(DEBIAN_DISTRO)" || { echo "DEBIAN_DISTRO is empty; check scripts/build/version.mk" >&2; exit 1; }
 	@echo "Building $(BUILD_IMAGE):$(BUILD_IMAGE_TAG) for $(PLATFORM)"
 	docker buildx build \
 	  --platform $(PLATFORM) \
@@ -244,8 +242,6 @@ docker-image: ## Build the pinned build environment (digest- and checksum-verifi
 	  --load \
 	  --file $(root_p)scripts/build/dockerfiles/build.Dockerfile \
 	  --build-arg DEBIAN_IMAGE=$(DEBIAN_IMAGE) \
-	  --build-arg DEBIAN_SNAPSHOT=$(DEBIAN_SNAPSHOT) \
-	  --build-arg DEBIAN_DISTRO=$(DEBIAN_DISTRO) \
 	  --build-arg GO_VERSION=$(GO_VERSION) \
 	  --build-arg NODE_VERSION=$(NODE_VERSION) \
 	  --build-arg LICENSE_EYE_VERSION=$(LICENSE_EYE_VERSION) \
@@ -436,12 +432,9 @@ docker-run: docker-image
 # Re-resolve everything that cannot be derived. The file is written through a
 # temp file and renamed, so a failed lookup (a moved tag, a network blip) leaves
 # the previous pins intact rather than a half-updated file.
-bump-build-image: ## Refresh the Debian digest and snapshot in scripts/build/version.mk
-	@# Both values are resolved and validated BEFORE version.mk is rewritten. The
-	@# previous version embedded `date -d` inside the sed replacement: GNU date
-	@# works, BSD date does not, and sed would still have succeeded -- replacing a
-	@# good pin with an empty value while the target reported success. A partially
-	@# written pin file is worse than an outdated one.
+bump-build-image: ## Refresh the Debian digest in scripts/build/version.mk
+	@# The digest is resolved and validated BEFORE version.mk is rewritten: a
+	@# partially written pin file is worse than an outdated one.
 	@set -e; \
 	base=$$(docker buildx imagetools inspect debian:$(DISTRO)-slim --format '{{.Manifest.Digest}}' 2>/dev/null || true); \
 	# A FORMAT check, not a non-empty check. imagetools can return an empty
@@ -449,23 +442,12 @@ bump-build-image: ## Refresh the Debian digest and snapshot in scripts/build/ver
 	# `debian:bookworm-slim@` -- a pin that looks valid and pins nothing.
 	printf '%s' "$$base" | grep -Eq '^sha256:[0-9a-f]{64}$$' || { \
 	  echo "could not resolve a sha256 digest for debian:$(DISTRO)-slim (got '$$base')" >&2; exit 1; }; \
-	# Portable "one week ago": `date -d` is GNU-only, so fall back to python or to
-	# leaving the snapshot untouched rather than blanking it.
-	snapshot="$$(python3 -c 'import datetime;print((datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(days=7)).strftime("%Y%m%dT%H%M%SZ"))' 2>/dev/null || true)"; \
-	if [ -z "$$snapshot" ]; then \
-	  echo "could not compute a snapshot date; leaving DEBIAN_SNAPSHOT unchanged"; \
-	else \
-	  echo "$$snapshot" | grep -Eq '^[0-9]{8}T[0-9]{6}Z$$' || { echo "implausible snapshot date '$$snapshot'" >&2; exit 1; }; \
-	fi; \
 	tmp=$$(mktemp); \
 	sed -e "s|^DEBIAN_IMAGE .*|DEBIAN_IMAGE := debian:$(DISTRO)-slim@$$base|" \
-	    $${snapshot:+-e "s|^DEBIAN_SNAPSHOT .*|DEBIAN_SNAPSHOT := $$snapshot|"} \
 	    $(VERSION_MK) > $$tmp; \
 	grep -qF "DEBIAN_IMAGE := debian:$(DISTRO)-slim@$$base" $$tmp || { echo "the digest rewrite did not take" >&2; rm -f $$tmp; exit 1; }; \
-	if [ -n "$$snapshot" ]; then grep -qF "DEBIAN_SNAPSHOT := $$snapshot" $$tmp || { echo "the snapshot rewrite did not take" >&2; rm -f $$tmp; exit 1; }; fi; \
 	mv $$tmp $(VERSION_MK); \
 	echo "Updated $(VERSION_MK):"; \
 	echo "  DEBIAN_IMAGE    = debian:$(DISTRO)-slim@$$base"; \
-	echo "  DEBIAN_SNAPSHOT = $${snapshot:-unchanged}"; \
 	echo "Go, Node and license-eye need no refresh here: Go is read from go.mod,"
 

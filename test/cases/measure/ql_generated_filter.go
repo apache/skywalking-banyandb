@@ -134,7 +134,7 @@ func verifyGeneratedFilterCall(base time.Time, c qlgen.Case, leaves uint64) {
 		after := vmeasure.BatchExecutionStats()
 		filterAfter := ql.FilterExecutionStats()
 		gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+		expectLiveResults(before.LiveResults)
 		gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "the oracle never issues native Query RPCs")
 		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(filterAfter.LiveBytes).To(gm.Equal(filterBefore.LiveBytes))
