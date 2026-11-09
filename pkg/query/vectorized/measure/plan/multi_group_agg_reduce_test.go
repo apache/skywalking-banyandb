@@ -19,6 +19,7 @@ package plan
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -34,6 +35,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 	logicalmeasure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	measure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
@@ -482,5 +484,84 @@ func TestMultiGroupAggConcat_DataNodeKeepsPartials(t *testing.T) {
 	}
 	if rows != 2 {
 		t.Fatalf("got %d partial rows, want one per group (2)", rows)
+	}
+}
+
+// reducedRows builds a reduced batch of (svc, value) rows.
+func reducedRows(t *testing.T, svcs []string, values []int64) *vectorized.RecordBatch {
+	t.Helper()
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTag, TagFamily: defaultName, Name: tagSvc, Type: vectorized.ColumnTypeString},
+		{Role: vectorized.RoleField, Name: fieldValue, Type: vectorized.ColumnTypeInt64},
+	})
+	batch := vectorized.NewRecordBatch(schema, len(svcs))
+	for i := range svcs {
+		if appendErr := appendCell(batch.Columns[0], svcs[i]); appendErr != nil {
+			t.Fatal(appendErr)
+		}
+		if appendErr := appendCell(batch.Columns[1], values[i]); appendErr != nil {
+			t.Fatal(appendErr)
+		}
+	}
+	batch.Len = len(svcs)
+	return batch
+}
+
+// TestTopPeakBytes pins the bound Top's reservation uses: the cells of the n largest rows, retained and emitted,
+// plus a header per retained row and cell.
+func TestTopPeakBytes(t *testing.T) {
+	batches := []*vectorized.RecordBatch{
+		reducedRows(t, []string{"a", strings.Repeat("b", 100)}, []int64{1, 2}),
+		reducedRows(t, []string{strings.Repeat("c", 10)}, []int64{3}),
+	}
+	// Row cells: a=16+1+8, b=16+100+8, c=16+10+8.
+	rowHeader := int64(topRowOverheadBytes + 2*topCellOverheadBytes)
+	if got, want := topPeakBytes(batches, 1), 2*int64(124)+rowHeader; got != want {
+		t.Fatalf("Top 1 = %d, want %d: the largest row, retained and emitted", got, want)
+	}
+	if got, want := topPeakBytes(batches, 10), 2*int64(25+124+34)+3*rowHeader; got != want {
+		t.Fatalf("Top 10 over 3 rows = %d, want %d: every row", got, want)
+	}
+}
+
+// TestMultiGroupAggReduce_TopCopiesAreCharged pins that Top's copies of the rows it keeps are reserved before it runs:
+// a budget that holds the reduced rows but not those copies fails the query and gives everything back.
+func TestMultiGroupAggReduce_TopCopiesAreCharged(t *testing.T) {
+	var svcs []string
+	var values []int64
+	for i := 0; i < 64; i++ {
+		svcs = append(svcs, fmt.Sprintf("%s%03d", strings.Repeat("s", 200), i))
+		values = append(values, int64(i))
+	}
+	batches := []*vectorized.RecordBatch{reducedRows(t, svcs, values)}
+	reduced := reduceRowsBytes(batches)
+	top := measure.ReduceTopSpec{FieldName: fieldValue, N: 64}
+	tracker := vectorized.NewMemoryTracker(reduced + topPeakBytes(batches, top.N) - 1)
+	merge := &MultiGroupMerge{tracker: tracker, cfg: measure.VectorizedConfig{BatchSize: 16}}
+	hold := &reduceHold{tracker: tracker}
+	if reserveErr := hold.reserve(reduced); reserveErr != nil {
+		t.Fatalf("the reduced rows fit the budget: %v", reserveErr)
+	}
+	if _, topErr := merge.topReduced(context.Background(), top, batches, hold); !errors.Is(topErr, vectorized.ErrMemoryBudgetExceeded) {
+		t.Fatalf("topReduced = %v, want the memory budget error", topErr)
+	}
+	hold.release(hold.held)
+	if used := tracker.Used(); used != 0 {
+		t.Fatalf("%d bytes still held after the failed Top", used)
+	}
+}
+
+// TestMultiGroupAggReduce_RejectsTagDeclaredAsAnotherType pins that a standalone node, like the liaison, rejects an
+// aggregation whose groups declare the same projected tag with different types (apache/skywalking#14069).
+func TestMultiGroupAggReduce_RejectsTagDeclaredAsAnotherType(t *testing.T) {
+	groups := []*mgBatchEC{
+		{schema: typedTagMeasure("a", databasev1.TagType_TAG_TYPE_STRING)},
+		{schema: typedTagMeasure("b", databasev1.TagType_TAG_TYPE_INT)},
+	}
+	req := sumBySvcRequest("a")
+	req.Groups = []string{"a", "b"}
+	req.TimeRange = &modelv1.TimeRange{Begin: timestamppb.New(time.Unix(0, 0)), End: timestamppb.New(time.Unix(600, 0))}
+	if _, err := runMultiGroupAgg(t, req, groups); err == nil || !strings.Contains(err.Error(), "zone") {
+		t.Fatalf("error = %v, want one naming zone", err)
 	}
 }

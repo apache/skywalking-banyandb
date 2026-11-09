@@ -18,6 +18,7 @@
 package plan
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -423,7 +424,7 @@ func (m *MultiGroupMerge) reduceGroups(ctx context.Context, groups []*GroupBatch
 	}
 	if spec.top != nil && len(batches) > 0 {
 		var topErr error
-		if batches, topErr = m.topReduced(ctx, *spec.top, batches, finished, hold); topErr != nil {
+		if batches, topErr = m.topReduced(ctx, *spec.top, batches, hold); topErr != nil {
 			return nil, topErr
 		}
 	}
@@ -478,14 +479,14 @@ func reduceRowsBytes(rows []*vectorized.RecordBatch) int64 {
 	return size
 }
 
-// topReduced keeps the top rows of the reduced batches. A non-positive Top keeps none, as BatchTop does. The top
-// rows are at most the reduced rows, so that bound is held while both exist.
+// topReduced keeps the top rows of the reduced batches. A non-positive Top keeps none, as BatchTop does. What Top
+// allocates on top of the reduced rows is reserved before it runs; afterwards only the top rows stay held.
 func (m *MultiGroupMerge) topReduced(ctx context.Context, top vmeasure.ReduceTopSpec, batches []*vectorized.RecordBatch,
-	reducedBytes int64, hold *reduceHold,
+	hold *reduceHold,
 ) ([]*vectorized.RecordBatch, error) {
 	var topped []*vectorized.RecordBatch
 	if top.N > 0 {
-		if reserveErr := hold.reserve(reducedBytes); reserveErr != nil {
+		if reserveErr := hold.reserve(topPeakBytes(batches, top.N)); reserveErr != nil {
 			return nil, reserveErr
 		}
 		var topErr error
@@ -499,6 +500,78 @@ func (m *MultiGroupMerge) topReduced(ctx context.Context, top vmeasure.ReduceTop
 		return nil, fmt.Errorf("vec multi-group merge: %w", ctxErr)
 	}
 	return topped, nil
+}
+
+// Top copies every row it retains into a row of its own, one single-row column per cell, and emits the retained
+// rows into new batches while those copies are still alive.
+const (
+	topRowOverheadBytes  = 64
+	topCellOverheadBytes = 80
+)
+
+// topPeakBytes bounds what Top over the reduced batches allocates while the batches are alive: the cells of the n
+// largest rows twice, once retained and once emitted, plus the retained rows' and cells' headers.
+func topPeakBytes(batches []*vectorized.RecordBatch, n int) int64 {
+	var sizes []int64
+	width := 0
+	for _, batch := range batches {
+		width = max(width, len(batch.Columns))
+		rows := make([]int64, batch.Len)
+		for _, col := range batch.Columns {
+			addCellBytes(rows, col)
+		}
+		sizes = append(sizes, rows...)
+	}
+	kept := min(n, len(sizes))
+	if kept < len(sizes) {
+		slices.SortFunc(sizes, func(a, b int64) int { return cmp.Compare(b, a) })
+	}
+	var cells int64
+	for _, size := range sizes[:kept] {
+		cells += size
+	}
+	return 2*cells + int64(kept)*(topRowOverheadBytes+int64(width)*topCellOverheadBytes)
+}
+
+// addCellBytes adds each row's cell of col to rows, sized as columnBytes sizes the whole column.
+func addCellBytes(rows []int64, col vectorized.Column) {
+	switch c := col.(type) {
+	case *vectorized.TypedColumn[int64], *vectorized.TypedColumn[float64]:
+		for i := range rows {
+			rows[i] += 8
+		}
+	case *vectorized.TypedColumn[string]:
+		for i, v := range c.Data() {
+			rows[i] += 16 + int64(len(v))
+		}
+	case *vectorized.TypedColumn[[]byte]:
+		for i, v := range c.Data() {
+			rows[i] += 24 + int64(len(v))
+		}
+	case *vectorized.TypedColumn[[]int64]:
+		for i, v := range c.Data() {
+			rows[i] += 24 + int64(len(v))*8
+		}
+	case *vectorized.TypedColumn[[]string]:
+		for i, v := range c.Data() {
+			rows[i] += 24
+			for _, e := range v {
+				rows[i] += 16 + int64(len(e))
+			}
+		}
+	case *vectorized.TypedColumn[*modelv1.TagValue]:
+		for i, v := range c.Data() {
+			rows[i] += 16 + int64(proto.Size(v))
+		}
+	case *vectorized.TypedColumn[*modelv1.FieldValue]:
+		for i, v := range c.Data() {
+			rows[i] += 16 + int64(proto.Size(v))
+		}
+	default:
+		for i := range rows {
+			rows[i] += 16
+		}
+	}
 }
 
 // sortKeyBytes estimates the sort keys the merge allocates: the order-by column's payload plus a
