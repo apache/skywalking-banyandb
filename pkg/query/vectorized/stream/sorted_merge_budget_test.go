@@ -89,7 +89,7 @@ func newBudgetedSortedMerge(t *testing.T, schema *vectorized.BatchSchema, capRow
 	return ctx, merge
 }
 
-func budgetedMergeOutput(t *testing.T, ctx context.Context, merge *SortedMerge) ([]uint64, []string) {
+func budgetedMergeOutput(ctx context.Context, t *testing.T, merge *SortedMerge) ([]uint64, []string) {
 	t.Helper()
 	require.NoError(t, merge.Finalize(ctx))
 	var ids []uint64
@@ -128,7 +128,7 @@ func TestSortedMergeBudgetPrunesBeforeRejectingNextCharge(t *testing.T) {
 	require.NoError(t, merge.Consume(ctx, incoming), "pre-charge pruning can drop the whole old batch")
 	require.Equal(t, []uint64{oldBytes}, lease.refunds)
 	require.Equal(t, 3, lease.attempts, "each input must be charged exactly once")
-	ids, _ := budgetedMergeOutput(t, ctx, merge)
+	ids, _ := budgetedMergeOutput(ctx, t, merge)
 	require.Equal(t, []uint64{0, 1}, ids)
 }
 
@@ -225,7 +225,7 @@ func TestSortedMergeBudgetSelectionAndEqualKeyWinner(t *testing.T) {
 	require.NoError(t, merge.Consume(ctx, old))
 	require.NoError(t, merge.Consume(ctx, best))
 	require.NoError(t, merge.Consume(ctx, incoming))
-	ids, tags := budgetedMergeOutput(t, ctx, merge)
+	ids, tags := budgetedMergeOutput(ctx, t, merge)
 	require.Equal(t, []uint64{1, 2}, ids)
 	require.Equal(t, []string{"first", "other"}, tags, "equal-key duplicates retain the earlier consumed row")
 }
@@ -243,7 +243,7 @@ func TestSortedMergeBudgetDuplicateOnlyRowsBelowCapCanBePruned(t *testing.T) {
 	require.LessOrEqual(t, len(merge.rows), merge.maxRows)
 	require.NoError(t, merge.Consume(ctx, incoming), "deduplication can free a whole batch even below the row cap")
 	require.Equal(t, []uint64{vectorized.EstimatedRetainedBytes(duplicate)}, lease.refunds)
-	ids, tags := budgetedMergeOutput(t, ctx, merge)
+	ids, tags := budgetedMergeOutput(ctx, t, merge)
 	require.Equal(t, []uint64{2, 1}, ids)
 	require.Equal(t, []string{"fresh", "first"}, tags)
 }
@@ -260,7 +260,7 @@ func TestSortedMergeBudgetWithoutLeaseKeepsNormalRowPruning(t *testing.T) {
 	require.Nil(t, merge.lease)
 	require.NoError(t, merge.Consume(ctx, buildBatch(schema, []testRow{{ts: 0, elemID: 0}})))
 	require.Nil(t, merge.lease)
-	ids, _ := budgetedMergeOutput(t, ctx, merge)
+	ids, _ := budgetedMergeOutput(ctx, t, merge)
 	require.Equal(t, []uint64{0, 1}, ids)
 }
 
@@ -358,7 +358,7 @@ func runBudgetedMergeOracleCase(t *testing.T, seed int64, byIndex, desc, selecte
 			recovered++
 		}
 	}
-	gotIDs, gotTags := budgetedMergeOutput(t, ctx, merge)
+	gotIDs, gotTags := budgetedMergeOutput(ctx, t, merge)
 	require.Equal(t, wantIDs, gotIDs)
 	require.Equal(t, wantTags, gotTags, "the chosen duplicate/equal-key row must match stable full sorting")
 	return true, recovered
@@ -414,7 +414,7 @@ func TestSortedMergeBudgetKeepsTopWindowAcrossTwoHundredThousandUniqueIDs(t *tes
 		}
 		require.NoError(t, merge.Consume(ctx, buildBatch(schema, rows)))
 	}
-	ids, _ := budgetedMergeOutput(t, ctx, merge)
+	ids, _ := budgetedMergeOutput(ctx, t, merge)
 	require.Len(t, ids, windowRows)
 	for idx, id := range ids {
 		require.Equal(t, uint64(idx), id)
