@@ -32,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/logging"
 	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -72,6 +73,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 	}
 
 	streamLiaisonNodeSel := node.NewRoundRobinSelector(data.TopicStreamWrite.String(), metaSvc)
+	streamLiaisonNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel)
 	streamDataNodeSel := node.NewRoundRobinSelector(data.TopicStreamPartSync.String(), metaSvc)
 	streamSVC, err := stream.NewLiaison(metaSvc, internalPipeline, metricSvc, pm, streamDataNodeSel, tire2Client)
 	if err != nil {
@@ -87,6 +89,12 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 
 	propertyNodeSel := node.NewRoundRobinSelector(data.TopicPropertyUpdate.String(), metaSvc)
 
+	// A liaison has no storage engine: it writes its own logs as a stream
+	// write does, over the tier-1 client to a liaison's write queue.
+	logSvc := logging.NewLiaisonService(nativeLogSink, nativeLoggingConfig, metaSvc, tire1Client,
+		streamLiaisonNodeRegistry, pm, metricSvc)
+	logSvc.SetNodeType("liaison")
+
 	dQuery, err := dquery.NewService(metaSvc, localPipeline, tire2Client, metricSvc, streamSVC, measureSVC, traceSVC)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate distributed query service")
@@ -99,7 +107,7 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 
 	grpcServer := grpc.NewServer(ctx, tire1Client, tire2Client, localPipeline, metaSvc, grpc.NodeRegistries{
 		MeasureLiaisonNodeRegistry: measureLiaisonNodeRegistry,
-		StreamLiaisonNodeRegistry:  grpc.NewClusterNodeRegistry(data.TopicStreamWrite, tire1Client, streamLiaisonNodeSel),
+		StreamLiaisonNodeRegistry:  streamLiaisonNodeRegistry,
 		PropertyNodeRegistry:       grpc.NewClusterNodeRegistry(data.TopicPropertyUpdate, tire2Client, propertyNodeSel),
 		TraceLiaisonNodeRegistry:   grpc.NewClusterNodeRegistry(data.TopicTraceWrite, tire1Client, traceLiaisonNodeSel),
 		StreamDataNodeSelector:     streamDataNodeSel,
@@ -116,6 +124,10 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		metricSvc,
 		metaSvc,
 		pm,
+		// Stopped before the pipelines and clients below: units stop in this
+		// order, and the final drain sends through the tier-1 client to a
+		// liaison's internal pipeline.
+		logSvc,
 		localPipeline,
 		internalPipeline,
 		tire1Client,
@@ -186,6 +198,12 @@ func newLiaisonCmd(runners ...run.Unit) *cobra.Command {
 		},
 	}
 	liaisonCmd.Flags().AddFlagSet(liaisonGroup.RegisterFlags().FlagSet)
+	// This role registers a consumer for the native log sink, so the root
+	// command may safely attach it when this is the command being run.
+	if liaisonCmd.Annotations == nil {
+		liaisonCmd.Annotations = map[string]string{}
+	}
+	liaisonCmd.Annotations[nativeLoggingAnnotation] = "supported"
 	liaisonCmd.PersistentFlags().StringVar(&nodeSelector, "data-node-selector", "",
 		"the data node selector. e.g. key1=value1,key2=value2. If not set, all nodes are selected")
 	return liaisonCmd

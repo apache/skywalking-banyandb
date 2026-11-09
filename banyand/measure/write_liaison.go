@@ -31,6 +31,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -39,7 +40,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client) bus.MessageListener {
+func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client,
+	pm protector.Memory,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -48,6 +51,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		tire2Client:         tire2Client,
+		pm:                  pm,
 	}
 }
 
@@ -55,10 +59,14 @@ type writeQueueCallback struct {
 	tire2Client         queue.Client
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
+	pm                  protector.Memory
 	maxDiskUsagePercent int
 }
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
+	if w.pm != nil && w.pm.State() == protector.StateHigh {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "memory pressure is high, the batch is not written")
+	}
 	if w.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-retention-high-watermark\" is 0")
 	}

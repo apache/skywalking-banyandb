@@ -18,7 +18,8 @@ producers:
   - data2:17912
   - data3:17912
   - data4:17912
-nodeTypes: data
+  - liaison:18912
+nodeTypes: data,liaison
 initializedPerProducer: 1
 disabledNodeLogged: true
 disabledNodeRows: 0
