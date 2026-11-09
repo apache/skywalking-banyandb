@@ -350,7 +350,7 @@ func (s *storedSegmentReader) postingCount(postingOffset uint64) (uint64, error)
 	if lengthErr != nil {
 		return 0, lengthErr
 	}
-	if postingsLength > maxSelectionPostingsSize || postingsLength > s.footer.docValueOffset-cursor {
+	if postingsLength > s.maxPostingsLength() || postingsLength > s.footer.docValueOffset-cursor {
 		return 0, corruptError("segment %q has an oversized posting bitmap", s.path)
 	}
 	postingsData, dataErr := s.readPostingBytes(cursor, postingsLength)
