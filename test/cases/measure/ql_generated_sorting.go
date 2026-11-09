@@ -217,7 +217,7 @@ func assertGeneratedSortingCleanup(before vmeasure.BatchExecutionCounters, memor
 	after := vmeasure.BatchExecutionStats()
 	sorted := ql.SortExecutionStats()
 	gm.Expect(after.IntermediateDataPoints).To(gm.Equal(before.IntermediateDataPoints))
-	gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
+	expectLiveResults(before.LiveResults)
 	gm.Expect(after.NativeBatchExecutions).To(gm.Equal(before.NativeBatchExecutions), "readiness and correctness use only BydbQL Query")
 	expectLiveReservedBytes(memoryBefore)
 	gm.Expect(sorted.LiveBytes).To(gm.Equal(sortBefore.LiveBytes))
