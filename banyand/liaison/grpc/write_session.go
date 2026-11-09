@@ -151,6 +151,9 @@ type writeRow struct {
 }
 
 type writeBatch struct {
+	// ctx is what the batch is published under: the session's, marked as a
+	// native log write for a batch of native log events.
+	ctx      context.Context
 	sealedAt time.Time
 	timer    *time.Timer
 	node     string
@@ -188,7 +191,12 @@ type writeSessionDeps struct {
 // writeSession batches the rows of one client Write stream per data node, acknowledges each sealed batch when its
 // node has applied it, and sends the responses through a queue that never blocks the receive loop.
 type writeSession struct {
-	ctx       context.Context
+	ctx context.Context
+	// nativeCtx is ctx marked as a native log write. The publisher logs about
+	// its nodes under the logger its context carries, so a batch of native log
+	// events is published under nativeCtx and never logs where native logs are
+	// stored.
+	nativeCtx context.Context
 	open      map[string]*writeBatch
 	inflight  map[string]int
 	windows   map[string]*nodeWindow
@@ -205,14 +213,15 @@ type writeSession struct {
 
 func newWriteSession(ctx context.Context, cfg writeSessionConfig, deps writeSessionDeps) *writeSession {
 	s := &writeSession{
-		ctx:      ctx,
-		cfg:      cfg.withDefaults(),
-		deps:     deps,
-		open:     make(map[string]*writeBatch),
-		inflight: make(map[string]int),
-		windows:  make(map[string]*nodeWindow),
-		notify:   make(chan struct{}),
-		fatalCh:  make(chan struct{}),
+		ctx:       ctx,
+		nativeCtx: logger.WithNativeWrite(ctx),
+		cfg:       cfg.withDefaults(),
+		deps:      deps,
+		open:      make(map[string]*writeBatch),
+		inflight:  make(map[string]int),
+		windows:   make(map[string]*nodeWindow),
+		notify:    make(chan struct{}),
+		fatalCh:   make(chan struct{}),
 	}
 	s.replies = newReplyQueue(ctx, deps.send, deps.log)
 	return s
@@ -298,7 +307,10 @@ func (s *writeSession) Append(node, group string, epoch uint64, ack writeAck, bu
 		return fmt.Errorf("%w: %w", errWriteRowSerialize, err)
 	}
 	if b == nil {
-		b = &writeBatch{node: node, group: group, epoch: epoch}
+		b = &writeBatch{ctx: s.ctx, node: node, group: group, epoch: epoch}
+		if group == logger.NativeLogGroup {
+			b.ctx = s.nativeCtx
+		}
 		s.open[node] = b
 		b.timer = time.AfterFunc(s.cfg.sealInterval, func() { s.sealIfOpen(b, sealReasonInterval) })
 	}
@@ -436,7 +448,7 @@ func (s *writeSession) runBatch(b *writeBatch) {
 		}
 		elapsed := now.Sub(firstBusy)
 		if elapsed >= limit {
-			s.deps.log.Warn().Str("node", b.node).Stringer("status", out.status).Dur("elapsed", elapsed).
+			logger.ForGroup(s.deps.log, b.group, "liaison-grpc").Warn().Str("node", b.node).Stringer("status", out.status).Dur("elapsed", elapsed).
 				Msg("the data node stayed unable to accept writes; failing the write stream")
 			s.fail(status.Errorf(codes.ResourceExhausted, "data node %s is unable to accept writes (%s) for %s", b.node, out.status, elapsed))
 			s.finishBatch(b, modelv1.Status_STATUS_SERVER_BUSY)
@@ -470,7 +482,7 @@ func (s *writeSession) publishOnce(b *writeBatch) batchOutcome {
 	failedAt := -1
 	for i := range b.rows {
 		msg := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), b.node, b.group, b.rows[i].payload)
-		if _, err := publisher.Publish(s.ctx, s.deps.topic, msg); err != nil {
+		if _, err := publisher.Publish(b.ctx, s.deps.topic, msg); err != nil {
 			publishErr, failedAt = err, i
 			break
 		}
@@ -481,7 +493,7 @@ func (s *writeSession) publishOnce(b *writeBatch) batchOutcome {
 		if failedAt == 0 && errors.As(publishErr, &ce) && isNotAppliedStatus(ce.Status()) {
 			return batchOutcome{notApplied: true, status: ce.Status(), err: publishErr}
 		}
-		s.deps.log.Error().Err(publishErr).Str("node", b.node).Int("rows", len(b.rows)).Msg("publishing a sealed write batch failed")
+		logger.ForGroup(s.deps.log, b.group, "liaison-grpc").Error().Err(publishErr).Str("node", b.node).Int("rows", len(b.rows)).Msg("publishing a sealed write batch failed")
 		return batchOutcome{status: modelv1.Status_STATUS_INTERNAL_ERROR, err: publishErr}
 	}
 	if ce := cee[b.node]; ce != nil {
@@ -491,7 +503,7 @@ func (s *writeSession) publishOnce(b *writeBatch) batchOutcome {
 		return batchOutcome{status: ce.Status(), err: ce}
 	}
 	if closeErr != nil {
-		s.deps.log.Error().Err(closeErr).Str("node", b.node).Msg("failed to close the batch publisher")
+		logger.ForGroup(s.deps.log, b.group, "liaison-grpc").Error().Err(closeErr).Str("node", b.node).Msg("failed to close the batch publisher")
 		return batchOutcome{status: modelv1.Status_STATUS_INTERNAL_ERROR, err: closeErr}
 	}
 	return batchOutcome{status: modelv1.Status_STATUS_SUCCEED}

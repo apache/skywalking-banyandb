@@ -76,6 +76,9 @@ type fakeClient struct {
 	// rejectOnClose makes Close answer the way localBatchPublisher answers a
 	// refused batch: a populated per-node map alongside a NIL error.
 	rejectOnClose atomic.Bool
+	// healthy makes HealthyNodes report one connected node, as a producer's
+	// client does once it has dialed its destination.
+	healthy atomic.Bool
 }
 
 func (f *fakeClient) seenMessageNodes() []string {
@@ -136,10 +139,15 @@ func (f *fakeClient) SetSelfNode(_, _, _ string)              {}
 func (f *fakeClient) Register(bus.Topic, schema.EventHandler) {}
 func (f *fakeClient) OnAddOrUpdate(schema.Metadata)           {}
 func (f *fakeClient) GracefulStop()                           {}
-func (f *fakeClient) HealthyNodes() []string                  { return nil }
-func (f *fakeClient) Name() string                            { return "fake-queue" }
-func (f *fakeClient) Serve() run.StopNotify                   { return nil }
-func (f *fakeClient) GetRouteTable() *databasev1.RouteTable   { return nil }
+func (f *fakeClient) HealthyNodes() []string {
+	if f.healthy.Load() {
+		return []string{destinationNodeName}
+	}
+	return nil
+}
+func (f *fakeClient) Name() string                          { return "fake-queue" }
+func (f *fakeClient) Serve() run.StopNotify                 { return nil }
+func (f *fakeClient) GetRouteTable() *databasev1.RouteTable { return nil }
 
 type fakePublisher struct{ client *fakeClient }
 

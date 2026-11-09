@@ -86,6 +86,8 @@ jobs:
             runs-on: ubuntu-24.04
           - name: Native Logs
             config: test/e2e-v2/cases/nativelog/e2e.yaml
+          - name: Native Logs Producers
+            config: test/e2e-v2/cases/nativelog-producers/e2e.yaml
           - name: Lifecycle File Discovery
             config: test/e2e-v2/cases/lifecycle/file-discovery/e2e.yaml
           - name: Lifecycle DNS Discovery
