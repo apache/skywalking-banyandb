@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 )
@@ -1843,4 +1844,41 @@ func Test_mergePartsThenSendIntroduction_cleansUpOnShutdown(t *testing.T) {
 	require.False(t, fileSystem.IsExist(partPath(tmpPath, outputID)),
 		"merged part directory should be removed when the introduction is refused")
 	require.True(t, fileSystem.IsExist(partPath(tmpPath, inputID)))
+}
+
+func Test_mergeParts_closedReleasesPooledObjects(t *testing.T) {
+	var fpp []*partWrapper
+	tmpPath, defFn := test.Space(require.New(t))
+	defer func() {
+		for _, pw := range fpp {
+			pw.decRef()
+		}
+		defFn()
+	}()
+
+	fileSystem := fs.NewLocalFileSystem()
+	for i, dps := range []*dataPoints{dpsTS1, dpsTS2} {
+		partID := uint64(i + 1)
+		mp := generateMemPart()
+		mp.mustInitFromDataPoints(dps)
+		mp.mustFlush(fileSystem, partPath(tmpPath, partID))
+		pw := newPartWrapper(nil, mustOpenFilePart(partID, tmpPath, fileSystem))
+		pw.p.partMetadata.ID = partID
+		fpp = append(fpp, pw)
+		releaseMemPart(mp)
+	}
+
+	before := pool.AllRefsCount()
+	closeCh := make(chan struct{})
+	close(closeCh)
+	tst := &tsTable{pm: protector.Nop{}}
+	p, err := tst.mergeParts(fileSystem, closeCh, fpp, 3, tmpPath)
+	require.ErrorIs(t, err, errClosed)
+	require.Nil(t, p)
+
+	after := pool.AllRefsCount()
+	for _, name := range []string{"fs-bufWriter", "measure-columnValuesDecoder"} {
+		require.Equal(t, before[name], after[name], "pool %s must be released when the merge stops early", name)
+	}
+	require.False(t, fileSystem.IsExist(partPath(tmpPath, 3)), "the partial merged part must be removed")
 }

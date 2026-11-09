@@ -269,6 +269,14 @@ func TestOutcomesAreCountedByTheirReason(t *testing.T) {
 			outcome: queue.Outcome{Reason: queue.OutcomeRetriesExhausted, Err: queue.Retryable(bus.ErrTopicNotExist)},
 			reason:  reasonDestinationUnready,
 		},
+		"no liaison located": {
+			outcome: queue.Outcome{Reason: queue.OutcomeRetriesExhausted, Err: queue.Retryable(fmt.Errorf("%w: no nodes available", queue.ErrNoNodeLocated))},
+			reason:  reasonLocateFailed,
+		},
+		"no liaison reached": {
+			outcome: queue.Outcome{Reason: queue.OutcomeDeliveryFailed, Err: errors.New("circuit breaker open")},
+			reason:  reasonPublishFailed,
+		},
 		"refused": {
 			outcome: queue.Outcome{Reason: queue.OutcomeDeliveryFailed, Err: errors.New("disk full")}, reason: reasonPublishFailed,
 		},

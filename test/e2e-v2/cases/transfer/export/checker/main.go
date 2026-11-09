@@ -21,6 +21,13 @@
 //	checker <stream|measure|trace|property> <artifact dir> [liaison host:grpc-port]
 //	checker schema-only <artifact dir>
 //
+// and serves the import cases with four more subcommands, described in their files:
+//
+//	checker compare <artifact A> <artifact B>                        (compare.go)
+//	checker conflict-schema <artifact A> <out dir>                   (conflict.go)
+//	checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>  (queries.go)
+//	checker ttl-rows <artifact A>                                    (ttl.go)
+//
 // Every row is checked against its group's schema, and the rows of known sources (the events
 // report-events.sh reports, trace-mocker's services and their metrics, the UI template
 // the setup creates) are printed under data, by resource, with their non-null columns, for the
@@ -55,6 +62,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
@@ -82,6 +90,18 @@ const (
 var failed bool
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "compare":
+			os.Exit(runCompare(os.Args[2:]))
+		case "conflict-schema":
+			os.Exit(runConflictSchema(os.Args[2:]))
+		case "queries":
+			os.Exit(runQueries(os.Args[2:]))
+		case "ttl-rows":
+			os.Exit(runTTLRows(os.Args[2:]))
+		}
+	}
 	if len(os.Args) != 3 && len(os.Args) != 4 {
 		usage()
 	}
@@ -112,6 +132,10 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, "usage: checker <stream|measure|trace|property|schema-only> <artifact dir> [liaison host:grpc-port]")
+	fmt.Fprintln(os.Stderr, "       checker compare <artifact A> <artifact B>")
+	fmt.Fprintln(os.Stderr, "       checker conflict-schema <artifact A> <out dir>")
+	fmt.Fprintln(os.Stderr, "       checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>")
+	fmt.Fprintln(os.Stderr, "       checker ttl-rows <artifact A>")
 	os.Exit(2)
 }
 
@@ -260,8 +284,8 @@ type groupSchema struct {
 
 // groupResult is what the checks found in one group: data holds the rows of known sources by
 // resource as printed, units the rows exported per unit and resource for the count queries,
-// stored the rows the snapshot stored in the group's shards and queried the points the count
-// queries answer.
+// stored the rows the snapshot stored in the group's shards, points the points the exported rows
+// make up and queried the points the count queries answer.
 type groupResult struct {
 	nodes        map[string]bool
 	data         map[string][][]printedValue
@@ -274,6 +298,7 @@ type groupResult struct {
 	rows         uint64
 	stored       uint64
 	queried      uint64
+	points       uint64
 }
 
 func checkCatalog(dir string, m *manifest.Manifest, catalog commonv1.Catalog, liaison string) {
@@ -389,7 +414,7 @@ func checkCatalog(dir string, m *manifest.Manifest, catalog commonv1.Catalog, li
 		// 0 for a group of segment-level files only, which have no stored count.
 		fmt.Printf("    storedRows: %d\n", g.stored)
 		if counted {
-			fmt.Printf("    queriedRows: %d\n", g.queried)
+			fmt.Printf("    points: %d\n    queriedRows: %d\n", g.points, g.queried)
 		}
 		var gr report
 		gr.check("header", g.header)
@@ -549,7 +574,7 @@ func scanFile(path string, f groupFile, s *groupSchema, g *groupResult) {
 		perResource[resource]++
 		g.rows++
 		if tsColumn >= 0 {
-			g.track(f.unit, resource, row[tsColumn])
+			g.track(f.unit, resource, row[tsColumn], seriesOf(columns, row, resource))
 		}
 		if !s.resources[resource] {
 			g.cells = append(g.cells, fmt.Sprintf("%s line %d: _name %q is not a resource of group %s", rel, line, resource, f.group))
@@ -575,6 +600,23 @@ func scanFile(path string, f groupFile, s *groupSchema, g *groupResult) {
 	for name, n := range perResource {
 		f.counts.got[name] += n
 	}
+}
+
+// seriesOf identifies the series of a _top_n_result row by its entity tags, which the Top-N
+// result measure keeps in one tag family; it is empty for every other resource, whose rows are
+// each a point because a series is stored in the one shard its entity hashes to.
+func seriesOf(columns []csvfmt.Column, row []string, resource string) string {
+	if resource != topnschema.Name {
+		return ""
+	}
+	var series strings.Builder
+	for i, c := range columns {
+		if c.Family == topnschema.TagFamily {
+			series.WriteString(row[i])
+			series.WriteByte(0)
+		}
+	}
+	return series.String()
 }
 
 func openData(path string) (io.ReadCloser, error) {

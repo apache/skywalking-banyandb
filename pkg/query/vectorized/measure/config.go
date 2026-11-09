@@ -20,29 +20,20 @@ package measure
 import (
 	"fmt"
 	"math"
-	"time"
 )
 
 // VectorizedConfig controls the v1 vectorized Measure query path.
 type VectorizedConfig struct {
-	BroadcastTimeout time.Duration
-	BatchSize        int
-	QueryMemoryMiB   int
+	BatchSize      int
+	QueryMemoryMiB int
 }
 
-// DefaultBroadcastTimeout is the per-broadcast wait the vec distributed
-// liaison uses when the caller (banyand/dquery) does not override it. The
-// value matches the historical hard-coded constant so behavior is
-// unchanged when the operator does not set --dst-broadcast-timeout.
-const DefaultBroadcastTimeout = 15 * time.Second
-
-// DefaultConfig returns the v1 default — 1024-row batches, 256 MiB
-// per-query memory budget, 15 s broadcast timeout.
+// DefaultConfig returns the v1 default — 1024-row batches and a 256 MiB
+// per-query memory budget.
 func DefaultConfig() VectorizedConfig {
 	return VectorizedConfig{
-		BatchSize:        1024,
-		QueryMemoryMiB:   256,
-		BroadcastTimeout: DefaultBroadcastTimeout,
+		BatchSize:      1024,
+		QueryMemoryMiB: 256,
 	}
 }
 
@@ -57,9 +48,6 @@ func (c VectorizedConfig) Validate() error {
 	}
 	if c.QueryMemoryMiB <= 0 {
 		return fmt.Errorf("vectorized.measure: QueryMemoryMiB must be > 0, got %d", c.QueryMemoryMiB)
-	}
-	if c.BroadcastTimeout < 0 {
-		return fmt.Errorf("vectorized.measure: BroadcastTimeout must be >= 0, got %s", c.BroadcastTimeout)
 	}
 	return nil
 }

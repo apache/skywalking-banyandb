@@ -49,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/schema/registry"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -61,24 +62,18 @@ const measureRegistryKinds = schema.KindGroup | schema.KindMeasure | schema.Kind
 
 const (
 	// TopNSchemaName is the name of the top n result schema.
-	TopNSchemaName = "_top_n_result"
+	TopNSchemaName = topnschema.Name
 	// TopNTagFamily is the tag family name of the topN result measure.
-	TopNTagFamily = "_topN"
+	TopNTagFamily = topnschema.TagFamily
 	// TopNFieldName is the field name of the topN result measure.
-	TopNFieldName = "value"
+	TopNFieldName = topnschema.FieldName
 )
 
 var (
 	metadataScope = measureScope.SubScope("metadata")
 
-	topNFieldsSpec = []*databasev1.FieldSpec{{
-		Name:              TopNFieldName,
-		FieldType:         databasev1.FieldType_FIELD_TYPE_DATA_BINARY,
-		EncodingMethod:    databasev1.EncodingMethod_ENCODING_METHOD_GORILLA,
-		CompressionMethod: databasev1.CompressionMethod_COMPRESSION_METHOD_ZSTD,
-	}}
 	// TopNTagNames is the tag names of the topN result measure.
-	TopNTagNames = []string{"name", "direction", "group", "parameters"}
+	TopNTagNames = topnschema.TagNames
 )
 
 // SchemaService allows querying schema information.
@@ -955,32 +950,12 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 
 // GetTopNSchema returns the schema of the topN result measure.
 func GetTopNSchema(md *commonv1.Metadata) *databasev1.Measure {
-	return &databasev1.Measure{
-		Metadata: md,
-		TagFamilies: []*databasev1.TagFamilySpec{
-			{
-				Name: TopNTagFamily,
-				Tags: []*databasev1.TagSpec{
-					{Name: TopNTagNames[0], Type: databasev1.TagType_TAG_TYPE_STRING},
-					{Name: TopNTagNames[1], Type: databasev1.TagType_TAG_TYPE_INT},
-					{Name: TopNTagNames[2], Type: databasev1.TagType_TAG_TYPE_STRING},
-					{Name: TopNTagNames[3], Type: databasev1.TagType_TAG_TYPE_STRING},
-				},
-			},
-		},
-		Fields: topNFieldsSpec,
-		Entity: &databasev1.Entity{
-			TagNames: TopNTagNames,
-		},
-	}
+	return topnschema.Measure(md)
 }
 
 // GetTopNSchemaMetadata returns the metadata of the topN result measure.
 func GetTopNSchemaMetadata(group string) *commonv1.Metadata {
-	return &commonv1.Metadata{
-		Name:  TopNSchemaName,
-		Group: group,
-	}
+	return topnschema.Metadata(group)
 }
 
 func getKey(metadata *commonv1.Metadata) string {

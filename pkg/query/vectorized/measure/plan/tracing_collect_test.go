@@ -41,47 +41,47 @@ func (f rawFrameFuture) GetAll() ([]bus.Message, error) {
 	return []bus.Message{f.message}, nil
 }
 
-func TestCollectRawFrameResponsesTraceEnvelope(t *testing.T) {
+func TestFrameOfTraceEnvelope(t *testing.T) {
 	rawBody := []byte{0x00, 0x01, 0x02}
 	trace := &commonv1.Trace{TraceId: "trace-1"}
-	frames, traces, collectErr := collectRawFrameResponses([]bus.Future{
-		rawFrameFuture{message: bus.NewMessage(1, &measurev1.InternalQueryResponse{RawFrameBody: rawBody, Trace: trace})},
-	})
-	if collectErr != nil {
-		t.Fatalf("collectRawFrameResponses returned error: %v", collectErr)
+	body, gotTrace, err := frameOf(&measurev1.InternalQueryResponse{RawFrameBody: rawBody, Trace: trace})
+	if err != nil {
+		t.Fatalf("frameOf returned error: %v", err)
 	}
-	if len(frames) != 1 || !bytes.Equal(frames[0], rawBody) {
-		t.Fatalf("frames = %v, want one raw body %v", frames, rawBody)
+	if !bytes.Equal(body, rawBody) {
+		t.Fatalf("body = %v, want %v", body, rawBody)
 	}
-	if len(traces) != 1 || traces[0].GetTraceId() != "trace-1" {
-		t.Fatalf("traces = %v, want trace-1", traces)
+	if gotTrace.GetTraceId() != "trace-1" {
+		t.Fatalf("trace = %v, want trace-1", gotTrace)
 	}
 }
 
-func TestCollectRawFrameResponsesRejectsProtoDataPointsUnderRawMode(t *testing.T) {
-	_, _, collectErr := collectRawFrameResponses([]bus.Future{
-		rawFrameFuture{message: bus.NewMessage(1, &measurev1.InternalQueryResponse{DataPoints: []*measurev1.InternalDataPoint{{}}})},
-	})
-	if collectErr == nil {
-		t.Fatal("collectRawFrameResponses returned nil error for proto data_points response under raw mode")
+func TestFrameOfRawBodyAndEmptyResult(t *testing.T) {
+	body, trace, err := frameOf([]byte{0x00, 0x01})
+	if err != nil || len(body) != 2 || trace != nil {
+		t.Fatalf("raw frame: body=%v trace=%v err=%v", body, trace, err)
+	}
+	body, trace, err = frameOf(nil)
+	if err != nil || body != nil || trace != nil {
+		t.Fatalf("empty result: body=%v trace=%v err=%v", body, trace, err)
 	}
 }
 
-func TestCollectRawFrameResponsesTraceOnlyErrorEnvelope(t *testing.T) {
-	_, traces, collectErr := collectRawFrameResponses([]bus.Future{
-		rawFrameFuture{message: bus.NewMessage(1, &measurev1.InternalQueryResponse{Trace: &commonv1.Trace{TraceId: "trace-error", Error: true}})},
-	})
-	if collectErr == nil {
-		t.Fatal("collectRawFrameResponses returned nil error for trace-only error envelope")
-	}
-	if len(traces) != 1 || traces[0].GetTraceId() != "trace-error" {
-		t.Fatalf("traces = %v, want trace-error", traces)
+func TestFrameOfRejectsProtoDataPointsUnderRawMode(t *testing.T) {
+	if _, _, err := frameOf(&measurev1.InternalQueryResponse{DataPoints: []*measurev1.InternalDataPoint{{}}}); err == nil {
+		t.Fatal("frameOf returned nil error for proto data_points response under raw mode")
 	}
 }
 
-func TestCollectRawFrameResponsesFutureError(t *testing.T) {
-	_, _, collectErr := collectRawFrameResponses([]bus.Future{rawFrameFuture{err: errors.New("boom")}})
-	if collectErr == nil {
-		t.Fatal("collectRawFrameResponses returned nil error for future error")
+func TestFrameOfTraceOnlyEnvelopeCarriesNoFrame(t *testing.T) {
+	body, trace, err := frameOf(&measurev1.InternalQueryResponse{Trace: &commonv1.Trace{TraceId: "trace-error", Error: true}})
+	if err != nil || len(body) != 0 || trace.GetTraceId() != "trace-error" {
+		t.Fatalf("trace-only envelope: body=%v trace=%v err=%v", body, trace, err)
+	}
+}
+
+func TestFrameOfRejectsUnexpectedPayload(t *testing.T) {
+	if _, _, err := frameOf(errors.New("boom")); err == nil {
+		t.Fatal("frameOf returned nil error for an unexpected payload")
 	}
 }

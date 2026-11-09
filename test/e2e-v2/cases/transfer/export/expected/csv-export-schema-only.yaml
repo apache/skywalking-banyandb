@@ -31,14 +31,6 @@ schema:
     topNAggregation: {{ gt .schema.counts.topNAggregation 0 }}
   groups:
     {{- contains .schema.groups }}
-    - name: _deletion_task
-      catalog: property
-      shardNum: 1
-      replicas: 0
-      segmentInterval: none
-      ttl: none
-      defaultStages: []
-      stages: []
     - name: sw_metadata
       catalog: measure
       shardNum: 2

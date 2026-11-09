@@ -27,7 +27,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
-	"github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure/frame"
 )
 
 // maxIndividualSubTraces is the cap on individually-attached per-node sub-traces
@@ -263,31 +262,4 @@ func percentileIdx(n, p int) int {
 		return n - 1
 	}
 	return idx
-}
-
-// collectFrameDecodeDurations times a frame.Decode call for each non-empty
-// body in frames and returns the per-frame durations. This is a lightweight
-// probe decode: the real decode happens inside ReduceRawFrames /
-// mergeDistributedRows; here we only measure the decode cost for tracing
-// purposes and discard the decoded batches immediately.
-// Empty bodies are skipped (consistent with ReduceRawFrames behavior). Only a
-// traced query reports the durations, so an untraced one skips the probe and
-// decodes each frame once.
-func collectFrameDecodeDurations(ctx context.Context, frames [][]byte) []time.Duration {
-	if query.GetTracer(ctx) == nil {
-		return nil
-	}
-	durations := make([]time.Duration, 0, len(frames))
-	for _, body := range frames {
-		if len(body) == 0 {
-			continue
-		}
-		start := time.Now()
-		probe, _ := frame.Decode(body)
-		durations = append(durations, time.Since(start))
-		if probe != nil {
-			probe.ReleaseOwners()
-		}
-	}
-	return durations
 }

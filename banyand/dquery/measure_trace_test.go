@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -253,6 +254,40 @@ func (b traceMeasureBroadcaster) Broadcast(time.Duration, bus.Topic, bus.Message
 	return []bus.Future{traceMeasureFuture{body: b.body}}, nil
 }
 
+// Scatter answers a scan with one node whose only chunk is the body.
+func (b traceMeasureBroadcaster) Scatter(context.Context, bus.Topic, bus.Message, bus.ScatterOptions) ([]bus.NodeStream, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return []bus.NodeStream{&fakeNodeStream{node: "node-a", chunks: [][]byte{b.body}}}, nil
+}
+
+// fakeNodeStream is a node stream that serves chunks, then ends with err or io.EOF.
+type fakeNodeStream struct {
+	err    error
+	node   string
+	chunks [][]byte
+}
+
+func (s *fakeNodeStream) Node() string { return s.node }
+
+func (s *fakeNodeStream) Next(ctx context.Context) (bus.Message, error) {
+	if err := ctx.Err(); err != nil {
+		return bus.Message{}, err
+	}
+	if len(s.chunks) > 0 {
+		chunk := s.chunks[0]
+		s.chunks = s.chunks[1:]
+		return bus.NewMessage(1, chunk), nil
+	}
+	if s.err != nil {
+		return bus.Message{}, s.err
+	}
+	return bus.Message{}, io.EOF
+}
+
+func (s *fakeNodeStream) Close() {}
+
 type traceMeasureFuture struct {
 	bus.Future
 	body []byte
@@ -286,6 +321,7 @@ func newTraceMeasureProcessor(t *testing.T, broadcastErr error) (*measureQueryPr
 	processor := &measureQueryProcessor{
 		measureService: traceMeasureService{},
 		broadcaster:    traceMeasureBroadcaster{body: body, err: broadcastErr},
+		scatterer:      traceMeasureBroadcaster{body: body, err: broadcastErr},
 		queryService:   &queryService{nodeID: "test", log: logger.GetLogger("trace-test")},
 	}
 	request := &measurev1.QueryRequest{

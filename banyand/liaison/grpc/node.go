@@ -70,6 +70,15 @@ func NewClusterNodeRegistry(topic bus.Topic, pipeline queue.Client, selector nod
 	return nr
 }
 
+// selectorRegistry locates nodes with sel, which another registry keeps up to date with the
+// nodes; nil for a nil sel.
+func selectorRegistry(sel node.Selector) NodeRegistry {
+	if sel == nil {
+		return nil
+	}
+	return &clusterNodeService{sel: sel}
+}
+
 func (n *clusterNodeService) Locate(group, name string, shardID, replicaID uint32) (string, error) {
 	nodeID, err := n.sel.Pick(group, name, shardID, replicaID)
 	if err != nil {

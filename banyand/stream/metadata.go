@@ -719,7 +719,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 			copies := ro.Replicas + 1
 			nodes, err := s.streamDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))
 			if err != nil {
-				s.l.Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
+				logForGroup(s.l, group).Error().Err(err).Str("group", group).Uint32("shard", uint32(shardID)).Msg("failed to locate nodes")
 				return nil
 			}
 			return nodes

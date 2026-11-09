@@ -116,9 +116,8 @@ func verifyGeneratedLegacyCompatibilityCall(base time.Time, c qlgen.Case) {
 	aggregateBefore := ql.AggregateExecutionStats()
 	nativeBefore := ql.NativeAggregateExecutionStats()
 	defer func() {
-		after := vmeasure.BatchExecutionStats()
-		gm.Expect(after.LiveResults).To(gm.Equal(before.LiveResults))
-		gm.Expect(vectorized.QueryMemoryStats().LiveReservedBytes).To(gm.Equal(memoryBefore.LiveReservedBytes))
+		expectLiveResults(before.LiveResults)
+		expectLiveReservedBytes(memoryBefore.LiveReservedBytes)
 		gm.Expect(ql.FilterExecutionStats().LiveBytes).To(gm.Equal(filterBefore.LiveBytes))
 		gm.Expect(ql.ExpressionExecutionStats().LiveBytes).To(gm.Equal(expressionBefore.LiveBytes))
 		gm.Expect(ql.AggregateExecutionStats().LiveBytes).To(gm.Equal(aggregateBefore.LiveBytes))

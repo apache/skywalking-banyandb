@@ -147,11 +147,17 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 	if err != nil {
 		panic(fmt.Sprintf("failed to list group: %v", err))
 	}
+	return true, []int64{r.layout(gg)}
+}
+
+// layout replaces the lookup table with the shards of groups and returns the highest
+// modification revision among them.
+func (r *roundRobinSelector) layout(groups []*commonv1.Group) int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var revision int64
 	r.lookupTable = r.lookupTable[:0]
-	for _, g := range gg {
+	for _, g := range groups {
 		if !validateGroup(g) {
 			continue
 		}
@@ -163,7 +169,7 @@ func (r *roundRobinSelector) OnInit(kinds []schema.Kind) (bool, []int64) {
 		}
 	}
 	r.sortEntries()
-	return true, []int64{revision}
+	return revision
 }
 
 func (r *roundRobinSelector) AddNode(node *databasev1.Node) {
