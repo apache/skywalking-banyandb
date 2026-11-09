@@ -23,6 +23,7 @@ import (
 	"os"
 	"slices"
 
+	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/rowdiff"
 )
 
@@ -43,7 +44,7 @@ func runCompare(args []string) int {
 	if len(args) != 2 {
 		usage()
 	}
-	rep, err := rowdiff.Compare(args[0], args[1], rowdiff.Options{})
+	rep, err := rowdiff.Compare(args[0], args[1], rowdiff.Options{TopN: topncheck.RowDiff{}})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "compare:", err)
 		fmt.Println("diffs: -1")
