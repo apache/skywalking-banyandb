@@ -1,0 +1,252 @@
+entries:
+- copies: 1
+  item:
+    group: sw_metric
+    kind: shard
+    segment: "20261018"
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-b/measure/sw_metric/seg-20261018/shard-0-00001.csv.gz
+      maxTimestamp: 1792299600000000000
+      minTimestamp: 1792281600000000000
+      node: data-b
+      rows: 100
+      timezone: UTC
+    stage: hot
+  key: measure/sw_metric/hot/20261018/shard-0
+  rows: 100
+  targetNodes:
+  - dst-hot1
+  targetStage: hot
+- copies: 1
+  item:
+    group: sw_metric
+    kind: shard
+    segment: "20261018"
+    shard: 1
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-a/measure/sw_metric/seg-20261018/shard-1-00001.csv.gz
+      maxTimestamp: 1792292400000000000
+      minTimestamp: 1792285200000000000
+      node: data-a
+      rows: 50
+      timezone: UTC
+    stage: hot
+  key: measure/sw_metric/hot/20261018/shard-1
+  rows: 50
+  targetNodes:
+  - dst-hot1
+  targetStage: hot
+- copies: 1
+  item:
+    group: sw_metric
+    kind: segment
+    segment: "20261018"
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-a/measure/sw_metric/seg-20261018/segment-00001.csv.gz
+      maxTimestamp: 1792367999999999999
+      minTimestamp: 1792281600000000000
+      node: data-a
+      rowCounts:
+        idx: 7
+      rows: 7
+      timezone: UTC
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-b/measure/sw_metric/seg-20261018/segment-00001.csv.gz
+      maxTimestamp: 1792367999999999999
+      minTimestamp: 1792281600000000000
+      node: data-b
+      rowCounts:
+        idx: 7
+      rows: 7
+      timezone: UTC
+    stage: hot
+  key: measure/sw_metric/hot/20261018/segment
+  rows: 14
+  targetNodes:
+  - dst-hot1
+  targetStage: hot
+- copies: 2
+  item:
+    group: sw_metric
+    kind: shard
+    segment: "20261010"
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-c/measure/sw_metric/seg-20261010/shard-0-00001.csv.gz
+      maxTimestamp: 1791763200000000000
+      minTimestamp: 1791590400000000000
+      node: data-c
+      rows: 80
+      timezone: UTC
+    stage: warm
+  key: measure/sw_metric/warm/20261010/shard-0
+  rows: 80
+  targetNodes:
+  - dst-warm1
+  targetStage: warm
+- copies: 1
+  item:
+    group: sw_prop
+    kind: property
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-a/property/sw_prop/shard-0-00001.csv.gz
+      maxTimestamp: 0
+      minTimestamp: 0
+      node: data-a
+      rows: 3
+      timezone: UTC
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-b/property/sw_prop/shard-0-00001.csv.gz
+      maxTimestamp: 0
+      minTimestamp: 0
+      node: data-b
+      rows: 3
+      timezone: UTC
+    stage: ""
+  key: property/sw_prop/shard-0
+  rows: 6
+  targetNodes:
+  - dst-hot1
+  targetStage: ""
+- copies: 1
+  item:
+    group: sw_prop
+    kind: property
+    shard: 1
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-a/property/sw_prop/shard-1-00001.csv.gz
+      maxTimestamp: 0
+      minTimestamp: 0
+      node: data-a
+      rows: 4
+      timezone: UTC
+    stage: ""
+  key: property/sw_prop/shard-1
+  rows: 4
+  targetNodes:
+  - dst-hot1
+  targetStage: ""
+- copies: 1
+  item:
+    group: sw_stream
+    kind: shard
+    segment: "20261018"
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-c/stream/sw_stream/seg-20261018/shard-0-00001.csv.gz
+      maxTimestamp: 1792364400000000000
+      minTimestamp: 1792281600000000000
+      node: data-c
+      rows: 2000
+      timezone: UTC
+    stage: cold
+  key: stream/sw_stream/cold/20261018/shard-0
+  rows: 2000
+  targetNodes: []
+  targetStage: hot
+gateDetails:
+- 'measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target
+  retention (newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl
+  imports it'
+header:
+  artifactVersion: 1
+  dataNodes: 2
+  endpoint: liaison-dst:17912 (ROLE_LIAISON)
+  exportedAt: "2026-10-19T08:00:00Z"
+  format: csv
+  input: ./artifact
+  standalone: false
+multiSource:
+- decisions:
+  - chosen: false
+    node: data-a
+    reason: subset
+    ref: data-b
+  - chosen: true
+    node: data-b
+    reason: gap
+  key: measure/sw_metric/hot/20261018/shard-0
+rejected:
+- gate: TTL
+  item:
+    group: sw_metric
+    kind: shard
+    segment: "20261012"
+    shard: 0
+    sources:
+    - files:
+      - bytes: 10
+        crc32: "0x00000001"
+        path: nodes/data-a/measure/sw_metric/seg-20261012/shard-0-00001.csv.gz
+      maxTimestamp: 1791799200000000000
+      minTimestamp: 1791763200000000000
+      node: data-a
+      rows: 30
+      timezone: UTC
+    stage: hot
+  key: measure/sw_metric/hot/20261012/shard-0
+  reason: every row is older than the target stage's retention
+  rows: 30
+  targetNodes:
+  - dst-hot1
+  targetStage: hot
+schema:
+- disposition: CREATE
+  group: sw_metric
+  kind: group
+  match: group/sw_metric
+- disposition: CREATE
+  group: sw_prop
+  kind: group
+  match: group/sw_prop
+- disposition: CREATE
+  group: sw_stream
+  kind: group
+  match: group/sw_stream
+- disposition: CREATE
+  group: sw_stream
+  kind: stream
+  match: stream/sw_stream/log
+  name: log
+- disposition: CREATE
+  group: sw_metric
+  kind: measure
+  match: measure/sw_metric/cpm
+  name: cpm
+- disposition: CREATE
+  group: sw_prop
+  kind: property
+  match: property/sw_prop/ui
+  name: ui
+warnings:
+- 'group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row
+  is written to every one of them'
+- 'group sw_stream: the target has no stage "cold"; its units go to hot'

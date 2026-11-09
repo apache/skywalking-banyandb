@@ -20,6 +20,7 @@ package exporter
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
@@ -46,8 +49,8 @@ func TestPreflight_KeepsEveryUsableLiaisonAndWarnsAboutTheOthers(t *testing.T) {
 	first, second := newFakeLiaison(), newFakeLiaison()
 	firstAddr, secondAddr := serveLiaison(t, first), serveLiaison(t, second)
 	var warn bytes.Buffer
-	ls, info, err := Preflight(context.Background(), []string{"127.0.0.1:1", firstAddr, secondAddr},
-		ConnectOptions{Timeout: 2 * time.Second, Log: &warn})
+	ls, info, err := cluster.Preflight(context.Background(), []string{"127.0.0.1:1", firstAddr, secondAddr},
+		cluster.ConnectOptions{Timeout: 2 * time.Second, Log: &warn})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +105,7 @@ func TestRunExport_MovesToTheNextLiaisonWhenRefused(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", code, err, log)
 		}
-		if got := primary.targets(); len(got) != 2 || got[0] != nodeA && got[1] != nodeA {
+		if got := primary.targets(); len(got) != 2 || !slices.Contains(got, nodeA) || !slices.Contains(got, nodeB) {
 			t.Fatalf("%s: the primary must take over data-b, streams = %v", code, got)
 		}
 		want := "node " + nodeB + " is busy or unreachable via " + env.Liaisons.All[1].Addr + " (" + code.String() + "); retrying via " + env.Liaisons.All[0].Addr
@@ -117,7 +120,7 @@ func TestRunExport_MovesToTheNextLiaisonWhenRefused(t *testing.T) {
 	}
 	opts, _ := exportOptions(t, primary)
 	opts.SendRetryTimeout = time.Minute
-	requireExit(t, runExportVia(t, opts, primary, refusing), ExitRuntime, "bad init")
+	requireExit(t, runExportVia(t, opts, primary, refusing), exitcode.ExitRuntime, "bad init")
 }
 
 func TestRenderSummary(t *testing.T) {

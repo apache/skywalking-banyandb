@@ -19,7 +19,10 @@
 # moved to the warm node in the lifecycle run and holds their call rate and response time, whose
 # average is the latency the mocker reports. Hour and day metrics may sit on either node and are
 # not pinned. A measure exports the latest version of each point: at most the rows the snapshot
-# stored (storedRows), and exactly the points a COUNT query over each unit answers (queriedRows).
+# stored (storedRows), and exactly the points a COUNT query over each unit answers (queriedRows). The
+# points are the exported rows with the rows of one _top_n_result series and time counted once: the
+# series is written into the shard of the last source row of each flush, so its rows may sit in
+# several shards, while a query merges them.
 exitCode: 0
 catalog: measure
 format: csv
@@ -36,7 +39,8 @@ groups:
   segmentFiles: {{ gt .segmentFiles 0 }}
   rows: {{ gt .rows 0 }}
   storedRows: 0
-  queriedRows: {{ .rows }}
+  points: {{ gt .points 0 }}
+  queriedRows: {{ .points }}
   header: ok
   cells: ok
   rowCounts: ok
@@ -78,7 +82,8 @@ groups:
   segmentFiles: 0
   rows: {{ gt .rows 0 }}
   storedRows: {{ ge .storedRows .rows }}
-  queriedRows: {{ .rows }}
+  points: {{ gt .points 0 }}
+  queriedRows: {{ .points }}
   header: ok
   cells: ok
   rowCounts: ok

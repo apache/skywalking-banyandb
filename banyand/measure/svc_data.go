@@ -50,6 +50,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 const (
@@ -349,9 +350,12 @@ func (s *dataSVC) PreRun(ctx context.Context) error {
 
 	// For now, keep the original write throttling behavior based on high watermark
 	// TODO: Replace this with a newer write callback that doesn't duplicate disk monitoring
-	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
+	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm)
 	err = s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 	if err != nil {
+		return err
+	}
+	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
 		return err
 	}
 	// only subscribe metricPipeline for data node

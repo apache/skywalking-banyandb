@@ -21,5 +21,5 @@
 // follow resources in name order, so it does not depend on the order schemas are listed.
 //
 // The package must not import anything under banyand/ so that the data node, the client
-// and the future importer share exactly the same pure functions.
+// and the importer share exactly the same pure functions.
 package csvfmt
