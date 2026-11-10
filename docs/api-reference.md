@@ -6277,13 +6277,17 @@ that share a group name, which the proxy merges.
 <a name="banyandb-fodc-v1-StreamMetricsRequest"></a>
 
 ### StreamMetricsRequest
-
+StreamMetricsRequest carries one agent&#39;s reply to a metrics request. A reply
+too large for one gRPC message is split into several requests: every chunk
+but the last sets has_more, and the proxy merges them before using the reply.
+A sender that never sets has_more sends each reply as a single message.
 
 
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | metrics | [Metric](#banyandb-fodc-v1-Metric) | repeated |  |
 | timestamp | [google.protobuf.Timestamp](#google-protobuf-Timestamp) |  |  |
+| has_more | [bool](#bool) |  | has_more is true when further chunks of the same reply follow. |
 
 
 

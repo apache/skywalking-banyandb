@@ -18,6 +18,7 @@
 package rowdiff
 
 import (
+	"encoding/base64"
 	"fmt"
 	"maps"
 	"os"
@@ -32,6 +33,8 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
@@ -563,5 +566,72 @@ func TestReportSummary(t *testing.T) {
 	}
 	if got := (&Report{}).Summary(5); len(got) != 0 {
 		t.Errorf("Summary of an empty report = %q", got)
+	}
+}
+
+// fakeTopN encodes a Top-N result as "entity=value" items joined by ",". Merging appends the
+// items of the right value that the left one lacks, so a merge reorders tied items the way
+// the engine may; rendering sorts the items.
+type fakeTopN struct{}
+
+func (fakeTopN) MergeTopNResults(_ []*modelv1.TagValue, _, _, _ int64, left, right []byte) ([]byte, error) {
+	items := strings.Split(string(left), ",")
+	for _, item := range strings.Split(string(right), ",") {
+		if !slices.Contains(items, item) {
+			items = append(items, item)
+		}
+	}
+	return []byte(strings.Join(items, ",")), nil
+}
+
+func (fakeTopN) RenderTopNResult(entity []*modelv1.TagValue, value []byte) (string, error) {
+	if len(entity) != len(topnschema.TagNames) {
+		return "", fmt.Errorf("entity has %d values", len(entity))
+	}
+	items := strings.Split(string(value), ",")
+	slices.Sort(items)
+	return strings.Join(items, ","), nil
+}
+
+// topNArtifact returns an artifact of one measure group holding only _top_n_result rows,
+// one node per source shard.
+func topNArtifact(sources map[string][]map[string]string) artifactSpec {
+	return artifactSpec{
+		schemas: []proto.Message{topnschema.Measure(topnschema.Metadata("ng"))},
+		units:   []unitSpec{{catalog: catalogMeasure, group: "ng", stage: "warm", sources: sources}},
+	}
+}
+
+func topNRow(version, value string) map[string]string {
+	return map[string]string{
+		"_name": topnschema.Name, "_timestamp": "1000", "_version": version,
+		"_topN.name": "endpoint_sla", "_topN.direction": "2", "_topN.group": "GENERAL", "_topN.parameters": "{}",
+		"_field.value": base64.StdEncoding.EncodeToString([]byte(value)),
+	}
+}
+
+func TestTopNResultCopiesAreMerged(t *testing.T) {
+	// The source stores one partial result per source shard; the import routes both into one
+	// target shard, whose part merge combines them and may reorder tied items.
+	a := topNArtifact(map[string][]map[string]string{
+		"n1": {topNRow("1", "a=5")},
+		"n2": {topNRow("2", "b=5,c=5")},
+	})
+	merged := topNArtifact(map[string][]map[string]string{
+		"n1": {topNRow("2", "c=5,a=5,b=5")},
+	})
+	if rep := compare(t, a, merged, Options{TopN: fakeTopN{}}); !rep.OK() {
+		t.Fatalf("unexpected diffs:\n%s", render(rep))
+	}
+	// Without a Top-N codec the newest copy of A is compared byte for byte.
+	expectKinds(t, compare(t, a, merged, Options{}), KindValueMismatch)
+
+	lost := topNArtifact(map[string][]map[string]string{
+		"n1": {topNRow("2", "b=5,c=5")},
+	})
+	rep := compare(t, a, lost, Options{TopN: fakeTopN{}})
+	expectKinds(t, rep, KindValueMismatch)
+	if d := rep.Diffs[0].Detail; !strings.Contains(d, `_field.value: A="a=5,b=5,c=5" B="b=5,c=5"`) {
+		t.Fatalf("detail = %s", d)
 	}
 }

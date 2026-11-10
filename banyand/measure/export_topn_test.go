@@ -69,3 +69,37 @@ func TestMergeTopNResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, left, same, "merging a value with an identical copy keeps its bytes")
 }
+
+func TestRenderTopNResultIgnoresTheOrderOfTiedItems(t *testing.T) {
+	params, err := json.Marshal(TopNParameters{Limit: 1000, FieldType: databasev1.FieldType_FIELD_TYPE_INT})
+	require.NoError(t, err)
+	entity := []*modelv1.TagValue{
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "endpoint_sla"}}},
+		{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: int64(modelv1.Sort_SORT_DESC)}}},
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "GENERAL"}}},
+		{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: string(params)}}},
+	}
+	// Two partial results of one data point, one per source shard, every item tied.
+	shard0 := topNBinary(t, map[string]int64{"ep1": 10000})
+	shard1 := topNBinary(t, map[string]int64{"ep2": 10000, "ep3": 10000})
+	leftFirst, err := MergeTopNResults(entity, 1000, 1, 2, shard0, shard1)
+	require.NoError(t, err)
+	rightFirst, err := MergeTopNResults(entity, 1000, 2, 1, shard1, shard0)
+	require.NoError(t, err)
+
+	want, err := RenderTopNResult(entity, leftFirst)
+	require.NoError(t, err)
+	got, err := RenderTopNResult(entity, rightFirst)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	for _, ep := range []string{"ep1", "ep2", "ep3"} {
+		require.Contains(t, want, ep)
+	}
+
+	partial, err := RenderTopNResult(entity, shard1)
+	require.NoError(t, err)
+	require.NotEqual(t, want, partial, "a partial result renders differently from the merged one")
+
+	_, err = RenderTopNResult(entity[:3], leftFirst)
+	require.Error(t, err)
+}
