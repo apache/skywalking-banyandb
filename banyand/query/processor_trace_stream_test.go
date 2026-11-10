@@ -19,12 +19,16 @@ package query
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
@@ -205,4 +209,23 @@ func TestRevStreamRejectsWrongPayload(t *testing.T) {
 	p := &traceQueryProcessor{queryService: &queryService{log: logger.GetLogger("test")}}
 	err := p.RevStream(context.Background(), bus.NewMessage(1, "not a request"), &recordingSink{})
 	require.Error(t, err)
+}
+
+func TestTraceRevStreamReportsResourceExhaustion(t *testing.T) {
+	budget := protector.NewQueryBudget(&protector.Nop{})
+	// A released reservation fails admission with ErrQueryResourceExhausted.
+	ctx, release, admitErr := budget.AdmitContext(context.Background(), 10, 0, 20)
+	require.NoError(t, admitErr)
+	release()
+	p := &traceQueryProcessor{queryService: &queryService{log: logger.GetLogger("test"), queryBudget: budget}}
+	req := &tracev1.QueryRequest{Name: "t", Groups: []string{"g"}}
+
+	err := p.RevStream(ctx, bus.NewMessage(1, req), &recordingSink{})
+	var failure *common.Error
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, modelv1.Status_STATUS_RESOURCE_EXHAUSTED, failure.Status())
+
+	err = p.RevStream(context.Background(), bus.NewMessage(1, "not a request"), &recordingSink{})
+	require.EqualError(t, err, "invalid event data type")
+	require.False(t, errors.As(err, &failure))
 }

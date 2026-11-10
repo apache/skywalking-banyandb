@@ -64,6 +64,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Apply the limit of a trace query with a tag filter at the index again, so it no longer reads every matching trace and exhausts the query memory pool (a regression from #1444). A trace query that goes over its memory budget now reports RESOURCE_EXHAUSTED instead of an internal error.
 - Accept the `Bearer` authorization scheme case-insensitively in the MCP HTTP server, so `Authorization: bearer <token>` is no longer rejected with 401.
 - Make the MCP server load `.env` before reading configuration and validate settings strictly: numeric settings (`MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_*`) must be plain positive integers and `TRANSPORT` only accepts `stdio`/`http` (case-insensitive); invalid values now fail at startup with a clear error instead of being silently altered. Fixes apache/skywalking#14194.
 - Skip a stream group whose schema is unknown on a distributed data node instead of failing the whole query, so a stream schema that has not propagated to that node yet no longer discards the results the rest of the cluster serves. A standalone node and the liaison still report an unknown stream schema as an error.

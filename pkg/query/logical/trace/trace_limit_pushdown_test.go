@@ -75,14 +75,23 @@ func TestTraceLimitPushdownWithResidualFilters(t *testing.T) {
 		criteria     *modelv1.Criteria
 		name         string
 		maxTraceSize int
+		unordered    bool
 	}{
 		{name: "unfiltered", maxTraceSize: 5},
 		{name: "trace ID only", criteria: equals("trace_id", "trace_001"), maxTraceSize: 5},
 		{name: "span ID", criteria: equals("span_id", "span_001")},
 		{name: "trace ID and span ID", criteria: and(equals("trace_id", "trace_001"), equals("span_id", "span_001"))},
+		{name: "tag only", criteria: equals("service", "api"), maxTraceSize: 5},
 		{name: "trace ID and tag", criteria: and(equals("trace_id", "trace_001"), equals("service", "api"))},
+		{name: "tag only without order", criteria: equals("service", "api"), unordered: true},
+		{name: "no filter without order", unordered: true, maxTraceSize: 5},
+		{name: "tag and span ID", criteria: and(equals("service", "api"), equals("span_id", "span_001"))},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
+			orderBy := &modelv1.QueryOrder{IndexRuleName: "timestamp", Sort: modelv1.Sort_SORT_DESC}
+			if testCase.unordered {
+				orderBy = nil
+			}
 			plan, analyzeErr := Analyze(&tracev1.QueryRequest{
 				Name:   metadata.Name,
 				Groups: []string{metadata.Group},
@@ -91,7 +100,7 @@ func TestTraceLimitPushdownWithResidualFilters(t *testing.T) {
 					End:   timestamppb.New(time.Unix(3600, 0)),
 				},
 				Criteria: testCase.criteria,
-				OrderBy:  &modelv1.QueryOrder{IndexRuleName: "timestamp", Sort: modelv1.Sort_SORT_DESC},
+				OrderBy:  orderBy,
 				Limit:    2,
 				Offset:   3,
 			}, []*commonv1.Metadata{metadata}, []logical.Schema{traceSchema},
@@ -114,6 +123,10 @@ func TestTraceLimitPushdownWithResidualFilters(t *testing.T) {
 			scan, isScan := scanPlan.(*localScan)
 			require.True(t, isScan)
 			require.Equal(t, testCase.maxTraceSize, scan.maxTraceSize)
+			if testCase.unordered {
+				require.Nil(t, scan.order)
+				return
+			}
 			require.NotNil(t, scan.order)
 			require.Equal(t, modelv1.Sort_SORT_DESC, scan.order.Sort)
 		})
