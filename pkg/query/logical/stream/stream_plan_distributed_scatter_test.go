@@ -116,15 +116,15 @@ func newScatterTestPlan() *distributedPlan {
 // referenceMerge is the whole-result algorithm the plan ran before it streamed:
 // a k-way merge of every node's complete result with a first-seen element-ID map.
 func referenceMerge(nodes [][]*streamv1.Element, plan *distributedPlan) []*streamv1.Element {
-	var see []sort.Iterator[*comparableElement]
+	var see []sort.Iterator[*distributedRow]
 	for _, n := range nodes {
-		see = append(see, newSortableElements(n, plan.sortByTime, plan.sortTagSpec))
+		see = append(see, &sortableNodeRows{chunks: []nodeStreamChunk{{elements: n}}, plan: plan})
 	}
 	merged := sort.NewItemIter(see, plan.desc)
 	var result []*streamv1.Element
 	seen := make(map[string]bool)
 	for merged.Next() {
-		element := merged.Val().Element
+		element := merged.Val().element
 		if !seen[element.ElementId] {
 			seen[element.ElementId] = true
 			result = append(result, element)
