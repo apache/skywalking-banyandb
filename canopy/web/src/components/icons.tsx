@@ -301,3 +301,8 @@ export function IconFilter({ size = 18 }: IconProps) {
     </Ic>
   );
 }
+
+/** Sampling percentage mark from the pipeline prototype. */
+export function IconSampling({ size = 18 }: IconProps) {
+  return <Ic size={size}><path d="M5 19 19 5" /><circle cx="7" cy="7" r="2.5" /><circle cx="17" cy="17" r="2.5" /></Ic>;
+}

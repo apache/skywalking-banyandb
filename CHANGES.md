@@ -6,6 +6,8 @@ Release Notes.
 
 ### Features
 
+- Add Canopy sampling pipeline management with Form/YAML editing, independent MERGE, FINALIZE and stage rules, and session-expiry recovery.
+- [Breaking Change] Trace sampling requires explicit MERGE/FINALIZE event selection; empty events no longer default to MERGE. Add `PIPELINE_EVENT_MERGE` to existing configurations that relied on the implicit default before upgrading. Stage-only pipelines remain supported.
 - Bound measure QL membership setup, skip proven-empty input, and reuse decoded buffers for eligible order-independent count scans.
 - Add indexed measure QL LIKE and ILIKE filters with ESCAPE, using whole-value string indexes and bounded native wildcard execution.
 - Compose scalar expressions inside and around measure QL aggregates, including computed aggregate inputs, HAVING and ordered results.
