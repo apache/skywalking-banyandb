@@ -270,7 +270,8 @@ func TestSamplerMetrics_RegisterUpdateRemove(t *testing.T) {
 	removeSamplersForGroup(group)
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: "lss",
@@ -337,7 +338,7 @@ func TestSamplerMetrics_SuccessUpdateAndIdempotentSkip(t *testing.T) {
 
 	// Empty-plugins config on an empty registry: desired == current == [] →
 	// idempotent skip. No register/update/active metric is emitted.
-	emptyCfg := &commonv1.TracePipelineConfig{Enabled: true}
+	emptyCfg := &commonv1.TracePipelineConfig{Enabled: true, EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}}
 	sr.reconcilePipeline(group, emptyCfg)
 
 	regTotal := factory.counter("sampler_register_total")

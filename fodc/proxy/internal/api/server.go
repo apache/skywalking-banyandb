@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/common/expfmt"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
@@ -70,7 +72,16 @@ type Server struct {
 	registry                   *registry.AgentRegistry
 	server                     *http.Server
 	logger                     *logger.Logger
-	startTime                  time.Time
+	// selfMetrics are the proxy's own instruments, such as its native log
+	// counters, served after the metrics collected from the agents.
+	selfMetrics prometheus.Gatherer
+	startTime   time.Time
+}
+
+// SetSelfMetrics serves the metrics g gathers on /metrics, after the metrics
+// collected from the agents. Call it before Start.
+func (s *Server) SetSelfMetrics(g prometheus.Gatherer) {
+	s.selfMetrics = g
 }
 
 // NewServer creates a new Server instance.
@@ -186,11 +197,35 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	bw := bufio.NewWriterSize(w, prometheusWriteBufferSize)
-	if writeErr := s.writePrometheusText(bw, aggregatedMetrics); writeErr != nil {
+	writeErr := s.writePrometheusText(bw, aggregatedMetrics)
+	if writeErr == nil && filter.Role == "" && filter.PodName == "" {
+		// The proxy's own metrics belong to no agent's role or pod, so they ride
+		// on the unfiltered scrape only, as the schema consistency series do.
+		writeErr = s.writeSelfMetrics(bw)
+	}
+	if writeErr != nil {
 		// The status line is already out; a mid-body failure means the scraper went
 		// away, which it observes as a truncated response.
 		s.logger.Debug().Err(writeErr).Msg("Failed to stream metrics response")
 	}
+}
+
+// writeSelfMetrics writes the proxy's own metrics in the text format.
+func (s *Server) writeSelfMetrics(bw *bufio.Writer) error {
+	if s.selfMetrics == nil {
+		return nil
+	}
+	families, err := s.selfMetrics.Gather()
+	if err != nil {
+		return err
+	}
+	enc := expfmt.NewEncoder(bw, expfmt.NewFormat(expfmt.TypeTextPlain))
+	for _, family := range families {
+		if err = enc.Encode(family); err != nil {
+			return err
+		}
+	}
+	return bw.Flush()
 }
 
 // schemaConsistencyMetrics turns the cached per-group schema consistency verdict

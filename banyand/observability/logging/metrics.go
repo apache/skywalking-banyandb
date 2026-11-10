@@ -22,10 +22,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-// logScope names the instruments. Raw metric names have to be globally unique,
+// Scope names the instruments. Raw metric names have to be globally unique,
 // not merely unique within a scope: the native meter provider uses the bare
 // name as the measure name, unlike the Prometheus provider which prefixes it.
-var logScope = observability.RootScope.SubScope("logging")
+// A producer with a Prometheus registry of its own builds its gauges under it.
+var Scope = observability.RootScope.SubScope("logging")
+
+// Gauges makes the gauges the counters are published through, such as
+// meter.Provider.Gauge or observability.Factory.NewGauge.
+type Gauges func(name string, labelNames ...string) meter.Gauge
 
 // allReasons is the closed set a drop can name. It is also what NewSink
 // allocates a counter for, so a reason added here is countable without a second
@@ -47,15 +52,14 @@ type metrics struct {
 	bufferBytes meter.Gauge
 }
 
-func newMetrics(omr observability.MetricsRegistry) *metrics {
-	if omr == nil {
+func newMetrics(gauge Gauges) *metrics {
+	if gauge == nil {
 		return nil
 	}
-	factory := omr.With(logScope)
 	return &metrics{
-		dropped:     factory.NewGauge("native_log_dropped_total", "reason"),
-		written:     factory.NewGauge("native_log_written_total"),
-		bufferBytes: factory.NewGauge("native_log_buffer_bytes", "state"),
+		dropped:     gauge("native_log_dropped_total", "reason"),
+		written:     gauge("native_log_written_total"),
+		bufferBytes: gauge("native_log_buffer_bytes", "state"),
 	}
 }
 

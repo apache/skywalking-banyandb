@@ -56,7 +56,7 @@ func executePlan(t *testing.T, plan *distributedPlan, chunks ...[]any) ([]*strea
 	return plan.Execute(executor.WithDistributedExecutionContext(context.Background(), fake))
 }
 
-func newBatchMergePlan(desc bool, offset, limit uint32) *distributedPlan {
+func newDistributedWindowPlan(desc bool, offset, limit uint32) *distributedPlan {
 	return &distributedPlan{
 		queryTemplate: &streamv1.QueryRequest{Name: "s"},
 		sortByTime:    true,
@@ -66,38 +66,40 @@ func newBatchMergePlan(desc bool, offset, limit uint32) *distributedPlan {
 	}
 }
 
-// TestDistributedBatchMergeHandCalculatedOracle is the issue's concrete example, run through
+// TestDistributedDeferredMergeHandCalculatedOracle is the issue's concrete example, run through
 // the real broadcast/read/merge path with frame replies only.
 //
 // Node 1 holds A (timestamp 1) and B (timestamp 3); node 2 holds A again (the same ElementID,
 // a replica) and C (timestamp 2). Ascending the merged, de-duplicated order is A, C, B, so
 // offset 1 limit 2 returns C, B; descending offset 0 limit 2 returns B, C.
-func TestDistributedBatchMergeHandCalculatedOracle(t *testing.T) {
+func TestDistributedDeferredMergeHandCalculatedOracle(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
 
 	nodeOne := []nodeRow{{ts: 1, elementID: 1}, {ts: 3, elementID: 3}}
 	nodeTwo := []nodeRow{{ts: 1, elementID: 1}, {ts: 2, elementID: 2}}
 
-	ascending, err := executePlan(t, newBatchMergePlan(false, 1, 2),
+	ascending, err := executePlan(t, newDistributedWindowPlan(false, 1, 2),
 		[]any{frameChunk(t, nodeOne)}, []any{frameChunk(t, nodeTwo)})
 	require.NoError(t, err)
 	require.Equal(t, []string{hexElementID(2), hexElementID(3)}, elementIDSeq(ascending),
 		"ascending offset 1 limit 2 must return C, B")
 
-	descending, err := executePlan(t, newBatchMergePlan(true, 0, 2),
-		[]any{frameChunk(t, nodeOne)}, []any{frameChunk(t, nodeTwo)})
+	// The row heap consumes each node in the order requested from that node.
+	descending, err := executePlan(t, newDistributedWindowPlan(true, 0, 2),
+		[]any{frameChunk(t, []nodeRow{nodeOne[1]}), frameChunk(t, []nodeRow{nodeOne[0]})},
+		[]any{frameChunk(t, []nodeRow{nodeTwo[1]}), frameChunk(t, []nodeRow{nodeTwo[0]})})
 	require.NoError(t, err)
 	require.Equal(t, []string{hexElementID(3), hexElementID(2)}, elementIDSeq(descending),
 		"descending offset 0 limit 2 must return B, C")
 }
 
-// TestDistributedBatchMergeMaterializesOnlyTheWindow is the path-sensitive assertion the
+// TestDistributedDeferredMergeMaterializesOnlyTheWindow is the path-sensitive assertion the
 // issue asks for. Comparing answers alone cannot show the optimization, because the old row
 // merge returns the same answers; so count the rows that reach the columnar→proto egress and
 // require exactly the client window, while the merge consumed more rows than that. Restoring
 // per-reply Element materialization leaves the counter at zero and fails the test.
-func TestDistributedBatchMergeMaterializesOnlyTheWindow(t *testing.T) {
+func TestDistributedDeferredMergeMaterializesOnlyTheWindow(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
 
@@ -105,13 +107,11 @@ func TestDistributedBatchMergeMaterializesOnlyTheWindow(t *testing.T) {
 	nodeOne := []nodeRow{{ts: 1, elementID: 1}, {ts: 3, elementID: 3}, {ts: 5, elementID: 5}}
 	nodeTwo := []nodeRow{{ts: 1, elementID: 1}, {ts: 2, elementID: 2}, {ts: 4, elementID: 4}}
 
-	plan := newBatchMergePlan(false, 2, 2)
+	plan := newDistributedWindowPlan(false, 2, 2)
 	materializedRows := 0
-	plan.buildElements = func(batch *vectorized.RecordBatch,
-		projection []model.TagProjection,
-	) ([]*streamv1.Element, error) {
-		materializedRows += batch.ActiveLen()
-		return vstream.BuildElementsFromBatch(batch, projection)
+	plan.buildElement = func(batch *vectorized.RecordBatch, projection []model.TagProjection, row int) (*streamv1.Element, error) {
+		materializedRows++
+		return vstream.BuildElementFromBatchRow(batch, projection, row)
 	}
 
 	// Distinct order is 1, 2, 3, 4, 5; offset 2 limit 2 must return 3 and 4.
@@ -124,8 +124,7 @@ func TestDistributedBatchMergeMaterializesOnlyTheWindow(t *testing.T) {
 }
 
 // TestDistributedMixedProtoAndFrameRepliesMatchAllProto keeps the rolling-upgrade contract:
-// a broadcast that mixes a proto reply with a frame reply falls back to the row merge and
-// must return exactly what an all-proto broadcast returns.
+// a broadcast that mixes a proto reply with a frame reply must return exactly what an all-proto broadcast returns.
 func TestDistributedMixedProtoAndFrameRepliesMatchAllProto(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
@@ -134,13 +133,13 @@ func TestDistributedMixedProtoAndFrameRepliesMatchAllProto(t *testing.T) {
 	nodeTwo := []nodeRow{{ts: 20, elementID: 200}, {ts: 50, elementID: 201}}
 	nodeThree := []nodeRow{{ts: 30, elementID: 100}, {ts: 60, elementID: 300}}
 
-	mixed, err := executePlan(t, newBatchMergePlan(false, 1, 3),
+	mixed, err := executePlan(t, newDistributedWindowPlan(false, 1, 3),
 		[]any{protoResponseForRows(nodeOne)},
 		[]any{frameChunk(t, nodeTwo)},
 		[]any{protoResponseForRows(nodeThree)})
 	require.NoError(t, err)
 
-	allProto, err := executePlan(t, newBatchMergePlan(false, 1, 3),
+	allProto, err := executePlan(t, newDistributedWindowPlan(false, 1, 3),
 		[]any{protoResponseForRows(nodeOne)},
 		[]any{protoResponseForRows(nodeTwo)},
 		[]any{protoResponseForRows(nodeThree)})
@@ -151,10 +150,10 @@ func TestDistributedMixedProtoAndFrameRepliesMatchAllProto(t *testing.T) {
 	require.Equal(t, []string{hexElementID(200), hexElementID(101), hexElementID(201)}, elementIDSeq(mixed))
 }
 
-// TestDistributedBatchMergeOrdersByTagThroughOrderKey covers the ordered-tag case: the frames
+// TestDistributedDeferredMergeOrdersByTagThroughOrderKey covers the ordered-tag case: the frames
 // carry the order key as a hidden column, the merge orders by it instead of the timestamp, and
 // the order tag stays out of the projected response.
-func TestDistributedBatchMergeOrdersByTagThroughOrderKey(t *testing.T) {
+func TestDistributedDeferredMergeOrdersByTagThroughOrderKey(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
 
@@ -180,13 +179,36 @@ func TestDistributedBatchMergeOrdersByTagThroughOrderKey(t *testing.T) {
 	}
 }
 
-// TestDistributedBatchMergeOffsetBeyondResult returns an empty result instead of panicking
+func TestDistributedDeferredMergeMixedIndexReplies(t *testing.T) {
+	originalRaw := data.StreamWireModeRaw()
+	data.SetStreamWireModeRaw(true)
+	t.Cleanup(func() { data.SetStreamWireModeRaw(originalRaw) })
+
+	plan := newDistributedWindowPlan(false, 1, 2)
+	plan.sortByTime = false
+	middle := scatterElement(1, 2)
+	middle.TagFamilies = []*modelv1.TagFamily{{
+		Name: "fam",
+		Tags: []*modelv1.Tag{{Key: "seq", Value: &modelv1.TagValue{
+			Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: "2"}},
+		}}},
+	}}
+	got, err := executePlan(t, plan,
+		[]any{orderedFrameChunk(t, []orderedRow{{ts: 4, elementID: 1, seq: "1"}, {ts: 2, elementID: 3, seq: "3"}})},
+		[]any{&streamv1.QueryResponse{Elements: []*streamv1.Element{middle}}})
+	require.NoError(t, err)
+	require.Equal(t, []string{hexElementID(2), hexElementID(3)}, elementIDSeq(got))
+	require.Same(t, middle, got[0], "an existing proto Element is reused")
+	require.Equal(t, "svc", got[1].GetTagFamilies()[0].GetTags()[0].GetKey())
+}
+
+// TestDistributedDeferredMergeOffsetBeyondResult returns an empty result instead of panicking
 // when the offset is past the merged set.
-func TestDistributedBatchMergeOffsetBeyondResult(t *testing.T) {
+func TestDistributedDeferredMergeOffsetBeyondResult(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
 
-	got, err := executePlan(t, newBatchMergePlan(false, 5, 2),
+	got, err := executePlan(t, newDistributedWindowPlan(false, 5, 2),
 		[]any{frameChunk(t, []nodeRow{{ts: 1, elementID: 1}})}, []any{frameChunk(t, []nodeRow{{ts: 2, elementID: 2}})})
 	require.NoError(t, err)
 	require.Empty(t, got)

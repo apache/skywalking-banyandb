@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -77,8 +78,7 @@ func protoResponseForRows(rows []nodeRow) *streamv1.QueryResponse {
 
 // runLiaisonMerge reproduces distributedPlan.Execute's post-broadcast row merge over a set of
 // pre-decoded node responses: decode each (proto or []byte frame) chunk, materialize the frame
-// batches the row path cannot consume, k-way merge by time, first-seen dedup by ElementId,
-// then the client offset:offset+limit slice.
+// batches only for the final window after k-way merge and deduplication.
 func runLiaisonMerge(t *testing.T, plan *distributedPlan, nodeResponses []any, offset, limit uint32) []*streamv1.Element {
 	t.Helper()
 	plan.offset, plan.limit = offset, limit
@@ -100,7 +100,7 @@ func runLiaisonMerge(t *testing.T, plan *distributedPlan, nodeResponses []any, o
 			batch.ReleaseOwners()
 		}
 	}()
-	merged, mergeErr := plan.mergeRowReplies(nodes, len(nodes), nil)
+	merged, mergeErr := plan.mergeRowReplies(context.Background(), nodes, nil)
 	require.NoError(t, mergeErr)
 	return merged
 }
@@ -119,8 +119,7 @@ func elementIDSeq(elements []*streamv1.Element) []string {
 // and a cross-node duplicate ElementID) must be identical to feeding the
 // equivalent all-proto bodies.
 //
-// This is a unit-level test of the row merge: frame chunks are materialized, then
-// k-way merged, de-duplicated and windowed.
+// The same merge consumes both reply formats.
 func TestLiaisonMerge_MixedProtoAndFrame_MatchesAllProto(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)

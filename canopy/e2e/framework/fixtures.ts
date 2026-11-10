@@ -34,6 +34,7 @@ import { SchemaPage } from './pages/SchemaPage.js';
 import { IndexRulePage } from './pages/IndexRulePage.js';
 import { LifecyclePage } from './pages/LifecyclePage.js';
 import { PropertyPage } from './pages/PropertyPage.js';
+import { SamplingPage } from './pages/SamplingPage.js';
 import { PipelinesPage } from './pages/PipelinesPage.js';
 import { SeedFactory } from './seed/factory.js';
 
@@ -46,6 +47,7 @@ type AppFixtures = {
   lifecyclePage: LifecyclePage;
   propertyPage: PropertyPage;
   pipelinesPage: PipelinesPage;
+  samplingPage: SamplingPage;
   seed: SeedFactory;
 };
 
@@ -73,6 +75,9 @@ export const test = base.extend<AppFixtures>({
   },
   pipelinesPage: async ({ page }, use) => {
     await use(new PipelinesPage(page));
+  },
+  samplingPage: async ({ page }, use) => {
+    await use(new SamplingPage(page));
   },
   seed: async ({ request }, use) => {
     const factory = new SeedFactory(request);

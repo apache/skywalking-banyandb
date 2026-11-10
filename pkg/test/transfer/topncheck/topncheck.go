@@ -34,6 +34,19 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
 
+// RowDiff merges and renders Top-N results in the engine encoding for rowdiff.Options.TopN.
+type RowDiff struct{}
+
+// MergeTopNResults merges two stored values of one data point the way a query does.
+func (RowDiff) MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightVersion int64, left, right []byte) ([]byte, error) {
+	return measure.MergeTopNResults(entity, timestamp, leftVersion, rightVersion, left, right)
+}
+
+// RenderTopNResult renders a stored value with its items sorted.
+func (RowDiff) RenderTopNResult(entity []*modelv1.TagValue, value []byte) (string, error) {
+	return measure.RenderTopNResult(entity, value)
+}
+
 // Row is one _top_n_result row of an artifact, decoded the way a query reads it.
 type Row struct {
 	// Tags are the row's Top-N tag cells by tag name (measure.TopNTagNames).

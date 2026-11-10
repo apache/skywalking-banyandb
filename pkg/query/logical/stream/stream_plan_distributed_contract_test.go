@@ -37,7 +37,7 @@ func TestDistributedIndexFramesRequireOrderKey(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	t.Cleanup(func() { data.SetStreamWireModeRaw(false) })
 	for _, rows := range [][]nodeRow{nil, {{ts: 1, elementID: 1}}} {
-		plan := newBatchMergePlan(false, 0, 1)
+		plan := newDistributedWindowPlan(false, 0, 1)
 		plan.sortByTime = false
 		got, err := executePlan(t, plan, []any{frameChunk(t, rows)})
 		require.ErrorContains(t, err, "order key")
@@ -48,11 +48,11 @@ func TestDistributedIndexFramesRequireOrderKey(t *testing.T) {
 func TestDistributedMaterializerCoversMixedReply(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	t.Cleanup(func() { data.SetStreamWireModeRaw(false) })
-	plan := newBatchMergePlan(false, 0, 2)
+	plan := newDistributedWindowPlan(false, 0, 2)
 	rows := 0
-	plan.buildElements = func(batch *vectorized.RecordBatch, projection []model.TagProjection) ([]*streamv1.Element, error) {
-		rows += batch.ActiveLen()
-		return vstream.BuildElementsFromBatch(batch, projection)
+	plan.buildElement = func(batch *vectorized.RecordBatch, projection []model.TagProjection, row int) (*streamv1.Element, error) {
+		rows++
+		return vstream.BuildElementFromBatchRow(batch, projection, row)
 	}
 	got, err := executePlan(t, plan,
 		[]any{frameChunk(t, []nodeRow{{ts: 1, elementID: 1}})},
@@ -86,7 +86,7 @@ func TestDistributedFrameSpanCountsBeforeWindow(t *testing.T) {
 		{name: "one", chunks: []any{frameChunk(t, []nodeRow{{ts: 1, elementID: 1}, {ts: 3, elementID: 3}})}},
 		{name: "two", chunks: []any{frameChunk(t, []nodeRow{{ts: 1, elementID: 1}, {ts: 2, elementID: 2}})}},
 	}}
-	got, err := newBatchMergePlan(false, 1, 1).Execute(executor.WithDistributedExecutionContext(ctx, fake))
+	got, err := newDistributedWindowPlan(false, 1, 1).Execute(executor.WithDistributedExecutionContext(ctx, fake))
 	require.NoError(t, err)
 	require.Equal(t, []string{hexElementID(2)}, elementIDSeq(got))
 	tags := distributedSpanTags(tracer.ToProto().Spans)

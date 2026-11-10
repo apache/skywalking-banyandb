@@ -87,10 +87,10 @@ func NewSortedMerge(schema *vectorized.BatchSchema, desc bool, batchSize int) *S
 	}
 }
 
-// maxPrunableCap is the largest cap worth regular row-count pruning. A client
-// "max limit" query passes maxRows ≈ MaxUint32, so a buffer of twice that is
-// impractical. Larger caps skip regular pruning, but an admitted merge may still
-// prune under budget pressure before the final sort and cap.
+// maxPrunableCap is the largest merge cap worth pruning incrementally. A client
+// "max limit" query passes maxRows ≈ MaxUint32; a prune buffer of twice that
+// exceeds any real result set, so pruning could never fire and the merge falls
+// back to the plain sort-then-cap path.
 const maxPrunableCap = 1 << 20
 
 // NewSortedMergeWithCap constructs a stream global-merge breaker that keeps only
@@ -99,9 +99,8 @@ const maxPrunableCap = 1 << 20
 //
 // The cap is enforced INCREMENTALLY: Consume prunes the buffer back to the
 // in-order top-N whenever it grows past 2*maxRows, so merge state stays O(maxRows)
-// rows — peaking just under 2*maxRows plus the batch being consumed. Regular
-// row-count pruning amortizes sorting across the incoming rows. Budget-triggered
-// pruning can run earlier and more frequently, so it does not share that bound.
+// rows — peaking just under 2*maxRows plus the batch being consumed — and sort
+// work is O(N log maxRows) rather than O(N log N).
 //
 // This yields the same QUERY result as capping after one full sort (the emitted
 // rows are the deduped top-N rather than a duplicate-carrying prefix of it, which
@@ -142,8 +141,7 @@ func (s *SortedMerge) OutputSchema() *vectorized.BatchSchema {
 // Consume buffers references to every active row in the batch, then prunes the
 // buffer back to the in-order top-N once it outgrows the prune threshold. The
 // batch is retained (not copied); callers must not recycle a consumed batch
-// until this operator is closed. An admitted capped merge also prunes before
-// an input charge that exceeds its current lease headroom.
+// until this operator is closed.
 func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch) error {
 	if batch == nil || batch.ActiveLen() == 0 {
 		return nil
@@ -152,23 +150,6 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 		return fmt.Errorf("SortedMerge: foreign batch schema")
 	}
 	chargeBytes := vectorized.EstimatedRetainedBytes(batch)
-	// Row-count pruning may run too late for wide batches. Under an admitted
-	// lease, try dropping existing candidates before charging an input that
-	// exceeds local headroom. The actual Charge below remains authoritative.
-	if s.maxRows > 0 && len(s.rows) > 0 {
-		if lease, admitted := query.BudgetLeaseFromContext(ctx); admitted {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			remaining := lease.Limit()
-			remaining -= min(remaining, lease.Used())
-			if chargeBytes > remaining {
-				s.sortRows()
-				s.capByDistinctElementID()
-				s.refundDropped()
-			}
-		}
-	}
 	if chargeErr := query.Charge(ctx, chargeBytes); chargeErr != nil {
 		return chargeErr
 	}
@@ -192,10 +173,9 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 	}
 	// Every prune leaves at most maxRows rows (capByDistinctElementID compacts to
 	// one row per retained ElementID), so the threshold needs no backoff. The
-	// regular threshold is checked after appending a whole batch, so the buffer
-	// peaks just under pruneAt (2*maxRows) plus one batch. Regular pruning
-	// amortizes sorting across incoming rows; the budget-triggered pruning above
-	// can run more frequently and has an additional CPU cost.
+	// buffer is checked only after a whole batch has been appended, so it peaks
+	// just under pruneAt (2*maxRows) plus one batch; each prune is therefore
+	// O(maxRows + batchSize) work, amortized O(N log(maxRows + batchSize)).
 	if s.pruneAt > 0 && len(s.rows) >= s.pruneAt {
 		s.sortRows()
 		s.capByDistinctElementID()

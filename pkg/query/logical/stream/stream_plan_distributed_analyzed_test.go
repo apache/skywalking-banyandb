@@ -19,12 +19,15 @@ package stream
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/data"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
@@ -37,6 +40,99 @@ import (
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
+
+type distributedProjectionErrorSchema struct {
+	logical.Schema
+	err error
+}
+
+func (s distributedProjectionErrorSchema) CreateTagRef(...[]*logical.Tag) ([][]*logical.TagRef, error) {
+	return nil, s.err
+}
+
+func TestDistributedAnalyzeProjectionAndOrder(t *testing.T) {
+	sortTag := &databasev1.TagSpec{Name: "sort", Type: databasev1.TagType_TAG_TYPE_STRING}
+	s, err := BuildSchema(&databasev1.Stream{
+		TagFamilies: []*databasev1.TagFamilySpec{{
+			Name: "tags",
+			Tags: []*databasev1.TagSpec{{Name: "other"}, sortTag},
+		}},
+	}, []*databasev1.IndexRule{
+		{Metadata: &commonv1.Metadata{Name: "single"}, Tags: []string{"sort"}},
+		{Metadata: &commonv1.Metadata{Name: "multi"}, Tags: []string{"sort", "other"}},
+		{Metadata: &commonv1.Metadata{Name: "unresolved"}, Tags: []string{"absent"}},
+	})
+	require.NoError(t, err)
+	projection := &modelv1.TagProjection{
+		TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: "tags", Tags: []string{"sort"}}},
+	}
+
+	for _, tc := range []struct {
+		name, index, wantError string
+		sort                   modelv1.Sort
+	}{
+		{name: "timestamp ascending", sort: modelv1.Sort_SORT_ASC},
+		{name: "timestamp descending", sort: modelv1.Sort_SORT_DESC},
+		{name: "index ascending", index: "single", sort: modelv1.Sort_SORT_ASC},
+		{name: "index descending", index: "single", sort: modelv1.Sort_SORT_DESC},
+		{name: "missing index", index: "missing", wantError: "index rule missing not found"},
+		{name: "multiple index tags", index: "multi", wantError: "index rule multi should have only one tag"},
+		{name: "missing index tag", index: "unresolved", wantError: "tag absent not found"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, analyzeErr := DistributedAnalyze(&streamv1.QueryRequest{
+				Projection: projection,
+				OrderBy:    &modelv1.QueryOrder{IndexRuleName: tc.index, Sort: tc.sort},
+			}, []logical.Schema{s})
+			if tc.wantError != "" {
+				require.EqualError(t, analyzeErr, tc.wantError)
+				require.Nil(t, plan)
+				return
+			}
+
+			require.NoError(t, analyzeErr)
+			distributed, ok := plan.(*distributedPlan)
+			require.True(t, ok)
+			require.Equal(t, tc.index == "", distributed.sortByTime)
+			require.Equal(t, tc.sort == modelv1.Sort_SORT_DESC, distributed.desc)
+			require.Nil(t, distributed.Schema().FindTagSpecByName("other"))
+			wantTag := logical.TagSpec{Spec: sortTag, TagFamilyIdx: 0, TagIdx: 0}
+			require.Equal(t, &wantTag, distributed.Schema().FindTagSpecByName("sort"))
+			if tc.index != "" {
+				require.Equal(t, wantTag, distributed.sortTagSpec)
+			}
+		})
+	}
+}
+
+func TestDistributedAnalyzeInvalidRequest(t *testing.T) {
+	s, err := BuildSchema(&databasev1.Stream{}, nil)
+	require.NoError(t, err)
+
+	t.Run("missing projection", func(t *testing.T) {
+		plan, analyzeErr := newUnresolvedDistributed(&streamv1.QueryRequest{}).Analyze(s)
+		require.EqualError(t, analyzeErr, "projection is required")
+		require.Nil(t, plan)
+	})
+
+	t.Run("projection resolution error", func(t *testing.T) {
+		req := &streamv1.QueryRequest{Projection: &modelv1.TagProjection{
+			TagFamilies: []*modelv1.TagProjection_TagFamily{{Name: "tags", Tags: []string{"unknown"}}},
+		}}
+		wantErr := errors.New("unknown projection tag")
+		plan, analyzeErr := newUnresolvedDistributed(req).Analyze(distributedProjectionErrorSchema{Schema: s, err: wantErr})
+		require.ErrorIs(t, analyzeErr, wantErr)
+		require.Nil(t, plan)
+	})
+
+	t.Run("window overflow", func(t *testing.T) {
+		// DistributedAnalyze rejects overflow before calling the unresolved plan.
+		req := &streamv1.QueryRequest{Projection: &modelv1.TagProjection{}, Offset: math.MaxUint32, Limit: 1}
+		plan, analyzeErr := newUnresolvedDistributed(req).Analyze(s)
+		require.EqualError(t, analyzeErr, "query limit and offset exceed supported range")
+		require.Nil(t, plan)
+	})
+}
 
 type analyzedDistributedContext struct {
 	*fakeDistributedContext
@@ -115,9 +211,9 @@ func TestDistributedAnalyzedWindowAndNodeRequest(t *testing.T) {
 					{name: "two", chunks: encode(two, frameTwo)},
 				}}}
 				builtRows := 0
-				distributed.buildElements = func(batch *vectorized.RecordBatch, projection []model.TagProjection) ([]*streamv1.Element, error) {
-					builtRows += batch.ActiveLen()
-					return vstream.BuildElementsFromBatch(batch, projection)
+				distributed.buildElement = func(batch *vectorized.RecordBatch, projection []model.TagProjection, row int) (*streamv1.Element, error) {
+					builtRows++
+					return vstream.BuildElementFromBatchRow(batch, projection, row)
 				}
 				got, err := executable.Execute(executor.WithDistributedExecutionContext(context.Background(), fake))
 				require.NoError(t, err)
@@ -133,51 +229,19 @@ func TestDistributedAnalyzedWindowAndNodeRequest(t *testing.T) {
 				case "frames":
 					require.EqualValues(t, tc.count, builtRows, "only the final window may become Elements")
 				case "mixed":
-					require.Equal(t, len(one), builtRows, "the frame fallback uses the same builder")
+					wantFrameRows := 0
+					for _, row := range one {
+						if id := uint32(row.elementID); id > tc.offset && id <= tc.offset+tc.count {
+							wantFrameRows++
+						}
+					}
+					require.Equal(t, wantFrameRows, builtRows, "only returned frame rows may become Elements")
 				default:
 					require.Zero(t, builtRows)
 				}
 			})
 		}
 	}
-}
-
-func TestDistributedAnalyzedMaterializationSpansOutputBatches(t *testing.T) {
-	originalRaw := data.StreamWireModeRaw()
-	data.SetStreamWireModeRaw(true)
-	t.Cleanup(func() { data.SetStreamWireModeRaw(originalRaw) })
-	const offset = uint32(7)
-	const limit = uint32(vectorized.DefaultBatchSize + 37)
-	executable, distributed := analyzedDistributedPlan(t, offset, limit)
-	var one, two []nodeRow
-	two = append(two, nodeRow{ts: 1, elementID: 1})
-	for id := uint64(1); id <= uint64(offset+limit+100); id++ {
-		row := nodeRow{ts: int64(id), elementID: id}
-		if id%2 == 1 {
-			one = append(one, row)
-		} else {
-			two = append(two, row)
-		}
-	}
-	fake := &analyzedDistributedContext{fakeDistributedContext: &fakeDistributedContext{streams: []*fakeNodeStream{
-		{name: "one", chunks: analyzedNodeChunks(t, one, true)},
-		{name: "two", chunks: analyzedNodeChunks(t, two, true)},
-	}}}
-	builtRows, calls := 0, 0
-	distributed.buildElements = func(batch *vectorized.RecordBatch, projection []model.TagProjection) ([]*streamv1.Element, error) {
-		calls++
-		builtRows += batch.ActiveLen()
-		return vstream.BuildElementsFromBatch(batch, projection)
-	}
-	got, err := executable.Execute(executor.WithDistributedExecutionContext(context.Background(), fake))
-	require.NoError(t, err)
-	require.Len(t, got, int(limit))
-	for idx, element := range got {
-		require.Equal(t, hexElementID(uint64(offset)+uint64(idx)+1), element.ElementId)
-	}
-	require.EqualValues(t, limit, builtRows)
-	require.GreaterOrEqual(t, calls, 2, "the proof allows one builder call per output batch")
-	require.Equal(t, offset+limit, fake.request.Limit)
 }
 
 func TestDistributedAnalyzedMaterializerHonorsSelection(t *testing.T) {
@@ -194,11 +258,11 @@ func TestDistributedAnalyzedMaterializerHonorsSelection(t *testing.T) {
 	}
 	calls, builtRows := 0, 0
 	sawNarrowedSelection := false
-	distributed.buildElements = func(batch *vectorized.RecordBatch, projection []model.TagProjection) ([]*streamv1.Element, error) {
+	distributed.buildElement = func(batch *vectorized.RecordBatch, projection []model.TagProjection, row int) (*streamv1.Element, error) {
 		calls++
-		builtRows += batch.ActiveLen()
+		builtRows++
 		sawNarrowedSelection = sawNarrowedSelection || batch.ActiveLen() < batch.Len
-		return vstream.BuildElementsFromBatch(batch, projection)
+		return vstream.BuildElementFromBatchRow(batch, projection, row)
 	}
 	fake := &fakeDistributedContext{streams: []*fakeNodeStream{
 		{name: "one", chunks: []any{frameChunk(t, []nodeRow{

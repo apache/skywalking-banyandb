@@ -27,7 +27,6 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/data"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -43,44 +42,18 @@ type distributedBatchOwner struct {
 func (o *distributedBatchOwner) Retain()  { o.retains.Add(1) }
 func (o *distributedBatchOwner) Release() { o.releases.Add(1) }
 
-type distributedMergeLease struct {
-	err     error
-	charges int
-	failOn  int
-}
-
-func (l *distributedMergeLease) Charge(uint64) error {
-	l.charges++
-	if l.charges == l.failOn {
-		return l.err
-	}
-	return nil
-}
-func (*distributedMergeLease) Refund(uint64) {}
-func (*distributedMergeLease) Limit() uint64 { return 1 << 20 }
-func (*distributedMergeLease) Used() uint64  { return 0 }
-func (*distributedMergeLease) Owner() any    { return "distributed-merge-test" }
-
 func TestDistributedFrameBatchLifetime(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	t.Cleanup(func() { data.SetStreamWireModeRaw(false) })
 	brokenNode := errors.New("node failed after sending a frame")
 	for _, name := range []string{
-		"success", "decode error", "cancellation", "node error", "materialization error", "alignment budget", "merge budget", "missing order key",
+		"success", "decode error", "cancellation", "node error", "materialization error", "missing order key",
 	} {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
-			budgetErr := errors.New("merge budget exhausted")
-			if name == "alignment budget" || name == "merge budget" {
-				failOn := 1
-				if name == "merge budget" {
-					failOn = 2
-				}
-				ctx = query.WithBudgetLease(ctx, &distributedMergeLease{err: budgetErr, failOn: failOn})
-			}
 			owner := &distributedBatchOwner{}
-			plan := newBatchMergePlan(false, 0, 2)
+			plan := newDistributedWindowPlan(false, 0, 1)
 			if name == "missing order key" {
 				plan.sortByTime = false
 			}
@@ -97,14 +70,12 @@ func TestDistributedFrameBatchLifetime(t *testing.T) {
 				return batch, err
 			}
 			egressErr := errors.New("egress failed")
-			plan.buildElements = func(batch *vectorized.RecordBatch,
-				projection []model.TagProjection,
-			) ([]*streamv1.Element, error) {
+			plan.buildElement = func(batch *vectorized.RecordBatch, projection []model.TagProjection, row int) (*streamv1.Element, error) {
 				require.EqualValues(t, 0, owner.releases.Load(), "source owners must stay live through egress")
 				if name == "materialization error" {
 					return nil, egressErr
 				}
-				return vstream.BuildElementsFromBatch(batch, projection)
+				return vstream.BuildElementFromBatchRow(batch, projection, row)
 			}
 			node := &fakeNodeStream{name: "node", chunks: []any{frameChunk(t, []nodeRow{{ts: 1, elementID: 1}})}}
 			switch name {
@@ -129,8 +100,6 @@ func TestDistributedFrameBatchLifetime(t *testing.T) {
 				require.ErrorIs(t, err, brokenNode)
 			case "materialization error":
 				require.ErrorIs(t, err, egressErr)
-			case "alignment budget", "merge budget":
-				require.ErrorIs(t, err, budgetErr)
 			case "missing order key":
 				require.ErrorContains(t, err, "order key")
 			}
@@ -156,7 +125,7 @@ func TestDistributedMixedChunksPreserveNodeOrder(t *testing.T) {
 			if frameFirst {
 				chunks = []any{frameChunk(t, []nodeRow{first}), protoResponseForRows([]nodeRow{last})}
 			}
-			got, err := executePlan(t, newBatchMergePlan(desc, 0, 3), chunks,
+			got, err := executePlan(t, newDistributedWindowPlan(desc, 0, 3), chunks,
 				[]any{protoResponseForRows([]nodeRow{{ts: 2, elementID: 2}})})
 			require.NoError(t, err)
 			require.Equal(t, want, elementIDSeq(got))
