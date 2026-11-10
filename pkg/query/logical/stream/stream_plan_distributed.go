@@ -19,9 +19,12 @@ package stream
 
 import (
 	"context"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -38,6 +41,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
 	streamframe "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream/frame"
 )
@@ -83,19 +88,17 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 		Limit:      uint32(window),
 		OrderBy:    ud.originalQuery.OrderBy,
 	}
+	result := &distributedPlan{
+		queryTemplate: temp,
+		s:             s,
+		sortByTime:    true,
+		offset:        ud.originalQuery.Offset,
+		limit:         limit,
+	}
 	if ud.originalQuery.OrderBy == nil {
-		return &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
-		}, nil
+		return result, nil
 	}
 	if ud.originalQuery.OrderBy.IndexRuleName == "" {
-		result := &distributedPlan{
-			queryTemplate: temp,
-			s:             s,
-			sortByTime:    true,
-		}
 		if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 			result.desc = true
 		}
@@ -112,12 +115,8 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 	if sortTagSpec == nil {
 		return nil, fmt.Errorf("tag %s not found", indexRule.Tags[0])
 	}
-	result := &distributedPlan{
-		queryTemplate: temp,
-		s:             s,
-		sortByTime:    false,
-		sortTagSpec:   *sortTagSpec,
-	}
+	result.sortByTime = false
+	result.sortTagSpec = *sortTagSpec
 	if ud.originalQuery.OrderBy.Sort == modelv1.Sort_SORT_DESC {
 		result.desc = true
 	}
@@ -127,12 +126,19 @@ func (ud *unresolvedDistributed) Analyze(s logical.Schema) (logical.Plan, error)
 var _ executor.StreamExecutable = (*distributedPlan)(nil)
 
 type distributedPlan struct {
-	s              logical.Schema
+	// Overrides used by tests and instrumentation. Nil means the native frame decoder
+	// (streamframe.Decode) or the frame row builder
+	// (vstream.BuildElementsFromBatch).
+	decodeFrame    func([]byte) (*vectorized.RecordBatch, error)
+	buildElement   func(*vectorized.RecordBatch, []model.TagProjection, int) (*streamv1.Element, error)
 	queryTemplate  *streamv1.QueryRequest
+	s              logical.Schema
 	sortTagSpec    logical.TagSpec
+	maxElementSize uint32
+	offset         uint32
+	limit          uint32
 	sortByTime     bool
 	desc           bool
-	maxElementSize uint32
 }
 
 func (t *distributedPlan) Close() {}
@@ -173,7 +179,7 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 			ns.Close()
 		}
 	}()
-	nodes := make([]nodeStreamElements, len(streams))
+	nodes := make([]nodeStreamResult, len(streams))
 	var wg sync.WaitGroup
 	var errOnce sync.Once
 	var firstErr error
@@ -191,52 +197,43 @@ func (t *distributedPlan) Execute(ctx context.Context) (ee []*streamv1.Element, 
 		}()
 	}
 	wg.Wait()
+	// Keep decoded batches alive through materialization, including when a
+	// node reports an error after sending a batch.
+	defer func() {
+		for _, node := range nodes {
+			for _, chunk := range node.chunks {
+				if chunk.batch != nil {
+					chunk.batch.ReleaseOwners()
+				}
+			}
+		}
+	}()
 	if firstErr != nil {
-		err = firstErr
 		return nil, firstErr
 	}
-	var see []sort.Iterator[*comparableElement]
-	var responseCount int
-	for idx := range nodes {
-		if !nodes[idx].responded {
-			continue
-		}
-		responseCount++
-		if span != nil {
-			span.AddSubTrace(nodes[idx].subTrace)
-		}
-		see = append(see, newSortableElements(nodes[idx].elements, t.sortByTime, t.sortTagSpec))
-	}
-	iter := sort.NewItemIter(see, t.desc)
-	var result []*streamv1.Element
-	seen := make(map[string]bool)
-	for iter.Next() {
-		element := iter.Val().Element
-		if !seen[element.ElementId] {
-			seen[element.ElementId] = true
-			result = append(result, element)
-		}
-	}
-	if span != nil {
-		span.Tagf("response_count", "%d", responseCount)
-		span.Tagf("element_id_count", "%d", len(seen))
-	}
-
-	return result, nil
+	return t.mergeRowReplies(ctx, nodes, span)
 }
 
-// nodeStreamElements is everything one node stream delivered.
-type nodeStreamElements struct {
+// nodeStreamResult is everything one node stream delivered.
+type nodeStreamResult struct {
 	err       error
 	subTrace  *commonv1.Trace
-	elements  []*streamv1.Element
+	chunks    []nodeStreamChunk
+	proto     bool
 	responded bool
 }
 
-// readNodeStream reads a node stream to its end, decoding one chunk at a time, so
-// only the decoded elements of the node are held, never its encoded chunks.
-func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeStreamElements {
-	var out nodeStreamElements
+// nodeStreamChunk preserves wire order even when a node mixes proto and frame replies.
+type nodeStreamChunk struct {
+	batch    *vectorized.RecordBatch
+	elements []*streamv1.Element
+}
+
+// readNodeStream reads a node stream to its end, decoding one chunk at a time. A proto chunk
+// is kept as Elements; a native frame chunk is kept as the batch it decodes to, because the
+// frame merge must never materialize rows it may discard.
+func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream) nodeStreamResult {
+	var out nodeStreamResult
 	for {
 		m, nextErr := ns.Next(ctx)
 		if errors.Is(nextErr, io.EOF) {
@@ -250,50 +247,147 @@ func (t *distributedPlan) readNodeStream(ctx context.Context, ns bus.NodeStream)
 		if d == nil {
 			continue
 		}
-		chunk, subTrace, decodeErr := t.decodeNodeElements(d)
+		decodeErr := t.decodeNodeChunk(d, &out)
 		if decodeErr != nil {
 			out.err = fmt.Errorf("stream query on node %s: %w", ns.Node(), decodeErr)
 			return out
 		}
 		out.responded = true
-		out.elements = append(out.elements, chunk...)
-		if subTrace != nil {
-			out.subTrace = subTrace
-		}
 	}
 }
 
-// decodeNodeElements converts a single node chunk into []*streamv1.Element,
-// accepting either the proto *streamv1.QueryResponse (flag-off / tracing / a data
-// node that has not rolled onto the vec path) or the native columnar frame
-// ([]byte, only when the raw wire mode is on). Both feed the SAME
-// sortableElements/comparableElement k-way merge + seen-dedup + distributedLimit
-// downstream, so mixed proto/frame bodies in one broadcast (rolling deploy) merge
-// correctly.
-func (t *distributedPlan) decodeNodeElements(d any) ([]*streamv1.Element, *commonv1.Trace, error) {
+// decodeNodeChunk appends a single node chunk to out: the proto *streamv1.QueryResponse
+// (flag-off / tracing / a data node that has not rolled onto the vec path) as Elements, and
+// the native columnar frame ([]byte, only when the raw wire mode is on) as a batch. A frame
+// is NOT materialized here; only the row merge decides which rows become Elements.
+// An index-ordered frame without the order-key column is rejected: sorting it by timestamp
+// would silently change the order the client asked for.
+func (t *distributedPlan) decodeNodeChunk(d any, out *nodeStreamResult) error {
 	switch payload := d.(type) {
 	case *streamv1.QueryResponse:
-		return payload.Elements, payload.Trace, nil
+		out.proto = true
+		out.chunks = append(out.chunks, nodeStreamChunk{elements: payload.Elements})
+		if payload.Trace != nil {
+			out.subTrace = payload.Trace
+		}
+		return nil
 	case []byte:
 		if !data.StreamWireModeRaw() {
-			return nil, nil, fmt.Errorf("unexpected raw stream frame body while wire mode is off")
+			return fmt.Errorf("unexpected raw stream frame body while wire mode is off")
 		}
-		batch, decodeErr := streamframe.Decode(payload)
+		decode := t.decodeFrame
+		if decode == nil {
+			decode = streamframe.Decode
+		}
+		batch, decodeErr := decode(payload)
 		if decodeErr != nil {
-			return nil, nil, fmt.Errorf("decode stream result frame: %w", decodeErr)
+			return fmt.Errorf("decode stream result frame: %w", decodeErr)
 		}
-		elements, buildErr := vstream.BuildElementsFromBatch(batch, vstream.ProjectionFromBatchSchema(batch))
-		if buildErr != nil {
-			return nil, nil, fmt.Errorf("build elements from stream frame: %w", buildErr)
+		if batch.Schema.TimestampIndex() < 0 || batch.Schema.ElementIDIndex() < 0 {
+			batch.ReleaseOwners()
+			return fmt.Errorf("stream frame lacks a timestamp or element ID column")
 		}
-		return elements, nil, nil
+		if !t.sortByTime && batch.Schema.OrderKeyIndex() < 0 {
+			batch.ReleaseOwners()
+			return fmt.Errorf("index-ordered stream frame lacks an order key column")
+		}
+		out.chunks = append(out.chunks, nodeStreamChunk{batch: batch})
+		return nil
 	default:
-		return nil, nil, fmt.Errorf("unexpected stream query response type %T", d)
+		return fmt.Errorf("unexpected stream query response type %T", d)
 	}
+}
+
+// mergeRowReplies uses one iterator per node, regardless of the wire format.
+func (t *distributedPlan) mergeRowReplies(ctx context.Context, nodes []nodeStreamResult, span *query.Span) ([]*streamv1.Element, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	iters := make([]sort.Iterator[*distributedRow], 0, len(nodes))
+	frameOnly := true
+	for _, node := range nodes {
+		if !node.responded {
+			continue
+		}
+		frameOnly = frameOnly && !node.proto
+		if span != nil {
+			span.AddSubTrace(node.subTrace)
+		}
+		iters = append(iters, &sortableNodeRows{chunks: node.chunks, plan: t})
+	}
+	iter := sort.NewItemIter(iters, t.desc)
+	frameIDs := make(map[uint64]struct{})
+	elementIDs := make(map[string]struct{})
+	var result []*streamv1.Element
+	var distinct uint64
+	window := uint64(t.offset) + uint64(t.limit)
+	for iter.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		row := iter.Val()
+		if frameOnly {
+			if _, seen := frameIDs[row.id]; seen {
+				continue
+			}
+			frameIDs[row.id] = struct{}{}
+		} else {
+			id := row.elementID()
+			if _, seen := elementIDs[id]; seen {
+				continue
+			}
+			elementIDs[id] = struct{}{}
+		}
+		distinct++
+		if distinct > uint64(t.offset) && (t.limit == 0 || distinct <= window) {
+			element, err := t.materialize(row)
+			if err != nil {
+				return nil, fmt.Errorf("build element from stream frame: %w", err)
+			}
+			result = append(result, element)
+		}
+		// Tracing reports the full distinct count even when the page is full.
+		if span == nil && t.limit != 0 && distinct == window {
+			break
+		}
+	}
+	if span != nil {
+		span.Tagf("response_count", "%d", len(iters))
+		span.Tagf("element_id_count", "%d", distinct)
+	}
+	return result, nil
+}
+
+func (t *distributedPlan) materialize(row *distributedRow) (*streamv1.Element, error) {
+	if row.frame == nil {
+		return row.element, nil
+	}
+	build := t.buildElement
+	if build == nil {
+		build = vstream.BuildElementFromBatchRow
+	}
+	element, err := build(row.frame, row.projection, row.index)
+	if err == nil && row.frame.Owners.Len() != 0 {
+		// The response outlives the batch. Detach any borrowed tag values.
+		element = proto.CloneOf(element)
+		for _, family := range element.GetTagFamilies() {
+			for _, tag := range family.GetTags() {
+				if str := tag.GetValue().GetStr(); str != nil {
+					str.Value = strings.Clone(str.Value)
+				}
+				if arr := tag.GetValue().GetStrArray(); arr != nil {
+					for i, str := range arr.Value {
+						arr.Value[i] = strings.Clone(str)
+					}
+				}
+			}
+		}
+	}
+	return element, err
 }
 
 func (t *distributedPlan) String() string {
-	return fmt.Sprintf("distributed:%s", t.queryTemplate.String())
+	return fmt.Sprintf("distributed:%s offset:%d limit:%d", t.queryTemplate.String(), t.offset, t.limit)
 }
 
 func (t *distributedPlan) Children() []logical.Plan {
@@ -308,137 +402,97 @@ func (t *distributedPlan) Limit(maxVal int) {
 	t.maxElementSize = uint32(maxVal)
 }
 
-var _ sort.Comparable = (*comparableElement)(nil)
-
-type comparableElement struct {
-	*streamv1.Element
-	sortField []byte
+type distributedRow struct {
+	frame      *vectorized.RecordBatch
+	element    *streamv1.Element
+	projection []model.TagProjection
+	sortField  []byte
+	timeKey    [8]byte
+	id         uint64
+	index      int
 }
 
-func newComparableElement(e *streamv1.Element, sortByTime bool, sortTagSpec logical.TagSpec) (*comparableElement, error) {
-	var sortField []byte
-	if sortByTime {
-		sortField = convert.Uint64ToBytes(uint64(e.Timestamp.AsTime().UnixNano()))
-	} else {
-		var err error
-		sortField, err = pbv1.MarshalTagValue(e.TagFamilies[sortTagSpec.TagFamilyIdx].Tags[sortTagSpec.TagIdx].Value)
-		if err != nil {
-			return nil, err
+func (r *distributedRow) SortedField() []byte { return r.sortField }
+
+func (r *distributedRow) elementID() string {
+	if r.frame == nil {
+		return r.element.GetElementId()
+	}
+	return hex.EncodeToString(convert.Uint64ToBytes(r.id))
+}
+
+type sortableNodeRows struct {
+	chunks        []nodeStreamChunk
+	plan          *distributedPlan
+	cur           *distributedRow
+	projection    []model.TagProjection
+	chunk, active int
+}
+
+func (*sortableNodeRows) Close() error           { return nil }
+func (s *sortableNodeRows) Val() *distributedRow { return s.cur }
+
+func (s *sortableNodeRows) Next() bool {
+	for s.chunk < len(s.chunks) {
+		chunk := s.chunks[s.chunk]
+		if chunk.batch != nil {
+			if s.active < chunk.batch.ActiveLen() {
+				s.cur = s.frameRow(chunk.batch)
+				s.active++
+				return true
+			}
+		} else if s.active < len(chunk.elements) {
+			element := chunk.elements[s.active]
+			s.active++
+			row, err := s.protoRow(element)
+			if err != nil {
+				continue
+			}
+			s.cur = row
+			return true
 		}
+		s.chunk++
+		s.active = 0
 	}
-
-	return &comparableElement{
-		Element:   e,
-		sortField: sortField,
-	}, nil
+	return false
 }
 
-func (e *comparableElement) SortedField() []byte {
-	return e.sortField
-}
-
-var _ sort.Iterator[*comparableElement] = (*sortableElements)(nil)
-
-type sortableElements struct {
-	cur          *comparableElement
-	elements     []*streamv1.Element
-	sortTagSpec  logical.TagSpec
-	index        int
-	isSortByTime bool
-}
-
-func newSortableElements(elements []*streamv1.Element, isSortByTime bool, sortTagSpec logical.TagSpec) *sortableElements {
-	return &sortableElements{
-		elements:     elements,
-		isSortByTime: isSortByTime,
-		sortTagSpec:  sortTagSpec,
+func (s *sortableNodeRows) frameRow(batch *vectorized.RecordBatch) *distributedRow {
+	if s.active == 0 {
+		s.projection = vstream.ProjectionFromBatchSchema(batch)
 	}
-}
-
-func (*sortableElements) Close() error {
-	return nil
-}
-
-func (s *sortableElements) Next() bool {
-	return s.iter(func(e *streamv1.Element) (*comparableElement, error) {
-		return newComparableElement(e, s.isSortByTime, s.sortTagSpec)
-	})
-}
-
-func (s *sortableElements) Val() *comparableElement {
-	return s.cur
-}
-
-func (s *sortableElements) iter(fn func(*streamv1.Element) (*comparableElement, error)) bool {
-	if s.index >= len(s.elements) {
-		return false
+	index := s.active
+	if batch.Selection != nil {
+		index = int(batch.Selection[index])
 	}
-	cur, err := fn(s.elements[s.index])
-	s.index++
-	if err != nil {
-		return s.iter(fn)
+	id := batch.Columns[batch.Schema.ElementIDIndex()].(*vectorized.TypedColumn[int64]).Data()[index]
+	row := &distributedRow{frame: batch, projection: s.projection, id: vstream.ColumnToElementID(id), index: index}
+	if s.plan.sortByTime {
+		ts := batch.Columns[batch.Schema.TimestampIndex()].(*vectorized.TypedColumn[int64]).Data()[index]
+		row.setTimeKey(ts)
+	} else {
+		row.sortField = batch.Columns[batch.Schema.OrderKeyIndex()].(*vectorized.TypedColumn[[]byte]).Data()[index]
 	}
-	s.cur = cur
-	return s.index <= len(s.elements)
+	return row
 }
 
-var _ executor.StreamExecutable = (*distributedLimit)(nil)
-
-type distributedLimit struct {
-	*Parent
-	limit  uint32
-	offset uint32
-}
-
-func (l *distributedLimit) Close() {
-	l.Parent.Input.(executor.StreamExecutable).Close()
-}
-
-func (l *distributedLimit) Execute(ec context.Context) ([]*streamv1.Element, error) {
-	entities, err := l.Parent.Input.(executor.StreamExecutable).Execute(ec)
-	if err != nil {
-		return nil, err
+func (s *sortableNodeRows) protoRow(element *streamv1.Element) (*distributedRow, error) {
+	row := &distributedRow{element: element}
+	if s.plan.sortByTime {
+		row.setTimeKey(element.GetTimestamp().AsTime().UnixNano())
+		return row, nil
 	}
-
-	start := int(l.offset)
-	if start > len(entities) {
-		return []*streamv1.Element{}, nil
+	spec := s.plan.sortTagSpec
+	families := element.GetTagFamilies()
+	if spec.TagFamilyIdx >= len(families) || spec.TagIdx >= len(families[spec.TagFamilyIdx].GetTags()) {
+		return nil, fmt.Errorf("stream element lacks its sort tag")
 	}
-
-	end := start + int(l.limit)
-	if end > len(entities) {
-		end = len(entities)
-	}
-	return entities[start:end], nil
-}
-
-func (l *distributedLimit) Analyze(s logical.Schema) (logical.Plan, error) {
 	var err error
-	l.Input, err = l.UnresolvedInput.Analyze(s)
-	if err != nil {
-		return nil, err
-	}
-	return l, nil
+	row.sortField, err = pbv1.MarshalTagValue(families[spec.TagFamilyIdx].GetTags()[spec.TagIdx].GetValue())
+	return row, err
 }
 
-func (l *distributedLimit) Schema() logical.Schema {
-	return l.Input.Schema()
-}
-
-func (l *distributedLimit) String() string {
-	return fmt.Sprintf("%s Distributed Limit: %d, %d", l.Input.String(), l.offset, l.limit)
-}
-
-func (l *distributedLimit) Children() []logical.Plan {
-	return []logical.Plan{l.Input}
-}
-
-func newDistributedLimit(input logical.UnresolvedPlan, offset, limit uint32) logical.UnresolvedPlan {
-	return &distributedLimit{
-		Parent: &Parent{
-			UnresolvedInput: input,
-		},
-		offset: offset,
-		limit:  limit,
-	}
+func (r *distributedRow) setTimeKey(ts int64) {
+	binary.BigEndian.PutUint64(r.timeKey[:], uint64(ts))
+	r.sortField = r.timeKey[:]
 }
