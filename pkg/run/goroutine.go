@@ -27,14 +27,14 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 )
 
-// goOrDieArtifactDeadline bounds how long GoOrDie waits for the artifact
-// write to drain before re-raising. A stuck disk should never indefinitely
-// block the fatal path; if the artifact has not landed in this window it is
-// dropped with a warning and the re-raise proceeds.
-const goOrDieArtifactDeadline = 5 * time.Second
+// repanicArtifactDeadline bounds how long Go waits for the artifact write to
+// drain before re-raising. A stuck disk should never indefinitely block the
+// fatal path; if the artifact has not landed in this window it is dropped with
+// a warning and the re-raise proceeds.
+const repanicArtifactDeadline = 5 * time.Second
 
-// Task tracks a goroutine launched by Go or GoOrDie. Done closes on exit;
-// Outcome is nil until then.
+// Task tracks a goroutine launched by Go. Done closes on exit; Outcome is nil
+// until then.
 type Task struct {
 	outcome atomic.Pointer[panicdiag.RecoveryOutcome]
 	done    chan struct{}
@@ -57,7 +57,7 @@ func (t *Task) Wait() *panicdiag.RecoveryOutcome {
 	return t.outcome.Load()
 }
 
-// goConfig holds resolved options for Go, GoOrDie, and GoWithSignal.
+// goConfig holds resolved options for Go and GoWithSignal.
 type goConfig struct {
 	reporter        panicdiag.Reporter
 	stateDumper     panicdiag.StateDumper
@@ -67,7 +67,7 @@ type goConfig struct {
 	stateLimitBytes int64
 }
 
-// Option configures Go, GoOrDie, or GoWithSignal.
+// Option configures Go or GoWithSignal.
 type Option func(*goConfig)
 
 // WithReporter installs a non-blocking per-call reporter for recovered panics.
@@ -102,17 +102,13 @@ func WithStateLimitBytes(n int64) Option {
 	return func(c *goConfig) { c.stateLimitBytes = n }
 }
 
-// Go launches fn in a recovered goroutine.
-// Panics are logged, reported, and exposed through the returned Task. Use
-// GoOrDie for fatal panics and GoWithSignal when a select needs the outcome.
+// Go launches fn in a goroutine whose panic crashes the process. The panic is
+// logged, reported and written as an artifact first, then re-raised: a
+// background goroutine that dies while the process keeps running leaves the
+// work it owned silently undone. Use GoWithSignal when the caller handles the
+// panic itself.
 func Go(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts ...Option) *Task {
-	return launchTask(ctx, component, log, fn, false, opts)
-}
-
-// GoOrDie launches fn with recovery, then re-raises recovered panics after
-// diagnostics and reporters complete.
-func GoOrDie(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts ...Option) *Task {
-	return launchTask(ctx, component, log, fn, true, opts)
+	return launchTask(ctx, component, log, fn, opts)
 }
 
 // SignalResult bundles fn's typed return with the recovery outcome so the
@@ -137,8 +133,8 @@ func GoWithSignal[T any](ctx context.Context, component string, log *logger.Logg
 	return ch
 }
 
-// launchTask starts the shared Go and GoOrDie goroutine.
-func launchTask(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), repanic bool, opts []Option) *Task {
+// launchTask starts the goroutine of Go.
+func launchTask(ctx context.Context, component string, log *logger.Logger, fn func(context.Context), opts []Option) *Task {
 	cfg := buildGoConfig(opts)
 	task := &Task{done: make(chan struct{})}
 	go func() {
@@ -146,15 +142,15 @@ func launchTask(ctx context.Context, component string, log *logger.Logger, fn fu
 		outcome := runRecovered(ctx, component, log, fn, cfg)
 		task.outcome.Store(outcome)
 		// Store before re-raise so observers can still see the outcome.
-		if repanic && outcome.Panicked {
+		if outcome.Panicked {
 			if outcome.ArtifactDone != nil {
 				select {
 				case <-outcome.ArtifactDone:
-				case <-time.After(goOrDieArtifactDeadline):
+				case <-time.After(repanicArtifactDeadline):
 					if log != nil {
 						log.Warn().
 							Str("component", component).
-							Dur("deadline", goOrDieArtifactDeadline).
+							Dur("deadline", repanicArtifactDeadline).
 							Msg("artifact write did not complete before re-raise; proceeding anyway")
 					}
 				}

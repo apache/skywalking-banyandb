@@ -1,6 +1,6 @@
 # rawgo baseline: pre-existing raw `go` call sites grandfathered in at
 # rollout. The lint-rawgo target enforces that any NEW `go` statement
-# either goes through run.Go / run.GoOrDie / run.GoWithSignal or carries
+# either goes through run.Go / run.GoWithSignal or carries
 # a `//panicdiag:allow-rawgo <reason>` directive. This file lets the
 # existing call sites stay temporarily while the conversion lands.
 #

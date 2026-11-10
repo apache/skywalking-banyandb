@@ -64,6 +64,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Crash the process when a background goroutine panics, after the panic is logged and its diagnostics are written. A recovered panic used to end only that goroutine while the node kept running, so the work it owned stopped silently; a measure merge loop that panicked this way left its shard unmerged until the parts piled up. `run.GoOrDie` is folded into `run.Go`.
 - Accept the `Bearer` authorization scheme case-insensitively in the MCP HTTP server, so `Authorization: bearer <token>` is no longer rejected with 401.
 - Make the MCP server load `.env` before reading configuration and validate settings strictly: numeric settings (`MCP_PORT`, `MCP_MAX_BODY_BYTES`, `MCP_RATE_LIMIT_*`) must be plain positive integers and `TRANSPORT` only accepts `stdio`/`http` (case-insensitive); invalid values now fail at startup with a clear error instead of being silently altered. Fixes apache/skywalking#14194.
 - Skip a stream group whose schema is unknown on a distributed data node instead of failing the whole query, so a stream schema that has not propagated to that node yet no longer discards the results the rest of the cluster serves. A standalone node and the liaison still report an unknown stream schema as an error.

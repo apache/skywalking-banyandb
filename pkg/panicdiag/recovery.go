@@ -139,7 +139,7 @@ func emitRecovery(ctx context.Context, log *logger.Logger, opts RecoveryOptions,
 	callReporter(ctx, log, reporter, recoveryResult)
 	callDefaultAbort(ctx, log, recoveryResult)
 
-	// Signal artifact completion for callers such as GoOrDie.
+	// Signal artifact completion for callers such as run.Go, which re-raises after it.
 	artifactDone := make(chan struct{})
 
 	if artifactRoot == "" {
