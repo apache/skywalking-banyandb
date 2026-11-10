@@ -17,7 +17,7 @@
 
 // Package lintrawgo provides a go/analysis Analyzer that fails the build
 // when production code launches a goroutine via a raw `go` statement
-// instead of run.Go or run.GoWithSignal.
+// instead of run.Go, run.GoOrDie, or run.GoWithSignal.
 //
 // The wrappers in pkg/run install panic recovery and breadcrumb
 // propagation around each goroutine; raw `go` bypasses both, so a panic
@@ -139,7 +139,7 @@ func newAnalyzer() *analysis.Analyzer {
 	a := &analysis.Analyzer{
 		Name: "rawgo",
 		Doc: "rawgo flags raw `go` statements outside the panic-recovery " +
-			"wrappers in pkg/run. Use run.Go or " +
+			"wrappers in pkg/run. Use run.Go, run.GoOrDie, or " +
 			"run.GoWithSignal so panics surface through diagnostics.",
 		Run: s.run,
 	}
@@ -237,8 +237,8 @@ func (s *state) collect(fset *token.FileSet, importPath string, f *ast.File) []a
 		out = append(out, analysis.Diagnostic{
 			Pos: stmt.Pos(),
 			Message: "raw `go` statement: launch goroutines through " +
-				"run.Go or run.GoWithSignal so panics are " +
-				"reported. To allow this site, add `" + directive +
+				"run.Go, run.GoOrDie, or run.GoWithSignal so panics are " +
+				"recovered. To allow this site, add `" + directive +
 				" <reason>` on the line above, or extend the baseline.",
 		})
 		return true

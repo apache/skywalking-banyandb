@@ -24,7 +24,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -154,8 +153,8 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 	workerCtx, cancelWorkers := context.WithCancel(ctx)
 	defer cancelWorkers()
 	workerLogger := logger.GetLogger("migration")
+	workerTasks := make([]*run.Task, 0, workerCount)
 	recordWorkerPanic := func(panicValue any) {
-		workerLogger.Error().Interface("panic", panicValue).Str("stack", string(debug.Stack())).Msg("union sidx source reader panicked")
 		panicErr := fmt.Errorf("union sidx source reader panicked: %v", panicValue)
 		if firstErr.CompareAndSwap(nil, &panicErr) {
 			cancelWorkers()
@@ -164,13 +163,12 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
-		run.Go(workerCtx, "union sidx source reader", workerLogger, func(taskCtx context.Context) {
+		workerTask := run.Go(workerCtx, "union sidx source reader", workerLogger, func(taskCtx context.Context) {
 			defer wg.Done()
-			// A reader's panic fails the union instead of crashing the process: a crash would leave the
-			// half-built staging index behind for the next run to open.
 			defer func() {
 				if panicValue := recover(); panicValue != nil {
 					recordWorkerPanic(panicValue)
+					panic(panicValue)
 				}
 			}()
 			for srcSidxPath := range pathCh {
@@ -193,6 +191,7 @@ func BuildGroupUnionSidx(ctx context.Context, srcGroupRoots []string, stagingPat
 					done, len(sidxPaths), float64(done)*100/float64(len(sidxPaths)), srcSidxPath)
 			}
 		})
+		workerTasks = append(workerTasks, workerTask)
 	}
 
 dispatch:
@@ -205,6 +204,11 @@ dispatch:
 	}
 	close(pathCh)
 	wg.Wait()
+	for _, workerTask := range workerTasks {
+		if outcome := workerTask.Wait(); outcome != nil && outcome.Panicked {
+			recordWorkerPanic(outcome.PanicValue)
+		}
+	}
 	if errPtr := firstErr.Load(); errPtr != nil {
 		return "", *errPtr
 	}

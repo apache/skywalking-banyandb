@@ -490,7 +490,7 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		owner.persistQ = queue
 		persistenceContext, persistenceCancel := context.WithCancel(context.Background())
 		owner.persistenceCancel = persistenceCancel
-		owner.persistenceTask = run.Go(persistenceContext, "native.owner.persistence", nil, func(ctx context.Context) {
+		owner.persistenceTask = run.GoOrDie(persistenceContext, "native.owner.persistence", nil, func(ctx context.Context) {
 			owner.runPersistence(ctx, queue)
 		})
 		if options.Path != "" && options.CompactionThreshold >= 0 {
@@ -503,7 +503,7 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 			owner.maintenanceGCWake = make(chan struct{}, 1)
 			maintenanceContext, cancel := context.WithCancel(context.Background())
 			owner.maintenanceCancel = cancel
-			owner.maintenanceTask = run.Go(maintenanceContext, "native.owner.compaction", nil, owner.runMaintenance)
+			owner.maintenanceTask = run.GoOrDie(maintenanceContext, "native.owner.compaction", nil, owner.runMaintenance)
 		}
 	}
 	return owner, nil

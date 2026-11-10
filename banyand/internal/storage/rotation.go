@@ -53,7 +53,7 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 	if !d.disableRetention {
 		rt = newRetentionTask(d, options.TTL)
 	}
-	run.Go(ctx, "storage-rotation", d.logger, func(taskCtx context.Context) {
+	run.GoOrDie(ctx, "storage-rotation", d.logger, func(taskCtx context.Context) {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 

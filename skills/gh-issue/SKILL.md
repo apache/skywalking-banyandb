@@ -171,7 +171,7 @@ these, say so in the issue — the implementer should not have to infer it:
 - **Durability and ordering.** For a flush, a WAL append, a compaction or a
   snapshot: what is the state after a crash between any two steps?
 - **Concurrency.** Goroutine launches go through the panic-recovery wrappers
-  (`run.Go` / `run.GoWithSignal`); a raw `go func(` needs an
+  (`run.Go` / `run.GoOrDie` / `run.GoWithSignal`); a raw `go func(` needs an
   explicit `//panicdiag:allow-rawgo` directive and the lint baseline only ever
   shrinks.
 - **Resource bounds.** An unbounded buffer, a query that materialises a whole
