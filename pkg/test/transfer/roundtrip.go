@@ -39,9 +39,11 @@ const (
 
 // ExpectRoundTrip asserts with g that the artifact dirB, exported from an import target, holds
 // the same logical rows as the source artifact dirA for the given groups (every group of dirA
-// when none is given), and returns the comparison report for further assertions.
-func ExpectRoundTrip(g gomega.Gomega, dirA, dirB string, groups ...string) *rowdiff.Report {
-	report, err := rowdiff.Compare(dirA, dirB, rowdiff.Options{Groups: groups})
+// when none is given), and returns the comparison report for further assertions. topN merges
+// the copies of each Top-N result (rowdiff.Options.TopN); this package cannot provide it, as
+// decoding Top-N values needs banyand/measure (see package topncheck).
+func ExpectRoundTrip(g gomega.Gomega, topN rowdiff.TopN, dirA, dirB string, groups ...string) *rowdiff.Report {
+	report, err := rowdiff.Compare(dirA, dirB, rowdiff.Options{Groups: groups, TopN: topN})
 	g.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 	g.ExpectWithOffset(1, report.OK()).To(gomega.BeTrue(), "artifacts differ:\n%s", strings.Join(report.Summary(maxReportedDiffs), "\n"))
 	return report

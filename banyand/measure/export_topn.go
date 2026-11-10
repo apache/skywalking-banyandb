@@ -20,7 +20,10 @@ package measure
 import (
 	"bytes"
 	"fmt"
+	"slices"
+	"strings"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
@@ -28,8 +31,8 @@ import (
 // measure the way a query and a part merge do. entity holds the data point's entity values
 // in the order of TopNTagNames.
 func MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightVersion int64, left, right []byte) ([]byte, error) {
-	if len(entity) != len(TopNTagNames) {
-		return nil, fmt.Errorf("a %s data point has %d entity values, want %d", TopNSchemaName, len(entity), len(TopNTagNames))
+	if err := checkTopNEntity(entity); err != nil {
+		return nil, err
 	}
 	// Merging a value with an identical copy of itself (a replayed import) yields that value;
 	// returning it as is avoids a decode/encode round trip that can rewrite empty entity values.
@@ -44,6 +47,51 @@ func MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightV
 	defer ReleaseTopNValuesDecoder(decoder)
 	return MergeTopNBinaryValues(left, right, int32(params.Limit), modelv1.Sort(entity[1].GetInt().GetValue()), decoder,
 		uint64(timestamp), leftVersion, rightVersion, params.FieldType)
+}
+
+// RenderTopNResult renders a stored field value of one data point of the Top-N result
+// measure for comparison: its value name, entity tag names and items, the items sorted, so
+// that equal results render equally whatever the order of their tied items. entity holds the
+// data point's entity values in the order of TopNTagNames.
+func RenderTopNResult(entity []*modelv1.TagValue, value []byte) (string, error) {
+	if err := checkTopNEntity(entity); err != nil {
+		return "", err
+	}
+	params, err := ParseTopNParameters(entity[3].GetStr().GetValue())
+	if err != nil {
+		return "", err
+	}
+	if params.FieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
+		return renderTopNValue[float64](value)
+	}
+	return renderTopNValue[int64](value)
+}
+
+func checkTopNEntity(entity []*modelv1.TagValue) error {
+	if len(entity) != len(TopNTagNames) {
+		return fmt.Errorf("a %s data point has %d entity values, want %d", TopNSchemaName, len(entity), len(TopNTagNames))
+	}
+	return nil
+}
+
+func renderTopNValue[K int64 | float64](value []byte) (string, error) {
+	v := &TopNValue[K]{}
+	decoder := GenerateTopNValuesDecoder()
+	defer ReleaseTopNValuesDecoder(decoder)
+	if err := v.Unmarshal(value, decoder); err != nil {
+		return "", err
+	}
+	name, tags, values, entities := v.Values()
+	items := make([]string, len(values))
+	for i, val := range values {
+		parts := make([]string, 0, len(entities[i]))
+		for _, tv := range entities[i] {
+			parts = append(parts, Stringify(tv))
+		}
+		items[i] = fmt.Sprintf("%v=%s", val, strings.Join(parts, "|"))
+	}
+	slices.Sort(items)
+	return fmt.Sprintf("%s %v %v", name, tags, items), nil
 }
 
 // MergeTopNResults lets the export service merge Top-N result versions without importing this package.

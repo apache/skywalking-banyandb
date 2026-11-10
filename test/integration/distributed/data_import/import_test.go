@@ -203,7 +203,7 @@ var _ = ginkgo.Describe("CSV import between two clusters", ginkgo.Ordered, func(
 		gomega.Expect(traceRows).To(gomega.BeNumerically(">", 0))
 		transfertest.ExportEventually(target2.liaisonAddr, exportRoot, func(g gomega.Gomega, dir string) {
 			// A replay changes no measure, Top-N result or property row.
-			transfertest.ExpectRoundTrip(g, firstB, dir, transfertest.MeasureGroup, transfertest.IndexModeGroup, transfertest.PropertyGroup)
+			transfertest.ExpectRoundTrip(g, topncheck.RowDiff{}, firstB, dir, transfertest.MeasureGroup, transfertest.IndexModeGroup, transfertest.PropertyGroup)
 			b := transfertest.ReadArtifact(dir, false)
 			// Stream and trace rows are replayed, not deduplicated (a known limitation).
 			g.Expect(transfertest.RowsCount(b, "stream", transfertest.StreamGroup)).To(gomega.Equal(2*streamRows), "stream rows double")
@@ -316,7 +316,7 @@ func importOptionsWith(input string, rules []config.ConflictRule) config.Import 
 func exportRoundTrip(c *cluster, artifactA string) (string, *rowdiff.Report) {
 	var report *rowdiff.Report
 	dir := transfertest.ExportEventually(c.liaisonAddr, exportRoot, func(g gomega.Gomega, dir string) {
-		report = transfertest.ExpectRoundTrip(g, artifactA, dir)
+		report = transfertest.ExpectRoundTrip(g, topncheck.RowDiff{}, artifactA, dir)
 	})
 	return dir, report
 }

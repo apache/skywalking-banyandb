@@ -33,6 +33,8 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/importer"
@@ -60,6 +62,9 @@ type resourceCols struct {
 	keyIdx     []int // layout indices of the key columns, after _name
 	versionIdx int   // layout index of _version for measures and _mod_revision for properties; -1 otherwise
 	deletePos  int   // position of _delete_time in headers for properties; -1 otherwise
+	// topNValuePos is the position of the value field in headers when the copies of the
+	// _top_n_result measure are merged; -1 otherwise.
+	topNValuePos int
 }
 
 type entry struct {
@@ -68,12 +73,17 @@ type entry struct {
 	key      string
 	conflict string
 	cells    []string
-	version  int64
+	// topNEntity and topNValue are the entity and the merged value of a _top_n_result data
+	// point whose copies are merged.
+	topNEntity []*modelv1.TagValue
+	topNValue  []byte
+	version    int64
 	// tombstone ranks a property tombstone above a live copy of its revision.
 	tombstone bool
 }
 
 type groupData struct {
+	topN      TopN
 	resources map[string]*resourceCols
 	rows      map[string]*entry
 	layout    *csvfmt.Layout
@@ -86,8 +96,8 @@ type artifact struct {
 }
 
 // loadArtifact reads the groups of the artifact at dir that scope accepts; a nil scope
-// accepts every group.
-func loadArtifact(ctx context.Context, dir string, scope map[string]bool) (*artifact, error) {
+// accepts every group. topN, when set, merges the copies of each _top_n_result data point.
+func loadArtifact(ctx context.Context, dir string, scope map[string]bool, topN TopN) (*artifact, error) {
 	art, err := importer.OpenArtifact(ctx, dir, false)
 	if err != nil {
 		return nil, err
@@ -100,7 +110,7 @@ func loadArtifact(ctx context.Context, dir string, scope map[string]bool) (*arti
 		if g, ok := a.groups[k]; ok {
 			return g, nil
 		}
-		g, buildErr := buildGroup(k, art)
+		g, buildErr := buildGroup(k, art, topN)
 		if buildErr != nil {
 			return nil, fmt.Errorf("artifact %s group %s: %w", dir, group, buildErr)
 		}
@@ -138,6 +148,11 @@ func loadArtifact(ctx context.Context, dir string, scope map[string]bool) (*arti
 			}
 		}
 	}
+	for _, g := range a.groups {
+		if err = g.renderTopN(); err != nil {
+			return nil, fmt.Errorf("artifact %s group %s: %w", dir, g.name, err)
+		}
+	}
 	return a, nil
 }
 
@@ -160,7 +175,7 @@ var keyKinds = map[string][]csvfmt.ColumnKind{
 	catalogProperty: {csvfmt.KindPropertyID},
 }
 
-func buildGroup(k groupKey, art *importer.Artifact) (*groupData, error) {
+func buildGroup(k groupKey, art *importer.Artifact, topN TopN) (*groupData, error) {
 	catalog, ok := transfer.CatalogByName(k.catalog)
 	if !ok {
 		return nil, fmt.Errorf("unknown catalog %q", k.catalog)
@@ -169,7 +184,7 @@ func buildGroup(k groupKey, art *importer.Artifact) (*groupData, error) {
 	if err != nil {
 		return nil, err
 	}
-	g := &groupData{catalog: k.catalog, name: k.group, layout: layout, resources: map[string]*resourceCols{}, rows: map[string]*entry{}}
+	g := &groupData{catalog: k.catalog, name: k.group, layout: layout, topN: topN, resources: map[string]*resourceCols{}, rows: map[string]*entry{}}
 	var names []string
 	entities := map[string][][2]string{} // measure -> (family, tag) of each entity tag
 	switch catalog {
@@ -193,7 +208,7 @@ func buildGroup(k groupKey, art *importer.Artifact) (*groupData, error) {
 		names = namesIn(art.Properties, k.group)
 	}
 	for _, name := range names {
-		rc := &resourceCols{pos: map[string]int{}, versionIdx: -1, deletePos: -1}
+		rc := &resourceCols{pos: map[string]int{}, versionIdx: -1, deletePos: -1, topNValuePos: -1}
 		for _, et := range entities[name] {
 			idx, ok := g.layout.TagIndex(name, et[0], et[1])
 			if !ok {
@@ -218,6 +233,10 @@ func buildGroup(k groupKey, art *importer.Artifact) (*groupData, error) {
 				rc.versionIdx = i
 			case csvfmt.KindDeleteTime:
 				rc.deletePos = len(rc.headers)
+			case csvfmt.KindField:
+				if topN != nil && name == csvfmt.TopNResultMeasure && c.Name == topnschema.FieldName {
+					rc.topNValuePos = len(rc.headers)
+				}
 			default:
 			}
 			rc.pos[c.Header] = len(rc.headers)
@@ -274,11 +293,13 @@ func (g *groupData) readFile(dir, rel string, gz bool, stage string) error {
 		if err = g.layout.CheckRow(row); err != nil {
 			return fmt.Errorf("record %d: %w", rd.RecordNo(), err)
 		}
-		g.add(row, stage)
+		if err = g.add(row, stage); err != nil {
+			return fmt.Errorf("record %d: %w", rd.RecordNo(), err)
+		}
 	}
 }
 
-func (g *groupData) add(row []csvfmt.Value, stage string) {
+func (g *groupData) add(row []csvfmt.Value, stage string) error {
 	name := row[0].Str
 	rc := g.resources[name]
 	cols := g.layout.Columns
@@ -308,24 +329,74 @@ func (g *groupData) add(row []csvfmt.Value, stage string) {
 	mapKey := name + "\x00" + key
 	e, ok := g.rows[mapKey]
 	if !ok {
-		g.rows[mapKey] = &entry{resource: name, key: key, cells: cells, version: version, tombstone: tombstone, stages: map[string]struct{}{stage: {}}}
-		return
+		e = &entry{resource: name, key: key, cells: cells, version: version, tombstone: tombstone, stages: map[string]struct{}{stage: {}}}
+		if rc.topNValuePos >= 0 {
+			e.topNEntity = topNEntity(row, rc, cols)
+			e.topNValue = row[rc.idx[rc.topNValuePos]].Bytes
+		}
+		g.rows[mapKey] = e
+		return nil
 	}
 	e.stages[stage] = struct{}{}
+	if rc.topNValuePos >= 0 {
+		return g.mergeTopN(e, row, rc, cells, version)
+	}
 	if rc.versionIdx >= 0 {
 		// Only the newest copy is kept: the largest measure version, or the latest property
 		// revision with a tombstone above a live copy of the same revision.
 		if version > e.version || (version == e.version && tombstone && !e.tombstone) {
 			e.cells, e.version, e.tombstone, e.conflict = cells, version, tombstone, ""
-			return
+			return nil
 		}
 		if version < e.version || tombstone != e.tombstone {
-			return
+			return nil
 		}
 	}
 	if e.conflict == "" {
 		e.conflict = compareCells(rc, e.cells, rc, cells)
 	}
+	return nil
+}
+
+// mergeTopN merges another copy of a _top_n_result data point into e the way a query does:
+// the copies are partial results, not replicas. e keeps the cells of the newest copy.
+func (g *groupData) mergeTopN(e *entry, row []csvfmt.Value, rc *resourceCols, cells []string, version int64) error {
+	// A measure's key columns are its entity tags followed by the timestamp.
+	ts := row[rc.keyIdx[len(topnschema.TagNames)]].Int
+	merged, err := g.topN.MergeTopNResults(e.topNEntity, ts, e.version, version, e.topNValue, row[rc.idx[rc.topNValuePos]].Bytes)
+	if err != nil {
+		return fmt.Errorf("merge the copies of %s [%s]: %w", e.resource, e.key, err)
+	}
+	e.topNValue = merged
+	if version > e.version {
+		e.cells, e.version = cells, version
+	}
+	return nil
+}
+
+// topNEntity returns the entity of a _top_n_result row, which its key columns start with.
+func topNEntity(row []csvfmt.Value, rc *resourceCols, cols []csvfmt.Column) []*modelv1.TagValue {
+	entity := make([]*modelv1.TagValue, 0, len(topnschema.TagNames))
+	for _, li := range rc.keyIdx[:len(topnschema.TagNames)] {
+		entity = append(entity, row[li].TagValue(cols[li].Type))
+	}
+	return entity
+}
+
+// renderTopN replaces the value cell of every merged _top_n_result data point by its
+// rendering, so that equal results compare equal.
+func (g *groupData) renderTopN() error {
+	for _, e := range g.rows {
+		if e.topNEntity == nil {
+			continue
+		}
+		rendered, err := g.topN.RenderTopNResult(e.topNEntity, e.topNValue)
+		if err != nil {
+			return fmt.Errorf("render %s [%s]: %w", e.resource, e.key, err)
+		}
+		e.cells[g.resources[e.resource].topNValuePos] = rendered
+	}
+	return nil
 }
 
 func (g *groupData) rowCount() int {
