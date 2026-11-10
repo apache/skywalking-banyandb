@@ -368,9 +368,13 @@ func TestSamplerPipelineUpdateRejection(t *testing.T) {
 }
 
 func samplerPipeline() *commonv1.TracePipelineConfig {
-	return &commonv1.TracePipelineConfig{Enabled: true, Plugins: []*commonv1.Plugin{
-		{Name: "s", Kind: &commonv1.Plugin_Sampler{Sampler: &commonv1.SamplerPlugin{Path: "s.so", AbiVersion: sdk.ABIVersion}}},
-	}}
+	return &commonv1.TracePipelineConfig{
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
+		Plugins: []*commonv1.Plugin{
+			{Name: "s", Kind: &commonv1.Plugin_Sampler{Sampler: &commonv1.SamplerPlugin{Path: "s.so", AbiVersion: sdk.ABIVersion}}},
+		},
+	}
 }
 
 func TestSamplerPipelineTraceWrites(t *testing.T) {

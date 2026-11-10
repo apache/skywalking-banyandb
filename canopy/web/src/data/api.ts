@@ -35,14 +35,19 @@ import type {
 
 import type { DataSource } from './DataSource.js';
 import { canopyPath } from '../runtime-config.js';
+import { SESSION_EXPIRED_EVENT } from '../auth/session-events.js';
 
 async function apiFetch<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(canopyPath(url), init);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
     try {
-      const body = await res.json() as { message?: string };
+      const body = await res.json() as { error?: string; message?: string };
       if (body.message) msg = body.message;
+      // Upstream credential failures also return 401; only Canopy session errors require sign-in.
+      if (res.status === 401 && body.error === 'unauthenticated') {
+        window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+      }
     } catch { /* ignore */ }
     throw new Error(msg);
   }

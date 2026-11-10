@@ -243,7 +243,8 @@ message TracePipelineConfig {
   }];
   // schema_name_regex is an RE2 pattern matched against schema names.
   string schema_name_regex = 7;
-  // enabled_events lists the pipeline-wide events to run.
+  // enabled_events explicitly selects MERGE and/or FINALIZE for the plugins chain.
+  // Empty or omitted means neither event runs. Stage rules are independent.
   repeated PipelineEvent enabled_events = 8 [(validate.rules).repeated.items.enum = {
     defined_only: true
     not_in: [0]
