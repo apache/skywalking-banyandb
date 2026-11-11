@@ -70,6 +70,8 @@ See `.env.example` for all env vars.
 - `CANOPY_AUTH_TOKENS_FILE` — alias for `auth.tokensFile` (see [API tokens](#api-tokens)).
 - `CANOPY_DEV_NOAUTH=true` — dev only, seeds admin/admin; fails boot in NODE_ENV=production
 - `BANYANDB_UPSTREAM_USERNAME/PASSWORD` — attach-if-configured service credential for every upstream request
+- `MONITOR_TARGET` — a standalone node's observability endpoint (default `http://127.0.0.1:2121`). The Monitor page scrapes its `/metrics`.
+- `CANOPY_MONITOR_ROLES` — comma-separated roles that may open the Monitor page (default `admin`), e.g. `admin,readonly`.
 
 ## Authentication
 

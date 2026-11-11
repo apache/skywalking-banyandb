@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Add a Canopy Monitor page for standalone nodes: CPU, memory, disk by path, write and query rates with average latency, errors, and storage per group, scraped from the node's `/metrics` through `GET /monitor/snapshot`. It is admin only unless `CANOPY_MONITOR_ROLES` opens it to other roles.
 - Add Canopy sampling pipeline management with Form/YAML editing, independent MERGE, FINALIZE and stage rules, and session-expiry recovery.
 - [Breaking Change] Trace sampling requires explicit MERGE/FINALIZE event selection; empty events no longer default to MERGE. Add `PIPELINE_EVENT_MERGE` to existing configurations that relied on the implicit default before upgrading. Stage-only pipelines remain supported.
 - Bound measure QL membership setup, skip proven-empty input, and reuse decoded buffers for eligible order-independent count scans.

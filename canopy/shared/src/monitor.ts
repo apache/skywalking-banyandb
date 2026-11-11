@@ -56,9 +56,17 @@ export interface MonitorPoint {
   readonly v: number;
 }
 
+// On-disk part bytes of one group, summed over its segments and shards.
+export interface MonitorGroupSize {
+  readonly name: string;
+  readonly catalog: 'measure' | 'stream' | 'trace';
+  readonly bytes: number;
+}
+
 export interface MonitorSnapshot {
   readonly mode: MonitorMode;
   readonly source: string;
   readonly scrapedAt: number;
   readonly nodes: readonly MonitorNode[];
+  readonly groups: readonly MonitorGroupSize[];
 }

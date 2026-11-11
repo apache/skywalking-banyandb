@@ -114,6 +114,25 @@ function buildStandaloneNode(samples: readonly Sample[], history: readonly Count
   };
 }
 
+const PART_BYTES = {
+  banyandb_measure_total_file_part_bytes: 'measure',
+  banyandb_stream_tst_total_file_part_bytes: 'stream',
+  banyandb_trace_tst_total_file_part_bytes: 'trace',
+} as const;
+
+function groupSizes(samples: readonly Sample[]) {
+  const sizes = new Map<string, { name: string; catalog: 'measure' | 'stream' | 'trace'; bytes: number }>();
+  for (const s of samples) {
+    const catalog = PART_BYTES[s.name as keyof typeof PART_BYTES];
+    if (!catalog || !s.labels.group) continue;
+    const key = `${catalog}/${s.labels.group}`;
+    const entry = sizes.get(key) ?? { name: s.labels.group, catalog, bytes: 0 };
+    entry.bytes += s.value;
+    sizes.set(key, entry);
+  }
+  return [...sizes.values()];
+}
+
 async function scrape(config: Config, reply: FastifyReply): Promise<string | undefined> {
   const fail = async (status: number, error: string, message: string): Promise<undefined> => {
     await reply.status(status).send({ error, message, path: '/metrics' });
@@ -170,6 +189,7 @@ export async function registerMonitor(app: FastifyInstance, config: Config): Pro
       source: id,
       scrapedAt: cur.t,
       nodes: [buildStandaloneNode(samples, history, id)],
+      groups: groupSizes(samples),
     };
   });
 }

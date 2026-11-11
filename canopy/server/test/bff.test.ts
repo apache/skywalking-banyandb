@@ -581,6 +581,9 @@ describe('/monitor/snapshot', () => {
     'banyandb_system_memory_state{kind="used_percent"} 0.6',
     'banyandb_system_disk{kind="used",path="/data/measure"} 400',
     'banyandb_system_disk{kind="total",path="/data/measure"} 1000',
+    'banyandb_measure_total_file_part_bytes{group="sw_metric",seg="s1",shard="0"} 300',
+    'banyandb_measure_total_file_part_bytes{group="sw_metric",seg="s1",shard="1"} 200',
+    'banyandb_stream_tst_total_file_part_bytes{group="sw_log",seg="s1",shard="0"} 70',
     `banyandb_liaison_grpc_total_started{group="g",method="query",service="measure"} ${queries}`,
     `banyandb_liaison_grpc_total_latency{group="g",method="query",service="measure"} ${latencySeconds}`,
     '',
@@ -637,6 +640,10 @@ describe('/monitor/snapshot', () => {
       disk: [{ path: '/data/measure', usedBytes: 400, totalBytes: 1000 }],
     });
     expect(first.nodes[0].cpuUsedCores).toBeUndefined();
+    expect(first.groups).toEqual([
+      { name: 'sw_metric', catalog: 'measure', bytes: 500 },
+      { name: 'sw_log', catalog: 'stream', bytes: 70 },
+    ]);
 
     now.mockReturnValue(base + 10_000);
     const second = (await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } })).json();
