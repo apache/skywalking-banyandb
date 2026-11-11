@@ -22,17 +22,23 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/banyand/trace"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	logical_trace "github.com/apache/skywalking-banyandb/pkg/query/logical/trace"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 )
 
 type recordingSink struct {
@@ -228,4 +234,61 @@ func TestTraceRevStreamReportsResourceExhaustion(t *testing.T) {
 	err = p.RevStream(context.Background(), bus.NewMessage(1, "not a request"), &recordingSink{})
 	require.EqualError(t, err, "invalid event data type")
 	require.False(t, errors.As(err, &failure))
+}
+
+// failingTraceService serves one trace whose storage query fails with queryErr.
+type failingTraceService struct {
+	trace.Service
+	queryErr error
+}
+
+func (s *failingTraceService) Trace(metadata *commonv1.Metadata) (trace.Trace, error) {
+	return &failingTrace{metadata: metadata, queryErr: s.queryErr}, nil
+}
+
+type failingTrace struct {
+	metadata *commonv1.Metadata
+	queryErr error
+}
+
+func (f *failingTrace) GetSchema() *databasev1.Trace {
+	return &databasev1.Trace{
+		Metadata:         f.metadata,
+		TraceIdTagName:   "trace_id",
+		SpanIdTagName:    "span_id",
+		TimestampTagName: "timestamp",
+		Tags: []*databasev1.TraceTagSpec{
+			{Name: "trace_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "span_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+			{Name: "timestamp", Type: databasev1.TagType_TAG_TYPE_TIMESTAMP},
+		},
+	}
+}
+
+func (f *failingTrace) GetIndexRules() []*databasev1.IndexRule { return nil }
+
+func (f *failingTrace) Query(context.Context, model.TraceQueryOptions) (model.TraceQueryResult, error) {
+	return nil, f.queryErr
+}
+
+// TestTraceRevStreamReportsExecutionResourceExhaustion pins that a query admitted and planned, whose storage
+// execution runs out of memory, fails with RESOURCE_EXHAUSTED, while any other execution error keeps its identity.
+func TestTraceRevStreamReportsExecutionResourceExhaustion(t *testing.T) {
+	run := func(queryErr error) error {
+		p := &traceQueryProcessor{traceService: &failingTraceService{queryErr: queryErr}, queryService: &queryService{log: logger.GetLogger("test")}}
+		req := &tracev1.QueryRequest{Name: "t", Groups: []string{"g"}, TimeRange: &modelv1.TimeRange{
+			Begin: timestamppb.New(time.Unix(0, 0)), End: timestamppb.New(time.Unix(3600, 0)),
+		}}
+		return p.RevStream(context.Background(), bus.NewMessage(1, req), &recordingSink{})
+	}
+
+	err := run(fmt.Errorf("load spans: %w", vectorized.ErrMemoryBudgetExceeded))
+	var failure *common.Error
+	require.ErrorAs(t, err, &failure)
+	require.Equal(t, modelv1.Status_STATUS_RESOURCE_EXHAUSTED, failure.Status())
+
+	diskErr := errors.New("disk read failed")
+	err = run(diskErr)
+	require.ErrorIs(t, err, diskErr)
+	require.False(t, errors.As(err, &failure), "an ordinary execution error must not be turned into a status")
 }
