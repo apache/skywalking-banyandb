@@ -20,7 +20,6 @@ package trace
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -35,11 +34,14 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-var errVectorizedTraceQueryMemoryBudgetExceeded = errors.New("vectorized trace query memory budget exceeded")
+// errVectorizedTraceQueryMemoryBudgetExceeded wraps vectorized.ErrMemoryBudgetExceeded, so the query reports
+// RESOURCE_EXHAUSTED rather than an internal error when the trace query memory cap is hit.
+var errVectorizedTraceQueryMemoryBudgetExceeded = fmt.Errorf("vectorized trace query memory budget exceeded: %w", vectorized.ErrMemoryBudgetExceeded)
 
 type vectorizedTraceQueryResult struct {
 	ctx              context.Context

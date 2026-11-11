@@ -153,7 +153,7 @@ func (r *Reloader) Start(ctx context.Context) error {
 		}
 	}
 
-	run.Go(ctx, "tls.reloader.watcher", r.log, func(_ context.Context) {
+	run.GoOrDie(ctx, "tls.reloader.watcher", r.log, func(_ context.Context) {
 		r.watchFiles()
 	})
 

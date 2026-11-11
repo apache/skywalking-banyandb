@@ -1449,7 +1449,12 @@ func (r *SchemaRegistry) processWatchSession(ctx context.Context,
 				close(recvCh)
 				return
 			}
-			recvCh <- resp
+			// The session stops reading recvCh once ctx is done; a send without this would block forever.
+			select {
+			case recvCh <- resp:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 

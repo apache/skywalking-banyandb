@@ -240,11 +240,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	// FINALIZE event, so starting it unconditionally-under-the-flag is safe.
 	if s.option.nativePipelineEnabled {
 		s.finalizeCloser = run.NewCloser(1)
-		// Launch via run.Go (not a bare `go`) so a panic in the scan loop is recovered
-		// and reported instead of crashing the process; the loop's deferred closer.Done
-		// still fires during panic unwinding. It uses the run.Closer for cancellation,
+		// Launch via run.GoOrDie: a panic in the scan loop is reported, then crashes the
+		// process instead of leaving finalize sampling silently stopped. It uses the run.Closer for cancellation,
 		// hence the contextcheck suppression (mirrors the tsTable background loops).
-		run.Go(context.Background(), "trace.finalize-scanner", s.l, func(_ context.Context) { //nolint:contextcheck
+		run.GoOrDie(context.Background(), "trace.finalize-scanner", s.l, func(_ context.Context) { //nolint:contextcheck
 			s.schemaRepo.finalizeScanLoop(s.finalizeCloser, defaultFinalizeScanInterval) //nolint:contextcheck
 		})
 	}

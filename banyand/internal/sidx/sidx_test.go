@@ -268,7 +268,7 @@ func TestSIDX_Take_File_Snapshot(t *testing.T) {
 
 		raw := idx.(*sidx)
 		originalDir := raw.root
-		flushIntro, err := raw.Flush(map[uint64]struct{}{2: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{2: {}})
 		require.NoError(t, err)
 		require.NotNil(t, flushIntro)
 		raw.IntroduceFlushed(flushIntro)
@@ -366,7 +366,7 @@ func TestSIDX_PartPaths(t *testing.T) {
 	writeTestData(t, raw, req, 1, flushedID)
 	writeTestData(t, raw, req, 2, memOnlyID)
 
-	flushIntro, err := raw.Flush(map[uint64]struct{}{flushedID: {}})
+	flushIntro, err := raw.Flush(nil, map[uint64]struct{}{flushedID: {}})
 	require.NoError(t, err)
 	require.NotNil(t, flushIntro)
 	raw.IntroduceFlushed(flushIntro)

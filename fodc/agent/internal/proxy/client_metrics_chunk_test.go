@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -251,8 +252,10 @@ func TestProxyClient_MetricsStreamRestart_KeepsConcurrentReconnect(t *testing.T)
 
 	opening := make(chan struct{})
 	release := make(chan struct{})
+	var openOnce sync.Once
 	pc := newStreamRestartClient(t, func(context.Context, ...grpc.CallOption) (fodcv1.FODCService_StreamMetricsClient, error) {
-		close(opening)
+		// The replacement stream ends at once, so the client reopens it again: only the first open signals.
+		openOnce.Do(func() { close(opening) })
 		<-release
 		return newMockStreamMetricsClient(ctx), nil
 	})
