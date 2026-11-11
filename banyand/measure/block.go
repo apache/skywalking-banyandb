@@ -1200,39 +1200,39 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	tagFamilyMap := make(map[string]*columnFamily)
+	// Families and columns are found by index, not by pointer: appending a new family or column may
+	// reallocate the slice, and a pointer taken before that would strand the values appended through it.
+	familyIdx := make(map[string]int, len(bi.tagFamilies))
 	for i := range bi.tagFamilies {
-		tagFamilyMap[bi.tagFamilies[i].name] = &bi.tagFamilies[i]
+		familyIdx[bi.tagFamilies[i].name] = i
 	}
 
 	for _, tf := range b.tagFamilies {
-		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
-			columnMap := make(map[string]*column)
-			for i := range existingTagFamily.columns {
-				columnMap[existingTagFamily.columns[i].name] = &existingTagFamily.columns[i]
-			}
-
-			for _, c := range tf.columns {
-				if existingColumn, exists := columnMap[c.name]; exists {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
-				} else {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					col := column{name: c.name, valueType: c.valueType}
-					for j := 0; j < existDataSize; j++ {
-						col.values = append(col.values, nil)
-					}
-					col.values = append(col.values, c.values[b.idx:offset]...)
-					existingTagFamily.columns = append(existingTagFamily.columns, col)
-				}
-			}
-		} else {
+		fi, exists := familyIdx[tf.name]
+		if !exists {
 			appendTagFamilies(tf)
+			continue
+		}
+		columnIdx := make(map[string]int, len(bi.tagFamilies[fi].columns))
+		for i := range bi.tagFamilies[fi].columns {
+			columnIdx[bi.tagFamilies[fi].columns[i].name] = i
+		}
+		for _, c := range tf.columns {
+			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			if ci, exists := columnIdx[c.name]; exists {
+				existingColumn := &bi.tagFamilies[fi].columns[ci]
+				existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
+				continue
+			}
+			col := column{name: c.name, valueType: c.valueType}
+			for j := 0; j < existDataSize; j++ {
+				col.values = append(col.values, nil)
+			}
+			col.values = append(col.values, c.values[b.idx:offset]...)
+			bi.tagFamilies[fi].columns = append(bi.tagFamilies[fi].columns, col)
 		}
 	}
-	for k := range tagFamilyMap {
-		delete(tagFamilyMap, k)
-	}
+	tagFamilyMap := make(map[string]*columnFamily, len(b.tagFamilies))
 	for i := range b.tagFamilies {
 		tagFamilyMap[b.tagFamilies[i].name] = &b.tagFamilies[i]
 	}
@@ -1292,22 +1292,22 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	fieldMap := make(map[string]*column)
+	// Fields are found by index, not by pointer: appending a new field may reallocate bi.field.columns.
+	fieldIdx := make(map[string]int, len(bi.field.columns))
 	for i := range bi.field.columns {
-		fieldMap[bi.field.columns[i].name] = &bi.field.columns[i]
+		fieldIdx[bi.field.columns[i].name] = i
 	}
 
 	for _, c := range b.field.columns {
-		if existingField, exists := fieldMap[c.name]; exists {
+		if fi, exists := fieldIdx[c.name]; exists {
 			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			existingField := &bi.field.columns[fi]
 			existingField.values = append(existingField.values, c.values[b.idx:offset]...)
 		} else {
 			appendFields(c)
 		}
 	}
-	for k := range fieldMap {
-		delete(fieldMap, k)
-	}
+	fieldMap := make(map[string]*column, len(b.field.columns))
 	for i := range b.field.columns {
 		fieldMap[b.field.columns[i].name] = &b.field.columns[i]
 	}
