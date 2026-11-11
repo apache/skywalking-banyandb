@@ -119,27 +119,92 @@ func TestMergeNowDefaultsToRealClock(t *testing.T) {
 	assert.False(t, actual.After(after))
 }
 
-// TestFinalizeEventEnabled_Matrix verifies the finalize event gate. Unlike MERGE,
-// an empty enabled_events list must NOT default finalize on.
-func TestFinalizeEventEnabled_Matrix(t *testing.T) {
-	tests := []struct {
-		name   string
-		events []commonv1.PipelineEvent
-		want   bool
-	}{
-		{"empty defaults off", nil, false},
-		{"merge only", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}, false},
-		{"finalize only", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, true},
-		{"both", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE, commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, true},
+func TestPipelineEventEnabled_Matrix(t *testing.T) {
+	for _, staged := range []bool{false, true} {
+		for _, tc := range []struct {
+			name     string
+			events   []commonv1.PipelineEvent
+			merge    bool
+			finalize bool
+		}{
+			{"omitted", nil, false, false},
+			{"empty", []commonv1.PipelineEvent{}, false, false},
+			{"merge", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}, true, false},
+			{"finalize", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, false, true},
+			{"both", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE, commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, true, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				cfg := &commonv1.TracePipelineConfig{EnabledEvents: tc.events}
+				if staged {
+					cfg.Stages = []*commonv1.StageRule{{Stage: "hot"}}
+				}
+				assert.Equal(t, tc.merge, mergeEventEnabled(cfg))
+				assert.Equal(t, tc.finalize, finalizeEventEnabled(cfg))
+			})
+		}
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := &commonv1.TracePipelineConfig{EnabledEvents: tt.events}
-			assert.Equal(t, tt.want, finalizeEventEnabled(cfg))
+	assert.False(t, mergeEventEnabled(nil))
+	assert.False(t, finalizeEventEnabled(nil))
+}
+
+func TestReconcilePipeline_EventChangesWithUnchangedPlugins(t *testing.T) {
+	resetRegistries()
+	defer resetRegistries()
+
+	const group = "event-transitions"
+	sr := makeDataSchemaRepo("")
+	sp := &commonv1.SamplerPlugin{Path: "unchanged.so"}
+	plugin := &commonv1.Plugin{Name: "sampler", Kind: &commonv1.Plugin_Sampler{Sampler: sp}}
+	sampler := &dummySampler{}
+	replaceSamplersForGroup(group, []namedSampler{{
+		name: plugin.Name, configHash: computeConfigHash(sp), path: sp.Path, sampler: sampler,
+	}})
+	// Stage configuration must not affect these gates; this test does not exercise lifecycle execution.
+	stages := []*commonv1.StageRule{{Stage: "hot", Plugins: []*commonv1.Plugin{plugin}}}
+	cfg := &commonv1.TracePipelineConfig{Enabled: true, Plugins: []*commonv1.Plugin{plugin}, Stages: stages}
+
+	for index, transition := range []struct {
+		name     string
+		events   []commonv1.PipelineEvent
+		merge    bool
+		finalize bool
+	}{
+		{"both", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE, commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, true, true},
+		{"finalize", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE}, false, true},
+		{"merge", []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE}, true, false},
+		{"stage only", nil, false, false},
+	} {
+		t.Run(transition.name, func(t *testing.T) {
+			cfg.EnabledEvents = transition.events
+			grace := time.Duration(index+1) * time.Minute
+			cfg.MergeGrace = durationpb.New(grace)
+			cfg.FinalizeGrace = durationpb.New(grace * 2)
+			sr.reconcilePipeline(group, cfg)
+			assert.Equal(t, transition.merge, mergeEventEnabledForGroup(group))
+			localFinalizeConfigRegistry.mu.RLock()
+			_, finalizeConfigured := localFinalizeConfigRegistry.m[group]
+			localFinalizeConfigRegistry.mu.RUnlock()
+			assert.Equal(t, transition.finalize, finalizeConfigured)
+			if transition.merge || transition.finalize {
+				require.Len(t, lookupSamplers(group), 1)
+				assert.Same(t, sampler, lookupSamplers(group)[0])
+				assert.Equal(t, grace.Nanoseconds(), lookupMergeGrace(group))
+			} else {
+				assert.Empty(t, lookupSamplers(group))
+				assert.Zero(t, lookupMergeGrace(group))
+			}
+			if transition.finalize {
+				assert.Equal(t, (grace * 2).Nanoseconds(), lookupFinalizeGrace(group))
+			} else {
+				assert.Zero(t, lookupFinalizeGrace(group))
+			}
+			assert.Equal(t, stages, cfg.Stages)
 		})
 	}
-	// mergeEventEnabled semantics unchanged: empty defaults on.
-	assert.True(t, mergeEventEnabled(&commonv1.TracePipelineConfig{}), "empty events must default MERGE on")
+	cfg.Stages = nil
+	sr.reconcilePipeline(group, cfg)
+	assert.Empty(t, lookupSamplers(group))
+	assert.False(t, mergeEventEnabledForGroup(group))
 }
 
 // TestSetFinalizeGrace_RoundTripAndDeleteOnZero mirrors the merge_grace registry

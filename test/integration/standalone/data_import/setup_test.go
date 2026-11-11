@@ -134,7 +134,7 @@ var _ = ginkgo.AfterSuite(func() {
 // in the given groups (every group of artifactA when none is given) and returns the export.
 func expectRoundTrip(addr string, groups ...string) string {
 	return transfertest.ExportEventually(addr, workDir, func(g gomega.Gomega, dir string) {
-		transfertest.ExpectRoundTrip(g, artifactA, dir, groups...)
+		transfertest.ExpectRoundTrip(g, topncheck.RowDiff{}, artifactA, dir, groups...)
 	})
 }
 

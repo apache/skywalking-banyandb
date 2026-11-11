@@ -79,6 +79,42 @@ export interface LifecycleStage {
   readonly replicas?: number;
 }
 
+/** Events supported by common.v1.TracePipelineConfig. */
+export type PipelineEvent = 'PIPELINE_EVENT_UNSPECIFIED' | 'PIPELINE_EVENT_MERGE' | 'PIPELINE_EVENT_FINALIZE';
+
+/** Native sampler configuration; path is a basename in the trusted plugin directory. */
+export interface SamplerPlugin {
+  readonly path: string;
+  readonly symbol?: string;
+  readonly abiVersion: number;
+  readonly config?: Readonly<Record<string, unknown>>;
+}
+
+/** One named link in the ordered sampling chain. */
+export interface PipelinePlugin {
+  readonly name: string;
+  readonly sampler?: SamplerPlugin;
+}
+
+/** Retention chain bound to a group lifecycle stage. */
+export interface PipelineStageRule {
+  readonly stage: string;
+  readonly plugins?: readonly PipelinePlugin[];
+}
+
+/** Group-scoped sampling config, using camelCase protojson and duration strings. */
+export interface TracePipelineConfig {
+  readonly enabled?: boolean;
+  readonly plugins?: readonly PipelinePlugin[];
+  readonly mergeGrace?: string;
+  readonly finalizeGrace?: string;
+  readonly stages?: readonly PipelineStageRule[];
+  readonly schemaNames?: readonly string[];
+  readonly schemaNameRegex?: string;
+  /** Explicit MERGE/FINALIZE selection; empty or omitted disables both, independently of stage rules. */
+  readonly enabledEvents?: readonly PipelineEvent[];
+}
+
 export interface Group {
   readonly name: string;
   readonly catalog: 'CATALOG_STREAM' | 'CATALOG_MEASURE' | 'CATALOG_PROPERTY' | 'CATALOG_TRACE' | 'CATALOG_UNSPECIFIED';
@@ -90,6 +126,7 @@ export interface Group {
     readonly defaultStages?: string[];
     readonly replicas?: number;
   };
+  readonly pipeline?: TracePipelineConfig;
   readonly updatedAt?: string;
 }
 

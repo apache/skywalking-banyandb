@@ -30,6 +30,7 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/importer"
@@ -125,7 +126,7 @@ var _ = ginkgo.Describe("CSV import with a parallelism of one and replayed", gin
 		gomega.Expect(traceRows).To(gomega.BeNumerically(">", 0))
 		transfertest.ExportEventually(target.addr, workDir, func(g gomega.Gomega, dir string) {
 			// A replay changes no measure, Top-N result or property row.
-			transfertest.ExpectRoundTrip(g, first, dir, transfertest.MeasureGroup, transfertest.IndexModeGroup, transfertest.PropertyGroup)
+			transfertest.ExpectRoundTrip(g, topncheck.RowDiff{}, first, dir, transfertest.MeasureGroup, transfertest.IndexModeGroup, transfertest.PropertyGroup)
 			g.Expect(decodedTopNResults(g, dir, transfertest.MeasureGroup)).
 				To(gomega.Equal(decodedTopNResults(g, first, transfertest.MeasureGroup)), "a replay changes no decoded Top-N result")
 			b := transfertest.ReadArtifact(dir, false)

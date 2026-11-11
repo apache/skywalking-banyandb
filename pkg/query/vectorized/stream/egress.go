@@ -92,41 +92,64 @@ func BuildElementsFromBatch(batch *vectorized.RecordBatch,
 		if batch.Selection != nil {
 			row = int(batch.Selection[active])
 		}
-		elementID := ColumnToElementID(elemCol.Data()[row])
-		e := &streamv1.Element{
-			Timestamp: timestamppb.New(time.Unix(0, tsCol.Data()[row])),
-			ElementId: hex.EncodeToString(convert.Uint64ToBytes(elementID)),
-		}
-		for _, proj := range projectionTags {
-			tagFamily := &modelv1.TagFamily{Name: proj.Family}
-			e.TagFamilies = append(e.TagFamilies, tagFamily)
-			for _, tagName := range proj.Names {
-				// A column carries nullness in its validity bitmap, which is
-				// independent of the stored cell. AppendColumnRange appends the source
-				// value unconditionally and only then marks the destination row null,
-				// so a null row can retain a non-nil pointer — reading Data() alone
-				// would emit that stale value as if it were real. The bitmap is the
-				// source of truth; the nil check stays as a guard for producers that
-				// leave a cell empty without marking it.
-				var tagValue *modelv1.TagValue
-				if colIdx, ok := schema.TagIndex(proj.Family, tagName); ok {
-					tagCol := batch.Columns[colIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
-					if !tagCol.IsNull(row) {
-						tagValue = tagCol.Data()[row]
-					}
-				}
-				if tagValue == nil {
-					tagValue = pbv1.NullTagValue
-				}
-				tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
-					Key:   tagName,
-					Value: tagValue,
-				})
-			}
-		}
-		elements = append(elements, e)
+		elements = append(elements, buildElementAt(batch, projectionTags, tsCol, elemCol, row))
 	}
 	return elements, nil
+}
+
+// BuildElementFromBatchRow materializes one physical row of a Stream batch.
+func BuildElementFromBatchRow(batch *vectorized.RecordBatch, projectionTags []model.TagProjection,
+	row int,
+) (*streamv1.Element, error) {
+	if batch == nil || row < 0 || row >= batch.Len {
+		return nil, fmt.Errorf("BuildElementFromBatchRow: invalid row %d", row)
+	}
+	tsIdx, elemIdx := batch.Schema.TimestampIndex(), batch.Schema.ElementIDIndex()
+	if tsIdx < 0 || elemIdx < 0 {
+		return nil, fmt.Errorf("BuildElementFromBatchRow: batch schema missing timestamp/elementID column")
+	}
+	tsCol := batch.Columns[tsIdx].(*vectorized.TypedColumn[int64])
+	elemCol := batch.Columns[elemIdx].(*vectorized.TypedColumn[int64])
+	return buildElementAt(batch, projectionTags, tsCol, elemCol, row), nil
+}
+
+func buildElementAt(batch *vectorized.RecordBatch, projectionTags []model.TagProjection,
+	tsCol, elemCol *vectorized.TypedColumn[int64], row int,
+) *streamv1.Element {
+	schema := batch.Schema
+	elementID := ColumnToElementID(elemCol.Data()[row])
+	e := &streamv1.Element{
+		Timestamp: timestamppb.New(time.Unix(0, tsCol.Data()[row])),
+		ElementId: hex.EncodeToString(convert.Uint64ToBytes(elementID)),
+	}
+	for _, proj := range projectionTags {
+		tagFamily := &modelv1.TagFamily{Name: proj.Family}
+		e.TagFamilies = append(e.TagFamilies, tagFamily)
+		for _, tagName := range proj.Names {
+			// A column carries nullness in its validity bitmap, which is
+			// independent of the stored cell. AppendColumnRange appends the source
+			// value unconditionally and only then marks the destination row null,
+			// so a null row can retain a non-nil pointer — reading Data() alone
+			// would emit that stale value as if it were real. The bitmap is the
+			// source of truth; the nil check stays as a guard for producers that
+			// leave a cell empty without marking it.
+			var tagValue *modelv1.TagValue
+			if colIdx, ok := schema.TagIndex(proj.Family, tagName); ok {
+				tagCol := batch.Columns[colIdx].(*vectorized.TypedColumn[*modelv1.TagValue])
+				if !tagCol.IsNull(row) {
+					tagValue = tagCol.Data()[row]
+				}
+			}
+			if tagValue == nil {
+				tagValue = pbv1.NullTagValue
+			}
+			tagFamily.Tags = append(tagFamily.Tags, &modelv1.Tag{
+				Key:   tagName,
+				Value: tagValue,
+			})
+		}
+	}
+	return e
 }
 
 // BuildElementsFromBatches concatenates BuildElementsFromBatch over a slice of

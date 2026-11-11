@@ -101,7 +101,7 @@ func (s *Scheduler) Register(ctx context.Context, name string, options cron.Pars
 	}
 	t := newTask(ctx, s.l.Named(name), name, clock, schedule, action)
 	s.tasks[name] = t
-	run.Go(ctx, "scheduler-task-"+name, s.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "scheduler-task-"+name, s.l, func(_ context.Context) {
 		t.run()
 		t.close()
 		s.Lock()

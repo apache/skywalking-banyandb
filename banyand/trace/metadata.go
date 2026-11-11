@@ -295,22 +295,12 @@ func (sr *schemaRepo) OnDelete(metadata schema.Metadata) {
 	}
 }
 
-// mergeEventEnabled reports whether cfg applies to the merge-time pipeline event.
-// v1 only implements the in-merge filter, so a config that does not enable
-// PIPELINE_EVENT_MERGE installs no samplers. An empty enabled_events list defaults
-// to MERGE for backward compatibility.
+// mergeEventEnabled reports whether MERGE is explicitly enabled.
 func mergeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
-	events := cfg.GetEnabledEvents()
-	if len(events) == 0 {
-		return true
-	}
-	return slices.Contains(events, commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
+	return slices.Contains(cfg.GetEnabledEvents(), commonv1.PipelineEvent_PIPELINE_EVENT_MERGE)
 }
 
-// finalizeEventEnabled reports whether cfg applies to the scheduled finalization
-// pass. Unlike MERGE, an empty enabled_events list does NOT default finalize on:
-// finalization is an extra background procedure and must be opted into explicitly
-// (empty list keeps only the backward-compatible MERGE default).
+// finalizeEventEnabled reports whether FINALIZE is explicitly enabled.
 func finalizeEventEnabled(cfg *commonv1.TracePipelineConfig) bool {
 	return slices.Contains(cfg.GetEnabledEvents(), commonv1.PipelineEvent_PIPELINE_EVENT_FINALIZE)
 }
@@ -371,8 +361,8 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		return
 	}
 	// Idempotent skip: if the desired identity list (name+configHash in order) equals
-	// the currently registered one, this is a redundant watch-replay re-apply. Return
-	// early with no reload, no UseHost, no teardown, no swap, and no metrics churn.
+	// the currently registered one, update event settings without reloading plugins,
+	// invoking UseHost, tearing down telemetry, swapping samplers, or metrics churn.
 	// This is defense-in-depth for the same-group re-reconcile race on top of the
 	// once-only-UseHost invariant enforced inside loadSamplerPlugin.
 	desired := make([]nameHash, 0, len(cfg.GetPlugins()))
@@ -399,6 +389,7 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 			}
 		}
 		if identical {
+			reconcilePipelineEvents(group, cfg)
 			return
 		}
 	}
@@ -466,6 +457,17 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 		})
 	}
 	replaceSamplersForGroup(group, newSet)
+	reconcilePipelineEvents(group, cfg)
+	sr.samplerMeter.setActiveCount(group, len(newSet))
+	if isUpdate {
+		sr.samplerMeter.incUpdateTotal(group, "success")
+	} else {
+		sr.samplerMeter.incRegisterTotal(group, "success")
+	}
+}
+
+// reconcilePipelineEvents updates event gates and grace periods independently of plugin identity.
+func reconcilePipelineEvents(group string, cfg *commonv1.TracePipelineConfig) {
 	var graceNs int64
 	if gd := cfg.GetMergeGrace(); gd != nil {
 		graceNs = gd.AsDuration().Nanoseconds()
@@ -487,12 +489,6 @@ func (sr *schemaRepo) reconcilePipeline(group string, cfg *commonv1.TracePipelin
 	} else {
 		setFinalizeGraceForGroup(group, 0)
 		setFinalizeConfigForGroup(group, nil)
-	}
-	sr.samplerMeter.setActiveCount(group, len(newSet))
-	if isUpdate {
-		sr.samplerMeter.incUpdateTotal(group, "success")
-	} else {
-		sr.samplerMeter.incRegisterTotal(group, "success")
 	}
 }
 

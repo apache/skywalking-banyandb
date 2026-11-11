@@ -216,12 +216,17 @@ func validateTracePipelineConfig(cfg *commonv1.TracePipelineConfig) error {
 			return err
 		}
 	}
+	hasStageSampler := false
 	for idx, stage := range cfg.GetStages() {
 		for jdx, plugin := range stage.GetPlugins() {
 			if err := validatePipelineSampler(plugin, fmt.Sprintf("stages[%d].plugins[%d]", idx, jdx)); err != nil {
 				return err
 			}
+			hasStageSampler = hasStageSampler || plugin.GetSampler() != nil
 		}
+	}
+	if cfg.GetEnabled() && len(cfg.GetEnabledEvents()) == 0 && !hasStageSampler {
+		return errors.New("enabled pipeline must select MERGE or FINALIZE, or configure a stage sampler chain")
 	}
 	return nil
 }

@@ -18,7 +18,7 @@
  */
 
 import type {
-  Group, IntervalRule, LifecycleStage,
+  Group, IntervalRule, LifecycleStage, TracePipelineConfig,
   StreamSchema, MeasureSchema, TraceSchema, PropertySchema,
   IndexRuleSchema, IndexRuleBindingSchema,
   TagFamilySpec, FieldSpec, TagType, FieldType, CompressMethod, EncodingMethod, IndexType,
@@ -43,6 +43,7 @@ export interface CreateGroupRequest {
   readonly group: {
     readonly metadata: { readonly name: string };
     readonly catalog: Group['catalog'];
+    readonly pipeline?: TracePipelineConfig;
     readonly resourceOpts: {
       readonly shardNum: number;
       readonly replicas?: number;
@@ -58,6 +59,7 @@ export interface UpdateGroupRequest {
   readonly group: {
     readonly metadata: { readonly name: string };
     readonly catalog?: Group['catalog'];
+    readonly pipeline?: TracePipelineConfig;
     readonly resourceOpts: {
       readonly shardNum: number;
       readonly replicas?: number;

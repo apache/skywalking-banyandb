@@ -1414,7 +1414,7 @@ type sidxFlushErrFake struct {
 	fakeSIDX
 }
 
-func (f *sidxFlushErrFake) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
+func (f *sidxFlushErrFake) Flush(<-chan struct{}, map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
 	return nil, errors.New("sidx flush failed")
 }
 
