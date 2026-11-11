@@ -22,6 +22,7 @@ import { loadConfig } from './config.js';
 import { registerSession } from './plugins/session.js';
 import { registerStatic } from './plugins/static.js';
 import { registerProxy } from './plugins/proxy.js';
+import { registerMonitor } from './plugins/monitor.js';
 import { registerAuth } from './routes/auth.js';
 
 const config = loadConfig();
@@ -60,6 +61,7 @@ async function start() {
     await registerSession(scopedApp, config);
     await registerAuth(scopedApp, config);
     await registerProxy(scopedApp, config);
+    await registerMonitor(scopedApp, config);
     await registerStatic(scopedApp, config);
   }, config.basePath === '/' ? {} : { prefix: config.basePath });
 
