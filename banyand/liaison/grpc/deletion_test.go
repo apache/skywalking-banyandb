@@ -27,6 +27,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -153,6 +155,31 @@ func TestHasNonEmptyResources(t *testing.T) {
 		assert.Contains(t, checkErr.Error(), "cold-0 panic")
 		assert.False(t, hasResources, "the bool return is irrelevant when the error is non-nil; caller must check err first")
 	})
+}
+
+// TestInitPropertyStorageConcurrentCreate covers two liaisons starting together:
+// both see the internal group and property schema as missing, and the slower one
+// gets AlreadyExists on create. That must not fail startup.
+func TestInitPropertyStorageConcurrentCreate(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// Rebuild the error the way a remote schema server returns it over gRPC.
+	remoteAlreadyExists := status.Error(codes.AlreadyExists, "banyandb: resource already exists")
+
+	mockGroup := schema.NewMockGroup(ctrl)
+	mockGroup.EXPECT().GetGroup(gomock.Any(), internalDeletionTaskGroup).Return(nil, schema.ErrGRPCResourceNotFound)
+	mockGroup.EXPECT().CreateGroup(gomock.Any(), gomock.Any()).Return(int64(0), remoteAlreadyExists)
+	mockProperty := schema.NewMockProperty(ctrl)
+	mockProperty.EXPECT().GetProperty(gomock.Any(), gomock.Any()).Return(nil, schema.ErrGRPCResourceNotFound)
+	mockProperty.EXPECT().CreateProperty(gomock.Any(), gomock.Any()).Return(remoteAlreadyExists)
+
+	mockRepo := metadata.NewMockRepo(ctrl)
+	mockRepo.EXPECT().GroupRegistry().Return(mockGroup).AnyTimes()
+	mockRepo.EXPECT().PropertyRegistry().Return(mockProperty).AnyTimes()
+
+	m := &groupDeletionTaskManager{schemaRegistry: mockRepo}
+	require.NoError(t, m.initPropertyStorage(context.Background()))
 }
 
 func TestDeletion(t *testing.T) {
