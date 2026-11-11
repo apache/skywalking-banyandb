@@ -324,7 +324,7 @@ func (p *pub) Serve() run.StopNotify {
 		certUpdateCh := p.caCertReloader.GetUpdateChannel()
 		stopCh := p.closer.CloseNotify()
 		if p.closer.AddRunning() {
-			run.Go(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
+			run.GoOrDie(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
 				defer p.closer.Done()
 				for {
 					select {
