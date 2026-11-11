@@ -27,7 +27,7 @@ import { canopyPath } from '../runtime-config.js';
 import { apiDataSource } from '../data/api.js';
 import {
   IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
-  IconProperties, IconPipelines, IconQuery, IconChevron, IconCollapse, IconSignOut,
+  IconProperties, IconPipelines, IconSampling, IconQuery, IconChevron, IconCollapse, IconSignOut,
   IconShield, IconViewer, IconIndex, IconGroup, IconTopN,
 } from './icons.js';
 
@@ -598,6 +598,11 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
                   <span className="nav-ico"><IconTopN size={16} /></span>
                   <span className="nav-label">TopN</span>
                   <span className="nav-count">{topNCount}</span>
+                </button>
+                <button className={'nav-row lvl-1' + (active.startsWith('/pipelines/sampling') ? ' is-active' : '')}
+                  style={{ paddingLeft: 28 }} onClick={() => navigate('/pipelines/sampling')} title="Sampling">
+                  <span className="nav-ico"><IconSampling size={16} /></span><span className="nav-label">Sampling</span>
+                  <span className="nav-count">{traceGroups.filter((group) => group.pipeline).length}</span>
                 </button>
               </div>
             </div>

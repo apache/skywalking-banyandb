@@ -17,6 +17,8 @@
  * under the License.
  */
 import React, { createContext, useContext, useEffect, useState } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
+import { SESSION_EXPIRED_EVENT } from './session-events.js';
 import { canopyPath } from '../runtime-config.js';
 
 export interface Session {
@@ -38,15 +40,28 @@ const AuthContext = createContext<AuthState>({
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const queryClient = useContext(QueryClientContext);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let ignoreProbe = false;
+    const expireSession = () => {
+      ignoreProbe = true;
+      setSession(null);
+      setLoading(false);
+      queryClient?.clear();
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, expireSession);
     fetch(canopyPath('/auth/session'))
       .then(res => (res.ok ? res.json() as Promise<Session> : null))
-      .then(s => { setSession(s); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, []);
+      .then(s => { if (!ignoreProbe) { setSession(s); setLoading(false); } })
+      .catch(() => { if (!ignoreProbe) setLoading(false); });
+    return () => {
+      ignoreProbe = true;
+      window.removeEventListener(SESSION_EXPIRED_EVENT, expireSession);
+    };
+  }, [queryClient]);
 
   return (
     <AuthContext.Provider value={{ session, loading, setSession }}>

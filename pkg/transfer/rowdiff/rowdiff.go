@@ -17,7 +17,8 @@
 
 // Package rowdiff compares two CSV artifacts as sets of logical rows: A is a source export
 // and B the re-export of the cluster A was imported into. Rows are keyed per catalog, replicas
-// are deduplicated, measure versions are reduced to the newest one, and cells are compared as
+// are deduplicated, measure versions are reduced to the newest one (with Options.TopN, the
+// copies of a _top_n_result data point are merged instead, see TopN), and cells are compared as
 // their canonical CSV encoding, with columns aligned by header name. A property is keyed by
 // its entity (group, _name, _id) and only its latest revision is compared (the largest
 // _mod_revision; at an equal revision a tombstone wins over a live copy), with _delete_time
@@ -34,6 +35,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
+
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 )
 
 // Diff kinds.
@@ -48,8 +51,25 @@ const (
 
 // Options configures Compare.
 type Options struct {
+	// TopN merges and renders the values of the _top_n_result measure. When it is set, every
+	// copy of a data point of that measure is merged and the merged values are compared as
+	// rendered; nil compares the measure like any other.
+	TopN TopN
 	// Groups restricts the comparison to these groups; empty means every group present in A.
 	Groups []string
+}
+
+// TopN merges and renders the values of the _top_n_result measure. A data point of it is
+// stored as one partial result per source shard and version, which a query merges, and an
+// import may route those copies into one shard, where a part merge combines them and may
+// reorder tied items. rowdiff cannot decode the engine encoding itself: that needs
+// banyand/measure.
+type TopN interface {
+	// MergeTopNResults combines two stored values of one data point the way a query does.
+	MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightVersion int64, left, right []byte) ([]byte, error)
+	// RenderTopNResult renders a value so that equal results render equally, whatever the
+	// order of their tied items.
+	RenderTopNResult(entity []*modelv1.TagValue, value []byte) (string, error)
 }
 
 // Diff is one difference between the artifacts. Key is the readable logical key of the row,
@@ -117,7 +137,7 @@ func Compare(dirA, dirB string, opts Options) (*Report, error) {
 		}
 	}
 	ctx := context.Background()
-	a, err := loadArtifact(ctx, dirA, scope)
+	a, err := loadArtifact(ctx, dirA, scope, opts.TopN)
 	if err != nil {
 		return nil, fmt.Errorf("artifact A: %w", err)
 	}
@@ -127,7 +147,7 @@ func Compare(dirA, dirB string, opts Options) (*Report, error) {
 			scope[k.group] = true
 		}
 	}
-	b, err := loadArtifact(ctx, dirB, scope)
+	b, err := loadArtifact(ctx, dirB, scope, opts.TopN)
 	if err != nil {
 		return nil, fmt.Errorf("artifact B: %w", err)
 	}
