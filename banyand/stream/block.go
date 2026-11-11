@@ -678,39 +678,39 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	tagFamilyMap := make(map[string]*tagFamily)
+	// Families and tags are found by index, not by pointer: appending a new family or tag may reallocate
+	// the slice, and a pointer taken before that would strand the values appended through it.
+	familyIdx := make(map[string]int, len(bi.tagFamilies))
 	for i := range bi.tagFamilies {
-		tagFamilyMap[bi.tagFamilies[i].name] = &bi.tagFamilies[i]
+		familyIdx[bi.tagFamilies[i].name] = i
 	}
 
 	for _, tf := range b.tagFamilies {
-		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
-			columnMap := make(map[string]*tag)
-			for i := range existingTagFamily.tags {
-				columnMap[existingTagFamily.tags[i].name] = &existingTagFamily.tags[i]
-			}
-
-			for _, c := range tf.tags {
-				if existingColumn, exists := columnMap[c.name]; exists {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
-				} else {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					col := tag{name: c.name, valueType: c.valueType}
-					for j := 0; j < existDataSize; j++ {
-						col.values = append(col.values, nil)
-					}
-					col.values = append(col.values, c.values[b.idx:offset]...)
-					existingTagFamily.tags = append(existingTagFamily.tags, col)
-				}
-			}
-		} else {
+		fi, exists := familyIdx[tf.name]
+		if !exists {
 			appendTagFamilies(tf)
+			continue
+		}
+		tagIdx := make(map[string]int, len(bi.tagFamilies[fi].tags))
+		for i := range bi.tagFamilies[fi].tags {
+			tagIdx[bi.tagFamilies[fi].tags[i].name] = i
+		}
+		for _, c := range tf.tags {
+			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			if ti, exists := tagIdx[c.name]; exists {
+				existingColumn := &bi.tagFamilies[fi].tags[ti]
+				existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
+				continue
+			}
+			col := tag{name: c.name, valueType: c.valueType}
+			for j := 0; j < existDataSize; j++ {
+				col.values = append(col.values, nil)
+			}
+			col.values = append(col.values, c.values[b.idx:offset]...)
+			bi.tagFamilies[fi].tags = append(bi.tagFamilies[fi].tags, col)
 		}
 	}
-	for k := range tagFamilyMap {
-		delete(tagFamilyMap, k)
-	}
+	tagFamilyMap := make(map[string]*tagFamily, len(b.tagFamilies))
 	for i := range b.tagFamilies {
 		tagFamilyMap[b.tagFamilies[i].name] = &b.tagFamilies[i]
 	}

@@ -57,7 +57,7 @@ func (p *traceQueryProcessor) RevStream(ctx context.Context, message bus.Message
 	}
 	admittedCtx, release, admissionErr := budget.AdmitRequestContext(ctx, queryCriteria.GetLimit(), queryCriteria.GetOffset(), 20)
 	if admissionErr != nil {
-		return fmt.Errorf("query admission failed: %w", admissionErr)
+		return streamFailure(fmt.Errorf("query admission failed: %w", admissionErr))
 	}
 	defer release()
 	defer func() {
@@ -66,7 +66,10 @@ func (p *traceQueryProcessor) RevStream(ctx context.Context, message bus.Message
 			err = fmt.Errorf("trace query panicked: %v", r)
 		}
 	}()
-	return p.executeQueryStream(admittedCtx, message.ID(), queryCriteria, sink)
+	if execErr := p.executeQueryStream(admittedCtx, message.ID(), queryCriteria, sink); execErr != nil {
+		return streamFailure(execErr)
+	}
+	return nil
 }
 
 func (p *traceQueryProcessor) executeQueryStream(ctx context.Context, id bus.MessageID, queryCriteria *tracev1.QueryRequest, sink bus.Sink) error {
