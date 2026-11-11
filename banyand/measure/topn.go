@@ -391,7 +391,7 @@ func (t *topNStreamingProcessor[K]) In() chan<- flow.StreamRecord {
 
 func (t *topNStreamingProcessor[K]) Setup(ctx context.Context) error {
 	t.Add(1)
-	run.Go(ctx, "measure.topn.processor-run", t.l, func(ctx context.Context) {
+	run.GoOrDie(ctx, "measure.topn.processor-run", t.l, func(ctx context.Context) {
 		t.run(ctx)
 	})
 	return nil
@@ -652,7 +652,7 @@ func (manager *topNProcessorManager) init(ctx context.Context, m *databasev1.Mea
 	if manager.inputCh == nil {
 		manager.inputCh = make(chan topNWrite, topNWriteQueueCapacity)
 		manager.stopCh = make(chan struct{})
-		manager.dispatcher = run.Go(ctx, "measure.topn.dispatcher", manager.l, manager.dispatchTopNWrites)
+		manager.dispatcher = run.GoOrDie(ctx, "measure.topn.dispatcher", manager.l, manager.dispatchTopNWrites)
 	}
 	if manager.m != nil {
 		return

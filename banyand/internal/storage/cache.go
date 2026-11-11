@@ -164,7 +164,7 @@ func NewServiceCacheWithConfig(ctx context.Context, config CacheConfig) Cache {
 
 func (sc *serviceCache) startCleaner(ctx context.Context) {
 	l := logger.GetLogger("storage-cache-cleaner")
-	run.Go(ctx, "storage-cache-cleaner", l, func(_ context.Context) {
+	run.GoOrDie(ctx, "storage-cache-cleaner", l, func(_ context.Context) {
 		defer sc.wg.Done()
 		sc.clean()
 	})

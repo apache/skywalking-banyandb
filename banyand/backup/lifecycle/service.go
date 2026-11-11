@@ -542,7 +542,7 @@ func (l *lifecycleService) startServers() {
 	wg.Add(2)
 
 	// gRPC server goroutine
-	run.Go(context.Background(), "backup.lifecycle.grpc-server", l.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "backup.lifecycle.grpc-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		lis, listenErr := net.Listen("tcp", l.lifecycleGRPCAddr)
 		if listenErr != nil {
@@ -556,7 +556,7 @@ func (l *lifecycleService) startServers() {
 	})
 
 	// HTTP server goroutine
-	run.Go(context.Background(), "backup.lifecycle.http-server", l.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "backup.lifecycle.http-server", l.l, func(_ context.Context) {
 		defer wg.Done()
 		l.l.Info().Str("addr", l.lifecycleHTTPAddr).Msg("Lifecycle HTTP server listening")
 		var serveErr error

@@ -58,7 +58,7 @@ func KeepNode(client queue.Client, node schema.Metadata, interval time.Duration,
 	client.OnAddOrUpdate(node)
 	done := make(chan struct{})
 	exited := make(chan struct{})
-	run.Go(context.Background(), "queue.pub.node-keeper", l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "queue.pub.node-keeper", l, func(_ context.Context) {
 		defer close(exited)
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()

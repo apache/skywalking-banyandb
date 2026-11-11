@@ -104,7 +104,7 @@ func TestManifest_BackCompat(t *testing.T) {
 
 	t.Run("manifest_without_timestamps", func(t *testing.T) {
 		writeTestDataWithTimeRange(t, raw, reqs, 1, 1, nil, nil)
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -130,7 +130,7 @@ func TestManifest_BackCompat(t *testing.T) {
 		minTS := int64(1000)
 		maxTS := int64(2000)
 		writeTestDataWithTimeRange(t, raw, reqs, 2, 2, &minTS, &maxTS)
-		flushIntro, err := raw.Flush(map[uint64]struct{}{2: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{2: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -329,7 +329,7 @@ func TestMerge_TimestampPropagation(t *testing.T) {
 		writeTestDataWithTimeRange(t, raw, reqs, 2, 2, nil, nil)
 		waitForIntroducerLoop()
 
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}, 2: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}, 2: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -373,7 +373,7 @@ func TestMerge_TimestampPropagation(t *testing.T) {
 		writeTestDataWithTimeRange(t, raw, reqs, 2, 2, &min2, &max2)
 		waitForIntroducerLoop()
 
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}, 2: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}, 2: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -495,7 +495,7 @@ func TestMergeUnknownTimestampEnvelopeCannotSkipOrBypassFiltering(t *testing.T) 
 	writeTestDataWithTimeRange(t, instance, []WriteRequest{createTestWriteRequest(1, 1, "known")}, 1, 1, &knownMin, &knownMax)
 	writeTestDataWithTimeRange(t, instance, []WriteRequest{createTestWriteRequest(1, 2, "unknown")}, 1, 2, nil, nil)
 	partIDs := map[uint64]struct{}{1: {}, 2: {}}
-	flushIntroduction, flushErr := instance.Flush(partIDs)
+	flushIntroduction, flushErr := instance.Flush(nil, partIDs)
 	require.NoError(t, flushErr)
 	require.NotNil(t, flushIntroduction)
 	instance.IntroduceFlushed(flushIntroduction)
