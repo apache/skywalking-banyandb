@@ -28,3 +28,11 @@ oap:
   env:
     SW_STORAGE_BANYANDB_TARGETS: "banyandb:17912"
     SW_STORAGE_BANYANDB_COMPATIBLE_SERVER_API_VERSIONS: "0.11"
+  # The chart's default startup probe gives OAP 90 s (9 x 10 s) to open port 12800. Under kind with
+  # Istio sidecars, OAP's model installation sometimes takes longer, and the kubelet then kills OAP
+  # mid-boot, so the case fails with "connection refused" while BanyanDB is healthy. Allow 300 s.
+  startupProbe:
+    tcpSocket:
+      port: 12800
+    failureThreshold: 30
+    periodSeconds: 10
