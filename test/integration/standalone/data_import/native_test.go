@@ -87,8 +87,8 @@ var _ = ginkgo.Describe("Native import into an empty standalone target", ginkgo.
 		b := expectRoundTrip(target.addr)
 		artB := transfertest.ReadArtifact(b, false)
 		artA := transfertest.ReadArtifact(artifactA, false)
-		gomega.Expect(resourceRows(artB, "measure", transfertest.MeasureGroup, topNResult)).
-			To(gomega.Equal(resourceRows(artA, "measure", transfertest.MeasureGroup, topNResult)))
+		gomega.Expect(topNResultRows(artB)).
+			To(gomega.Equal(topNResultRows(artA)))
 		tombB := latestTombstone(artB)
 		gomega.Expect(tombB).NotTo(gomega.BeNil(), "the tombstone travels")
 		gomega.Expect(transfertest.IsLiveProperty(tombB)).To(gomega.BeFalse(), "the tombstone stays deleted")

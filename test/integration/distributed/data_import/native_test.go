@@ -99,7 +99,7 @@ var _ = ginkgo.Describe("Native import between two clusters", ginkgo.Ordered, fu
 		// A copy of nativeA whose manifest doubles the stream group's shard number, dry-run
 		// against target3, which now holds the group with the source's shard number.
 		resharded := reshardedCopy(nativeA, transfertest.StreamGroup)
-		shards := groupShardNum(target3, transfertest.StreamGroup)
+		shards := streamGroupShardNum(target3)
 		opts := importOptionsWith(resharded, nil)
 		opts.DryRun, opts.IncludeSchema = true, false
 		run := transfertest.RunImport(context.Background(), target3.liaisonAddr, opts, nil)
@@ -109,7 +109,7 @@ var _ = ginkgo.Describe("Native import between two clusters", ginkgo.Ordered, fu
 			gomega.HaveField("Item.Group", transfertest.StreamGroup),
 		)), run.Out)
 		gomega.Expect(run.Result.Push).To(gomega.BeNil())
-		gomega.Expect(groupShardNum(target3, transfertest.StreamGroup)).To(gomega.Equal(shards))
+		gomega.Expect(streamGroupShardNum(target3)).To(gomega.Equal(shards))
 	})
 
 	ginkgo.It("re-exports the source rows unchanged", func() {

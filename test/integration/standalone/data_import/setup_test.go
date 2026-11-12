@@ -204,10 +204,10 @@ func latestTombstone(a *transfertest.Artifact) map[string]string {
 	return a.LatestProperties()[transfertest.TombstoneProperty().GetId()]
 }
 
-// resourceRows counts the rows of one resource of a catalog and group, across nodes.
-func resourceRows(a *transfertest.Artifact, catalog, group, name string) int {
+// topNResultRows counts the rows of the TopN result measure of the measure group, across nodes.
+func topNResultRows(a *transfertest.Artifact) int {
 	var n int
-	for _, rows := range a.RowsOf(catalog, group, name) {
+	for _, rows := range a.RowsOf("measure", transfertest.MeasureGroup, topNResult) {
 		n += len(rows)
 	}
 	return n
