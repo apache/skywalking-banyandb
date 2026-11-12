@@ -35,7 +35,7 @@ import (
 )
 
 // PartTypeCore is the type of the core part.
-const PartTypeCore = "core"
+const PartTypeCore = queue.PartTypeCore
 
 func (tst *tsTable) syncLoop(syncCh chan *syncIntroduction, flusherNotifier watcher.Channel) {
 	defer tst.loopCloser.Done()

@@ -86,6 +86,11 @@ type Client interface {
 	// without dialing. The standalone local pipeline answers with an in-process
 	// client of the ExportService registered through SetExportServer.
 	NewExportClient(node string) (transferv1.ExportServiceClient, error)
+	// NewChunkedSyncRelayClient returns a raw cluster.v1 ChunkedSyncService client of the
+	// named node, sharing the pooled connection, so a relay can forward chunk frames it did not
+	// read from disk. The standalone local pipeline answers with an in-process client that
+	// feeds the chunked sync handlers registered on it.
+	NewChunkedSyncRelayClient(node string) (clusterv1.ChunkedSyncServiceClient, error)
 	Register(bus.Topic, schema.EventHandler)
 	OnAddOrUpdate(md schema.Metadata)
 	GracefulStop()
@@ -168,6 +173,13 @@ type ChunkedSyncClient interface {
 	// Close releases resources associated with the client.
 	Close() error
 }
+
+// PartTypeCore is the PartInfo.part_type of a core part on the chunked sync wire.
+const PartTypeCore = "core"
+
+// DefaultReceiveMemWaitTimeout is the default of the --{stream,measure,trace}-lifecycle-receive-mem-wait-timeout
+// flags: how long a chunked sync receiver waits for memory before it answers SERVER_BUSY.
+const DefaultReceiveMemWaitTimeout = 5 * time.Minute
 
 // ChunkedSyncPartContext represents the context for a chunked sync operation.
 type ChunkedSyncPartContext struct {

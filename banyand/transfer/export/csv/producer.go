@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io/fs"
 	"maps"
-	"math"
 	"slices"
 	"strings"
 	"time"
@@ -37,19 +36,16 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
-// Directory and file names of the snapshot layout; they mirror the storage engines.
-const (
-	segDirPrefix    = "seg-"
-	shardDirPrefix  = "shard-"
-	sidxDirName     = "sidx"
-	segmentFileName = "segment"
-)
+// segmentFileName is the name of the segment-level file of an index-mode measure unit.
+const segmentFileName = "segment"
 
 // localFS is the file system the part readers open snapshot files through.
 var localFS = pkgfs.NewLocalFileSystem()
@@ -75,8 +71,8 @@ func NewProducer(ctx context.Context, meta metadata.Repo, indexMode IndexModeRea
 		meta:      meta,
 		indexMode: indexMode,
 		settings: &streamSettings{
-			bytes:       newBucket(limit.GetBytesPerSecond()),
-			rows:        newBucket(limit.GetRowsPerSecond()),
+			bytes:       snapshot.NewBucket(limit.GetBytesPerSecond()),
+			rows:        snapshot.NewBucket(limit.GetRowsPerSecond()),
 			send:        send,
 			maxFileSize: init.GetMaxFileSize(),
 			gzip:        init.GetCompress() == transferv1.Compress_COMPRESS_GZIP,
@@ -183,13 +179,10 @@ type fileWriter struct {
 func (r *unitRun) newWriter(layout *csvfmt.Layout, pathPrefix string, shardID, shardIndex uint32, segmentLevel bool,
 	revisions map[string]int64,
 ) *fileWriter {
-	sink := &frameSink{
-		run:          r,
-		settings:     r.settings,
-		revisions:    revisions,
-		shardID:      shardID,
-		shardIndex:   shardIndex,
-		segmentLevel: segmentLevel,
+	sink := &frameSink{revisions: revisions}
+	sink.Framer = snapshot.Framer{
+		Ctx: r.ctx, Bytes: r.settings.bytes, Send: r.settings.send, OnChunk: sink.chunkSent,
+		ShardID: shardID, ShardIndex: shardIndex, SegmentLevel: segmentLevel,
 	}
 	w := csvfmt.NewWriter(sink, csvfmt.WriterOptions{
 		Layout:      layout,
@@ -211,7 +204,7 @@ func (fw *fileWriter) writeRow(resource string, cells []string) error {
 			if err := fw.w.Flush(); err != nil {
 				return err
 			}
-			if err := fw.sink.flush(); err != nil {
+			if err := fw.sink.Flush(); err != nil {
 				return err
 			}
 		}
@@ -266,78 +259,35 @@ func (r *unitRun) finish(listedShards bool) []string {
 	return out
 }
 
-// frameSink is the csvfmt.Sink of one fileWriter: it frames the on-disk bytes into
-// file_started / chunk / file_finished, buffering chunks of up to chunkLimit bytes. A
-// chunk waits for the byte bucket before it is sent, so a slow client or a low rate
-// stops the reading.
+// frameSink is the csvfmt.Sink of one fileWriter: the Framer frames the on-disk bytes, and
+// each chunk carries the rows written into the file so far.
 type frameSink struct {
-	sent         time.Time // when the last chunk was sent
-	run          *unitRun
-	settings     *streamSettings
-	revisions    map[string]int64
-	buf          []byte
-	rows         uint64 // rows written into the open file
-	sentRows     uint64 // rows of the open file the last chunk carried
-	shardID      uint32
-	shardIndex   uint32
-	segmentLevel bool
+	sent      time.Time // when the last chunk was sent
+	revisions map[string]int64
+	snapshot.Framer
+	rows     uint64 // rows written into the open file
+	sentRows uint64 // rows of the open file the last chunk carried
 }
 
 func (s *frameSink) StartFile(relativePath string, seq uint32) error {
 	s.rows, s.sentRows = 0, 0
-	return s.settings.send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileStarted{FileStarted: &transferv1.FileStarted{
-		RelativePath: relativePath,
-		ShardId:      s.shardID,
-		SegmentLevel: s.segmentLevel,
-		ShardIndex:   s.shardIndex,
-		Seq:          seq,
-	}}})
+	return s.Framer.StartFile(relativePath, seq)
 }
 
-func (s *frameSink) Write(p []byte) error {
-	limit := chunkLimit(s.settings.bytes)
-	for len(p) > 0 {
-		if s.buf == nil {
-			s.buf = make([]byte, 0, limit)
-		}
-		n := min(len(p), limit-len(s.buf))
-		s.buf = append(s.buf, p[:n]...)
-		p = p[n:]
-		if len(s.buf) == limit {
-			if err := s.flush(); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (s *frameSink) flush() error {
-	if len(s.buf) == 0 {
-		return nil
-	}
-	if err := ratelimit.Wait(s.run.ctx, s.settings.bytes, len(s.buf)); err != nil {
-		return err
-	}
-	// The frame owns its bytes: gRPC may still hold the message after Send returns.
-	content := s.buf
-	s.buf = nil
+func (s *frameSink) chunkSent(chunk *transferv1.DataChunk) {
+	chunk.Rows = s.rows
 	s.sent, s.sentRows = time.Now(), s.rows
-	return s.settings.send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: content, Rows: s.rows}}})
 }
 
 func (s *frameSink) FinishFile(size uint64, crc uint32, rowCounts map[string]uint64) error {
-	if err := s.flush(); err != nil {
-		return err
-	}
 	// Every resource the layout was built from, rows or not: the client checks the whole
 	// layout against the schema it saved.
-	return s.settings.send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileFinished{FileFinished: &transferv1.FileFinished{
+	return s.Finish(&transferv1.FileFinished{
 		Bytes:              size,
 		Crc32:              crc,
 		RowCounts:          rowCounts,
 		SchemaModRevisions: maps.Clone(s.revisions),
-	}}})
+	})
 }
 
 // readOnlyFS is the file system the part readers open snapshot files through. It never
@@ -387,8 +337,8 @@ func (f *readOnlyFS) Read(name string) ([]byte, error) {
 
 // shardPrefix is the path prefix of one shard's files in a segment unit.
 func shardPrefix(unit *transferv1.SegmentUnit, shard uint32) string {
-	return fmt.Sprintf("%s/%s/%s%s/%s%d", transfer.CatalogName(unit.GetCatalog()), csvfmt.EscapePathComponent(unit.GetGroup()),
-		segDirPrefix, unit.GetSegmentSuffix(), shardDirPrefix, shard)
+	return fmt.Sprintf("%s/%s/%s%s/%s", transfer.CatalogName(unit.GetCatalog()), csvfmt.EscapePathComponent(unit.GetGroup()),
+		nativefmt.SegDirPrefix, unit.GetSegmentSuffix(), nativefmt.ShardDir(shard))
 }
 
 // fixedColumns finds the index of every fixed column of a layout by kind.
@@ -409,28 +359,7 @@ func resetRow(cells []string) {
 	}
 }
 
-// readError maps a failure while reading the snapshot to the stream status: a file that
-// vanished means the session was preempted (FailedPrecondition), a canceled stream keeps
-// its context status, gRPC statuses pass through, anything else is Internal.
-func readError(what string, err error) error {
-	if err == nil {
-		return nil
-	}
-	if _, ok := status.FromError(err); ok {
-		return err
-	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return status.FromContextError(err).Err()
-	}
-	if errors.Is(err, fs.ErrNotExist) {
-		return status.Errorf(codes.FailedPrecondition, "%s: the export session snapshot is gone (preempted or released): %v", what, err)
-	}
-	return status.Errorf(codes.Internal, "%s: %v", what, err)
-}
-
 const (
-	// chunkSize is the largest DataChunk an Export stream sends.
-	chunkSize = 1 << 20
 	// earlyFlush is how long a stream that waits for its row bucket at all holds the rows it
 	// has written before it sends them.
 	earlyFlush = time.Second
@@ -438,20 +367,6 @@ const (
 	// holds right away, so that a low row rate shows every row as it is written.
 	earlyFlushWait = 100 * time.Millisecond
 )
-
-// chunkLimit is the largest chunk a stream with the byte bucket l sends: chunkSize, or one
-// second's worth of a lower rate (the bucket's burst), so that a throttled stream still sends
-// a chunk every second; nil is unlimited.
-func chunkLimit(l *rate.Limiter) int {
-	if l == nil {
-		return chunkSize
-	}
-	return min(chunkSize, l.Burst())
-}
-
-// newBucket returns the per-stream bucket of perSecond bytes or rows, its burst one second's
-// worth, or nil when perSecond is 0 (unlimited). chunkLimit keeps a chunk within the burst.
-func newBucket(perSecond uint64) *rate.Limiter { return ratelimit.New(perSecond, math.MaxInt32) }
 
 // rowWait is how long taking one token from l would wait now.
 func rowWait(l *rate.Limiter) time.Duration {

@@ -87,6 +87,10 @@ func TestDataImport_DryRunNamesTheIgnoredFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "NOTE --dry-run writes nothing and ignores --write-batch-size\n", out)
 
+	out, err = preRunImport(t, "--input", in, "--dry-run", "--part-rate-limit", "1MiB/s", "--part-chunk-size", "1MiB")
+	require.NoError(t, err)
+	assert.Equal(t, "NOTE --dry-run writes nothing and ignores --part-rate-limit, --part-chunk-size\n", out)
+
 	out, err = preRunImport(t, "--input", in, "--dry-run")
 	require.NoError(t, err)
 	assert.Empty(t, out)

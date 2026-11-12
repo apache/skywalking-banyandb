@@ -115,6 +115,22 @@ func (g *ReadOnlyGeneration) ReferencedFiles() []string {
 	return files
 }
 
+// NewestGenerationFiles returns the file names ReferencedFiles would return for the generation
+// OpenReadOnlyGenerationStrict opens in dir, after the same strict validation, but without
+// page-cache advice and with no file left open: for a caller that needs only the names.
+func NewestGenerationFiles(dir string) ([]string, error) {
+	metadata, err := nativeice.ReadStrictSnapshotMetadata(dir, nil)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(metadata.Segments)+1)
+	files = append(files, nativeICEFileName(metadata.ID, ".snp"))
+	for _, segment := range metadata.Segments {
+		files = append(files, nativeICEFileName(segment.ID, ".seg"))
+	}
+	return files, nil
+}
+
 // nativeICEFileName reproduces the on-disk name Encode/PublishSnapshot gives
 // one manifest or segment file. It is duplicated here (rather than exported
 // from pkg/index/internal/nativeice, an internal package pkg/index/native
@@ -184,6 +200,31 @@ func (g *ReadOnlyGeneration) VisibleDocCount() (int64, error) {
 		return 0, nil
 	}
 	return g.reader.VisibleDocCount()
+}
+
+// TimeBounds returns the smallest and largest "_timestamp" the pinned generation's segments
+// record in their footers, without reading any document. The footers count deleted documents
+// too, so the range may be wider than the live documents. A segment recording no timestamp,
+// or bounds folded across a sign change (min above max), is skipped; ok is false when no
+// segment is left.
+func (g *ReadOnlyGeneration) TimeBounds() (lo, hi int64, ok bool) {
+	if g == nil || g.reader == nil {
+		return 0, 0, false
+	}
+	for _, s := range g.reader.SnapshotMetadata().Segments {
+		minTS, maxTS := int64(s.TimeMin), int64(s.TimeMax)
+		if (minTS == 0 && maxTS == 0) || minTS > maxTS {
+			continue
+		}
+		if !ok || minTS < lo {
+			lo = minTS
+		}
+		if !ok || maxTS > hi {
+			hi = maxTS
+		}
+		ok = true
+	}
+	return lo, hi, ok
 }
 
 // DecodeTimestamp decodes one series/property document's stored "_timestamp"

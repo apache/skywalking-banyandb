@@ -130,6 +130,7 @@ func BuildReport(info *cluster.Info, result *cluster.PlanResult) *Report {
 			row.Segments++
 			row.CompressedBytes += seg.GetSegmentLevel().GetEstimatedBytes()
 			row.EstRows += seg.GetSegmentLevel().GetDocCount()
+			transfer.MergeRange(&row.MinTimestamp, &row.MaxTimestamp, seg.GetSegmentLevel().GetMinTimestamp(), seg.GetSegmentLevel().GetMaxTimestamp())
 			if seg.GetSegmentLevel().GetDocCount() > 0 {
 				// The series index is only re-read on import for index-mode groups; elsewhere
 				// it is rebuilt from the parts and costs no raw bytes.

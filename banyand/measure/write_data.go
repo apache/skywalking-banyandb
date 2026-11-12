@@ -51,9 +51,8 @@ type syncPartContext struct {
 	partID        uint64
 }
 
-func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for measure")
-	return nil
+func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("a measure part does not support part type %q", ctx.PartType)
 }
 
 func (s *syncPartContext) FinishSync() error {
@@ -236,9 +235,8 @@ type syncSeriesContext struct {
 	memWaitTimeout time.Duration
 }
 
-func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for measure")
-	return nil
+func (s *syncSeriesContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("the measure series index does not support part type %q", ctx.PartType)
 }
 
 func (s *syncSeriesContext) FinishSync() error {

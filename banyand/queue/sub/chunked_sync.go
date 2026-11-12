@@ -20,7 +20,6 @@ package sub
 import (
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"time"
 
@@ -33,65 +32,22 @@ import (
 )
 
 func checkSyncVersionCompatibility(versionInfo *clusterv1.VersionInfo) (*clusterv1.VersionCompatibility, clusterv1.SyncStatus) {
-	if versionInfo == nil {
-		return &clusterv1.VersionCompatibility{
-			Supported:                   true,
-			ServerApiVersion:            apiversion.Version,
-			SupportedApiVersions:        []string{apiversion.Version},
-			ServerFileFormatVersion:     storage.GetCurrentVersion(),
-			SupportedFileFormatVersions: storage.GetCompatibleVersions(),
-			Reason:                      "No version info provided, assuming compatible",
-		}, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+	syncStatus, reason := queue.CheckSyncVersion(versionInfo)
+	compatibility := &clusterv1.VersionCompatibility{
+		Supported:                   syncStatus == clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED,
+		ServerApiVersion:            apiversion.Version,
+		SupportedApiVersions:        []string{apiversion.Version},
+		ServerFileFormatVersion:     storage.GetCurrentVersion(),
+		SupportedFileFormatVersions: storage.GetCompatibleVersions(),
+		Reason:                      reason,
 	}
-
-	serverAPIVersion := apiversion.Version
-	serverFileFormatVersion := storage.GetCurrentVersion()
-	compatibleFileFormatVersions := storage.GetCompatibleVersions()
-
-	// Check API version compatibility
-	apiCompatible := versionInfo.ApiVersion == serverAPIVersion
-
-	// Check file format version compatibility
-	fileFormatCompatible := false
-	if versionInfo.FileFormatVersion == serverFileFormatVersion {
-		fileFormatCompatible = true
-	} else {
-		// Check if client's file format version is in our compatible list
-		for _, compatVer := range compatibleFileFormatVersions {
-			if compatVer == versionInfo.FileFormatVersion {
-				fileFormatCompatible = true
-				break
-			}
-		}
-	}
-
-	versionCompatibility := &clusterv1.VersionCompatibility{
-		ServerApiVersion:            serverAPIVersion,
-		SupportedApiVersions:        []string{serverAPIVersion},
-		ServerFileFormatVersion:     serverFileFormatVersion,
-		SupportedFileFormatVersions: compatibleFileFormatVersions,
-	}
-
 	switch {
-	case !apiCompatible && !fileFormatCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s) and file format version %s not compatible (server: %s, supported: %v)",
-			versionInfo.ApiVersion, serverAPIVersion, versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
-		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
-	case !apiCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("API version %s not supported (server: %s)", versionInfo.ApiVersion, serverAPIVersion)
-		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_VERSION_UNSUPPORTED
-	case !fileFormatCompatible:
-		versionCompatibility.Supported = false
-		versionCompatibility.Reason = fmt.Sprintf("File format version %s not compatible (server: %s, supported: %v)",
-			versionInfo.FileFormatVersion, serverFileFormatVersion, compatibleFileFormatVersions)
-		return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_FORMAT_VERSION_MISMATCH
+	case versionInfo == nil:
+		compatibility.Reason = "No version info provided, assuming compatible"
+	case compatibility.Supported:
+		compatibility.Reason = "Client version compatible with server"
 	}
-
-	versionCompatibility.Supported = true
-	versionCompatibility.Reason = "Client version compatible with server"
-	return versionCompatibility, clusterv1.SyncStatus_SYNC_STATUS_CHUNK_RECEIVED
+	return compatibility, syncStatus
 }
 
 type chunkBuffer struct {
@@ -379,7 +335,7 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 }
 
 func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
-	calculatedChecksum := fmt.Sprintf("%x", crc32.ChecksumIEEE(req.ChunkData))
+	calculatedChecksum := queue.ChunkChecksum(req.ChunkData)
 	if calculatedChecksum != req.ChunkChecksum {
 		errMsg := fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s",
 			req.ChunkIndex, req.ChunkChecksum, calculatedChecksum)
@@ -418,35 +374,19 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 
 		if createNewContext {
 			session.partCtx = &queue.ChunkedSyncPartContext{
-				Context:               stream.Context(),
-				ID:                    partInfo.Id,
-				Group:                 session.metadata.Group,
-				ShardID:               session.metadata.ShardId,
-				CompressedSizeBytes:   partInfo.CompressedSizeBytes,
-				UncompressedSizeBytes: partInfo.UncompressedSizeBytes,
-				TotalCount:            partInfo.TotalCount,
-				BlocksCount:           partInfo.BlocksCount,
-				MinTimestamp:          partInfo.MinTimestamp,
-				MaxTimestamp:          partInfo.MaxTimestamp,
-				MinKey:                partInfo.MinKey,
-				MaxKey:                partInfo.MaxKey,
-				PartType:              partInfo.PartType,
+				Context: stream.Context(),
+				ID:      partInfo.Id,
+				Group:   session.metadata.Group,
+				ShardID: session.metadata.ShardId,
 			}
+			queue.FillPartContext(session.partCtx, partInfo)
 			partHandler, createErr := handler.CreatePartHandler(session.partCtx)
 			if createErr != nil {
 				return fmt.Errorf("failed to create part handler: %w", createErr)
 			}
 			session.partCtx.Handler = partHandler
 		} else if session.partCtx.PartType != partInfo.PartType {
-			session.partCtx.CompressedSizeBytes = partInfo.CompressedSizeBytes
-			session.partCtx.UncompressedSizeBytes = partInfo.UncompressedSizeBytes
-			session.partCtx.TotalCount = partInfo.TotalCount
-			session.partCtx.BlocksCount = partInfo.BlocksCount
-			session.partCtx.MinTimestamp = partInfo.MinTimestamp
-			session.partCtx.MaxTimestamp = partInfo.MaxTimestamp
-			session.partCtx.MinKey = partInfo.MinKey
-			session.partCtx.MaxKey = partInfo.MaxKey
-			session.partCtx.PartType = partInfo.PartType
+			queue.FillPartContext(session.partCtx, partInfo)
 			if newPartErr := session.partCtx.Handler.NewPartType(session.partCtx); newPartErr != nil {
 				return fmt.Errorf("failed to new part type: %w", newPartErr)
 			}
@@ -545,7 +485,9 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 
 	var partDataSize uint32
 	for _, fileInfo := range partInfo.Files {
-		if fileInfo.Offset >= uint32(len(req.ChunkData)) {
+		// A zero-length file may sit at the very end of a chunk (or in an empty chunk); it is
+		// still delivered so that the handler creates it.
+		if fileInfo.Offset > uint32(len(req.ChunkData)) || (fileInfo.Size > 0 && fileInfo.Offset == uint32(len(req.ChunkData))) {
 			s.log.Warn().Str("session_id", session.sessionID).
 				Str("topic", session.metadata.Topic).
 				Str("file_name", fileInfo.Name).

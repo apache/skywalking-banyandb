@@ -57,7 +57,7 @@ var _ = ginkgo.Describe("CSV import between two clusters", ginkgo.Ordered, func(
 	var firstB string
 
 	ginkgo.BeforeAll(func() {
-		artifactA = transfertest.ExportFrom(source.liaisonAddr, exportRoot)
+		artifactA = csvArtifact
 		a := transfertest.ReadArtifact(artifactA, false)
 		var stages []string
 		for _, u := range a.Manifest.Units {

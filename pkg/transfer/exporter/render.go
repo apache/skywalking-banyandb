@@ -63,16 +63,16 @@ func renderTable(w io.Writer, rep *Report) error {
 	}
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NODE\tCATALOG\tGROUP\tSTAGE\tSEGMENTS\tSHARDS\tPARTS\tEST-ROWS\tEST-SIZE(comp/raw)\tTIME-RANGE")
+	fmt.Fprintln(tw, "NODE\tCATALOG\tGROUP\tSTAGE\tSEGMENTS\tSHARDS\tPARTS\tEST-ROWS\tEST-SIZE\tTIME-RANGE")
 	for _, r := range rep.Rows {
 		segments, parts := strconv.Itoa(r.Segments), strconv.Itoa(r.Parts)
 		if r.Catalog == transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY) {
 			// Properties have no segments or parts; the counters are placeholders.
 			segments, parts = "-", "-"
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s / %s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\n",
 			r.Node, r.Catalog, r.Group, r.Stage, segments, r.Shards, parts,
-			output.HumanCount(r.EstRows), output.HumanBytes(r.CompressedBytes), output.HumanBytes(r.UncompressedBytes), output.TimeRange(r.MinTimestamp, r.MaxTimestamp))
+			output.HumanCount(r.EstRows), output.HumanBytes(r.CompressedBytes), output.TimeRange(r.MinTimestamp, r.MaxTimestamp))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

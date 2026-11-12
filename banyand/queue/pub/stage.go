@@ -100,9 +100,11 @@ type StageResolution struct {
 }
 
 // ResolveStage resolves the complete tsdb configuration for this node from the group opts
-// and the node's lifecycle stage. It warns when a labeled node whose group has stages
-// matches none of them and silently falls back to the group default -- the condition that
-// previously produced short segments. This is the single entry point OpenDB uses.
+// and the node's lifecycle stage. A labeled node whose group has stages and that matches none
+// of them serves the group's default (hot) stage with the group-default options; that is the
+// normal case of every hot node, so it is logged at info level, naming the labels, for an
+// operator to spot a warm or cold node whose labels miss its stage's selector. This is the
+// single entry point OpenDB uses.
 func ResolveStage(l *logger.Logger, groupName string, ro *commonv1.ResourceOpts, nodeLabels map[string]string) (StageResolution, error) {
 	resolved, matchedStage, matchedIdx, err := ResolveStageResourceOpts(ro, nodeLabels)
 	if err != nil {
@@ -110,8 +112,8 @@ func ResolveStage(l *logger.Logger, groupName string, ro *commonv1.ResourceOpts,
 	}
 	staged := len(ro.GetStages()) > 0 && len(nodeLabels) > 0
 	if matchedStage == nil && staged {
-		l.Warn().Str("group", groupName).Interface("nodeLabels", nodeLabels).
-			Msg("no lifecycle stage matched this data node's labels; using the group-default segment interval/ttl/shardNum")
+		l.Info().Str("group", groupName).Interface("nodeLabels", nodeLabels).
+			Msg("no lifecycle stage matches this data node's labels; it serves the group's default stage with the group-default segment interval/ttl/shardNum")
 	}
 	// A non-zero idle timeout so the reclaimer ticker starts (storage/rotation.go gates it
 	// on >=1s); a Close stage shortens it. Retention is disabled on non-terminal tiers

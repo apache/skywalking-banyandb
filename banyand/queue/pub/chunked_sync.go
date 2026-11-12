@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"strings"
 	"time"
@@ -462,7 +461,7 @@ func (c *chunkedSyncClient) sendChunk(
 	isFirstChunk bool,
 	metadata *clusterv1.SyncMetadata,
 ) error {
-	chunkChecksum := fmt.Sprintf("%x", crc32.ChecksumIEEE(chunkData))
+	chunkChecksum := queue.ChunkChecksum(chunkData)
 
 	retryCount := 0
 	for {

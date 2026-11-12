@@ -20,6 +20,8 @@ package config
 import (
 	"fmt"
 	"slices"
+
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // Bounds of the import batch settings; a value outside them is refused, never clamped.
@@ -31,14 +33,21 @@ const (
 	// MinWriteInflightBatches and MaxWriteInflightBatches bound --write-inflight-batches.
 	MinWriteInflightBatches = 1
 	MaxWriteInflightBatches = 8
+	// MinPartChunkSize and MaxPartChunkSize bound --part-chunk-size; the maximum is the wire
+	// limit of ImportPartsRequest.Chunk, which the liaison enforces.
+	MinPartChunkSize = 64 << 10
+	MaxPartChunkSize = nativefmt.MaxChunkSize
 )
 
 // Validate checks the resolved import settings against each other before anything is
 // contacted, naming the source of each offending setting. Every error is a usage error
 // (exit 1):
-//   - --write-batch-bytes outside [64KiB, 64MiB] (the dry run uses it for its batch warnings);
-//   - --write-batch-size outside [1, 10000] or --write-inflight-batches outside [1, 8] (not
-//     checked under --dry-run, which ignores them);
+//   - --write-batch-bytes outside [MinWriteBatchBytes, MaxWriteBatchBytes] (the dry run uses it
+//     for its batch warnings);
+//   - --part-chunk-size outside [MinPartChunkSize, MaxPartChunkSize];
+//   - --write-batch-size outside [MinWriteBatchSize, MaxWriteBatchSize] or --write-inflight-batches
+//     outside [MinWriteInflightBatches, MaxWriteInflightBatches] (not checked under --dry-run,
+//     which ignores them);
 //   - --schema-only with --include-schema=false;
 //   - --verify-timeout given explicitly (flag or plan.yaml) while verification is off by
 //     --verify=false or --schema-only (not checked under --dry-run, which ignores it);
@@ -46,7 +55,12 @@ const (
 //   - --force while neither the default policy nor any plan.yaml rule is overwrite.
 func (i *Import) Validate(sources Sources) error {
 	if i.WriteBatchBytes < MinWriteBatchBytes || i.WriteBatchBytes > MaxWriteBatchBytes {
-		return fmt.Errorf("%s: %d bytes is outside [64KiB, 64MiB]", sources.Label("write-batch-bytes"), i.WriteBatchBytes)
+		return fmt.Errorf("%s: %d bytes is outside [%s, %s]", sources.Label("write-batch-bytes"), i.WriteBatchBytes,
+			sizeLabel(MinWriteBatchBytes), sizeLabel(MaxWriteBatchBytes))
+	}
+	if i.PartChunkSize < MinPartChunkSize || i.PartChunkSize > MaxPartChunkSize {
+		return fmt.Errorf("%s: %d bytes is outside [%s, %s]", sources.Label("part-chunk-size"), i.PartChunkSize,
+			sizeLabel(MinPartChunkSize), sizeLabel(MaxPartChunkSize))
 	}
 	if !i.DryRun {
 		if i.WriteBatchSize < MinWriteBatchSize || i.WriteBatchSize > MaxWriteBatchSize {
@@ -94,4 +108,16 @@ func (i *Import) EffectiveVerify() bool {
 func (i *Import) HasOverwrite() bool {
 	return i.OnSchemaConflict == ConflictPolicyOverwrite ||
 		slices.ContainsFunc(i.ConflictRules, func(r ConflictRule) bool { return r.Policy == ConflictPolicyOverwrite })
+}
+
+// sizeLabel prints a byte size in the largest binary unit that divides it.
+func sizeLabel(n uint64) string {
+	switch {
+	case n != 0 && n%(1<<20) == 0:
+		return fmt.Sprintf("%dMiB", n>>20)
+	case n != 0 && n%(1<<10) == 0:
+		return fmt.Sprintf("%dKiB", n>>10)
+	default:
+		return fmt.Sprintf("%d bytes", n)
+	}
 }

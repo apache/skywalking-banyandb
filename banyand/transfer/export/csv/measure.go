@@ -37,9 +37,11 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/internal/dump/measure"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // IndexModeReader is implemented by the measure backend. Index-mode measures keep their
@@ -247,17 +249,17 @@ func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string
 	if len(unit.GetShardIds()) > 0 {
 		resolver, openErr := dump.NewIndexResolver(segDir, dump.DefaultIndexCacheSize, nil)
 		if openErr != nil {
-			return readError("open the series index of "+segDir, openErr)
+			return snapshot.ReadError("open the series index of "+segDir, openErr)
 		}
 		defer resolver.Close()
 		for i, shard := range unit.GetShardIds() {
 			fw := run.newWriter(g.layout, shardPrefix(unit, shard), shard, uint32(i), false, g.revisions)
-			shardDir := filepath.Join(segDir, fmt.Sprintf("%s%d", shardDirPrefix, shard))
+			shardDir := filepath.Join(segDir, nativefmt.ShardDir(shard))
 			if err = writeMeasureShard(run, fw, shardDir, resolver, g); err != nil {
 				return err
 			}
 			if err = fw.close(); err != nil {
-				return readError("finish "+shardDir, err)
+				return snapshot.ReadError("finish "+shardDir, err)
 			}
 		}
 		if g.unmergedTopN > 0 {
@@ -285,9 +287,9 @@ func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string
 // is open at once, with its block metadata and its rows of the current series, so memory grows
 // with the number of parts and the length of a series.
 func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *dump.IndexResolver, g *measureGroup) error {
-	partIDs, err := SessionPartIDs(shardDir)
+	partIDs, err := snapshot.SessionPartIDs(shardDir)
 	if err != nil {
-		return readError("list parts of "+shardDir, err)
+		return snapshot.ReadError("list parts of "+shardDir, err)
 	}
 	cursors := &measureCursors{}
 	defer cursors.close()
@@ -299,7 +301,7 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 			openErr = rofs.err
 		}
 		if openErr != nil {
-			return readError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
 		}
 		// The resolver recovers both the entity values of parts without smeta.bin and the
 		// indexed tags, which the write path never stores as columns.
@@ -342,7 +344,7 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 				}
 			case topN != nil:
 				if err = topN.add(g.topN, entity, ts, row); err != nil {
-					return readError(fmt.Sprintf("merge the versions of a %s row in %s", csvfmt.TopNResultMeasure, shardDir), err)
+					return snapshot.ReadError(fmt.Sprintf("merge the versions of a %s row in %s", csvfmt.TopNResultMeasure, shardDir), err)
 				}
 			}
 			ok, nextErr := c.next(shardDir)
@@ -367,7 +369,7 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 			}
 		}
 		if err = fw.writeRow(subject, cells); err != nil {
-			return readError("write "+subject+" row", err)
+			return snapshot.ReadError("write "+subject+" row", err)
 		}
 	}
 	return nil
@@ -492,7 +494,7 @@ func (c *measureCursor) next(shardDir string) (bool, error) {
 		_ = c.it.Close()
 		_ = c.part.Close()
 		if err != nil {
-			return false, readError(fmt.Sprintf("read part %016x of %s", c.id, shardDir), err)
+			return false, snapshot.ReadError(fmt.Sprintf("read part %016x of %s", c.id, shardDir), err)
 		}
 		return false, nil
 	}
@@ -577,12 +579,12 @@ func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir st
 		return status.Errorf(codes.Internal, "group %s holds index-mode measures but the measure backend cannot read them", unit.GetGroup())
 	}
 	prefix := fmt.Sprintf("%s/%s/%s%s/%s", transfer.CatalogName(unit.GetCatalog()), csvfmt.EscapePathComponent(unit.GetGroup()),
-		segDirPrefix, unit.GetSegmentSuffix(), segmentFileName)
+		nativefmt.SegDirPrefix, unit.GetSegmentSuffix(), segmentFileName)
 	shards := uint32(len(unit.GetShardIds()))
 	fw := run.newWriter(g.layout, prefix, 0, shards, true, g.revisions)
 	cells := g.layout.NewRow()
 	fixed := fixedColumns(g.layout)
-	sidxDir := filepath.Join(segDir, sidxDirName)
+	sidxDir := filepath.Join(segDir, nativefmt.SeriesIndexDir)
 	err := reader.ExportIndexModeRows(run.ctx, sidxDir, g.indexMode, g.rules,
 		func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error {
 			res, known := g.resources[subject]
@@ -604,10 +606,10 @@ func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir st
 			return fw.writeRow(subject, cells)
 		})
 	if err != nil {
-		return readError("read index-mode rows of "+sidxDir, err)
+		return snapshot.ReadError("read index-mode rows of "+sidxDir, err)
 	}
 	if err = fw.close(); err != nil {
-		return readError("finish "+sidxDir, err)
+		return snapshot.ReadError("finish "+sidxDir, err)
 	}
 	return nil
 }

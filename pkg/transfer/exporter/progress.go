@@ -50,6 +50,8 @@ type nodeProgress struct {
 	width     int
 	shards    uint32
 	parts     uint32
+	// countsRows tells whether the files carry row counts; native files carry none.
+	countsRows bool
 }
 
 // nodeWidth is the width of a node column holding ids.
@@ -62,9 +64,9 @@ func nodeWidth(ids []string) int {
 }
 
 // newNodeProgress registers a node that exports units units, in a node column width wide,
-// and shows its live line.
-func newNodeProgress(p *output.Progress, id string, units, width int) *nodeProgress {
-	n := &nodeProgress{p: p, node: id, units: units, width: width, start: p.Now()}
+// and shows its live line; rows tells whether the files carry row counts.
+func newNodeProgress(p *output.Progress, id string, units, width int, rows bool) *nodeProgress {
+	n := &nodeProgress{p: p, node: id, units: units, width: width, start: p.Now(), countsRows: rows}
 	p.Add(n)
 	return n
 }
@@ -100,7 +102,7 @@ func (n *nodeProgress) fileStarted(rel string, shardID, shardIndex uint32, segme
 	n.p.Update(func() string {
 		n.file = rel
 		n.fileStart = n.p.Now()
-		n.where = "segment index"
+		n.where = "segment-level"
 		if !segmentLevel {
 			n.where = fmt.Sprintf("shard %d (%d/%d%s)", shardID, shardIndex+1, n.shards, partsSuffix(n.parts))
 		}
@@ -128,7 +130,7 @@ func (n *nodeProgress) fileFinished(rowCounts map[string]uint64, size uint64) {
 		n.unitFiles++
 		n.unitRows += rows
 		n.unitBytes += size
-		fixed := fmt.Sprintf("  %-*s  %s  %d rows  %s  %s\n", n.width, n.node, n.file, rows, output.HumanBytes(size),
+		fixed := fmt.Sprintf("  %-*s  %s%s  %s  %s\n", n.width, n.node, n.file, n.rowsLabel("  ", rows), output.HumanBytes(size),
 			output.FormatElapsed(n.p.Now().Sub(n.fileStart)))
 		n.file, n.where, n.fileRows, n.fileBytes = "", "", 0, 0
 		return fixed
@@ -142,8 +144,8 @@ func (n *nodeProgress) unitFinished(elapsed time.Duration) {
 		n.files += uint64(n.unitFiles)
 		n.rows += n.unitRows
 		n.bytes += n.unitBytes
-		fixed := fmt.Sprintf("✓ %-*s  [%d/%d] %s  %d file(s)  %d rows  %s  %s\n", n.width, n.node, n.doneUnits, n.units, n.unit.displayName(),
-			n.unitFiles, n.unitRows, output.HumanBytes(n.unitBytes), output.FormatElapsed(elapsed))
+		fixed := fmt.Sprintf("✓ %-*s  [%d/%d] %s  %d file(s)%s  %s  %s\n", n.width, n.node, n.doneUnits, n.units, n.unit.displayName(),
+			n.unitFiles, n.rowsLabel("  ", n.unitRows), output.HumanBytes(n.unitBytes), output.FormatElapsed(elapsed))
 		n.unit = nil
 		return fixed
 	})
@@ -154,7 +156,7 @@ func (n *nodeProgress) unitFinished(elapsed time.Duration) {
 func (n *nodeProgress) finish(ok bool) {
 	fixed := ""
 	if ok {
-		fixed = fmt.Sprintf("✓ %-*s  done: %d unit(s), %d file(s), %d rows, %s in %s\n", n.width, n.node, n.doneUnits, n.files, n.rows,
+		fixed = fmt.Sprintf("✓ %-*s  done: %d unit(s), %d file(s)%s, %s in %s\n", n.width, n.node, n.doneUnits, n.files, n.rowsLabel(", ", n.rows),
 			output.HumanBytes(n.bytes), output.FormatElapsed(n.p.Now().Sub(n.start)))
 	}
 	n.p.Remove(n, fixed)
@@ -176,6 +178,14 @@ func (n *nodeProgress) LiveLine(now time.Time) string {
 	if elapsed > 0 {
 		rate = uint64(float64(bytes) / elapsed.Seconds())
 	}
-	return fmt.Sprintf("%s %-*s  [%d/%d] %s  %s  %d rows  %s  %s/s  %s", spin, n.width, n.node, n.doneUnits+1, n.units, n.unit.displayName(), where,
-		n.unitRows+n.fileRows, output.HumanBytes(bytes), output.HumanBytes(rate), output.FormatElapsed(elapsed))
+	return fmt.Sprintf("%s %-*s  [%d/%d] %s  %s%s  %s  %s/s  %s", spin, n.width, n.node, n.doneUnits+1, n.units, n.unit.displayName(), where,
+		n.rowsLabel("  ", n.unitRows+n.fileRows), output.HumanBytes(bytes), output.HumanBytes(rate), output.FormatElapsed(elapsed))
+}
+
+// rowsLabel is sep followed by "<count> rows", or "" when the files carry no row counts.
+func (n *nodeProgress) rowsLabel(sep string, count uint64) string {
+	if !n.countsRows {
+		return ""
+	}
+	return fmt.Sprintf("%s%d rows", sep, count)
 }

@@ -46,13 +46,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
-var (
-	// exportRetryBase and exportRetryMax bound the back-off of opening an Export stream that
-	// the server refused as busy or unavailable (--send-retry-timeout); tests shorten them.
-	exportRetryBase = time.Second
-	exportRetryMax  = 30 * time.Second
-)
-
 // plannedUnit is one unit a node exports: a segment unit (stream, measure, trace) or a
 // property group's shards on that node, and what the node streamed for it.
 type plannedUnit struct {
@@ -184,9 +177,26 @@ func (n *nodeExport) export(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	for _, u := range n.job.units {
-		if err = stream.Send(u.request()); err != nil {
-			return n.streamErr(stream, fmt.Sprintf("send unit %s", u.label()), err)
+	// The node produces one unit at a time in request order; the next request is queued ahead
+	// of the unit being received, so a unit starts without waiting for a round trip.
+	units := n.job.units
+	// io.EOF means the node ended the stream; receiving the unit being read reports why.
+	send := func(u *plannedUnit) error {
+		if sendErr := stream.Send(u.request()); sendErr != nil && !errors.Is(sendErr, io.EOF) {
+			return n.streamErr(stream, "send unit "+u.label(), sendErr)
+		}
+		return nil
+	}
+	if len(units) > 0 {
+		if err = send(units[0]); err != nil {
+			return err
+		}
+	}
+	for i, u := range units {
+		if i+1 < len(units) {
+			if err = send(units[i+1]); err != nil {
+				return err
+			}
 		}
 		n.idle.touch()
 		if err = n.receiveUnit(stream, u); err != nil {
@@ -222,7 +232,7 @@ func (n *nodeExport) streamErr(stream transferv1.ExportService_ExportClient, wha
 // with a doubling back-off until the retry window (--send-retry-timeout) is used up.
 func (n *nodeExport) open(ctx context.Context) (transferv1.ExportService_ExportClient, error) {
 	deadline := time.Now().Add(n.retryFor)
-	backoff := exportRetryBase
+	backoff := transfer.RetryBase
 	for {
 		via := n.liaison()
 		stream, err := n.openOnce(ctx, via)
@@ -243,7 +253,7 @@ func (n *nodeExport) open(ctx context.Context) (transferv1.ExportService_ExportC
 			return nil, fmt.Errorf("node %s: waiting to retry the export stream: %w", n.job.nodeID, err)
 		}
 		n.idle.resume()
-		backoff = min(backoff*2, exportRetryMax)
+		backoff = transfer.NextBackoff(backoff)
 	}
 }
 
@@ -455,11 +465,12 @@ func (n *nodeExport) finishFile(u *plannedUnit, p *partialFile, ff *transferv1.F
 }
 
 // checkSchemaRevisions compares the schema a file was encoded with to the exported schema;
-// without an exported schema there is nothing to compare with. Columns are bound by
+// without an exported schema, or for a native file, there is nothing to compare with. Columns are bound by
 // position and the layout is built from every resource of the group, so the node must
 // report exactly the group's exported resources, each at its exported mod revision.
 func (n *nodeExport) checkSchemaRevisions(u *plannedUnit, p *partialFile, ff *transferv1.FileFinished) error {
-	if n.schema == nil {
+	// A native file holds the engine files as they are: it binds no column to the schema.
+	if n.schema == nil || n.init.GetFormat() == transferv1.Format_FORMAT_NATIVE {
 		return nil
 	}
 	want := n.schema.GroupRevisions(u.catalog(), u.group())

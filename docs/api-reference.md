@@ -541,6 +541,14 @@
     - [ExportService](#banyandb-transfer-v1-ExportService)
   
 - [banyandb/transfer/v1/import.proto](#banyandb_transfer_v1_import-proto)
+    - [ImportPartsRequest](#banyandb-transfer-v1-ImportPartsRequest)
+    - [ImportPartsRequest.Chunk](#banyandb-transfer-v1-ImportPartsRequest-Chunk)
+    - [ImportPartsRequest.Completion](#banyandb-transfer-v1-ImportPartsRequest-Completion)
+    - [ImportPartsRequest.FileSlice](#banyandb-transfer-v1-ImportPartsRequest-FileSlice)
+    - [ImportPartsRequest.Init](#banyandb-transfer-v1-ImportPartsRequest-Init)
+    - [ImportPartsRequest.PartInfo](#banyandb-transfer-v1-ImportPartsRequest-PartInfo)
+    - [ImportPartsResponse](#banyandb-transfer-v1-ImportPartsResponse)
+    - [ImportPartsResponse.TargetResult](#banyandb-transfer-v1-ImportPartsResponse-TargetResult)
     - [ImportRowsRequest](#banyandb-transfer-v1-ImportRowsRequest)
     - [ImportRowsRequest.Init](#banyandb-transfer-v1-ImportRowsRequest-Init)
     - [ImportRowsRequest.MeasureRow](#banyandb-transfer-v1-ImportRowsRequest-MeasureRow)
@@ -558,6 +566,8 @@
     - [TargetsRequest](#banyandb-transfer-v1-TargetsRequest)
     - [TargetsResponse](#banyandb-transfer-v1-TargetsResponse)
     - [TargetsResponse.Shard](#banyandb-transfer-v1-TargetsResponse-Shard)
+  
+    - [ImportPartsRequest.Kind](#banyandb-transfer-v1-ImportPartsRequest-Kind)
   
     - [ImportService](#banyandb-transfer-v1-ImportService)
   
@@ -2617,8 +2627,8 @@ Information about an individual file within a part.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | name | [string](#string) |  | File identifier (e.g., &#34;primary&#34;, &#34;timestamps&#34;, &#34;tagFamilies:seriesId&#34;). |
-| offset | [uint32](#uint32) |  | Byte offset within the part where this file starts. |
-| size | [uint32](#uint32) |  | Size of this file in bytes. |
+| offset | [uint32](#uint32) |  | Byte offset of this file&#39;s slice within this request&#39;s chunk_data. |
+| size | [uint32](#uint32) |  | Length in bytes of this file&#39;s slice in this chunk; a file may span several chunks, and a zero-length file is a size-0 slice, which may sit at offset == len(chunk_data). |
 
 
 
@@ -2840,7 +2850,7 @@ Chunked Sync Service Messages.
 | session_id | [string](#string) |  | Unique session identifier for this sync operation. |
 | chunk_index | [uint32](#uint32) |  | Current chunk index (0-based). |
 | chunk_data | [bytes](#bytes) |  | Actual chunk data. |
-| chunk_checksum | [string](#string) |  | CRC32 checksum for this chunk. |
+| chunk_checksum | [string](#string) |  | Lowercase hexadecimal CRC-32 (IEEE) of chunk_data, without zero padding (queue.ChunkChecksum). |
 | parts_info | [PartInfo](#banyandb-cluster-v1-PartInfo) | repeated | Information about parts contained in this chunk. |
 | metadata | [SyncMetadata](#banyandb-cluster-v1-SyncMetadata) |  | Sent with first chunk (chunk_index = 0). |
 | completion | [SyncCompletion](#banyandb-cluster-v1-SyncCompletion) |  | Sent with last chunk to finalize. |
@@ -7846,7 +7856,7 @@ Init is the first frame of a stream.
 | target_node | [string](#string) |  | Data node the liaison forwards the stream to: a node_id from the Plan frames. |
 | format | [Format](#banyandb-transfer-v1-Format) |  |  |
 | compress | [Compress](#banyandb-transfer-v1-Compress) |  |  |
-| max_file_size | [uint64](#uint64) |  | Soft upper bound of one produced file in on-disk bytes; 0 means no split. |
+| max_file_size | [uint64](#uint64) |  | Upper bound of one produced file in on-disk bytes; 0 means no split. CSV: a soft bound, a file rolls after the row that reaches it. NATIVE: a hard cap on every .bnc volume, footer and trailer included; a non-zero value below 64 KiB is refused with INVALID_ARGUMENT. |
 | rate_limit | [RateLimit](#banyandb-transfer-v1-RateLimit) |  |  |
 | csv_annotations | [bool](#bool) |  | CSV only: write a #datatype line before the header of every file. |
 | liaison_bytes_per_second | [uint64](#uint64) |  | Byte rate of the relaying liaison, shared by every Export stream that liaison relays: the liaison applies the value of the stream opened last, 0 meaning unlimited, and waits on it before it forwards each chunk. Data nodes ignore it. |
@@ -7887,8 +7897,8 @@ FileFinished closes the open file.
 | ----- | ---- | ----- | ----------- |
 | bytes | [uint64](#uint64) |  | Size and crc32 (IEEE) of the file as written to disk. |
 | crc32 | [uint32](#uint32) |  |  |
-| entry_count | [uint32](#uint32) |  | Native only: entries in the container footer. CSV sends 0. |
-| row_counts | [FileFinished.RowCountsEntry](#banyandb-transfer-v1-FileFinished-RowCountsEntry) | repeated | Rows per resource name in this file. |
+| entry_count | [uint32](#uint32) |  | Native only: entries in the container footer, required (above 0) for a container volume and 0 for a plain file. CSV sends 0. |
+| row_counts | [FileFinished.RowCountsEntry](#banyandb-transfer-v1-FileFinished-RowCountsEntry) | repeated | CSV only: rows per resource name in this file. Native sends none; its counts come from the Plan statistics. |
 | schema_mod_revisions | [FileFinished.SchemaModRevisionsEntry](#banyandb-transfer-v1-FileFinished-SchemaModRevisionsEntry) | repeated | CSV only: schema mod revision of every resource the node built the group&#39;s column layout from, whether or not it wrote rows. The client checks that the set and the revisions match the schema it saved, because columns are bound by position. |
 
 
@@ -7938,9 +7948,9 @@ FileStarted opens one produced file.
 | ----- | ---- | ----- | ----------- |
 | relative_path | [string](#string) |  | Path relative to the node subtree, e.g. &#34;stream/sw_record/seg-20260907/shard-0-00001.csv.gz&#34;. |
 | shard_id | [uint32](#uint32) |  | Shard the file belongs to; meaningless when segment_level is set. |
-| segment_level | [bool](#bool) |  | The file belongs to the segment rather than to one shard (index-mode measure rows). |
+| segment_level | [bool](#bool) |  | The file belongs to the segment rather than to one shard: CSV index-mode measure rows; native the segment metadata file and the sidx-NNNNN.bnc volumes. |
 | shard_index | [uint32](#uint32) |  | Index of shard_id in the unit&#39;s shard list; segment-level files use total_shards. |
-| seq | [uint32](#uint32) |  | Split sequence within the shard, starting at 1. |
+| seq | [uint32](#uint32) |  | Sequence of the file within its series, starting at 1: CSV the split number within the shard; native the volume number within its container. |
 
 
 
@@ -8280,6 +8290,8 @@ SidxStat describes the segment-level series index.
 | ----- | ---- | ----- | ----------- |
 | estimated_bytes | [uint64](#uint64) |  |  |
 | doc_count | [uint64](#uint64) |  | Documents of the series index, computed only when the current schema declares an index-mode measure in the group (0 otherwise). Those documents are the index-mode rows plus the series entries of the group&#39;s regular measures, so the value is an upper bound of the rows. |
+| min_timestamp | [int64](#int64) |  | Range of the &#34;_timestamp&#34; values the series index&#39;s segment footers record (unix nanoseconds), read alongside doc_count and 0 when it is not computed or the index records none. The footers count deleted documents and the series entries of regular measures too, so the range may be wider than the index-mode rows. |
+| max_timestamp | [int64](#int64) |  |  |
 
 
 
@@ -8289,7 +8301,8 @@ SidxStat describes the segment-level series index.
 <a name="banyandb-transfer-v1-UnitFinished"></a>
 
 ### UnitFinished
-UnitFinished closes one unit; the client sends the next unit after it.
+UnitFinished closes one unit. The node produces units one at a time in request order; the
+client may send the next unit before this frame arrives.
 
 
 | Field | Type | Label | Description |
@@ -8345,8 +8358,6 @@ UnitStarted opens one unit and carries its progress denominators.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | total_shards | [uint32](#uint32) |  | Number of shards in the unit; 0 for units that only have segment-level data. |
-| total_files | [uint32](#uint32) |  | Native only: files the unit will produce. CSV cannot know it in advance and sends 0. |
-| estimated_total_bytes | [uint64](#uint64) |  | Native only: bytes the unit will produce. CSV sends 0. |
 | total_parts | [uint32](#uint32) |  | Live parts of the unit&#39;s shards in the snapshot; 0 for units without parts (property, segment-level data only). |
 
 
@@ -8377,7 +8388,7 @@ Format is the artifact format of one export.
 | Name | Number | Description |
 | ---- | ------ | ----------- |
 | FORMAT_UNSPECIFIED | 0 |  |
-| FORMAT_NATIVE | 1 | FORMAT_NATIVE packs the engine files byte for byte into .bnc containers. Not implemented yet: data nodes answer UNIMPLEMENTED. |
+| FORMAT_NATIVE | 1 | FORMAT_NATIVE packs the engine files byte for byte into .bnc containers; it is never compressed. ImportService.ImportParts imports it. |
 | FORMAT_CSV | 2 | FORMAT_CSV writes logical rows, one CSV stream per unit and shard. |
 
 
@@ -8412,7 +8423,7 @@ registered in GlobalMethodPolicies(), otherwise the liaison refuses to start.
 | ----------- | ------------ | ------------- | ------------|
 | Plan | [PlanRequest](#banyandb-transfer-v1-PlanRequest) | [PlanResponse](#banyandb-transfer-v1-PlanResponse) stream | Plan enumerates the per-segment units (per-group for property) a selector hits. Each segment unit lists the shards the node holds for that segment. Without a session it reads the live directories. CreateSession snapshots first and announces the new session id in the first frame; ReadSession reads that snapshot and renews its lease. |
 | Sessions | [SessionsRequest](#banyandb-transfer-v1-SessionsRequest) | [SessionsResponse](#banyandb-transfer-v1-SessionsResponse) stream | Sessions runs one lifecycle action (list, heartbeat, release) on every data node and streams one frame per node, stamped with node_id by the liaison. |
-| Export | [ExportRequest](#banyandb-transfer-v1-ExportRequest) stream | [ExportResponse](#banyandb-transfer-v1-ExportResponse) stream | Export streams the files of one data node&#39;s units out of an export session snapshot. The first request frame is init (session, target node, format, limits); every later frame carries exactly one unit, and the client sends the next unit only after it has received unit_finished for the previous one. The liaison forwards the stream to init.target_node; it may split a chunk into smaller ones with the same rows to apply its byte rate. Export neither creates nor removes the snapshot. |
+| Export | [ExportRequest](#banyandb-transfer-v1-ExportRequest) stream | [ExportResponse](#banyandb-transfer-v1-ExportResponse) stream | Export streams the files of one data node&#39;s units out of an export session snapshot. The first request frame is init (session, target node, format, limits); every later frame carries exactly one unit. The node produces units one at a time in request order, and the client may send the next unit before unit_finished for the previous one. The liaison forwards the stream to init.target_node; it may split a chunk into smaller ones with the same rows to apply its byte rate. Export neither creates nor removes the snapshot. |
 
  
 
@@ -8422,6 +8433,155 @@ registered in GlobalMethodPolicies(), otherwise the liaison refuses to start.
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/transfer/v1/import.proto
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest"></a>
+
+### ImportPartsRequest
+ImportPartsRequest is one frame of an ImportParts stream.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| init | [ImportPartsRequest.Init](#banyandb-transfer-v1-ImportPartsRequest-Init) |  |  |
+| chunk | [ImportPartsRequest.Chunk](#banyandb-transfer-v1-ImportPartsRequest-Chunk) |  |  |
+| completion | [ImportPartsRequest.Completion](#banyandb-transfer-v1-ImportPartsRequest-Completion) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-Chunk"></a>
+
+### ImportPartsRequest.Chunk
+Chunk carries the next bytes of the payload. The liaison relays each chunk as one SyncPart
+frame to every target.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| data | [bytes](#bytes) |  | data is at most 4 MiB (4194304 bytes); a larger chunk is refused with INVALID_ARGUMENT. A data node&#39;s --max-recv-msg-size must exceed that plus the frame overhead. |
+| files | [ImportPartsRequest.FileSlice](#banyandb-transfer-v1-ImportPartsRequest-FileSlice) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-Completion"></a>
+
+### ImportPartsRequest.Completion
+Completion ends the payload. total_bytes and total_chunks must equal the bytes and chunks
+sent; a payload carries at least one chunk.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| total_bytes | [uint64](#uint64) |  |  |
+| total_chunks | [uint32](#uint32) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-FileSlice"></a>
+
+### ImportPartsRequest.FileSlice
+FileSlice is a piece of one file in a chunk; the slices of a chunk follow each other.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| name | [string](#string) |  | name is the file name as it is on disk, such as &#34;primary.bin&#34; or &#34;000000000012.seg&#34;. |
+| size | [uint32](#uint32) |  |  |
+| part_index | [uint32](#uint32) |  | part_index indexes Init.parts. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-Init"></a>
+
+### ImportPartsRequest.Init
+Init opens the stream for one payload.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| catalog | [banyandb.common.v1.Catalog](#banyandb-common-v1-Catalog) |  |  |
+| group | [string](#string) |  |  |
+| stage | [string](#string) |  | stage is the lifecycle stage of the target group; empty means &#34;hot&#34;. Ignored for KIND_PROPERTY, whose groups have no stages. |
+| shard_id | [uint32](#uint32) |  | shard_id is the shard of a KIND_PART, KIND_ELEMENT_INDEX or KIND_PROPERTY payload; it is ignored for KIND_SERIES_INDEX. |
+| shard_ids | [uint32](#uint32) | repeated | shard_ids are the shards a KIND_SERIES_INDEX payload covers; its targets are the union of their nodes, and an empty list means every shard of the target stage. Ignored for other kinds. |
+| kind | [ImportPartsRequest.Kind](#banyandb-transfer-v1-ImportPartsRequest-Kind) |  |  |
+| segment_version | [string](#string) |  | segment_version is the file format version of the source segment; the data nodes refuse a version they cannot read. KIND_PROPERTY carries no segment, so it may leave this empty, and the liaison then sends its own file format version. |
+| parts | [ImportPartsRequest.PartInfo](#banyandb-transfer-v1-ImportPartsRequest-PartInfo) | repeated | parts lists the parts of a KIND_PART payload, core part first; an index payload carries one entry with its time range, id 0 and no part type; a KIND_PROPERTY payload carries none. |
+| retry_nodes | [string](#string) | repeated | retry_nodes, when set, restricts the payload to these nodes of its targets; a node outside the targets is refused. |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-PartInfo"></a>
+
+### ImportPartsRequest.PartInfo
+PartInfo describes one part of a KIND_PART stream, or the time range of an index stream.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| id | [uint64](#uint64) |  | id is the source part id. Every entry of a KIND_PART payload carries the same id, the core part&#39;s; the entries are told apart by part_type. Index and property payloads leave it 0. |
+| part_type | [string](#string) |  | part_type is empty for a core part, which the liaison relays as the cluster wire&#39;s &#34;core&#34;, and the index name for a trace secondary index part. Index payloads leave it empty. |
+| compressed_size_bytes | [uint64](#uint64) |  |  |
+| uncompressed_size_bytes | [uint64](#uint64) |  |  |
+| total_count | [uint64](#uint64) |  |  |
+| blocks_count | [uint64](#uint64) |  |  |
+| min_timestamp | [int64](#int64) |  |  |
+| max_timestamp | [int64](#int64) |  |  |
+| min_key | [int64](#int64) |  |  |
+| max_key | [int64](#int64) |  |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsResponse"></a>
+
+### ImportPartsResponse
+ImportPartsResponse reports every target of one payload.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| requested_copies | [uint32](#uint32) |  | requested_copies is the copies the target stage asks for per shard (replicas &#43; 1). For KIND_SERIES_INDEX, whose targets are the union of several shards&#39; nodes, it is not comparable with the number of targets. |
+| targets | [ImportPartsResponse.TargetResult](#banyandb-transfer-v1-ImportPartsResponse-TargetResult) | repeated |  |
+
+
+
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsResponse-TargetResult"></a>
+
+### ImportPartsResponse.TargetResult
+TargetResult is the result of one target data node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| node | [string](#string) |  |  |
+| success | [bool](#bool) |  |  |
+| error | [string](#string) |  |  |
+| completion_sent | [bool](#bool) |  | completion_sent tells that the completion reached this target and its failure came after it (the stream broke before the answer), so the target may have committed the payload. A client must not push such a payload again when storing it twice duplicates data. |
+
+
+
 
 
 
@@ -8712,6 +8872,22 @@ Shard lists the nodes one shard is written to.
 
  
 
+
+<a name="banyandb-transfer-v1-ImportPartsRequest-Kind"></a>
+
+### ImportPartsRequest.Kind
+Kind is what one ImportParts stream carries. The liaison refuses a (catalog, kind) pair not
+listed below with INVALID_ARGUMENT.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| KIND_UNSPECIFIED | 0 |  |
+| KIND_PART | 1 | KIND_PART is one core part, plus the trace secondary index parts sharing its id (stream, measure, trace). |
+| KIND_SERIES_INDEX | 2 | KIND_SERIES_INDEX is the series index segments of one segment; it is sent to the union of the nodes of the shards in Init.shard_ids (stream, measure, trace). |
+| KIND_ELEMENT_INDEX | 3 | KIND_ELEMENT_INDEX is the element index segments of one stream shard (stream only). |
+| KIND_PROPERTY | 4 | KIND_PROPERTY is the native index files of one property shard (property only). |
+
+
  
 
  
@@ -8721,14 +8897,16 @@ Shard lists the nodes one shard is written to.
 
 ### ImportService
 ImportService is served by the liaison gRPC endpoint (17912) in both cluster and
-standalone deployments. It replays the rows of a CSV artifact into the data nodes of a
-target stage. Every method must be registered in GlobalMethodPolicies(), otherwise the
+standalone deployments. It imports an artifact into the data nodes of a target stage:
+ImportRows replays the rows of a CSV artifact, ImportParts relays the files of a native one.
+Every method must be registered in GlobalMethodPolicies(), otherwise the
 liaison refuses to start.
 
 | Method Name | Request Type | Response Type | Description |
 | ----------- | ------------ | ------------- | ------------|
 | ImportRows | [ImportRowsRequest](#banyandb-transfer-v1-ImportRowsRequest) stream | [ImportRowsResponse](#banyandb-transfer-v1-ImportRowsResponse) stream | ImportRows replays rows of one (catalog, group, stage). The first request frame is init; every later frame is one batch, acknowledged by one response echoing its batch_seq once every target data node accepted it. A failed batch ends the stream with a gRPC status whose message starts with &#34;batch_seq=&lt;n&gt;&#34;. A failure not tied to a received batch (a receive error, an oversized frame, a frame that is not a batch, a canceled stream) carries no batch_seq and is attributed to the oldest unacknowledged batch. |
 | Targets | [TargetsRequest](#banyandb-transfer-v1-TargetsRequest) | [TargetsResponse](#banyandb-transfer-v1-TargetsResponse) | Targets reports, read-only, the data nodes each shard of one (group, stage) is written to. |
+| ImportParts | [ImportPartsRequest](#banyandb-transfer-v1-ImportPartsRequest) stream | [ImportPartsResponse](#banyandb-transfer-v1-ImportPartsResponse) | ImportParts relays the files of one payload of a native artifact (one part with its trace secondary index parts, one segment&#39;s series index, one shard&#39;s element index, or one property shard) to every target data node of the payload&#39;s (group, stage, shard) over the chunked sync protocol. The first frame is init, then chunks, then one completion; the liaison forwards every chunk to all targets and waits for all of them before it reads the next, and answers once every target finished, reporting each target on its own. A frame over the liaison&#39;s receive size limit ends the stream with RESOURCE_EXHAUSTED and the MESSAGE_TOO_LARGE detail, which a retry cannot fix. |
 
  
 

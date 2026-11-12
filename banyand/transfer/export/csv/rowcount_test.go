@@ -48,11 +48,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 const (
@@ -181,23 +183,23 @@ func produceCounted(t *testing.T, meta metadata.Repo, g engineGroup, name string
 	require.NoError(t, err)
 	var out []*countedUnit
 	for _, seg := range segs {
-		if !seg.IsDir() || !strings.HasPrefix(seg.Name(), segDirPrefix) {
+		if !seg.IsDir() || !strings.HasPrefix(seg.Name(), nativefmt.SegDirPrefix) {
 			continue
 		}
 		segDir := filepath.Join(groupDir, seg.Name())
-		unit := &transferv1.SegmentUnit{Catalog: g.catalog, Group: g.name, SegmentSuffix: strings.TrimPrefix(seg.Name(), segDirPrefix)}
+		unit := &transferv1.SegmentUnit{Catalog: g.catalog, Group: g.name, SegmentSuffix: strings.TrimPrefix(seg.Name(), nativefmt.SegDirPrefix)}
 		cu := &countedUnit{unit: unit}
 		shards, readErr := os.ReadDir(segDir)
 		require.NoError(t, readErr)
 		for _, sh := range shards {
-			id, isShard := strings.CutPrefix(sh.Name(), shardDirPrefix)
+			id, isShard := strings.CutPrefix(sh.Name(), nativefmt.ShardDirPrefix)
 			if !isShard || !sh.IsDir() {
 				continue
 			}
 			n, parseErr := strconv.ParseUint(id, 10, 32)
 			require.NoError(t, parseErr)
 			shardDir := filepath.Join(segDir, sh.Name())
-			partIDs, partsErr := LivePartIDs(shardDir)
+			partIDs, partsErr := snapshot.LivePartIDs(shardDir)
 			require.NoError(t, partsErr)
 			// The Plan names only the shards holding parts.
 			if len(partIDs) > 0 {

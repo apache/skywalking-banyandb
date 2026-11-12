@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"maps"
@@ -677,9 +678,9 @@ func TestRunExport_IdleTimeoutFires(t *testing.T) {
 }
 
 func TestRunExport_RetriesABusyNode(t *testing.T) {
-	origBase := exportRetryBase
-	exportRetryBase = 10 * time.Millisecond
-	t.Cleanup(func() { exportRetryBase = origBase })
+	origBase := transfer.RetryBase
+	transfer.RetryBase = 10 * time.Millisecond
+	t.Cleanup(func() { transfer.RetryBase = origBase })
 	f := exportFake()
 	onlyNodeA(f)
 	var calls int
@@ -730,11 +731,94 @@ func TestRunExport_SchemaOnly(t *testing.T) {
 	}
 }
 
-func TestRunExport_NativeIsNotImplemented(t *testing.T) {
+func TestRunExport_NativeRefusesCompressionAndSmallVolumes(t *testing.T) {
 	f := exportFake()
 	opts, _ := exportOptions(t, f)
 	opts.Format = transferv1.Format_FORMAT_NATIVE
-	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "native export format is not implemented yet")
+	opts.Compress = transferv1.Compress_COMPRESS_GZIP
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "a native export is not compressed")
+
+	opts, _ = exportOptions(t, f)
+	opts.Format = transferv1.Format_FORMAT_NATIVE
+	opts.Compress = transferv1.Compress_COMPRESS_NONE
+	opts.MaxFileSize = 1024
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "a native export needs --max-file-size 0 or at least")
+}
+
+// A native unit skips the schema revision check, keeps the entry count of every volume, lists
+// the metadata file at the segment level and takes the shard total from the Plan aggregate.
+func TestRunExport_NativeUnit(t *testing.T) {
+	f := exportFake()
+	onlyNodeA(f)
+	measure := segmentOf(f.planFrames[0])
+	f.planFrames[0].GetUnits().Units = f.planFrames[0].GetUnits().Units[:1]
+	f.exportScript = scripted(func(_ *fakeLiaison, _ *transferv1.ExportRequest_Init, req *transferv1.ExportRequest, stream transferv1.ExportService_ExportServer) error {
+		u := req.GetSegment()
+		dir := fmt.Sprintf("%s/%s/seg-%s/", transfer.CatalogName(u.GetCatalog()), u.GetGroup(), u.GetSegmentSuffix())
+		send := func(r *transferv1.ExportResponse) error { return stream.Send(r) }
+		started := &transferv1.UnitStarted{TotalShards: 1, TotalParts: 1}
+		if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: started}}); err != nil {
+			return err
+		}
+		for i, file := range []struct {
+			path     string
+			content  []byte
+			entries  uint32
+			segLevel bool
+		}{{path: dir + "metadata", content: []byte(`{"version":"1.5.0"}`), segLevel: true}, {path: dir + "shard-0-00001.bnc", content: []byte("volume"), entries: 3}} {
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileStarted{FileStarted: &transferv1.FileStarted{
+				RelativePath: file.path, SegmentLevel: file.segLevel, Seq: uint32(i + 1),
+			}}}); err != nil {
+				return err
+			}
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: file.content}}}); err != nil {
+				return err
+			}
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileFinished{FileFinished: &transferv1.FileFinished{
+				Bytes: uint64(len(file.content)), Crc32: crc32.ChecksumIEEE(file.content), EntryCount: file.entries,
+			}}}); err != nil {
+				return err
+			}
+		}
+		return send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitFinished{UnitFinished: &transferv1.UnitFinished{}}})
+	})
+	opts, log := exportOptions(t, f)
+	opts.Selectors = []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_MEASURE}}
+	opts.Format = transferv1.Format_FORMAT_NATIVE
+	opts.Compress = transferv1.Compress_COMPRESS_UNSPECIFIED
+	if err := runExport(t, f, opts); err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	m, err := manifest.Read(filepath.Join(opts.Output, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Format != manifest.FormatNative || m.Compress != "none" || len(m.Units) != 1 || len(m.Units[0].Sources) != 1 {
+		t.Fatalf("manifest = %+v", m)
+	}
+	src := m.Units[0].Sources[0]
+	if len(src.SegmentFiles) != 1 || !strings.HasSuffix(src.SegmentFiles[0].Path, "/metadata") {
+		t.Fatalf("segment files = %+v", src.SegmentFiles)
+	}
+	if len(src.Shards) != 1 || len(src.Shards[0].Files) != 1 || src.Shards[0].Files[0].EntryCount != 3 ||
+		src.Shards[0].TotalCount != measure.GetShards()[0].GetTotalCount() {
+		t.Fatalf("shards = %+v", src.Shards)
+	}
+	checkFile(t, opts.Output, src.SegmentFiles[0])
+	checkFile(t, opts.Output, src.Shards[0].Files[0])
+}
+
+func TestCheckFormat_NativeDefaultsToNoCompression(t *testing.T) {
+	opts := config.Export{Format: transferv1.Format_FORMAT_NATIVE}
+	if err := CheckFormat(&opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Compress != transferv1.Compress_COMPRESS_NONE {
+		t.Fatalf("compress = %s", opts.Compress)
+	}
+	if m := baseManifest(opts.Format, opts.Compress, nil, nil); m.Format != "native" || m.Compress != "none" {
+		t.Fatalf("manifest format %q compress %q", m.Format, m.Compress)
+	}
 }
 
 func TestSchemaSync_ListsOnlyTheKindsOfEachCatalog(t *testing.T) {
@@ -794,9 +878,9 @@ func TestSchemaSync_ListsOnlyTheKindsOfEachCatalog(t *testing.T) {
 // A cancellation during the retry back-off reports why the export was canceled, not the
 // busy answer of the attempt before it.
 func TestRunExport_CancelDuringRetryBackoffReportsTheCause(t *testing.T) {
-	origBase := exportRetryBase
-	exportRetryBase = time.Minute
-	t.Cleanup(func() { exportRetryBase = origBase })
+	origBase := transfer.RetryBase
+	transfer.RetryBase = time.Minute
+	t.Cleanup(func() { transfer.RetryBase = origBase })
 	f := exportFake()
 	onlyNodeA(f)
 	f.exportScript = func(*fakeLiaison, *transferv1.ExportRequest_Init, transferv1.ExportService_ExportServer) error {
@@ -1067,7 +1151,7 @@ func TestBaseManifest_StagesRecordTheirOwnOptions(t *testing.T) {
 			{Name: "cold", ShardNum: 1, SegmentInterval: day(5), Ttl: day(365), Replicas: 1},
 		},
 	}}
-	m := baseManifest(transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{g}, &schemasync.Result{})
+	m := baseManifest(transferv1.Format_FORMAT_CSV, transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{g}, &schemasync.Result{})
 	want := []manifest.Stage{
 		{Name: "hot", ShardNum: 4, SegmentInterval: "1d", TTL: "7d", Replicas: 2},
 		{Name: "warm", ShardNum: 2, SegmentInterval: "3d", TTL: "30d", Replicas: 0},
@@ -1090,12 +1174,43 @@ func TestUnitSource_CountsRowsWhereTheFilesBelong(t *testing.T) {
 		{file: manifest.File{Path: "seg-2"}, segmentLevel: true, rowCounts: map[string]uint64{"m1": 3}},
 		{file: manifest.File{Path: "shard-1"}, shardID: 1, rowCounts: map[string]uint64{"m1": 4}},
 	}}
-	src := unitSource("n", u)
+	src := unitSource("n", u, false)
 	if !maps.Equal(src.RowCounts, map[string]uint64{"m1": 5, "m2": 1}) || src.TotalCount != 6 || len(src.SegmentFiles) != 2 {
 		t.Fatalf("segment-level counts: rowCounts %v totalCount %d files %d", src.RowCounts, src.TotalCount, len(src.SegmentFiles))
 	}
 	if len(src.Shards) != 1 || !maps.Equal(src.Shards[0].RowCounts, map[string]uint64{"m1": 4}) || src.Shards[0].TotalCount != 4 {
 		t.Fatalf("shard counts: %+v", src.Shards)
+	}
+}
+
+// A native file counts no rows: shard totals come from the Plan shard aggregate, the segment-level total
+// from the index-mode document count, a property shard's from its document count.
+func TestUnitSource_NativeCountsFromThePlan(t *testing.T) {
+	u := &plannedUnit{segment: &transferv1.SegmentInventory{
+		SegmentLevel: &transferv1.SidxStat{DocCount: 7},
+		Shards: []*transferv1.ShardStat{{ShardId: 1, TotalCount: 15, Parts: []*transferv1.PartStat{
+			{Id: 1, TotalCount: 10}, {Id: 2, TotalCount: 5},
+		}}},
+	}, files: []receivedFile{
+		{file: manifest.File{Path: "seg/metadata"}, segmentLevel: true},
+		{file: manifest.File{Path: "seg/shard-1-00001.bnc", EntryCount: 3}, shardID: 1},
+	}}
+	src := unitSource("n", u, true)
+	if src.TotalCount != 7 || len(src.Shards) != 1 || src.Shards[0].TotalCount != 15 || len(src.Shards[0].Files) != 1 {
+		t.Fatalf("native counts: total %d shards %+v", src.TotalCount, src.Shards)
+	}
+	// The aggregate wins over the sum of the parts: a split shard's pieces are folded into it.
+	merged := unitSource("n", &plannedUnit{segment: &transferv1.SegmentInventory{
+		Shards: []*transferv1.ShardStat{{ShardId: 0, TotalCount: 40, Parts: []*transferv1.PartStat{{Id: 1, TotalCount: 10}}}},
+	}}, true)
+	if len(merged.Shards) != 1 || merged.Shards[0].TotalCount != 40 {
+		t.Fatalf("native shard aggregate: %+v", merged.Shards)
+	}
+	prop := unitSource("n", &plannedUnit{property: &transferv1.PropertyInventory{
+		Shards: []*transferv1.PropertyShardStat{{ShardId: 0, DocCount: 4}},
+	}}, true)
+	if len(prop.Shards) != 1 || prop.Shards[0].TotalCount != 4 {
+		t.Fatalf("native property counts: %+v", prop.Shards)
 	}
 }
 

@@ -64,7 +64,7 @@ type Export struct {
 	OutputFormat string                 `flag:"output-format" short:"o" env:"OUTPUT_FORMAT" default:"table" usage:"dry-run rendering: table|yaml|json"`
 	Selectors    []*transferv1.Selector `flag:"selector" plan:"export.selectors" parse:"selector" usage:"scope, repeatable: catalog=<stream|measure|trace|property>[,groups=<g1>;<g2>]"`
 
-	MaxFileSize uint64 `flag:"max-file-size" plan:"export.maxFileSize" env:"MAX_FILE_SIZE" default:"512MiB" parse:"size" usage:"soft size limit of one exported file on disk, 0 = unlimited"`
+	MaxFileSize uint64 `flag:"max-file-size" plan:"export.maxFileSize" env:"MAX_FILE_SIZE" default:"512MiB" parse:"size" usage:"size limit of one exported file on disk (CSV: soft; native: hard cap per .bnc volume, 0 or at least 64KiB), 0 = unlimited"`
 
 	NodeRateLimit    float64 `flag:"node-rate-limit" plan:"export.nodeRateLimit" env:"NODE_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"per data node byte rate, e.g. 50MiB/s or 3GiB/min; 0 = unlimited"`
 	NodeRowRateLimit float64 `flag:"node-row-rate-limit" plan:"export.nodeRowRateLimit" env:"NODE_ROW_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"per data node CSV row rate, e.g. 50000/s or 3000000/min; 0 = unlimited"`
@@ -75,8 +75,8 @@ type Export struct {
 
 	// Parallelism is math.MaxInt for "max".
 	Parallelism int                 `flag:"parallelism" plan:"export.parallelism" env:"PARALLELISM" default:"max" parse:"parallelism" usage:"number of data nodes exported concurrently: max or an integer >= 1"`
-	Format      transferv1.Format   `flag:"format" plan:"export.format" env:"FORMAT" default:"csv" parse:"format" usage:"artifact format: csv (native is not implemented yet)"`
-	Compress    transferv1.Compress `flag:"compress" plan:"export.compress" env:"COMPRESS" default:"gzip" parse:"compress" usage:"file compression: none|gzip"`
+	Format      transferv1.Format   `flag:"format" plan:"export.format" env:"FORMAT" default:"csv" parse:"format" usage:"artifact format: csv|native"`
+	Compress    transferv1.Compress `flag:"compress" plan:"export.compress" env:"COMPRESS" default:"gzip" parse:"compress" usage:"file compression: none|gzip; native accepts none only and defaults to it"`
 
 	CSVAnnotations bool `flag:"csv-annotations" plan:"export.csvAnnotations" env:"CSV_ANNOTATIONS" usage:"write a #datatype line before every CSV header"`
 	IncludeSchema  bool `flag:"include-schema" plan:"export.includeSchema" env:"INCLUDE_SCHEMA" default:"true" usage:"export the schema too; false skips it and leaves groups[].indexMode unknown in the manifest"`
@@ -97,12 +97,14 @@ type Import struct {
 	ConflictRules    []ConflictRule `flag:"-" plan:"import.schemaConflictPolicy.rules" parse:"conflict-rules"`
 
 	WriteBatchBytes  uint64  `flag:"write-batch-bytes" plan:"import.writeBatchBytes" env:"IMPORT_WRITE_BATCH_BYTES" default:"4MiB" parse:"size" usage:"bytes of rows sent in one batch, 64KiB to 64MiB"`
-	WriteRateLimit   float64 `flag:"write-rate-limit" plan:"import.writeRateLimit" env:"IMPORT_WRITE_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"rows written per second across the import, e.g. 50000/s or 3000000/min; 0 = unlimited"`
-	LiaisonRateLimit float64 `flag:"liaison-rate-limit" plan:"connection.rateLimit" env:"LIAISON_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"byte rate sent to each liaison by this import, e.g. 100MiB/s; 0 = unlimited"`
-	NodeRateLimit    float64 `flag:"node-rate-limit" plan:"import.nodeRateLimit" env:"IMPORT_NODE_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"byte rate each target data node admits from the imports, however many liaisons write to it, e.g. 50MiB/s or 3GiB/min; 0 = unlimited"`
-	NodeRowRateLimit float64 `flag:"node-row-rate-limit" plan:"import.nodeRowRateLimit" env:"IMPORT_NODE_ROW_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"row rate each target data node admits from the imports, however many liaisons write to it, e.g. 50000/s or 3000000/min; 0 = unlimited"`
+	WriteRateLimit   float64 `flag:"write-rate-limit" plan:"import.writeRateLimit" env:"IMPORT_WRITE_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"CSV only: rows written per second across the import, e.g. 50000/s or 3000000/min; 0 = unlimited"`
+	LiaisonRateLimit float64 `flag:"liaison-rate-limit" plan:"connection.rateLimit" env:"LIAISON_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"CSV only: byte rate sent to each liaison by this import, e.g. 100MiB/s; 0 = unlimited"`
+	NodeRateLimit    float64 `flag:"node-rate-limit" plan:"import.nodeRateLimit" env:"IMPORT_NODE_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"CSV only: byte rate each target data node admits from the imports, however many liaisons write to it, e.g. 50MiB/s or 3GiB/min; 0 = unlimited"`
+	NodeRowRateLimit float64 `flag:"node-row-rate-limit" plan:"import.nodeRowRateLimit" env:"IMPORT_NODE_ROW_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"CSV only: row rate each target data node admits from the imports, however many liaisons write to it, e.g. 50000/s or 3000000/min; 0 = unlimited"`
+	PartRateLimit    float64 `flag:"part-rate-limit" plan:"import.partRateLimit" env:"IMPORT_PART_RATE_LIMIT" default:"0" parse:"rate-bytes" usage:"native only: total byte rate of the part files this import sends, e.g. 50MiB/s; 0 = unlimited"`
+	PartChunkSize    uint64  `flag:"part-chunk-size" plan:"import.partChunkSize" env:"IMPORT_PART_CHUNK_SIZE" default:"1MiB" parse:"size" usage:"native only: bytes of part files sent in one frame, 64KiB to 4MiB"`
 
-	SendRetryTimeout time.Duration `flag:"send-retry-timeout" plan:"import.sendRetryTimeout" env:"IMPORT_SEND_RETRY_TIMEOUT" default:"15m" usage:"how long to keep reopening an import stream refused as unavailable or busy, trying the next liaison each time"`
+	SendRetryTimeout time.Duration `flag:"send-retry-timeout" plan:"import.sendRetryTimeout" env:"IMPORT_SEND_RETRY_TIMEOUT" default:"15m" usage:"how long to keep reopening an import stream the liaison refused as unavailable or busy (tried on the next liaison) or for a schema not live yet (tried again on the same liaison)"`
 	VerifyTimeout    time.Duration `flag:"verify-timeout" plan:"import.verifyTimeout" env:"IMPORT_VERIFY_TIMEOUT" default:"2m" usage:"how long --verify polls for the written rows to show up"`
 
 	// Parallelism is math.MaxInt for "max".
@@ -117,7 +119,7 @@ type Import struct {
 	SchemaOnly        bool `flag:"schema-only" plan:"import.schemaOnly" env:"IMPORT_SCHEMA_ONLY" usage:"write the schema only, without data"`
 	Force             bool `flag:"force" usage:"confirm an overwrite schema conflict policy"`
 	ForceTTL          bool `flag:"force-ttl" usage:"import units whose data the target TTL has already expired"`
-	StrictCoverage    bool `flag:"strict-coverage" env:"IMPORT_STRICT_COVERAGE" usage:"refuse (exit 2) a non-property unit that would be imported from more than one source after picking the minimal covering set (or with --all-sources)"`
+	StrictCoverage    bool `flag:"strict-coverage" env:"IMPORT_STRICT_COVERAGE" usage:"refuse (exit 2) a shard work item, or a CSV stream/trace segment-level item, that would be imported from more than one source after picking the minimal covering set (or with --all-sources); property units, series indexes and measure segment items are exempt"`
 	AllSources        bool `flag:"all-sources" usage:"import every source of a unit instead of the minimal covering set"`
 	AbortOnPlanChange bool `flag:"abort-on-plan-change" usage:"exit 5 when the plan re-checked after writing the schema differs from the first one"`
 	Verify            bool `flag:"verify" plan:"import.verify" env:"IMPORT_VERIFY" default:"true" usage:"after the import, check the target's row counts against what was sent (exit 4 on a mismatch)"`

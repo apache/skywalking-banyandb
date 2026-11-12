@@ -34,16 +34,9 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/csv"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
-)
-
-const (
-	segDirPrefix   = "seg-"
-	sidxDirName    = "sidx"
-	shardDirPrefix = "shard-"
-	// streamIdxDirName is the per-shard element index of a stream (stream/part.go).
-	streamIdxDirName = "idx"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // segSuffixPattern is the day (YYYYMMDD) or hour (YYYYMMDDHH) suffix of a segment
@@ -99,10 +92,10 @@ func hasSegmentDir(groupDir string) (bool, error) {
 
 // segmentSuffixOf returns the time suffix of a seg-<suffix> directory entry.
 func segmentSuffixOf(e os.DirEntry) (string, bool) {
-	if !e.IsDir() || !strings.HasPrefix(e.Name(), segDirPrefix) {
+	if !e.IsDir() || !strings.HasPrefix(e.Name(), nativefmt.SegDirPrefix) {
 		return "", false
 	}
-	suffix := strings.TrimPrefix(e.Name(), segDirPrefix)
+	suffix := strings.TrimPrefix(e.Name(), nativefmt.SegDirPrefix)
 	return suffix, segSuffixPattern.MatchString(suffix)
 }
 
@@ -112,14 +105,14 @@ func statSegment(segDir, suffix string, catalog commonv1.Catalog, group string, 
 	if err != nil {
 		return nil, err
 	}
-	sidxDir := filepath.Join(segDir, sidxDirName)
+	sidxDir := filepath.Join(segDir, nativefmt.SeriesIndexDir)
 	sidxBytes, err := dirBytes(sidxDir)
 	if err != nil {
 		return nil, err
 	}
 	segLevel := &transferv1.SidxStat{EstimatedBytes: sidxBytes}
 	if indexMode {
-		if segLevel.DocCount, err = docCount(sidxDir); err != nil {
+		if err = statIndexMode(sidxDir, segLevel); err != nil {
 			return nil, err
 		}
 	}
@@ -161,7 +154,7 @@ func statSegment(segDir, suffix string, catalog commonv1.Catalog, group string, 
 // parts is added to both byte estimates: a stream's idx/ is copied as-is, so its size counts
 // on both sides; a trace's sidx/<rule>/<part> carries its own manifest.json sizes.
 func statShard(shardDir string, shardID uint32, catalog commonv1.Catalog, read partReadFunc) (*transferv1.ShardStat, error) {
-	partIDs, err := csv.LivePartIDs(shardDir)
+	partIDs, err := snapshot.LivePartIDs(shardDir)
 	if err != nil {
 		return nil, err
 	}
@@ -190,14 +183,14 @@ func statShard(shardDir string, shardID uint32, catalog commonv1.Catalog, read p
 	}
 	switch catalog {
 	case commonv1.Catalog_CATALOG_STREAM:
-		idxBytes, idxErr := dirBytes(filepath.Join(shardDir, streamIdxDirName))
+		idxBytes, idxErr := dirBytes(filepath.Join(shardDir, nativefmt.ElementIndexDir))
 		if idxErr != nil {
 			return nil, idxErr
 		}
 		stat.EstimatedCompressedBytes += idxBytes
 		stat.EstimatedUncompressedBytes += idxBytes
 	case commonv1.Catalog_CATALOG_TRACE:
-		compressed, uncompressed, sidxErr := sidxBytes(filepath.Join(shardDir, sidxDirName))
+		compressed, uncompressed, sidxErr := sidxBytes(filepath.Join(shardDir, nativefmt.SecondaryIndexDir))
 		if sidxErr != nil {
 			return nil, sidxErr
 		}
@@ -277,6 +270,28 @@ func statPropertyGroup(groupDir, group string) (*transferv1.UnitInventory, error
 	return &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Property{Property: prop}}, nil
 }
 
+// statIndexMode fills the document count and the time range of an index-mode group's series
+// index; a missing or unflushed index leaves both 0.
+func statIndexMode(dir string, stat *transferv1.SidxStat) error {
+	generation, err := native.OpenReadOnlyGeneration(dir)
+	if err != nil {
+		if errors.Is(err, native.ErrNoSnapshot) || errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("open index %s: %w", dir, err)
+	}
+	defer func() { _ = generation.Close() }()
+	count, err := generation.VisibleDocCount()
+	if err != nil {
+		return fmt.Errorf("count documents of index %s: %w", dir, err)
+	}
+	stat.DocCount = uint64(count)
+	if lo, hi, ok := generation.TimeBounds(); ok {
+		stat.MinTimestamp, stat.MaxTimestamp = lo, hi
+	}
+	return nil
+}
+
 // docCount is the committed document count of the native index in dir. An index that was
 // never flushed (or is absent) holds no committed generation and counts 0; any other
 // failure, a corrupt index among them, fails the plan rather than reporting 0 rows.
@@ -292,10 +307,10 @@ func docCount(dir string) (uint64, error) {
 }
 
 func shardIDOf(e os.DirEntry) (uint32, bool) {
-	if !e.IsDir() || !strings.HasPrefix(e.Name(), shardDirPrefix) {
+	if !e.IsDir() || !strings.HasPrefix(e.Name(), nativefmt.ShardDirPrefix) {
 		return 0, false
 	}
-	id, err := strconv.ParseUint(strings.TrimPrefix(e.Name(), shardDirPrefix), 10, 32)
+	id, err := strconv.ParseUint(strings.TrimPrefix(e.Name(), nativefmt.ShardDirPrefix), 10, 32)
 	if err != nil {
 		return 0, false
 	}
