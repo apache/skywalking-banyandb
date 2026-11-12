@@ -351,19 +351,19 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 
 	for i := 0; i < fastWorkers; i++ {
 		workersWg.Add(1)
-		run.Go(context.Background(), "trace.merger.fast-lane", tst.l, func(_ context.Context) {
+		run.GoOrDie(context.Background(), "trace.merger.fast-lane", tst.l, func(_ context.Context) {
 			defer workersWg.Done()
 			tst.mergeLaneWorker(fastCh, merges) //nolint:contextcheck
 		})
 	}
 	workersWg.Add(1)
-	run.Go(context.Background(), "trace.merger.slow-lane", tst.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.merger.slow-lane", tst.l, func(_ context.Context) {
 		defer workersWg.Done()
 		tst.mergeLaneWorker(slowCh, merges) //nolint:contextcheck
 	})
 
 	dispatcherWg.Add(1)
-	run.Go(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
 		defer dispatcherWg.Done()
 		tst.dispatcherLoop(threshold, fastCh, slowCh)
 	})

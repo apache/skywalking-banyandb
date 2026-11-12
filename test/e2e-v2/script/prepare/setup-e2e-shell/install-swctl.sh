@@ -28,6 +28,8 @@ install_swctl() {
   mkdir -p $BASE_DIR/swctl && cd $BASE_DIR/swctl
   curl -kLo skywalking-cli.tar.gz https://github.com/apache/skywalking-cli/archive/${SW_CTL_COMMIT}.tar.gz
   tar -zxf skywalking-cli.tar.gz --strip=1
+  # The upstream clean target suppresses dependency errors; expose them in CI logs.
+  sed -i 's/@go mod tidy &> \/dev\/null/@go mod tidy/' Makefile
   VERSION=${SW_CTL_COMMIT} make install DESTDIR=$BIN_DIR
 }
 

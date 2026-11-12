@@ -811,12 +811,12 @@ func (hc *handoffController) startMonitor() {
 	hc.monitorWg.Add(2)
 
 	// Goroutine 1: Periodic polling
-	run.Go(context.Background(), "trace.handoff.poll-node-status", hc.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.handoff.poll-node-status", hc.l, func(_ context.Context) {
 		hc.pollNodeStatus()
 	})
 
 	// Goroutine 2: Handle status changes
-	run.Go(context.Background(), "trace.handoff.status-changes", hc.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.handoff.status-changes", hc.l, func(_ context.Context) {
 		hc.handleStatusChanges()
 	})
 
@@ -948,7 +948,7 @@ func (hc *handoffController) startReplayWorker() {
 	hc.replayCancel = cancel
 
 	hc.replayWg.Add(1)
-	run.Go(ctx, "trace.handoff.replay-worker", hc.l, func(workerCtx context.Context) {
+	run.GoOrDie(ctx, "trace.handoff.replay-worker", hc.l, func(workerCtx context.Context) {
 		hc.replayWorkerLoop(workerCtx)
 	})
 

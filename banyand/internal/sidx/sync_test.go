@@ -50,7 +50,7 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		maxTS := int64(1700001000)
 		writeTestDataWithTimeRange(t, raw, reqs, 1, 1, &minTS, &maxTS)
 
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -85,7 +85,7 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		// segmentID=1000, nil timestamps — should fall back to SegmentID
 		writeTestDataWithTimeRange(t, raw, reqs, 1000, 1, nil, nil)
 
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -115,7 +115,7 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		// segmentID=0, nil timestamps — should panic
 		writeTestDataWithTimeRange(t, raw, reqs, 0, 1, nil, nil)
 
-		flushIntro, err := raw.Flush(map[uint64]struct{}{1: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{1: {}})
 		require.NoError(t, err)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()
@@ -166,7 +166,7 @@ func TestStreamingParts_Timestamps(t *testing.T) {
 		writeTestDataWithTimeRange(t, raw, reqs, 1, 2, &min1, &max1)
 		writeTestDataWithTimeRange(t, raw, reqs, 2, 3, &min2, &max2)
 
-		flushIntro, flushErr := raw.Flush(map[uint64]struct{}{2: {}, 3: {}})
+		flushIntro, flushErr := raw.Flush(nil, map[uint64]struct{}{2: {}, 3: {}})
 		require.NoError(t, flushErr)
 		raw.IntroduceFlushed(flushIntro)
 		flushIntro.Release()

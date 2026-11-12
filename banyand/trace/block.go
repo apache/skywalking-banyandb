@@ -693,14 +693,17 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	tagMap := make(map[string]*tag)
+	// Tags are found by index, not by pointer: appending a new tag may reallocate bi.tags, and a pointer
+	// taken before that would strand the values appended through it.
+	tagIdx := make(map[string]int, len(bi.tags))
 	for i := range bi.tags {
-		tagMap[bi.tags[i].name] = &bi.tags[i]
+		tagIdx[bi.tags[i].name] = i
 	}
 
 	for _, t := range b.tags {
-		if existingTag, exists := tagMap[t.name]; exists {
+		if ti, exists := tagIdx[t.name]; exists {
 			assertIdxAndOffset(t.name, len(t.values), b.idx, offset)
+			existingTag := &bi.tags[ti]
 			existingTag.values = append(existingTag.values, t.values[b.idx:offset]...)
 		} else {
 			newTag := tag{name: t.name, valueType: t.valueType}

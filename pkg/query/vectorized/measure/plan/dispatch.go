@@ -137,6 +137,10 @@ func dispatchBatches(ctx context.Context, req *measurev1.QueryRequest, metadata 
 	// partials). The caller in banyand/query/processor.go sets emitPartial
 	// from internalRequest.AggReturnPartial on the distributed path.
 	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(cfg.QueryMemoryMiB)*1024*1024)
+	if emitPartial && skipProjectionValidation && req.GetAgg() != nil && len(req.GetGroups()) > 1 {
+		// A group of a multi-group aggregation reduced across groups.
+		req = partialAggRequest(req, measureSchema)
+	}
 	defer func() {
 		if err == nil {
 			handledCount.Add(1)

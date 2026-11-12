@@ -780,15 +780,22 @@ func dispatchMeasureBatches(
 	if projErr := vecplan.ValidateMultiGroupProjection(queryCriteria, mctx.schemas, measureSchemas); projErr != nil {
 		return nil, "", projErr
 	}
-	merge, mergeErr := vecplan.NewMultiGroupMerge(ctx, queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig())
+	var mergeOptions []vecplan.MultiGroupOption
+	if emitPartial {
+		// A data node returns its groups' partials as they are; the liaison reduces them.
+		mergeOptions = append(mergeOptions, vecplan.ConcatAggregates())
+	}
+	merge, mergeErr := vecplan.NewMultiGroupMerge(ctx, queryCriteria, mctx.schemas, measureSchemas, vecs[0].VectorizedConfig(), mergeOptions...)
 	if mergeErr != nil {
 		return nil, "", mergeErr
 	}
+	// Reducing the groups' aggregates needs their partials, not their final results.
+	groupEmitPartial := emitPartial || merge.ReducesAggregates()
 	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
 	for groupIdx, vec := range vecs {
 		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
-			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), emitPartial, true, groupPatternRequests(resolved, groupIdx)...)
+			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), groupEmitPartial, true, groupPatternRequests(resolved, groupIdx)...)
 		if dispatchErr == nil {
 			var group *vecplan.GroupBatches
 			group, dispatchErr = merge.Collect(ctx, result, planStr)

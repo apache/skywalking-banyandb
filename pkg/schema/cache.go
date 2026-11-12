@@ -276,7 +276,7 @@ func NewPortableRepository(
 
 func (sr *schemaRepo) Watcher() {
 	for i := 0; i < sr.workerNum; i++ {
-		run.Go(sr.closer.Ctx(), "schema-watcher", sr.l, func(ctx context.Context) {
+		run.GoOrDie(sr.closer.Ctx(), "schema-watcher", sr.l, func(ctx context.Context) {
 			if !sr.closer.AddReceiver() {
 				return
 			}
@@ -323,7 +323,7 @@ func (sr *schemaRepo) Watcher() {
 						sr.l.Err(retryErr).Interface("event", evt).Msg("retry processing failed, requeueing")
 						sr.metrics.totalRetries.Inc(1)
 						retryEvent := evt
-						run.Go(ctx, "schema-watcher-retry", sr.l, func(retryCtx context.Context) {
+						run.GoOrDie(ctx, "schema-watcher-retry", sr.l, func(retryCtx context.Context) {
 							sr.sendMetadataEvent(retryCtx, retryEvent)
 						})
 					}
