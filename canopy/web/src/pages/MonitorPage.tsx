@@ -17,12 +17,13 @@
  * under the License.
  */
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Group, MonitorNode, MonitorSnapshot } from 'canopy-shared';
 
 import { apiDataSource } from '../data/api.js';
 import { fetchMonitorSnapshot, MonitorError } from '../data/monitor.js';
+import { useFocusTrap } from '../components/modal-utils.js';
 
 // Warn and danger thresholds from the Monitor design; disk danger matches STATUS_DISK_FULL at 95%.
 const CPU = [70, 90] as const;
@@ -38,6 +39,7 @@ const REFRESH = [
 ] as const;
 
 type Level = 'ok' | 'warn' | 'danger';
+type Status = Level | 'unknown' | 'stale';
 
 const level = (pct: number | undefined, [warn, danger]: readonly [number, number]): Level =>
   pct === undefined ? 'ok' : pct >= danger ? 'danger' : pct >= warn ? 'warn' : 'ok';
@@ -68,27 +70,39 @@ export function formatUptime(seconds: number | undefined): string {
 
 const formatMs = (ms: number | undefined) => (ms === undefined ? '—' : `${ms >= 10 ? Math.round(ms) : ms.toFixed(1)}ms`);
 
-// Each path reports its filesystem's usage, so paths on one filesystem report the same
-// numbers; count those once instead of adding the same disk up per path.
-function diskTotals(node: MonitorNode) {
-  const filesystems = new Map(node.disk.map((d) => [`${d.usedBytes}/${d.totalBytes}`, d]));
-  const used = [...filesystems.values()].reduce((a, d) => a + d.usedBytes, 0);
-  const total = [...filesystems.values()].reduce((a, d) => a + d.totalBytes, 0);
-  return { used, total, pct: total ? Math.round((used / total) * 100) : undefined };
+// Paths can share a filesystem and nothing in the metrics says which do, so sums over paths
+// may count one disk more than once. Pressure comes from the fullest path, which is exact.
+function diskUsage(node: MonitorNode) {
+  const used = node.disk.reduce((a, d) => a + d.usedBytes, 0);
+  const total = node.disk.reduce((a, d) => a + d.totalBytes, 0);
+  const fullest = node.disk.length
+    ? Math.max(...node.disk.map((d) => (d.totalBytes ? Math.round((d.usedBytes / d.totalBytes) * 100) : 0)))
+    : undefined;
+  return { used, total, fullest };
 }
 
-function nodeHealth(node: MonitorNode) {
+const STATUS_LABELS: Record<Status, string> = {
+  ok: 'Healthy', warn: 'Degraded', danger: 'Critical', unknown: 'Unknown', stale: 'Stale',
+};
+
+export function nodeHealth(node: MonitorNode) {
   const cpu = node.cpuCores && node.cpuUsedCores !== undefined ? Math.round((node.cpuUsedCores / node.cpuCores) * 100) : undefined;
   const memory = pct(node.memoryUsedRatio);
-  const disk = diskTotals(node).pct;
-  const warn = (disk ?? 0) >= DISK[0] || (memory ?? 0) >= MEMORY[0];
-  return { cpu, memory, disk, warn };
+  const disk = diskUsage(node).fullest;
+  const levels = [level(cpu, CPU), level(memory, MEMORY), level(disk, DISK), node.errorsPerMinute ? 'warn' : 'ok'];
+  // Without CPU, memory and disk readings there is nothing to call healthy yet.
+  const status: Status = cpu === undefined || memory === undefined || disk === undefined
+    ? 'unknown'
+    : levels.includes('danger') ? 'danger' : levels.includes('warn') ? 'warn' : 'ok';
+  return { cpu, memory, disk, status };
 }
 
-function Bar({ label, value }: { label: string; value: number | undefined; }) {
+const dotLevel = (status: Status) => (status === 'unknown' || status === 'stale' ? 'faint' : status);
+
+function Bar({ label, value, title }: { label: string; value: number | undefined; title?: string }) {
   return (
     <>
-      <span className="mon-bar-k">{label}</span>
+      <span className="mon-bar-k" title={title}>{label}</span>
       <span className="mon-bar" aria-hidden="true">
         <span className="mon-bar-fill" data-level={level(value, label === 'cpu' ? CPU : label === 'disk' ? DISK : MEMORY)} style={{ width: `${Math.min(value ?? 0, 100)}%` }} />
       </span>
@@ -113,30 +127,36 @@ function Sparkline({ points, max }: { points: MonitorNode['cpuHistory']; max: nu
   );
 }
 
-function NodeDrawer({ node, onClose }: { node: MonitorNode; onClose: () => void }) {
+// Data from the last successful scrape, kept on screen after a failed refresh.
+interface Observed {
+  readonly status: Status;
+  readonly label: string;
+}
+
+function observed(node: MonitorNode, staleSince: number | undefined): Observed {
+  if (staleSince !== undefined) return { status: 'stale', label: `Stale · as of ${new Date(staleSince).toLocaleTimeString()}` };
+  const { status } = nodeHealth(node);
+  return { status, label: STATUS_LABELS[status] };
+}
+
+function NodeDrawer({ node, seen, onClose }: { node: MonitorNode; seen: Observed; onClose: () => void }) {
   const health = nodeHealth(node);
-  const disk = diskTotals(node);
-  const closeRef = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  const disk = diskUsage(node);
+  const trapRef = useFocusTrap(true, onClose);
   return (
-    <aside className="mon-drawer" role="dialog" aria-label={`Node ${node.id}`}>
+    <aside ref={trapRef} className="mon-drawer" role="dialog" aria-modal="true" aria-label={`Node ${node.id}`}>
       <div className="mon-drawer-head">
         <div>
-          <div className="mon-drawer-title"><span className="mon-dot" data-level={health.warn ? 'warn' : 'ok'} />{node.id}</div>
-          <div className="mon-faint">standalone · {health.warn ? 'Degraded' : 'Healthy'}</div>
+          <div className="mon-drawer-title"><span className="mon-dot" data-level={dotLevel(seen.status)} />{node.id}</div>
+          <div className="mon-faint">standalone · {seen.label}</div>
         </div>
-        <button ref={closeRef} className="btn btn-ghost" onClick={onClose} aria-label="Close node details">✕</button>
+        <button className="btn btn-ghost" onClick={onClose} aria-label="Close node details">✕</button>
       </div>
       <dl className="mon-stats">
         <div><dt>Uptime</dt><dd>{formatUptime(node.uptimeSeconds)}</dd></div>
         <div><dt>CPU</dt><dd>{node.cpuUsedCores === undefined ? '—' : node.cpuUsedCores.toFixed(1)} / {node.cpuCores ?? '—'} cores</dd></div>
         <div><dt>Memory</dt><dd>{formatBytes(node.rssBytes)} RSS · {health.memory ?? '—'}%</dd></div>
-        <div><dt>Disk</dt><dd>{formatBytes(disk.used)} · {disk.pct ?? '—'}%</dd></div>
+        <div><dt>Fullest path</dt><dd>{disk.fullest ?? '—'}%</dd></div>
         <div><dt>Goroutines</dt><dd>{node.goroutines?.toLocaleString('en-US') ?? '—'}</dd></div>
         <div><dt>Heap in use</dt><dd>{formatBytes(node.heapInuseBytes)}</dd></div>
       </dl>
@@ -153,6 +173,7 @@ function NodeDrawer({ node, onClose }: { node: MonitorNode; onClose: () => void 
           </div>
         );
       })}
+      <p className="mon-faint">Each path reports the filesystem it is on, so paths on one disk show the same usage.</p>
     </aside>
   );
 }
@@ -175,30 +196,44 @@ function groupRows(snapshot: MonitorSnapshot, groups: readonly Group[]) {
     }));
 }
 
+const BADGE: Record<Status, string> = { ok: 'healthy', warn: 'degraded', danger: 'critical', unknown: 'unknown', stale: 'unknown' };
+
 export function MonitorPage() {
   const [refresh, setRefresh] = useState<(typeof REFRESH)[number]>(REFRESH[0]);
   const [selected, setSelected] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const opener = useRef<HTMLElement | null>(null);
   const snapshot = useQuery<MonitorSnapshot, MonitorError>({
     queryKey: ['monitor-snapshot'],
     queryFn: fetchMonitorSnapshot,
     refetchInterval: (query) => (query.state.error?.status === 403 || !refresh.ms ? false : refresh.ms),
     retry: false,
   });
-  const groups = useQuery({ queryKey: ['groups'], queryFn: () => apiDataSource.listGroups(), enabled: snapshot.isSuccess });
+  const groups = useQuery({ queryKey: ['groups'], queryFn: () => apiDataSource.listGroups(), enabled: snapshot.isSuccess || !!snapshot.data });
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+  // Stable, so the page's one-second clock does not re-run the drawer's focus handling.
+  const closeDrawer = useCallback(() => {
+    setSelected(null);
+    opener.current?.focus();
+  }, []);
+  const openDrawer = (id: string, from: HTMLElement) => {
+    opener.current = from;
+    setSelected(id);
+  };
 
   const error = snapshot.error;
   const data = snapshot.data;
   const blocked = error?.status === 403;
   const unreachable = !!error && !blocked;
+  const staleSince = unreachable && data ? snapshot.dataUpdatedAt : undefined;
   const node = data?.nodes[0];
+  const seen = node && observed(node, staleSince);
   const health = node && nodeHealth(node);
-  const badge = unreachable ? 'unknown' : health?.warn ? 'degraded' : data ? 'healthy' : undefined;
-  const disk = node && diskTotals(node);
+  const badge = unreachable ? 'unknown' : seen ? BADGE[seen.status] : undefined;
+  const disk = node && diskUsage(node);
   const selectedNode = data?.nodes.find((n) => n.id === selected);
   const ago = data ? Math.max(0, Math.round((now - snapshot.dataUpdatedAt) / 1000)) : undefined;
 
@@ -213,7 +248,7 @@ export function MonitorPage() {
         <div className="page-title-row">
           <h1 className="page-title">
             Node monitor
-            {badge && <span className="mon-badge" data-level={badge === 'healthy' ? 'ok' : badge === 'degraded' ? 'warn' : 'faint'}>{badge}</span>}
+            {badge && <span className="mon-badge" data-level={badge === 'healthy' ? 'ok' : badge === 'degraded' ? 'warn' : badge === 'critical' ? 'danger' : 'faint'}>{badge}</span>}
           </h1>
           {!blocked && (
             <div className="mon-refresh">
@@ -244,39 +279,45 @@ export function MonitorPage() {
           <div>
             <div className="mon-notice-title">Cannot reach the node&apos;s metrics endpoint</div>
             <p>{error.message}. Schema and query pages are unaffected. Check <span className="mon-mono">MONITOR_TARGET</span> and the BanyanDB process.{refresh.ms ? ` Retrying every ${refresh.label}.` : ''}</p>
-            {data && <p className="mon-faint">Last successful scrape {new Date(snapshot.dataUpdatedAt).toLocaleTimeString()}</p>}
+            {data && <p className="mon-faint">The values below are from the last successful scrape at {new Date(snapshot.dataUpdatedAt).toLocaleTimeString()}.</p>}
           </div>
           <button className="btn" onClick={() => void snapshot.refetch()}>Retry now</button>
         </div>
       )}
 
-      {node && health && disk && !blocked && (
+      {node && health && disk && seen && !blocked && (
         <>
-          <div className="mon-fleet">
+          <div className="mon-fleet" data-stale={staleSince !== undefined ? '' : undefined}>
             <div><span className="mon-k">Reporting</span><span className="mon-v">{unreachable ? '0' : '1'} / 1</span></div>
             <div><span className="mon-k">Mode</span><span className="mon-v">standalone</span></div>
             <div><span className="mon-k">CPU</span><span className="mon-v">{node.cpuUsedCores?.toFixed(1) ?? '—'}<small> / {node.cpuCores ?? '—'} cores</small></span></div>
             <div><span className="mon-k">Memory (RSS)</span><span className="mon-v">{formatBytes(node.rssBytes)}</span></div>
-            <div><span className="mon-k">Disk</span><span className="mon-v">{formatBytes(disk.used)}<small> / {formatBytes(disk.total)}</small></span></div>
+            <div>
+              <span className="mon-k" title="Paths on one filesystem are each counted, so this can overlap">Disk, sum of paths</span>
+              <span className="mon-v">{formatBytes(disk.used)}<small> / {formatBytes(disk.total)}</small></span>
+            </div>
           </div>
 
           <section className="mon-section">
             <div className="mon-section-head">
               <span className="mon-section-title">Topology <span className="mon-faint">· standalone</span></span>
-              <span className="mon-faint">rate · avg latency · click the node</span>
+              <span className="mon-faint">click the node for details</span>
             </div>
-            <button className="mon-node" data-level={health.warn ? 'warn' : 'ok'} onClick={() => setSelected(node.id)}>
-              <span className="mon-node-id"><span className="mon-dot" data-level={health.warn ? 'warn' : 'ok'} />{node.id}<span className="mon-role">standalone</span></span>
+            <button className="mon-node" data-level={dotLevel(seen.status)} data-stale={staleSince !== undefined ? '' : undefined} onClick={(e) => openDrawer(node.id, e.currentTarget)}>
+              <span className="mon-node-id">
+                <span className="mon-dot" data-level={dotLevel(seen.status)} />{node.id}<span className="mon-role">standalone</span>
+                <span className="mon-faint">{seen.label}</span>
+              </span>
               <span className="mon-bars">
                 <Bar label="cpu" value={health.cpu} />
                 <Bar label="memory" value={health.memory} />
-                <Bar label="disk" value={health.disk} />
+                <Bar label="disk" value={health.disk} title="Fullest path" />
               </span>
               <span className="mon-work">
-                <span className="mon-k">write</span><span>{formatRate(node.write.perSecond)}</span><span />
-                <span className="mon-k">query</span><span>{formatRate(node.query.perSecond)}</span>
-                <span data-level={(node.query.avgLatencyMs ?? 0) >= SLOW_MS ? 'warn' : undefined}>{formatMs(node.query.avgLatencyMs)}</span>
-                <span className="mon-k">error</span><span data-level={node.errorsPerMinute ? 'danger' : undefined}>{node.errorsPerMinute === undefined ? '—' : `${node.errorsPerMinute.toFixed(node.errorsPerMinute >= 10 ? 0 : 1)}/min`}</span><span />
+                <span className="mon-k">write</span><span>{formatRate(node.write.perSecond)}</span>
+                <span className="mon-k" title="Measure, stream, trace and property query executions">query</span>
+                <span>{formatRate(node.query.perSecond)} · <span data-level={(node.query.avgLatencyMs ?? 0) >= SLOW_MS ? 'warn' : undefined}>avg {node.query.avgLatencyMs === undefined ? 'n/a' : formatMs(node.query.avgLatencyMs)}</span></span>
+                <span className="mon-k">error</span><span data-level={node.errorsPerMinute ? 'danger' : undefined}>{node.errorsPerMinute === undefined ? '—' : `${node.errorsPerMinute.toFixed(node.errorsPerMinute >= 10 ? 0 : 1)}/min`}</span>
               </span>
             </button>
             <p className="mon-faint">
@@ -290,10 +331,14 @@ export function MonitorPage() {
               <span className="mon-faint">writes are rejected with STATUS_DISK_FULL at 95%</span>
             </div>
             <div className="mon-storage">
-              <span>standalone · 1 node</span>
-              <span className="mon-bar" aria-hidden="true"><span className="mon-bar-fill" data-level={level(disk.pct, DISK)} style={{ width: `${disk.pct ?? 0}%` }} /></span>
-              <span>{formatBytes(disk.used)} / {formatBytes(disk.total)} · {disk.pct ?? '—'}%</span>
+              <span>fullest path</span>
+              <span className="mon-bar" aria-hidden="true"><span className="mon-bar-fill" data-level={level(disk.fullest, DISK)} style={{ width: `${disk.fullest ?? 0}%` }} /></span>
+              <span>{disk.fullest ?? '—'}%</span>
             </div>
+            <p className="mon-faint">{node.disk.length} {node.disk.length === 1 ? 'path' : 'paths'}, {formatBytes(disk.used)} of {formatBytes(disk.total)} summed; paths on one filesystem are each counted.</p>
+            {groups.error && (
+              <p className="mon-notice" data-level="warn" role="status">Group details are unavailable: {groups.error.message}. Node metrics above are unaffected.</p>
+            )}
             {groups.data && (
               <table className="mon-table">
                 <thead><tr><th>Group</th><th>Catalog</th><th>Shards</th><th className="num">Size</th></tr></thead>
@@ -308,7 +353,7 @@ export function MonitorPage() {
         </>
       )}
 
-      {selectedNode && <NodeDrawer node={selectedNode} onClose={() => setSelected(null)} />}
+      {selectedNode && seen && <NodeDrawer node={selectedNode} seen={seen} onClose={closeDrawer} />}
     </div>
   );
 }

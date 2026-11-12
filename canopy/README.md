@@ -71,7 +71,7 @@ See `.env.example` for all env vars.
 - `CANOPY_DEV_NOAUTH=true` — dev only, seeds admin/admin; fails boot in NODE_ENV=production
 - `BANYANDB_UPSTREAM_USERNAME/PASSWORD` — attach-if-configured service credential for every upstream request
 - `MONITOR_TARGET` — a standalone node's observability endpoint (default `http://127.0.0.1:2121`). The Monitor page scrapes its `/metrics`.
-- `CANOPY_MONITOR_ROLES` — comma-separated roles that may open the Monitor page (default `admin`), e.g. `admin,readonly`.
+- `CANOPY_MONITOR_ROLES` — comma-separated roles that may read monitoring data, both the Monitor page and the raw `/monitoring/*` proxy (default `admin`), e.g. `admin,readonly`. Readonly users let in can still only send GET requests.
 
 ## Authentication
 

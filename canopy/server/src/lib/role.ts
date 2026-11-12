@@ -50,3 +50,19 @@ export async function enforceRole(request: FastifyRequest, reply: FastifyReply):
     });
   }
 }
+
+/**
+ * Builds the preHandler for monitoring data: the Monitor snapshot and the raw /monitoring proxy.
+ * Both carry the same telemetry, so CANOPY_MONITOR_ROLES (default admin) gates them together.
+ */
+export function requireMonitorRole(allowed: readonly Role[] = ['admin']) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const role = request.principal?.role;
+    if (!role || !allowed.includes(role)) {
+      await reply.status(403).send({
+        error: 'forbidden',
+        message: 'Monitoring is limited to administrators. Set CANOPY_MONITOR_ROLES to open it to other roles.',
+      });
+    }
+  };
+}

@@ -2880,7 +2880,7 @@
   .mon-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--lvl); flex: none; }
   .mon-bars, .mon-work { display: grid; align-items: center; gap: 6px 10px; font-size: var(--fs-115); }
   .mon-bars { grid-template-columns: auto 1fr 42px; }
-  .mon-work { grid-template-columns: auto auto 1fr; }
+  .mon-work { grid-template-columns: auto 1fr; }
   .mon-work [data-level] { color: var(--lvl); }
   .mon-bar-k { color: var(--text-faint); }
   .mon-bar-v, .mon-path-v { text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; }
@@ -2910,3 +2910,5 @@
     .mon-node { grid-template-columns: 1fr; }
     .mon-fleet > div + div { border-left: none; border-top: 1px solid var(--border); }
   }
+  .mon-page [data-stale] { opacity: .7; }
+  .mon-node-id .mon-faint { white-space: nowrap; }

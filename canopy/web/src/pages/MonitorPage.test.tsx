@@ -18,11 +18,11 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { Group, MonitorSnapshot } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
-import { MonitorPage, formatBytes, formatRate, formatUptime, shortPath } from './MonitorPage.js';
+import { MonitorPage, formatBytes, formatRate, formatUptime, nodeHealth, shortPath } from './MonitorPage.js';
 
 vi.mock('../data/api.js', () => ({ apiDataSource: { listGroups: vi.fn() } }));
 
@@ -62,7 +62,10 @@ function mount() {
   return render(<QueryClientProvider client={client}><MonitorPage /></QueryClientProvider>);
 }
 
-beforeEach(() => vi.mocked(apiDataSource.listGroups).mockResolvedValue({ groups }));
+// Braced: a function returned from beforeEach would run as a teardown.
+beforeEach(() => {
+  vi.mocked(apiDataSource.listGroups).mockResolvedValue({ groups });
+});
 afterEach(() => vi.restoreAllMocks());
 
 it('shows the standalone node, its storage and group sizes', async () => {
@@ -72,8 +75,8 @@ it('shows the standalone node, its storage and group sizes', async () => {
   expect(node).toHaveTextContent('25%'); // 4 of 16 cores
   expect(node).toHaveTextContent('90%');
   expect(node).toHaveTextContent('48.2k/s');
-  expect(node).toHaveTextContent('41ms');
-  // Disk at 90% is past the 85% warning, so the node and the page read as degraded.
+  expect(node).toHaveTextContent('avg 41ms');
+  // The fullest path at 90% is past the 85% warning, so the node and the page read as degraded.
   expect(screen.getByRole('heading', { name: /Node monitor/ })).toHaveTextContent('degraded');
   const row = (await screen.findByRole('cell', { name: 'sw_metric' })).closest('tr')!;
   expect(row).toHaveTextContent('measure22.0 GiB');
@@ -96,25 +99,64 @@ it('names the failing scrape when the metrics endpoint is down', async () => {
   expect(within(alert).getByRole('button', { name: 'Retry now' })).toBeInTheDocument();
 });
 
-it('opens the node drawer and closes it with Escape', async () => {
-  respond(200, snapshot);
-  mount();
-  fireEvent.click(await screen.findByRole('button', { name: /banyandb-0:2121/ }));
-  const drawer = screen.getByRole('dialog', { name: 'Node banyandb-0:2121' });
-  expect(drawer).toHaveTextContent('/data/measure');
-  expect(drawer).toHaveTextContent('Disk90.0 GiB · 90%');
-  expect(drawer).toHaveTextContent('90.0 GiB / 100 GiB');
-  expect(within(drawer).getByRole('img', { name: /CPU cores used/ })).toBeInTheDocument();
-  fireEvent.keyDown(window, { key: 'Escape' });
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+it('judges health from the fullest path, CPU and missing readings, not just averages', () => {
+  const base = snapshot.nodes[0];
+  const paths = [{ path: '/a', usedBytes: 99, totalBytes: 100 }, { path: '/b', usedBytes: 0, totalBytes: 10_000 }];
+  expect(nodeHealth({ ...base, cpuUsedCores: undefined, memoryUsedRatio: undefined, disk: [] }).status).toBe('unknown');
+  expect(nodeHealth({ ...base, cpuUsedCores: 15, disk: [{ path: '/a', usedBytes: 1, totalBytes: 10 }] }).status).toBe('danger');
+  expect(nodeHealth({ ...base, disk: paths })).toMatchObject({ disk: 99, status: 'danger' });
+  expect(nodeHealth({ ...base, errorsPerMinute: 2, disk: [{ path: '/a', usedBytes: 1, totalBytes: 10 }] }).status).toBe('warn');
+  expect(nodeHealth({ ...base, disk: [{ path: '/a', usedBytes: 1, totalBytes: 10 }] }).status).toBe('ok');
 });
 
-it('counts paths on one filesystem once', async () => {
-  const shared = { usedBytes: 40 * GiB, totalBytes: 100 * GiB };
-  respond(200, { ...snapshot, nodes: [{ ...snapshot.nodes[0], disk: [{ path: '/data/measure', ...shared }, { path: '/data/stream', ...shared }] }] });
+it('marks retained values stale after a failed refresh, on the card and in the drawer', async () => {
+  vi.spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(new Response(JSON.stringify(snapshot), { status: 200 }))
+    .mockResolvedValue(new Response(JSON.stringify({ error: 'upstream_error', message: 'GET /metrics failed with ECONNREFUSED', path: '/metrics' }), { status: 502 }));
   mount();
-  expect(await screen.findByRole('button', { name: /banyandb-0:2121/ })).toHaveTextContent('40%');
-  expect(screen.getByText('Disk').nextSibling).toHaveTextContent('40.0 GiB / 100 GiB');
+  const card = await screen.findByRole('button', { name: /banyandb-0:2121/ });
+  expect(card).toHaveTextContent('Degraded');
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(card).toHaveTextContent(/Stale · as of/));
+  expect(card).not.toHaveTextContent('Degraded');
+  expect(screen.getByRole('heading', { name: /Node monitor/ })).toHaveTextContent('unknown');
+  expect(screen.getByRole('alert')).toHaveTextContent('from the last successful scrape');
+  fireEvent.click(card);
+  expect(screen.getByRole('dialog')).toHaveTextContent(/standalone · Stale · as of/);
+});
+
+it('says why the group table is missing when group metadata fails', async () => {
+  respond(200, snapshot);
+  vi.mocked(apiDataSource.listGroups).mockRejectedValue(new Error('upstream timed out'));
+  mount();
+  expect(await screen.findByText(/Group details are unavailable: upstream timed out/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /banyandb-0:2121/ })).toBeInTheDocument();
+});
+
+it('keeps focus in the drawer, survives the clock, and returns focus to the card on Escape', async () => {
+  respond(200, snapshot);
+  mount();
+  const card = await screen.findByRole('button', { name: /banyandb-0:2121/ });
+  card.focus();
+  fireEvent.click(card);
+  const drawer = screen.getByRole('dialog', { name: 'Node banyandb-0:2121' });
+  const close = within(drawer).getByRole('button', { name: 'Close node details' });
+  await waitFor(() => expect(close).toHaveFocus());
+  expect(drawer).toHaveTextContent('/data/measure');
+  expect(drawer).toHaveTextContent('90.0 GiB / 100 GiB');
+  expect(drawer).toHaveTextContent('Fullest path90%');
+  expect(within(drawer).getByRole('img', { name: /CPU cores used/ })).toBeInTheDocument();
+  fireEvent.keyDown(document, { key: 'Tab' });
+  expect(close).toHaveFocus();
+  fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+  expect(close).toHaveFocus();
+  // The page clock ticks every second; it must not refocus the drawer.
+  const focus = vi.spyOn(HTMLElement.prototype, 'focus');
+  await new Promise((r) => setTimeout(r, 1200));
+  expect(focus).not.toHaveBeenCalled();
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(card).toHaveFocus();
 });
 
 it('formats bytes, rates, uptime and paths', () => {
