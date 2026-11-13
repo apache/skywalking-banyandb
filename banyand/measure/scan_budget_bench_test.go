@@ -19,7 +19,6 @@ package measure
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -74,7 +73,7 @@ func BenchmarkBudgetedTimeOrderedScan(b *testing.B) {
 				result.Release()
 			}
 			if total == 0 {
-				b.Fatal(fmt.Sprintf("no rows scanned for %s", w.name))
+				b.Fatalf("no rows scanned for %s", w.name)
 			}
 		})
 	}

@@ -22,12 +22,12 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestSharedScanBudgetRejectsBeforeDecode(t *testing.T) {

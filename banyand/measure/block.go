@@ -475,29 +475,29 @@ var blockPool = pool.Register[*block]("measure-block")
 // and pooled only when the count reaches zero, so a borrowed cell stays valid
 // until the last batch that holds it is released.
 type blockCursor struct {
-	p *part
+	schemaTagTypes map[string]pbv1.ValueType
 	// res is the scan's memory reservation for this cursor, released when the
 	// last reference goes (see releaseBlockCursor). It is nil outside a window scan.
-	res                 *scanReservation
-	fields              columnFamily
-	timestamps          []int64
-	versions            []int64
-	tagFamilies         []columnFamily
-	columnValuesDecoder encoding.BytesBlockDecoder
+	res         *scanReservation
+	p           *part
+	fields      columnFamily
+	timestamps  []int64
+	versions    []int64
+	tagFamilies []columnFamily
 	// spareBacking is the decoder's backing array detached by compactValues; decodeCursor
 	// returns it to decodeBackingPool once the temporary block that views it is released.
-	spareBacking []byte
+	spareBacking        []byte
+	tagProjection       []model.TagProjection
+	fieldProjection     []string
+	columnValuesDecoder encoding.BytesBlockDecoder
+	bm                  blockMetadata
+	idx                 int
+	minTimestamp        int64
+	maxTimestamp        int64
+	refs                atomic.Int32
+	shardID             common.ShardID
 	// compacted is set when compactValues released the decoded block.
-	compacted       bool
-	tagProjection   []model.TagProjection
-	fieldProjection []string
-	schemaTagTypes  map[string]pbv1.ValueType
-	bm              blockMetadata
-	idx             int
-	minTimestamp    int64
-	maxTimestamp    int64
-	refs            atomic.Int32
-	shardID         common.ShardID
+	compacted bool
 }
 
 // Retain adds one reference. The caller must already hold one.

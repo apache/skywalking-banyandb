@@ -47,28 +47,28 @@ const (
 // always collected, because a few atomic adds per cursor cost nothing next to a decode; the
 // trace span and the metrics are produced from it when the scan ends.
 type scanTelemetry struct {
-	lastReject string
-	rejects    map[string]int64
-	// deep asks for measurements that cost a pass over each decoded cursor; set only when
-	// the query is traced.
-	deep         atomic.Bool
-	decodes      atomic.Int64
+	rejects      map[string]int64
+	lastReject   string
+	waitNS       atomic.Int64
+	planNS       atomic.Int64
 	decodesEmpty atomic.Int64
 	decodeNS     atomic.Int64
 	decodeNSMax  atomic.Int64
 	queueNS      atomic.Int64
 	hits         atomic.Int64
 	waits        atomic.Int64
-	waitNS       atomic.Int64
-	planNS       atomic.Int64
+	poolQueued   int
+	decodes      atomic.Int64
 	scanNS       atomic.Int64
 	estimate     atomic.Int64
 	estimateKept atomic.Int64
 	retained     atomic.Int64
 	compacted    atomic.Int64
 	poolWorkers  int
-	poolQueued   int
 	mu           sync.Mutex
+	// deep asks for measurements that cost a pass over each decoded cursor; set only when
+	// the query is traced.
+	deep atomic.Bool
 }
 
 func (t *scanTelemetry) observeDecode(d time.Duration, ok bool) {

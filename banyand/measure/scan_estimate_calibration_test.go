@@ -20,7 +20,6 @@ package measure
 import (
 	"fmt"
 	"os"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -179,15 +178,15 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 				bc.minTimestamp, bc.maxTimestamp = qo.minTimestamp, qo.maxTimestamp
 				pre := (&scanBudget{columns: shape.columns, rowBytes: shape.rowBytes, shared: vectorized.NewMemoryTracker(1 << 60)}).sharedBlockBytes(bc)
 				kept := sharedRetainedBytes(shape.rowBytes*cursorRowFactor, inRangeAvg, uint64(rows), encAvg)
-				real := int64(retained / series)
+				retainedReal := int64(retained / series)
 				if assertMargins {
-					require.GreaterOrEqualf(t, float64(kept), 1.1*float64(real), "%s rows=%d window=%v: retained envelope %d vs real %d", shape.name, rows, frac, kept, real)
+					require.GreaterOrEqualf(t, float64(kept), 1.1*float64(retainedReal), "%s rows=%d window=%v: retained envelope %d vs real %d", shape.name, rows, frac, kept, retainedReal)
 				}
 				if calibrate && assertMargins {
 					require.GreaterOrEqualf(t, float64(pre), 1.5*float64(alloc), "%s rows=%d window=%v: pre-decode envelope %d vs allocation %d", shape.name, rows, frac, pre, alloc)
 				}
 				fmt.Fprintf(&out, "%-14s %5d %7d %9d | %9d %9d %9d %9d | %6.1fx %6.1fx | %6.2f %6.1f\n", shape.name, rows, inRangeAvg, encAvg,
-					pre, kept, alloc, real, float64(pre)/float64(max(alloc, 1)), float64(kept)/float64(max(real, 1)),
+					pre, kept, alloc, retainedReal, float64(pre)/float64(max(alloc, 1)), float64(kept)/float64(max(retainedReal, 1)),
 					float64(alloc)/float64(max(encAvg, 1)), float64(alloc)/float64(uint64(rows)*shape.columns))
 				for _, c := range cursors {
 					releaseBlockCursor(c)
@@ -203,26 +202,4 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 
 func tagProjectionOf(family string, names ...string) []model.TagProjection {
 	return []model.TagProjection{{Family: family, Names: names}}
-}
-
-// retainedBytes adds up what a decoded cursor's buffers hold: the row slices, the cell
-// slices and their bytes, and the decoder's backing array. Values that view the decoder's
-// backing are counted twice, so it is an upper bound.
-func retainedBytes(bc *blockCursor) int {
-	n := cap(bc.timestamps)*8 + cap(bc.versions)*8
-	family := func(cf *columnFamily) {
-		for i := range cf.columns {
-			c := &cf.columns[i]
-			n += cap(c.values)*24 + cap(c.int64s)*8 + cap(c.float64s)*8
-			for _, v := range c.values {
-				n += len(v)
-			}
-		}
-	}
-	family(&bc.fields)
-	for i := range bc.tagFamilies {
-		family(&bc.tagFamilies[i])
-	}
-	n += reflect.ValueOf(&bc.columnValuesDecoder).Elem().FieldByName("data").Cap()
-	return n
 }

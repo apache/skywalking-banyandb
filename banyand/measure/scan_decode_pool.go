@@ -429,24 +429,24 @@ const (
 // the node-wide total additionally keeps concurrent queries within the
 // protector's headroom.
 type scanBudget struct {
-	tracker   *vectorized.MemoryTracker
+	tel       *scanTelemetry
 	shared    *vectorized.MemoryTracker
 	reuse     *scanDecodeReuse
 	node      *decodePool
+	tracker   *vectorized.MemoryTracker
+	qm        *queryMetrics
 	held      atomic.Int64
-	columns   uint64
-	rowBytes  uint64
 	workspace int64
+	rowBytes  uint64
+	columns   uint64
 	// sliceNeed is what a time-ordered merge may keep live before it is cut into time slices, and
 	// sliceBudget what one slice may keep live; zero disables slicing (see sliceMergeUnit).
-	tel           *scanTelemetry
-	qm            *queryMetrics
 	sliceNeed     int64
 	sliceBudget   int64
 	quota         int64
 	active        atomic.Int64
-	closing       atomic.Bool
 	workspaceOnce sync.Once
+	closing       atomic.Bool
 }
 
 // newScanBudget returns a budget of quota bytes (negative: no per-query limit)
