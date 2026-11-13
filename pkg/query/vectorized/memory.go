@@ -74,7 +74,11 @@ func (m *MemoryTracker) Reserve(bytes int64) error {
 					return err
 				}
 			}
-			for peak := m.peak.Load(); next > peak && !m.peak.CompareAndSwap(peak, next); peak = m.peak.Load() {
+			for {
+				peak := m.peak.Load()
+				if next <= peak || m.peak.CompareAndSwap(peak, next) {
+					break
+				}
 			}
 			recordMemoryReservation(bytes)
 			return nil

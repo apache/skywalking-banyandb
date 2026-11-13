@@ -78,7 +78,11 @@ func (t *scanTelemetry) observeDecode(d time.Duration, ok bool) {
 	}
 	ns := d.Nanoseconds()
 	t.decodeNS.Add(ns)
-	for cur := t.decodeNSMax.Load(); ns > cur && !t.decodeNSMax.CompareAndSwap(cur, ns); cur = t.decodeNSMax.Load() {
+	for {
+		cur := t.decodeNSMax.Load()
+		if ns <= cur || t.decodeNSMax.CompareAndSwap(cur, ns) {
+			break
+		}
 	}
 }
 
