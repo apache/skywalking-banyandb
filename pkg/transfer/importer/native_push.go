@@ -64,9 +64,7 @@ func PushParts(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, 
 		opts.Log = io.Discard
 	}
 	p := &partPusher{art: art, opts: opts, liaisons: liaisons, rows: map[PushKey]uint64{}, done: map[string]bool{}}
-	if opts.PartRateLimit > 0 {
-		p.limiter = rate.NewLimiter(rate.Limit(opts.PartRateLimit), max(int(opts.PartRateLimit), int(opts.PartChunkSize)))
-	}
+	p.limiter = ratelimit.NewClient(opts.PartRateLimit, int(opts.PartChunkSize))
 	if opts.Progress != nil {
 		// Built over every entry, both rounds, so each group counts all its items.
 		p.progress = newImportProgress(opts.Progress, entries)

@@ -235,43 +235,63 @@ func (s *localSyncSession) chunk(ctx context.Context, req *clusterv1.SyncPartReq
 	return nil
 }
 
-// switchPart finishes the open part when info starts another one and opens it, or opens a
-// secondary part type of the same part.
-func (s *localSyncSession) switchPart(ctx context.Context, info *clusterv1.PartInfo) error {
-	if s.partCtx != nil && s.partCtx.ID == info.GetId() {
-		if s.partCtx.PartType == info.GetPartType() {
-			return nil
-		}
-		FillPartContext(s.partCtx, info)
-		return s.partCtx.Handler.NewPartType(s.partCtx)
-	}
-	if err := s.finishPart(); err != nil {
-		return err
-	}
-	s.partCtx = &ChunkedSyncPartContext{
-		Context: ctx,
-		ID:      info.GetId(),
-		Group:   s.metadata.GetGroup(),
-		ShardID: s.metadata.GetShardId(),
-	}
-	FillPartContext(s.partCtx, info)
-	h, err := s.handler.CreatePartHandler(s.partCtx)
-	if err != nil {
-		return fmt.Errorf("failed to create part handler: %w", err)
-	}
-	s.partCtx.Handler = h
-	return nil
+// switchPart moves the session to the part info describes.
+func (s *localSyncSession) switchPart(ctx context.Context, info *clusterv1.PartInfo) (err error) {
+	s.partCtx, err = SwitchPart(ctx, s.partCtx, s.metadata, info, s.handler)
+	return err
 }
 
 // finishPart finishes the open part, if any.
 func (s *localSyncSession) finishPart() error {
-	if s.partCtx == nil || s.partCtx.Handler == nil {
+	return FinishPart(s.partCtx)
+}
+
+// SwitchPart returns the context of the part info describes, the one chunked sync receiver step
+// shared by the cluster receiver and the in-process relay. A frame continuing the open part cur
+// returns cur, telling its handler about a new part type when the type changes; a frame starting
+// another part finishes cur and creates the new part's handler. On an error the returned context
+// is the one to close: cur when it could not be finished, the new one when its handler could not
+// be created.
+func SwitchPart(ctx context.Context, cur *ChunkedSyncPartContext, md *clusterv1.SyncMetadata,
+	info *clusterv1.PartInfo, handler ChunkedSyncHandler,
+) (*ChunkedSyncPartContext, error) {
+	if cur != nil && cur.ID == info.GetId() {
+		if cur.PartType == info.GetPartType() {
+			return cur, nil
+		}
+		FillPartContext(cur, info)
+		if err := cur.Handler.NewPartType(cur); err != nil {
+			return cur, fmt.Errorf("failed to new part type: %w", err)
+		}
+		return cur, nil
+	}
+	if err := FinishPart(cur); err != nil {
+		return cur, err
+	}
+	next := &ChunkedSyncPartContext{
+		Context: ctx,
+		ID:      info.GetId(),
+		Group:   md.GetGroup(),
+		ShardID: md.GetShardId(),
+	}
+	FillPartContext(next, info)
+	h, err := handler.CreatePartHandler(next)
+	if err != nil {
+		return next, fmt.Errorf("failed to create part handler: %w", err)
+	}
+	next.Handler = h
+	return next, nil
+}
+
+// FinishPart finishes the part c holds, if any, and drops its handler.
+func FinishPart(c *ChunkedSyncPartContext) error {
+	if c == nil || c.Handler == nil {
 		return nil
 	}
-	if err := s.partCtx.Handler.FinishSync(); err != nil {
-		return fmt.Errorf("failed to complete part %d: %w", s.partCtx.ID, err)
+	if err := c.Handler.FinishSync(); err != nil {
+		return fmt.Errorf("failed to complete part %d: %w", c.ID, err)
 	}
-	s.partCtx.Handler = nil
+	c.Handler = nil
 	return nil
 }
 

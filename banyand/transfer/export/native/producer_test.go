@@ -47,7 +47,8 @@ import (
 const staleSegment = "0000000000ff.seg"
 
 // writeIndex builds a native index of two documents in dir, adds a stale segment next to it and
-// returns the files its generation references, sorted.
+// returns the files its generation references, sorted. The documents are named after dir, so
+// the files of two indexes differ.
 func writeIndex(t *testing.T, dir string) []string {
 	t.Helper()
 	scratch := t.TempDir()
@@ -61,7 +62,7 @@ func writeIndex(t *testing.T, dir string) []string {
 	for i := range 2 {
 		done := make(chan error, 1)
 		require.NoError(t, owner.Batch(context.Background(), native.Batch{
-			Documents:          []native.Document{{Identifier: []byte(fmt.Sprintf("doc-%d", i)), Timestamp: int64(i + 1)}},
+			Documents:          []native.Document{{Identifier: []byte(fmt.Sprintf("%s/doc-%d", dir, i)), Timestamp: int64(i + 1)}},
 			PersistentCallback: func(err error) { done <- err },
 		}))
 		require.NoError(t, <-done)
@@ -152,9 +153,9 @@ func fakeSegment(t *testing.T) (segDir string, sidxFiles, idxFiles []string) {
 	shard := filepath.Join(segDir, "shard-0")
 	for _, id := range []uint64{1, 2, 3} {
 		part := filepath.Join(shard, fmt.Sprintf("%016x", id))
-		writeFile(t, filepath.Join(part, "metadata.json"), []byte(`{"minTimestamp":1,"maxTimestamp":2,"totalCount":5}`))
+		writeFile(t, filepath.Join(part, "metadata.json"), []byte(fmt.Sprintf(`{"minTimestamp":1,"maxTimestamp":2,"totalCount":%d}`, id)))
 		writeFile(t, filepath.Join(part, "spans.bin"), randomBytes(t, 100<<10))
-		writeFile(t, filepath.Join(shard, "sidx", "duration", fmt.Sprintf("%016x", id), "manifest.json"), []byte(`{"minKey":1}`))
+		writeFile(t, filepath.Join(shard, "sidx", "duration", fmt.Sprintf("%016x", id), "manifest.json"), []byte(fmt.Sprintf(`{"minKey":%d}`, id)))
 		writeFile(t, filepath.Join(shard, "sidx", "duration", fmt.Sprintf("%016x", id), "primary.bin"), randomBytes(t, 512))
 	}
 	writeFile(t, filepath.Join(shard, "0000000000000005.snp"), []byte(`["0000000000000001","0000000000000002"]`))
@@ -187,6 +188,20 @@ func readContainer(t *testing.T, files []*sentFile, prefix string) *bnc.VolumeSe
 	_, err = set.Verify(context.Background())
 	require.NoError(t, err)
 	return set
+}
+
+// requireSameBytes requires every file of set to read back byte for byte as the file of the
+// same relative path under dir.
+func requireSameBytes(t *testing.T, set *bnc.VolumeSet, dir string) {
+	t.Helper()
+	require.NotEmpty(t, set.Files())
+	for _, f := range set.Files() {
+		want, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(f.Path)))
+		require.NoError(t, err)
+		got, err := set.ReadFile(f, f.Size)
+		require.NoError(t, err, f.Path)
+		require.True(t, bytes.Equal(want, got), "the packed %s differs from its source", f.Path)
+	}
 }
 
 func paths(set *bnc.VolumeSet) []string {
@@ -226,6 +241,7 @@ func TestSegmentPacksTheLiveSnapshot(t *testing.T) {
 
 			sidx := readContainer(t, c.files, "trace/sw_trace/seg-20260907/sidx")
 			require.Equal(t, sidxFiles, paths(sidx), "only the live generation of the series index")
+			requireSameBytes(t, sidx, filepath.Join(segDir, "sidx"))
 
 			shard := readContainer(t, c.files, "trace/sw_trace/seg-20260907/shard-0")
 			want := []string{
@@ -240,6 +256,8 @@ func TestSegmentPacksTheLiveSnapshot(t *testing.T) {
 			)
 			sort.Strings(want)
 			require.Equal(t, want, paths(shard), "the live parts, the newest snapshot file and the live element index")
+			// Core part files, trace secondary part files, the snapshot file and the element index.
+			requireSameBytes(t, shard, filepath.Join(segDir, "shard-0"))
 			layout := shard.Shard()
 			require.Empty(t, layout.Orphans)
 			require.Len(t, layout.Parts, 2)
@@ -296,7 +314,7 @@ func TestIndexOpenErrorOfAGoneSession(t *testing.T) {
 func TestPropertyPacksEveryShard(t *testing.T) {
 	groupDir := filepath.Join(t.TempDir(), "sw_prop")
 	shard0 := writeIndex(t, filepath.Join(groupDir, "shard-0"))
-	writeIndex(t, filepath.Join(groupDir, "shard-2"))
+	shard2 := writeIndex(t, filepath.Join(groupDir, "shard-2"))
 	c := &collect{}
 	p, err := NewProducer(context.Background(), &transferv1.ExportRequest_Init{Compress: transferv1.Compress_COMPRESS_NONE}, c.send)
 	require.NoError(t, err)
@@ -306,7 +324,14 @@ func TestPropertyPacksEveryShard(t *testing.T) {
 	require.Equal(t, "property/sw_prop/shard-0-00001.bnc", c.files[0].started.GetRelativePath())
 	require.Equal(t, uint32(2), c.files[1].started.GetShardId())
 	require.Equal(t, uint32(1), c.files[1].started.GetShardIndex())
-	require.Equal(t, shard0, paths(readContainer(t, c.files, "property/sw_prop/shard-0")))
+	for _, s := range []struct {
+		name  string
+		files []string
+	}{{"shard-0", shard0}, {"shard-2", shard2}} {
+		set := readContainer(t, c.files, "property/sw_prop/"+s.name)
+		require.Equal(t, s.files, paths(set))
+		requireSameBytes(t, set, filepath.Join(groupDir, s.name))
+	}
 }
 
 func TestNewProducerRefusesSettings(t *testing.T) {

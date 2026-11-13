@@ -164,6 +164,67 @@ func TestDecideNative_VersionGate(t *testing.T) {
 	assert.Empty(t, gateRejections(p, GateVersion), "a compatible version passes")
 }
 
+func TestDecideNative_TimezoneGateSkipsAnUnknownZone(t *testing.T) {
+	t.Run("source node records no time zone", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			for i := range in.Artifact.Manifest.Source.Nodes {
+				in.Artifact.Manifest.Source.Nodes[i].Timezone = ""
+			}
+			in.Target.DataNodes[0].TzName = "Asia/Shanghai"
+		}))
+		assert.Empty(t, gateRejections(p, GateTimezone), "an unknown source zone is not refused")
+	})
+	t.Run("target node reports no time zone", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			in.Target.DataNodes[0].TzName = ""
+			in.Target.DataNodes[1].TzName = ""
+		}))
+		assert.Empty(t, gateRejections(p, GateTimezone), "an unknown target zone is not refused")
+	})
+	t.Run("target node in the source zone", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			in.Target.DataNodes[0].TzName = "UTC"
+			in.Target.DataNodes[1].TzName = "UTC"
+		}))
+		assert.Empty(t, gateRejections(p, GateTimezone))
+	})
+}
+
+func TestDecideNative_VersionGateMixedNodes(t *testing.T) {
+	t.Run("nodes reading different formats refuse only the items routed to the one that cannot read", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			in.Target.DataNodes[0].Version = &clusterv1.VersionInfo{FileFormatVersion: "1.5.0"}
+			in.Target.DataNodes[1].Version = &clusterv1.VersionInfo{FileFormatVersion: "1.6.0", CompatibleFileFormatVersion: []string{"1.6.0"}}
+		}))
+		var keys []string
+		for _, r := range gateRejections(p, GateVersion) {
+			keys = append(keys, r.Item.Key())
+			assert.Contains(t, r.Reason, "dst-warm1")
+		}
+		assert.Contains(t, keys, "measure/sw_metric/warm/20261010/shard-0")
+		assert.NotContains(t, keys, "measure/sw_metric/hot/20261018/shard-0", "the item routed to the node reading 1.5.0 passes")
+	})
+	t.Run("a node that reports no version is not refused", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			in.Target.DataNodes[0].Version = nil
+			in.Target.DataNodes[1].Version = &clusterv1.VersionInfo{}
+		}))
+		assert.Empty(t, gateRejections(p, GateVersion))
+	})
+	t.Run("a unit without a recorded segment version is refused", func(t *testing.T) {
+		p := Decide(nativeInputs(t, func(in *Inputs) {
+			for i := range in.Artifact.Manifest.Units {
+				in.Artifact.Manifest.Units[i].SegmentVersion = ""
+			}
+		}))
+		rejected := gateRejections(p, GateVersion)
+		require.NotEmpty(t, rejected)
+		for _, r := range rejected {
+			assert.Contains(t, r.Reason, "records no segment file format version")
+		}
+	})
+}
+
 func TestDecideNative_SegmentSourcesFollowTheChosenShards(t *testing.T) {
 	// data-a and data-b hold the same shard 0, so one of them is skipped as a replica; with
 	// shard 1 gone from data-a, the series index of the skipped source is skipped too.

@@ -182,9 +182,7 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 	if opts.Progress != nil {
 		p.progress = newImportProgress(opts.Progress, entries)
 	}
-	if opts.WriteRateLimit > 0 {
-		p.limiter = rate.NewLimiter(rate.Limit(opts.WriteRateLimit), max(int(math.Ceil(opts.WriteRateLimit)), opts.WriteBatchSize))
-	}
+	p.limiter = ratelimit.NewClient(opts.WriteRateLimit, opts.WriteBatchSize)
 	workers, _ := WorkerCount(opts.Parallelism, entries)
 	result := &PushResult{Rows: p.rows}
 	if workers == 0 {

@@ -188,7 +188,10 @@ Importing a native artifact refuses the whole import (exit `2`, the gate and its
 differs: `TOPOLOGY` (the shard number or segment interval of the target stage or group), `TZ` (a target data node's time zone),
 `VERSION` (a segment file format a target data node cannot read) or `INDEX_RULE` (an index rule that exists on the target with another
 id; index rules the import creates keep the artifact's ids, so let the import create the schema rather than creating it beforehand).
-Two options apply to the native import only:
+Two options apply to the native import only. A native import copies whole segments into a cluster that usually serves live
+traffic, and the liaison writes every byte to each replica; set `--part-rate-limit` so the copy does not saturate the target's
+network and disks. Raise `--part-chunk-size` over a high-latency link to cut acknowledgement round trips, or lower it to reduce the
+memory the liaison and receivers hold per in-flight frame:
 
 | Flag | Default | Meaning |
 |------|---------|---------|

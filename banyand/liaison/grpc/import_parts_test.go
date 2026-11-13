@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -37,10 +38,12 @@ import (
 	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
@@ -1022,5 +1025,260 @@ func TestImportParts_GroupDeletionWaitsForRelay(t *testing.T) {
 	case <-done:
 	case <-time.After(10 * time.Second):
 		t.Fatal("group deletion did not go on after the relay ended")
+	}
+}
+
+// everyKindRelay relays to a queue.Local pipeline that feeds h on the sync topic of every payload kind.
+func everyKindRelay(t *testing.T, h queue.ChunkedSyncHandler, node string) clusterv1.ChunkedSyncServiceClient {
+	t.Helper()
+	pipeline := queue.Local()
+	for _, topic := range []bus.Topic{
+		data.TopicStreamPartSync, data.TopicStreamSeriesSync, data.TopicStreamElementIndexSync,
+		data.TopicTracePartSync, data.TopicPropertyPartSync,
+	} {
+		pipeline.RegisterChunkedSyncHandler(topic, h)
+	}
+	client, err := pipeline.NewChunkedSyncRelayClient(node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
+}
+
+// relayToEveryNode gives every node a recording relay and returns the handlers by node.
+func relayToEveryNode(t *testing.T, f *importFixture, nodes []string) map[string]*recordingSync {
+	t.Helper()
+	handlers := map[string]*recordingSync{}
+	f.client.relay = map[string]clusterv1.ChunkedSyncServiceClient{}
+	f.client.relayErr = map[string]error{}
+	for _, n := range nodes {
+		handlers[n] = &recordingSync{}
+		f.client.relay[n] = everyKindRelay(t, handlers[n], n)
+	}
+	return handlers
+}
+
+// shardNodes returns the sorted union of the nodes of shards in the route of group.
+func shardNodes(t *testing.T, f *importFixture, group string, shards ...uint32) []string {
+	t.Helper()
+	set := map[string]struct{}{}
+	for _, sh := range targetRoute(t, f, group, "").GetShards() {
+		if slices.Contains(shards, sh.GetShardId()) {
+			for _, n := range sh.GetNodeIds() {
+				set[n] = struct{}{}
+			}
+		}
+	}
+	return slices.Sorted(maps.Keys(set))
+}
+
+func fixtureNodeNames(nodes []*databasev1.Node) []string {
+	names := []string{"p1", "p2", "p3"}
+	for _, n := range nodes {
+		names = append(names, n.GetMetadata().GetName())
+	}
+	return names
+}
+
+// wantRelayedExactly checks that the payload succeeded on exactly want, which finished it, and
+// that no other node received anything.
+func wantRelayedExactly(t *testing.T, resp *transferv1.ImportPartsResponse, handlers map[string]*recordingSync, want []string) {
+	t.Helper()
+	var got []string
+	for _, tr := range resp.GetTargets() {
+		if !tr.GetSuccess() {
+			t.Fatalf("target %v, want success", tr)
+		}
+		got = append(got, tr.GetNode())
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("targets = %v, want %v", got, want)
+	}
+	for n, h := range handlers {
+		events := h.got()
+		if slices.Contains(want, n) {
+			if !slices.Contains(events, "finish") {
+				t.Fatalf("target %s saw %v, want the payload finished", n, events)
+			}
+			continue
+		}
+		if len(events) != 0 {
+			t.Fatalf("node %s is not a target but saw %v", n, events)
+		}
+	}
+}
+
+func TestImportParts_RelaysEveryKindToItsTargets(t *testing.T) {
+	nodes := clusterNodes()
+	f := newImportFixture(t, nodes)
+	indexInit := func(kind nativefmt.Kind, shardID uint32) *transferv1.ImportPartsRequest_Init {
+		return &transferv1.ImportPartsRequest_Init{
+			Catalog: commonv1.Catalog_CATALOG_STREAM, Group: testStreamGroup, Kind: kind, ShardId: shardID,
+			Parts: []*partInfo{{MinTimestamp: 100, MaxTimestamp: 200}}, SegmentVersion: storage.GetCurrentVersion(),
+		}
+	}
+	seg := &transferv1.ImportPartsRequest_FileSlice{Name: "000000000012.seg", Size: 2}
+	cases := []struct {
+		init   *transferv1.ImportPartsRequest_Init
+		chunk  *transferv1.ImportPartsRequest
+		name   string
+		group  string
+		shards []uint32
+	}{
+		{
+			name: "stream part", group: testStreamGroup, shards: []uint32{2},
+			init: streamPartInit(), chunk: partsChunk("PP", &transferv1.ImportPartsRequest_FileSlice{Name: "primary.bin", Size: 2}),
+		},
+		{
+			name: "trace part with a secondary index part", group: testTraceGroup, shards: []uint32{1},
+			init: &transferv1.ImportPartsRequest_Init{
+				Catalog: commonv1.Catalog_CATALOG_TRACE, Group: testTraceGroup, ShardId: 1, Kind: nativefmt.KindPart,
+				Parts:          []*partInfo{{Id: 7, MinTimestamp: 100}, {Id: 7, PartType: "sidx_x", MinTimestamp: 100}},
+				SegmentVersion: storage.GetCurrentVersion(),
+			},
+			chunk: partsChunk("Pk",
+				&transferv1.ImportPartsRequest_FileSlice{Name: "primary.bin", Size: 1}, &transferv1.ImportPartsRequest_FileSlice{Name: "keys.bin", Size: 1, PartIndex: 1}),
+		},
+		{
+			name: "element index", group: testStreamGroup, shards: []uint32{1},
+			init: indexInit(nativefmt.KindElementIndex, 1), chunk: partsChunk("SS", seg),
+		},
+		{
+			name: "series index of every shard", group: testStreamGroup, shards: []uint32{0, 1, 2},
+			init: indexInit(nativefmt.KindSeriesIndex, 0), chunk: partsChunk("SS", seg),
+		},
+		{
+			name: "property", group: testPropertyGroup, shards: []uint32{0},
+			init:  &transferv1.ImportPartsRequest_Init{Catalog: commonv1.Catalog_CATALOG_PROPERTY, Group: testPropertyGroup, Kind: nativefmt.KindProperty},
+			chunk: partsChunk("SS", seg),
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			want := shardNodes(t, f, c.group, c.shards...)
+			if len(want) == 0 {
+				t.Fatalf("group %s has no node for shards %v", c.group, c.shards)
+			}
+			handlers := relayToEveryNode(t, f, fixtureNodeNames(nodes))
+			s := &fakePartsStream{ctx: context.Background(), frames: []*transferv1.ImportPartsRequest{
+				partsInit(c.init), c.chunk, partsCompletion(2, 1),
+			}}
+			if err := f.svc.ImportParts(s); err != nil {
+				t.Fatalf("ImportParts() = %v", err)
+			}
+			wantRelayedExactly(t, s.resp, handlers, want)
+		})
+	}
+}
+
+func TestImportParts_SeriesIndexReachesUnionOfShards(t *testing.T) {
+	nodes := []*databasev1.Node{
+		labeledNode("hot-a", hotLabel()), labeledNode("hot-b", hotLabel()), labeledNode("hot-c", hotLabel()),
+		labeledNode("hot-d", hotLabel()), labeledNode("hot-e", hotLabel()), labeledNode("hot-f", hotLabel()),
+		labeledNode("warm-a", warmLabel()),
+	}
+	f := newImportFixture(t, nodes)
+	// Pick two shards whose nodes leave out some node of the stage, so the payload must reach more
+	// than one shard's nodes and still miss a node that serves only the other shard.
+	stage := shardNodes(t, f, testStreamGroup, 0, 1, 2)
+	var want []string
+	var shardIDs []uint32
+	for _, pair := range [][]uint32{{0, 1}, {0, 2}, {1, 2}} {
+		union := shardNodes(t, f, testStreamGroup, pair...)
+		if len(union) < len(stage) && len(union) > len(shardNodes(t, f, testStreamGroup, pair[0])) {
+			shardIDs, want = pair, union
+			break
+		}
+	}
+	if shardIDs == nil {
+		t.Fatalf("route %v has no two shards whose union leaves out a node of the stage", targetRoute(t, f, testStreamGroup, "").GetShards())
+	}
+	handlers := relayToEveryNode(t, f, fixtureNodeNames(nodes))
+	s := &fakePartsStream{ctx: context.Background(), frames: []*transferv1.ImportPartsRequest{
+		partsInit(&transferv1.ImportPartsRequest_Init{
+			Catalog: commonv1.Catalog_CATALOG_STREAM, Group: testStreamGroup, Kind: nativefmt.KindSeriesIndex, ShardIds: shardIDs,
+			Parts: []*partInfo{{MinTimestamp: 100, MaxTimestamp: 200}}, SegmentVersion: storage.GetCurrentVersion(),
+		}),
+		partsChunk("SS", &transferv1.ImportPartsRequest_FileSlice{Name: "000000000012.seg", Size: 2}),
+		partsCompletion(2, 1),
+	}}
+	if err := f.svc.ImportParts(s); err != nil {
+		t.Fatalf("ImportParts() = %v", err)
+	}
+	wantRelayedExactly(t, s.resp, handlers, want)
+}
+
+func TestImportParts_ClusterTargetFailsDuringRelay(t *testing.T) {
+	nodes := clusterNodes()
+	f := newImportFixture(t, nodes)
+	targets := shardNodes(t, f, testStreamGroup, 2)
+	if len(targets) < 2 {
+		t.Fatalf("stream shard 2 is served by %v, want replicas", targets)
+	}
+	failing := targets[len(targets)-1]
+	handlers := relayToEveryNode(t, f, fixtureNodeNames(nodes))
+	handlers[failing].failOn = "primary"
+	s := &fakePartsStream{ctx: context.Background(), frames: streamPartFrames()}
+	if err := f.svc.ImportParts(s); err != nil {
+		t.Fatalf("ImportParts() = %v", err)
+	}
+	var got []string
+	for _, tr := range s.resp.GetTargets() {
+		got = append(got, tr.GetNode())
+		if tr.GetNode() == failing {
+			if tr.GetSuccess() || !strings.Contains(tr.GetError(), "disk full") || tr.GetCompletionSent() {
+				t.Fatalf("failing target %v, want its own failure naming the cause before the completion", tr)
+			}
+			if events := handlers[failing].got(); slices.Contains(events, "finish") {
+				t.Fatalf("failing target saw %v, want its part never finished", events)
+			}
+			continue
+		}
+		if !tr.GetSuccess() || tr.GetError() != "" || !slices.Contains(handlers[tr.GetNode()].got(), "finish") {
+			t.Fatalf("target %v saw %v, want it finished despite the failure of %s", tr, handlers[tr.GetNode()].got(), failing)
+		}
+	}
+	if !slices.Equal(got, targets) {
+		t.Fatalf("targets = %v, want one result per target %v", got, targets)
+	}
+}
+
+func TestImportParts_SeriesIndexTargetFailsAlone(t *testing.T) {
+	nodes := clusterNodes()
+	f := newImportFixture(t, nodes)
+	targets := shardNodes(t, f, testStreamGroup, 0, 2)
+	if len(targets) < 2 {
+		t.Fatalf("stream shards 0 and 2 are served by %v, want several nodes", targets)
+	}
+	failing := targets[0]
+	handlers := relayToEveryNode(t, f, fixtureNodeNames(nodes))
+	f.client.relayErr[failing] = errors.New("no active client")
+	s := &fakePartsStream{ctx: context.Background(), frames: []*transferv1.ImportPartsRequest{
+		partsInit(&transferv1.ImportPartsRequest_Init{
+			Catalog: commonv1.Catalog_CATALOG_STREAM, Group: testStreamGroup, Kind: nativefmt.KindSeriesIndex, ShardIds: []uint32{0, 2},
+			Parts: []*partInfo{{MinTimestamp: 100, MaxTimestamp: 200}}, SegmentVersion: storage.GetCurrentVersion(),
+		}),
+		partsChunk("SS", &transferv1.ImportPartsRequest_FileSlice{Name: "000000000012.seg", Size: 2}),
+		partsCompletion(2, 1),
+	}}
+	if err := f.svc.ImportParts(s); err != nil {
+		t.Fatalf("ImportParts() = %v", err)
+	}
+	var got []string
+	for _, tr := range s.resp.GetTargets() {
+		got = append(got, tr.GetNode())
+		events := handlers[tr.GetNode()].got()
+		if tr.GetNode() == failing {
+			if tr.GetSuccess() || !strings.Contains(tr.GetError(), "no active client") || len(events) != 0 {
+				t.Fatalf("failing target %v saw %v, want it reported failed and sent nothing", tr, events)
+			}
+			continue
+		}
+		if !tr.GetSuccess() || !slices.Contains(events, "finish") {
+			t.Fatalf("target %v saw %v, want the series index finished despite the failure of %s", tr, events, failing)
+		}
+	}
+	if !slices.Equal(got, targets) {
+		t.Fatalf("targets = %v, want one result per union node %v", got, targets)
 	}
 }

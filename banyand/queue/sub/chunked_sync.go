@@ -363,33 +363,9 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 	}
 
 	for partIndex, partInfo := range req.PartsInfo {
-		createNewContext := session.partCtx == nil ||
-			session.partCtx.ID != partInfo.Id
-
-		if createNewContext && session.partCtx != nil && session.partCtx.Handler != nil {
-			if finishErr := session.partCtx.Handler.FinishSync(); finishErr != nil {
-				return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, finishErr)
-			}
-		}
-
-		if createNewContext {
-			session.partCtx = &queue.ChunkedSyncPartContext{
-				Context: stream.Context(),
-				ID:      partInfo.Id,
-				Group:   session.metadata.Group,
-				ShardID: session.metadata.ShardId,
-			}
-			queue.FillPartContext(session.partCtx, partInfo)
-			partHandler, createErr := handler.CreatePartHandler(session.partCtx)
-			if createErr != nil {
-				return fmt.Errorf("failed to create part handler: %w", createErr)
-			}
-			session.partCtx.Handler = partHandler
-		} else if session.partCtx.PartType != partInfo.PartType {
-			queue.FillPartContext(session.partCtx, partInfo)
-			if newPartErr := session.partCtx.Handler.NewPartType(session.partCtx); newPartErr != nil {
-				return fmt.Errorf("failed to new part type: %w", newPartErr)
-			}
+		var switchErr error
+		if session.partCtx, switchErr = queue.SwitchPart(stream.Context(), session.partCtx, session.metadata, partInfo, handler); switchErr != nil {
+			return switchErr
 		}
 
 		if processErr := s.processPart(session, req, partInfo, partIndex, handler); processErr != nil {
@@ -525,15 +501,12 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 }
 
 func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
-	if session.partCtx != nil && session.partCtx.Handler != nil {
-		if finishErr := session.partCtx.Handler.FinishSync(); finishErr != nil {
-			if s.metrics != nil {
-				op, grp, sn, sr, st := s.resolveSessionLabels(session)
-				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
-			}
-			return fmt.Errorf("failed to complete part %d: %w", session.partCtx.ID, finishErr)
+	if finishErr := queue.FinishPart(session.partCtx); finishErr != nil {
+		if s.metrics != nil {
+			op, grp, sn, sr, st := s.resolveSessionLabels(session)
+			s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
 		}
-		session.partCtx.Handler = nil
+		return finishErr
 	}
 
 	partsResults := make([]*clusterv1.PartResult, 0, len(session.partsProgress))
