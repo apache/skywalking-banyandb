@@ -33,7 +33,9 @@ export async function httpFetch({
 }) {
   const abortController = new AbortController();
   const timeoutId = setTimeout(() => {
-    abortController.abort(`Request timeout ${Timeout}ms`);
+    // Abort with an Error: fetch rejects with the abort reason, and a plain string would skip the
+    // callers' `error instanceof Error` timeout handling.
+    abortController.abort(new DOMException(`Request timeout ${Timeout}ms`, 'TimeoutError'));
   }, Timeout);
 
   // Only include body and Content-Type for requests that have a body
