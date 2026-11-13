@@ -39,6 +39,7 @@ type MemoryTracker struct {
 	// that account for live memory (see WithLiveLeaseAccounting).
 	refund func(uint64)
 	used   atomic.Int64
+	peak   atomic.Int64
 	limit  int64
 }
 
@@ -73,6 +74,8 @@ func (m *MemoryTracker) Reserve(bytes int64) error {
 					return err
 				}
 			}
+			for peak := m.peak.Load(); next > peak && !m.peak.CompareAndSwap(peak, next); peak = m.peak.Load() {
+			}
 			recordMemoryReservation(bytes)
 			return nil
 		}
@@ -94,6 +97,12 @@ func (m *MemoryTracker) Release(bytes int64) {
 	}
 	recordMemoryRelease(bytes)
 }
+
+// Peak returns the most bytes the tracker has held at once.
+func (m *MemoryTracker) Peak() int64 { return m.peak.Load() }
+
+// Limit returns the byte limit of the tracker.
+func (m *MemoryTracker) Limit() int64 { return m.limit }
 
 // Used returns the current outstanding reservation.
 func (m *MemoryTracker) Used() int64 {

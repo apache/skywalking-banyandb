@@ -135,8 +135,12 @@ func (t *decodeTask) run() {
 		return
 	}
 	wake := t.wake
+	queued := time.Since(t.enqueued)
 	if t.qm != nil {
-		t.qm.scanDecodeQueueWait.Observe(time.Since(t.enqueued).Seconds())
+		t.qm.scanDecodeQueueWait.Observe(queued.Seconds())
+	}
+	if res := t.bc.res; res != nil && res.budget != nil {
+		res.budget.telemetry().queueNS.Add(queued.Nanoseconds())
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -318,6 +322,97 @@ func (r *scanReservation) release() {
 	}
 }
 
+// trueUp shrinks the cursor's shared reservation from the pre-decode worst case to
+// what the decoded cursor keeps: the rows inside the query range, at the per-row
+// envelope, plus twice the block's encoded bytes for the decode backing it retains.
+// The expansion of the whole block, which was transient and is gone once the rows are
+// copied, is handed back, so many cursors can be live at once (a merge over a series
+// per endpoint) without each of them holding that expansion until it is released. It
+// only ever lowers the reservation, and does nothing for a cursor with a reusable slot.
+func (r *scanReservation) trueUp(rows int, blockRows uint64) {
+	b := r.budget
+	if b == nil || b.shared == nil || r.reuse != nil || r.released.Load() || r.sharedBytes <= 0 {
+		return
+	}
+	kept := sharedRetainedBytes(b.perRowBytes(), uint64(rows), blockRows, uint64(r.bytes))
+	if kept >= r.sharedBytes {
+		return
+	}
+	b.shared.Release(r.sharedBytes - kept)
+	r.sharedBytes = kept
+}
+
+// The shared envelope of a cursor is calibrated against measured decodes
+// (TestCalibrateSharedEnvelope: a cluster-shaped one-tag block, a constant-valued
+// block, and a wide 7-tag/5-field block with arrays, binary and nulls, at 4%-100% of the
+// block in range). A live decoded cursor holds about a decoder-backing floor, its
+// encoded block size once, and 10-50 bytes per row and column. The constants below give
+// at least 1.4x the retained size and 2.0x the per-decode allocation measured in every
+// one of those cases, so the figures are an upper bound with margin, not a mean. The per-row cost
+// follows the projected column types (projectedRowBytes) rather than their number.
+const (
+	// cursorFloorBytes is the decoder backing a cursor keeps however few rows it holds.
+	cursorFloorBytes uint64 = 32 << 10
+	// cursorRowColumnBytes is what one row of one column keeps when the column types are unknown
+	// (the 4 base columns count).
+	cursorRowColumnBytes uint64 = 48
+	// cursorRowFactor is the safety factor on projectedRowBytes.
+	cursorRowFactor uint64 = 2
+	// decodeTransientFactor bounds the garbage one decode allocates, as a multiple of the
+	// block's encoded size; the worst measured is 5x (arrays and binary on a wide schema).
+	decodeTransientFactor uint64 = 6
+)
+
+// compactedFloorBytes is what a compacted cursor (see blockCursor.compactValues) keeps however few
+// rows it holds.
+const compactedFloorBytes uint64 = 4 << 10
+
+// sharedRetainedBytes is what a decoded cursor of rows in-range rows, out of a block of count
+// rows and encodedBytes bytes, keeps while it is live. A cursor with under half the block in
+// range is compacted: it owns only its rows' bytes, estimated as their share of the block.
+// Any other cursor still views the decoder's whole backing array.
+func sharedRetainedBytes(perRow, rows, count, encodedBytes uint64) int64 {
+	rows = max(rows, 16)
+	if perRow == 0 || rows > math.MaxInt64/perRow || encodedBytes > math.MaxInt64/4-rows*perRow-cursorFloorBytes {
+		return math.MaxInt64
+	}
+	if count > 0 && rows*2 < count {
+		return int64(compactedFloorBytes + encodedBytes*rows/count + rows*perRow)
+	}
+	return int64(cursorFloorBytes + encodedBytes + rows*perRow)
+}
+
+// perRowBytes is what one in-range row of one cursor keeps, from the projected columns' types when the
+// scan knows them and from their count otherwise.
+func (b *scanBudget) perRowBytes() uint64 {
+	if b.rowBytes > 0 {
+		return b.rowBytes * cursorRowFactor
+	}
+	return b.columns * cursorRowColumnBytes
+}
+
+// projectedRowBytes is what a row of the projected columns costs in the decoded cursor before the
+// safety factor: the row's timestamp and version, then per column the value itself for a fixed-width
+// type or a slice header for a string, binary or array (their bytes are covered by the encoded size).
+func projectedRowBytes(schema *vectorized.BatchSchema) uint64 {
+	if schema == nil {
+		return 0
+	}
+	n := uint64(16)
+	for _, col := range schema.Columns {
+		if col.Role != vectorized.RoleTag && col.Role != vectorized.RoleField {
+			continue
+		}
+		switch col.Type {
+		case vectorized.ColumnTypeInt64, vectorized.ColumnTypeFloat64:
+			n += 8
+		default:
+			n += 24
+		}
+	}
+	return n
+}
+
 type reserveOutcome uint8
 
 const (
@@ -334,13 +429,20 @@ const (
 // the node-wide total additionally keeps concurrent queries within the
 // protector's headroom.
 type scanBudget struct {
-	tracker       *vectorized.MemoryTracker
-	shared        *vectorized.MemoryTracker
-	reuse         *scanDecodeReuse
-	node          *decodePool
-	held          atomic.Int64
-	columns       uint64
-	workspace     int64
+	tracker   *vectorized.MemoryTracker
+	shared    *vectorized.MemoryTracker
+	reuse     *scanDecodeReuse
+	node      *decodePool
+	held      atomic.Int64
+	columns   uint64
+	rowBytes  uint64
+	workspace int64
+	// sliceNeed is what a time-ordered merge may keep live before it is cut into time slices, and
+	// sliceBudget what one slice may keep live; zero disables slicing (see sliceMergeUnit).
+	tel           *scanTelemetry
+	qm            *queryMetrics
+	sliceNeed     int64
+	sliceBudget   int64
 	quota         int64
 	active        atomic.Int64
 	closing       atomic.Bool
@@ -350,7 +452,7 @@ type scanBudget struct {
 // newScanBudget returns a budget of quota bytes (negative: no per-query limit)
 // that also counts against node's total (nil: no node accounting).
 func newScanBudget(quota int64, node *decodePool) *scanBudget {
-	b := &scanBudget{quota: quota, node: node}
+	b := &scanBudget{quota: quota, node: node, tel: new(scanTelemetry)}
 	if quota >= 0 {
 		b.tracker = vectorized.NewMemoryTracker(quota)
 	}
@@ -436,10 +538,10 @@ func (b *scanBudget) reserveCurrent(ctx context.Context, size uint64, r *scanRes
 	admit := b.held.Load() == 0
 	outcome := b.tryReserve(size, false, r)
 	if outcome == reserveOverShared {
-		return r.failure
+		return b.rejected(r.failure, rejectOther)
 	}
 	if outcome == reserveOverQuery {
-		return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", uint64(b.held.Load())+size, b.quota)
+		return b.rejected(fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", uint64(b.held.Load())+size, b.quota), rejectRawQuota)
 	}
 	if admit && b.node != nil && b.node.pm != nil {
 		if err := b.node.pm.AcquireResource(ctx, size); err != nil {
@@ -448,6 +550,15 @@ func (b *scanBudget) reserveCurrent(ctx context.Context, size uint64, r *scanRes
 		}
 	}
 	return nil
+}
+
+// rejected records a reservation the scan needed and could not get, then returns the error.
+func (b *scanBudget) rejected(err error, fallback string) error {
+	reason := b.telemetry().reject(err, fallback)
+	if b.qm != nil {
+		b.qm.scanReservationRejections.Inc(1, reason)
+	}
+	return err
 }
 
 // attachShared reserves bounded batch workspace before scan allocation and connects
@@ -488,6 +599,7 @@ func (b *scanBudget) attachShared(ctx context.Context, columns, batchRows, curso
 	b.shared = tracker
 	b.columns = uint64(columns)
 	b.workspace = workspace
+	b.sliceNeed, b.sliceBudget = scanSliceBudget(ctx, tracker, workspace)
 	return nil
 }
 
@@ -509,20 +621,39 @@ func (b *scanBudget) finishWorkspace() {
 	b.workspaceOnce.Do(func() { b.shared.Release(b.workspace); b.workspace = 0 })
 }
 
+// inRangeRows estimates how many rows of the block fall in the query time range, by
+// assuming the block's rows are spread evenly between its first and last timestamp.
+// Only those rows are copied into batches; the rest of a decoded block is transient and
+// covered by the uncompressed-size term of sharedBlockBytes. A block of a merged part
+// spans hours, so charging all its rows to a query for minutes overstates it manyfold.
+func inRangeRows(bc *blockCursor) uint64 {
+	count := bc.bm.count
+	lo, hi := bc.bm.timestamps.min, bc.bm.timestamps.max
+	if bc.maxTimestamp == 0 || hi <= lo || count <= 1 {
+		return count
+	}
+	from, to := max(lo, bc.minTimestamp), min(hi, bc.maxTimestamp)
+	if to < from {
+		return 0
+	}
+	span := uint64(hi-lo) + 1
+	overlap := uint64(to-from) + 1
+	if overlap >= span {
+		return count
+	}
+	// Scale in float64: count*overlap can overflow uint64 for nanosecond spans.
+	return min(count, uint64(math.Ceil(float64(count)*float64(overlap)/float64(span))))
+}
+
 // sharedBlockBytes bounds decode expansion and native batch copies before decoding.
 // Borrowed batches keep the cursor reservation alive through their owner pins.
 func (b *scanBudget) sharedBlockBytes(bc *blockCursor) int64 {
 	if b.shared == nil {
 		return 0
 	}
-	perRow := b.columns*256 + 256
-	rows := max(bc.bm.count, uint64(16))
-	if rows > math.MaxInt64/perRow {
+	kept := sharedRetainedBytes(b.perRowBytes(), inRangeRows(bc), bc.bm.count, bc.bm.uncompressedSizeBytes)
+	if bc.bm.uncompressedSizeBytes > uint64(math.MaxInt64-kept)/decodeTransientFactor {
 		return math.MaxInt64
 	}
-	fixed := rows * perRow
-	if bc.bm.uncompressedSizeBytes > (math.MaxInt64-fixed)/16 {
-		return math.MaxInt64
-	}
-	return int64(fixed + bc.bm.uncompressedSizeBytes*16)
+	return kept + int64(bc.bm.uncompressedSizeBytes*decodeTransientFactor)
 }

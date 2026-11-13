@@ -136,6 +136,7 @@ Release Notes.
 - Report MCP server request timeouts as timeouts: the HTTP client now aborts with a `TimeoutError`, so the client's "Query timeout" and "List groups timeout" messages are shown instead of a generic failure.
 - Fix FODC `/metrics-windows` failing when an agent's reply exceeds the gRPC message limit. The agent now sends replies in 4MiB chunks that the proxy merges, and a metrics stream error reopens only that stream instead of re-registering the agent. Upgrade the proxy before or with the agents.
 - Fix tolerate AlreadyExists when concurrent liaisons create the internal deletion task schema.
+- Stop measure queries from failing with `query memory pool exhausted` when a time-ordered scan merges many series over blocks much wider than the query window, as after a merge. The scan reserved each block as if every row were kept; it now reserves what the in-range rows keep (schema-aware, calibrated against measured decodes), refunds the decode's temporary expansion once the decode ends, copies a narrow window's bytes out of the decoded block so the rest can be freed, and cuts a merge that still would not fit into time slices. Exhaustion errors name the allowance that ran out. A traced measure query gets a `scan-storage` span (decode pool, prefetch, memory budget, rejections) and the scan exports `total_scan_reservation_rejections{reason}`, `query_budget_peak_ratio`, `scan_decode_seconds`, `total_scan_slices` and `total_scan_sliced_units`.
 
 ### Document
 

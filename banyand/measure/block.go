@@ -484,15 +484,20 @@ type blockCursor struct {
 	versions            []int64
 	tagFamilies         []columnFamily
 	columnValuesDecoder encoding.BytesBlockDecoder
-	tagProjection       []model.TagProjection
-	fieldProjection     []string
-	schemaTagTypes      map[string]pbv1.ValueType
-	bm                  blockMetadata
-	idx                 int
-	minTimestamp        int64
-	maxTimestamp        int64
-	refs                atomic.Int32
-	shardID             common.ShardID
+	// spareBacking is the decoder's backing array detached by compactValues; decodeCursor
+	// returns it to decodeBackingPool once the temporary block that views it is released.
+	spareBacking []byte
+	// compacted is set when compactValues released the decoded block.
+	compacted       bool
+	tagProjection   []model.TagProjection
+	fieldProjection []string
+	schemaTagTypes  map[string]pbv1.ValueType
+	bm              blockMetadata
+	idx             int
+	minTimestamp    int64
+	maxTimestamp    int64
+	refs            atomic.Int32
+	shardID         common.ShardID
 }
 
 // Retain adds one reference. The caller must already hold one.
@@ -510,6 +515,8 @@ func (bc *blockCursor) reset() {
 	bc.bm.reset()
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
+	bc.spareBacking = nil
+	bc.compacted = false
 	bc.tagProjection = bc.tagProjection[:0]
 	bc.fieldProjection = bc.fieldProjection[:0]
 	bc.schemaTagTypes = nil
@@ -932,7 +939,49 @@ NEXT_FIELD:
 		c.copyRowsFrom(&tmpBlock.field.columns[i], start, end+1)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
+	if kept := end - start + 1; kept*2 < len(tmpBlock.timestamps) && (bc.res == nil || bc.res.reuse == nil) {
+		bc.compactValues()
+	}
 	return true
+}
+
+// compactValues moves the bytes of the cursor's cell values into one buffer of their own
+// and drops the decoder's backing array. Cell values are views into that array, so a
+// cursor that keeps a few rows of a large block would otherwise keep the whole decoded
+// block alive. It is used when the query range covers under half of the block.
+func (bc *blockCursor) compactValues() {
+	var total int
+	each := func(fn func(c *column)) {
+		for i := range bc.tagFamilies {
+			for j := range bc.tagFamilies[i].columns {
+				fn(&bc.tagFamilies[i].columns[j])
+			}
+		}
+		for i := range bc.fields.columns {
+			fn(&bc.fields.columns[i])
+		}
+	}
+	each(func(c *column) {
+		for _, v := range c.values {
+			total += len(v)
+		}
+	})
+	buf := make([]byte, 0, total)
+	each(func(c *column) {
+		for i, v := range c.values {
+			switch {
+			case v == nil:
+			case len(v) == 0:
+				c.values[i] = []byte{}
+			default:
+				at := len(buf)
+				buf = append(buf, v...)
+				c.values[i] = buf[at:len(buf):len(buf)]
+			}
+		}
+	})
+	bc.spareBacking = bc.columnValuesDecoder.DetachBacking()
+	bc.compacted = true
 }
 
 var blockCursorPool = pool.Register[*blockCursor]("measure-blockCursor")
@@ -1424,17 +1473,20 @@ var blockPointerPool = pool.Register[*blockPointer]("measure-blockPointer")
 // boundDecodeBacking drops oversized pooled buffers before a budgeted decode.
 // The shared scan envelope includes twice a normal batch per projected column.
 func (bc *blockCursor) boundDecodeBacking(tmpBlock *block) {
+	// The temporary block decodes the whole block, the cursor keeps the rows in range.
 	rows := 2 * max(int(bc.bm.count), 16)
+	keptRows := 2 * max(int(inRangeRows(bc)), 16)
 	encoded := 2 * max(int(bc.bm.uncompressedSizeBytes), 1024)
 	reusing := bc.res != nil && bc.res.reuse != nil
 	if reusing {
 		rows = 2 * int(bc.res.reuse.rows)
+		keptRows = rows
 		encoded = 2 * int(bc.res.reuse.encoded)
 	}
-	if cap(bc.timestamps) > rows {
+	if cap(bc.timestamps) > keptRows {
 		bc.timestamps = nil
 	}
-	if cap(bc.versions) > rows {
+	if cap(bc.versions) > keptRows {
 		bc.versions = nil
 	}
 	bc.columnValuesDecoder.ResetBounded(encoded)
@@ -1488,4 +1540,25 @@ func boundFamilyBacking(family *columnFamily, columns, rows int) {
 			column.float64s = nil
 		}
 	}
+}
+
+// retainedBytes adds up what a decoded cursor's buffers hold: the row slices, the cell slices and
+// their bytes, and the decoder's backing array. Cells that view the decoder's backing are counted
+// twice, so it is an upper bound. It costs a pass over the cells and is only taken for traced queries.
+func (bc *blockCursor) retainedBytes() int {
+	n := cap(bc.timestamps)*8 + cap(bc.versions)*8
+	family := func(cf *columnFamily) {
+		for i := range cf.columns {
+			c := &cf.columns[i]
+			n += cap(c.values)*24 + cap(c.int64s)*8 + cap(c.float64s)*8
+			for _, v := range c.values {
+				n += len(v)
+			}
+		}
+	}
+	family(&bc.fields)
+	for i := range bc.tagFamilies {
+		family(&bc.tagFamilies[i])
+	}
+	return n + bc.columnValuesDecoder.BackingCap()
 }

@@ -26,6 +26,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSharedScanBudgetRejectsBeforeDecode(t *testing.T) {
@@ -195,4 +197,108 @@ func TestSharedScanWorkspaceCoversBoundedCellSlabs(t *testing.T) {
 			t.Fatalf("workspace %d does not cover bounded slabs %d", budget.workspace, required)
 		}
 	}
+}
+
+func TestSharedBlockBytesChargesOnlyInRangeRows(t *testing.T) {
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 8<<20)
+	budget := newScanBudget(8<<20, nil)
+	if err := budget.attachShared(ctx, 6, 1024, 1); err != nil {
+		t.Fatal(err)
+	}
+	defer budget.releaseWorkspace()
+	const hour = int64(3600e9)
+	newCursor := func(minTS, maxTS int64) *blockCursor {
+		bc := &blockCursor{bm: blockMetadata{count: 360, uncompressedSizeBytes: 23 << 10}}
+		bc.bm.timestamps.min, bc.bm.timestamps.max = 0, 6*hour
+		bc.minTimestamp, bc.maxTimestamp = minTS, maxTS
+		return bc
+	}
+	whole := budget.sharedBlockBytes(newCursor(0, 6*hour))
+	narrow := budget.sharedBlockBytes(newCursor(hour, hour+hour/4))
+	disjoint := budget.sharedBlockBytes(newCursor(7*hour, 8*hour))
+	encoded := uint64(23 << 10)
+	// 15 of 360 rows are in range and the floor is 16: the cursor is compacted. A window with
+	// no row in range is charged the same floor.
+	want := sharedRetainedBytes(6*cursorRowColumnBytes, 16, 360, encoded) + int64(decodeTransientFactor*encoded)
+	if narrow != want || disjoint != want {
+		t.Fatalf("narrow window charged %d, disjoint %d, want %d (whole block %d)", narrow, disjoint, want, whole)
+	}
+	if narrow >= whole {
+		t.Fatalf("narrow window charged %d, not less than the whole block %d", narrow, whole)
+	}
+	unset := &blockCursor{bm: blockMetadata{count: 360, uncompressedSizeBytes: 23 << 10}}
+	if got := budget.sharedBlockBytes(unset); got != whole {
+		t.Fatalf("cursor without a range charged %d, want %d", got, whole)
+	}
+}
+
+func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 64<<20)
+	shared := vectorized.QueryMemoryTracker(ctx, 0)
+	budget := newScanBudget(64<<20, nil)
+	if err := budget.attachShared(ctx, 6, 1024, 1); err != nil {
+		t.Fatal(err)
+	}
+	workspace := shared.Used()
+	bc := &blockCursor{bm: blockMetadata{count: 600, uncompressedSizeBytes: 40 << 10}}
+	reservation := scanReservation{sharedBytes: budget.sharedBlockBytes(bc)}
+	if err := budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, &reservation); err != nil {
+		t.Fatal(err)
+	}
+	before := reservation.sharedBytes
+	reservation.trueUp(15, 600)
+	want := sharedRetainedBytes(6*cursorRowColumnBytes, 15, 600, 40<<10)
+	if reservation.sharedBytes != want || shared.Used() != workspace+want {
+		t.Fatalf("after true-up: reservation %d, tracker %d, want %d over workspace %d", reservation.sharedBytes, shared.Used(), want, workspace)
+	}
+	if want >= before/4 {
+		t.Fatalf("true-up kept %d of %d", want, before)
+	}
+	reservation.trueUp(600, 600) // never raises the reservation
+	if reservation.sharedBytes != want {
+		t.Fatalf("true-up raised the reservation to %d", reservation.sharedBytes)
+	}
+	reservation.release()
+	reservation.release()
+	if shared.Used() != workspace {
+		t.Fatalf("leaked %d bytes after release", shared.Used()-workspace)
+	}
+	budget.releaseWorkspace()
+}
+
+// A merge over many series holds every cursor live; with the envelope of each trued up
+// after decode, the set fits a quota that the pre-decode envelope of all of them exceeds.
+func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {
+	const cursors = 100
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 96<<20)
+	budget := newScanBudget(1<<30, nil)
+	if err := budget.attachShared(ctx, 6, 1024, cursors); err != nil {
+		t.Fatal(err)
+	}
+	defer budget.releaseWorkspace()
+	var held []*scanReservation
+	for i := 0; i < cursors; i++ {
+		bc := &blockCursor{bm: blockMetadata{count: 611, uncompressedSizeBytes: 40 << 10}}
+		r := &scanReservation{sharedBytes: budget.sharedBlockBytes(bc)}
+		if err := budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, r); err != nil {
+			t.Fatalf("cursor %d: %v", i, err)
+		}
+		r.trueUp(15, 611)
+		held = append(held, r)
+	}
+	for _, r := range held {
+		r.release()
+	}
+}
+
+func TestProjectedRowBytesFollowsTheColumnTypes(t *testing.T) {
+	q := prefetchQuery(0, 10, true, true) // tag url (string), field fi (int64)
+	schema := q.schema(t)
+	require.EqualValues(t, 16+24+8, projectedRowBytes(schema), "timestamp and version, one string, one int field")
+	require.Zero(t, projectedRowBytes(nil))
+
+	budget := &scanBudget{columns: 6}
+	require.EqualValues(t, 6*cursorRowColumnBytes, budget.perRowBytes(), "without column types the count is used")
+	budget.rowBytes = projectedRowBytes(schema)
+	require.EqualValues(t, (16+24+8)*cursorRowFactor, budget.perRowBytes())
 }

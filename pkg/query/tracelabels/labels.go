@@ -169,4 +169,66 @@ const (
 	TagErrorMsg = "error_msg"
 	// TagIgnoredChildSpans records children omitted by tracer fanout cap.
 	TagIgnoredChildSpans = "ignored_child_spans"
+	// TagScanBlocks records blocks the scan planned to read.
+	TagScanBlocks = "scan_blocks"
+	// TagScanBlocksDecoded records blocks decoded with at least one row in range.
+	TagScanBlocksDecoded = "scan_blocks_decoded"
+	// TagScanBlocksNoRows records blocks decoded with no row in the query range.
+	TagScanBlocksNoRows = "scan_blocks_no_rows"
+	// TagScanWindows records series windows the scan visited.
+	TagScanWindows = "scan_windows"
+	// TagMergeUnits records time-ordered merges the scan ran.
+	TagMergeUnits = "merge_units"
+	// TagMergeCursors records cursors the merges decoded.
+	TagMergeCursors = "merge_cursors"
+	// TagMergePeakLive records most cursors any one merge held decoded at once.
+	TagMergePeakLive = "merge_peak_live"
+	// TagPrefetchPeak records most decodes requested ahead of the one being consumed.
+	TagPrefetchPeak = "prefetch_peak"
+	// TagPrefetchHits records cursors already decoded when the scan needed them.
+	TagPrefetchHits = "prefetch_hits"
+	// TagPrefetchWaits records cursors the scan had to wait for.
+	TagPrefetchWaits = "prefetch_waits"
+	// TagDecodeWaitNS records nanoseconds the scan spent waiting for or running decodes.
+	TagDecodeWaitNS = "decode_wait_ns"
+	// TagDecodeQueueNS records nanoseconds decodes waited in the node decode queue, summed.
+	TagDecodeQueueNS = "decode_queue_ns"
+	// TagPlanNS records nanoseconds spent planning the scan units.
+	TagPlanNS = "plan_ns"
+	// TagScanNS records nanoseconds spent inside the scan producing batches.
+	TagScanNS = "scan_ns"
+	// TagMergeNS records scan nanoseconds not spent waiting for decodes: merge and batch assembly.
+	TagMergeNS = "merge_ns"
+	// TagPoolWorkers records workers of the node decode pool.
+	TagPoolWorkers = "pool_workers"
+	// TagPoolQueued records decodes queued on the node pool when the scan started.
+	TagPoolQueued = "pool_queued_at_start"
+	// TagCompactedCursors records cursors that copied their in-range rows and released the decoded block.
+	TagCompactedCursors = "compacted_cursors"
+	// TagBudgetLeaseLimit records per-query lease limit in bytes.
+	TagBudgetLeaseLimit = "budget_lease_limit"
+	// TagBudgetLeasePeak records most bytes the query lease held at once.
+	TagBudgetLeasePeak = "budget_lease_peak"
+	// TagBudgetSharedLimit records limit of the query's shared memory tracker in bytes.
+	TagBudgetSharedLimit = "budget_shared_limit"
+	// TagBudgetSharedPeak records most bytes the shared tracker held at once.
+	TagBudgetSharedPeak = "budget_shared_peak"
+	// TagBudgetEstimate records sum of the pre-decode reservations of the decoded cursors.
+	TagBudgetEstimate = "budget_estimate_bytes"
+	// TagBudgetEstimateKept records sum of the reservations after the refund that follows each decode.
+	TagBudgetEstimateKept = "budget_estimate_kept_bytes"
+	// TagBudgetRetained records sum of the bytes the decoded cursors actually retained.
+	TagBudgetRetained = "budget_retained_bytes"
+	// TagBudgetRejects records reservation rejections by reason, as reason=count pairs.
+	TagBudgetRejects = "budget_rejects"
+	// TagBudgetRejectReason records the last rejection with its limit, used and requested bytes.
+	TagBudgetRejectReason = "budget_reject_reason"
+	// TagSliceNeed records bytes a time-ordered merge may hold before it is cut into slices.
+	TagSliceNeed = "slice_need_bytes"
+	// TagSliceTarget records bytes one slice may hold once the merge is sliced.
+	TagSliceTarget = "slice_target_bytes"
+	// TagSlices records time slices the sliced merges were cut into.
+	TagSlices = "slices"
+	// TagSlicedUnits records merge units cut into time slices.
+	TagSlicedUnits = "sliced_units"
 )
