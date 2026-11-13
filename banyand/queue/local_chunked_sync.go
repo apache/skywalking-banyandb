@@ -165,6 +165,17 @@ func ChunkChecksum(data []byte) string {
 	return strconv.FormatUint(uint64(crc32.ChecksumIEEE(data)), 16)
 }
 
+// ChunkChecksumMismatch returns the refusal message of a frame whose chunk data does not match
+// its checksum, or "" when they match. The sender recognizes the refusal by its "checksum
+// mismatch" text.
+func ChunkChecksumMismatch(req *clusterv1.SyncPartRequest) string {
+	sum := ChunkChecksum(req.GetChunkData())
+	if sum == req.GetChunkChecksum() {
+		return ""
+	}
+	return fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s", req.GetChunkIndex(), req.GetChunkChecksum(), sum)
+}
+
 // CheckSyncVersion is the version check of a chunked sync receiver: a frame without version info
 // is accepted, otherwise the API version must match and the file format version must be the
 // current or a compatible one. It returns SYNC_STATUS_CHUNK_RECEIVED when the frame may be read,
@@ -208,11 +219,8 @@ func (s *localSyncSession) chunk(ctx context.Context, req *clusterv1.SyncPartReq
 			msg:    fmt.Sprintf("out of order chunk received: expected %d, got %d", s.chunks, req.GetChunkIndex()),
 		}
 	}
-	if sum := ChunkChecksum(req.GetChunkData()); sum != req.GetChunkChecksum() {
-		return &syncRefusalError{
-			status: clusterv1.SyncStatus_SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH,
-			msg:    fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s", req.GetChunkIndex(), req.GetChunkChecksum(), sum),
-		}
+	if msg := ChunkChecksumMismatch(req); msg != "" {
+		return &syncRefusalError{status: clusterv1.SyncStatus_SYNC_STATUS_CHUNK_CHECKSUM_MISMATCH, msg: msg}
 	}
 	s.chunks++
 	chunkData := req.GetChunkData()

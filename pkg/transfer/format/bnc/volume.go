@@ -74,13 +74,15 @@ type VolumeWriter struct {
 // disk, footer and trailer included; 0 never splits, and any other value below MinFileSize is
 // an error. open returns the bytes of a member by its path.
 func NewVolumeWriter(sink Sink, pathPrefix string, maxFileSize uint64, open func(path string) (io.ReadCloser, error)) (*VolumeWriter, error) {
-	if err := checkFileSize(maxFileSize); err != nil {
+	if err := CheckFileSize(maxFileSize); err != nil {
 		return nil, err
 	}
 	return &VolumeWriter{sink: sink, prefix: pathPrefix, plan: volumePlan{limit: maxFileSize}, open: open, paths: newPathSet()}, nil
 }
 
-func checkFileSize(maxFileSize uint64) error {
+// CheckFileSize refuses a volume limit a VolumeWriter does not accept: any non-zero value
+// below MinFileSize.
+func CheckFileSize(maxFileSize uint64) error {
 	if maxFileSize != 0 && maxFileSize < MinFileSize {
 		return fmt.Errorf("a volume limit of %d bytes is below the minimum of %d", maxFileSize, MinFileSize)
 	}

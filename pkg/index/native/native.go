@@ -211,20 +211,7 @@ func (g *ReadOnlyGeneration) TimeBounds() (lo, hi int64, ok bool) {
 	if g == nil || g.reader == nil {
 		return 0, 0, false
 	}
-	for _, s := range g.reader.SnapshotMetadata().Segments {
-		minTS, maxTS := int64(s.TimeMin), int64(s.TimeMax)
-		if (minTS == 0 && maxTS == 0) || minTS > maxTS {
-			continue
-		}
-		if !ok || minTS < lo {
-			lo = minTS
-		}
-		if !ok || maxTS > hi {
-			hi = maxTS
-		}
-		ok = true
-	}
-	return lo, hi, ok
+	return g.reader.SnapshotMetadata().TimeBounds()
 }
 
 // DecodeTimestamp decodes one series/property document's stored "_timestamp"

@@ -616,7 +616,7 @@ func loadPersistedRoot(path string) (*publishedRoot, error) {
 		handle := &segmentHandle{
 			reader: segmentReader, count: segmentMetadata.DocumentCount, id: segmentMetadata.ID,
 			size: segmentMetadata.Size, timeMin: segmentMetadata.TimeMin, timeMax: segmentMetadata.TimeMax,
-			hasTime: segmentMetadata.TimeMin != 0 || segmentMetadata.TimeMax != 0,
+			hasTime: nativeice.HasTime(segmentMetadata.TimeMin, segmentMetadata.TimeMax),
 		}
 		fields, fieldsErr := segmentReader.Fields()
 		if fieldsErr != nil {
@@ -2240,7 +2240,7 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
 		timeMin: uint64(timeMin), timeMax: uint64(timeMax),
-		hasTime: timeMin != 0 || timeMax != 0,
+		hasTime: nativeice.HasTime(uint64(timeMin), uint64(timeMax)),
 	}
 	handle.refs.Store(1)
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
@@ -2267,7 +2267,7 @@ func newSegmentFromFile(path string, metadata nativeice.SnapshotSegment, segment
 	handle := &segmentHandle{
 		reader: reader, sourcePath: path, staged: true, count: metadata.DocumentCount, id: segmentID,
 		size: metadata.Size, timeMin: uint64(timeMin), timeMax: uint64(timeMax),
-		hasTime: timeMin != 0 || timeMax != 0, indexedFields: fields,
+		hasTime: nativeice.HasTime(uint64(timeMin), uint64(timeMax)), indexedFields: fields,
 	}
 	handle.refs.Store(1)
 	// Best effort, see newMemorySegment. The external-receive caller opens

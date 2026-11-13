@@ -69,7 +69,7 @@ type Env struct {
 }
 
 // CheckOutputDir accepts an output directory that does not exist or is empty. Anything else
-// is refused: this step has no resume, and a fresh export must not mix with leftovers.
+// is refused, so an export never mixes with what an earlier run left behind.
 func CheckOutputDir(dir string) error {
 	if dir == "" {
 		return exitcode.Exit(exitcode.ExitUsage, "no output directory: give --output or export.output in plan.yaml")
@@ -359,7 +359,7 @@ func CheckFormat(opts *config.Export) error {
 	default:
 		return exitcode.Exit(exitcode.ExitUsage, "a native export is not compressed: its column files already are; use --compress none")
 	}
-	if opts.MaxFileSize != 0 && opts.MaxFileSize < bnc.MinFileSize {
+	if bnc.CheckFileSize(opts.MaxFileSize) != nil {
 		return exitcode.Exit(exitcode.ExitUsage, "a native export needs --max-file-size 0 or at least %d bytes, got %d", bnc.MinFileSize, opts.MaxFileSize)
 	}
 	return nil

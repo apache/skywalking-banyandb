@@ -58,7 +58,7 @@ bydbctl data export --plan plan.yaml --output ./schema-20261010 --schema-only
 
 The command:
 
-1. checks that `--output` does not exist or is empty (anything else is exit `1`; there is no resume yet);
+1. checks that `--output` does not exist or is empty (anything else is exit `1`);
 2. connects to the liaisons, lists the groups and validates the selectors;
 3. writes the schema of the selected groups to `schema/`; with `--schema-only` it writes `manifest.json` and stops here, without a
    session or any data. With `--include-schema=false` it writes no schema at all and skips the schema revision check below;
@@ -238,7 +238,7 @@ stream may go without a single frame, however long the whole export takes. Conne
 under a 3-minute deadline, a dry run under 10 minutes and `release-session` under 3 minutes. Under any rate limit a node stream
 delivers a frame about every second (see above), so only a node that stalls hits the idle timeout.
 
-`plan.yaml` accepts only the keys below plus the `import.*` keys of `data import` (such as `import.partRateLimit` and `import.partChunkSize`); any other key (`export.checkpoint` and the import resume keys included, which arrive with resume)
+`plan.yaml` accepts only the keys below plus the `import.*` keys of `data import` (such as `import.partRateLimit` and `import.partChunkSize`); any other key
 is rejected so a typo never falls back to a default silently. Its selectors get the same checks as `--selector` (a group
 name must not be empty or repeated), and `--selector` replaces them entirely. Explicit flags override the file, which overrides the
 `BYDBCTL_*` environment. `--dry-run`, `--preempt`, `--strict-coverage` and `--output-format` are one-shot switches with no plan field.

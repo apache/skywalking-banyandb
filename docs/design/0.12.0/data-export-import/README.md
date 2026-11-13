@@ -1,6 +1,6 @@
 # Data Export and Import
 
-Status: the export dry run, the session RPCs (`Plan` create/read, `Sessions`) and the CSV export (`Export` RPC, `bydbctl data export`) are implemented (2026-10-10), and so is the CSV import (`ImportService`, `bydbctl data import`, 2026-10-19) — see [5.4 CSV import as implemented](#54-csv-import-as-implemented). The native export and the native import (`ImportService.ImportParts`, 2026-11-03) are implemented too — see [5.5 Native import as implemented](#55-native-import-as-implemented); export and import resume are still **design** — see [4.9 Remaining work](#49-remaining-work).
+Status: the export dry run, the session RPCs (`Plan` create/read, `Sessions`) and the CSV export (`Export` RPC, `bydbctl data export`) are implemented (2026-10-10), and so is the CSV import (`ImportService`, `bydbctl data import`, 2026-10-19) — see [5.4 CSV import as implemented](#54-csv-import-as-implemented). The native export and the native import (`ImportService.ImportParts`, 2026-11-03) are implemented too — see [5.5 Native import as implemented](#55-native-import-as-implemented); what is still design is listed in [4.9 Remaining work](#49-remaining-work).
 
 > **NIDX-03/04/05 note.** This document was written while the per-segment
 > series index (`seg-*/sidx/`) was still backed by a third-party index
@@ -87,7 +87,6 @@ export:                               # Export only: scope and options
   nodeRowRateLimit: 0                 # CSV only: per-node row rate limit (rows/s), 0 = unlimited
   nodeIdleTimeout: 10m                # Fail a node stream that delivers nothing for this long; 0 = never
   sendRetryTimeout: 15m               # Window for reopening a refused export stream on the next liaison
-  checkpoint: ""                      # Empty = <output>/.export-progress.json
   selectors:                          # Empty or omitted = all catalogs and groups in the cluster, but the
                                       #   groups the server creates for itself (_deletion_task,
                                       #   _property_gossip), which no export includes
@@ -122,22 +121,13 @@ import:                               # Import only: import policy; scope is rea
                                  #   out of range is a usage error (exit 1)
   writeBatchSize: 1000           # CSV only: rows per ImportRows batch; 1-10000, out of range is a
                                  #   usage error (exit 1); see §5.4.7 for writeBatchBytes and the rest
-  checkpointEveryBatches: 64     # CSV only: batches between progress-file fsyncs
-  resumeDuplicationPolicy:       # ONLY on a resumed run: what to do with a unit the
-    default: ""                  # previous run never got confirmation for.
-                                 #   block | warn | push | skip
-                                 #   empty = the per-catalog default
-    rules:                       # match = <catalog>[/<group>]
-    - match: trace               # Example: stop rather than risk duplicate spans
-      policy: block
-  checkpoint: ""                 # Empty = <artifact>/.import-progress.json
   verify: true                   # Reconcile counts after the import; CLI --verify overrides
   workDir: /data/import-work     # Local scratch directory, used only to unpack .tar/.tar.gz artifacts
 ```
 
-> **In the tree today** (CSV export step, 2026-10-10): the plan file is strict and accepts `connection.nodes`, `connection.nodesTLS`, `connection.rateLimit` and, under `export`, `output`, `format`, `compress`, `maxFileSize`, `includeSchema`, `schemaOnly`, `csvAnnotations`, `parallelism`, `nodeRateLimit`, `nodeRowRateLimit`, `nodeIdleTimeout`, `sendRetryTimeout` and `selectors`. Every option is declared once in `pkg/transfer/config` with struct tags naming its flag, plan path, `BYDBCTL_*` variable, default and grammar; one-shot switches (`--dry-run`, `--preempt`, `--strict-coverage`, `--output-format`) have a flag and a variable but no plan field. Under `import` (CSV import, 2026-10-19) it accepts `input`, `includeSchema`, `schemaOnly`, `schemaConflictPolicy.{default, rules}` (`rules` is plan-only), `parallelism`, `writeRateLimit`, `nodeRateLimit`, `nodeRowRateLimit`, `writeBatchSize`, `writeBatchBytes`, `writeInflightBatches`, `sendRetryTimeout`, `verify` and `verifyTimeout`; the native import (2026-11-03) adds `partRateLimit` and `partChunkSize`; `export.checkpoint`, `import.checkpoint`, `import.workDir`, `import.checkpointEveryBatches` and `import.resumeDuplicationPolicy` belong to resume and archives and are rejected until those land. `format: native` exports `.bnc` containers ([Native export](#42-native-export)). Explicit flags override the file, which overrides the `BYDBCTL_*` environment.
+> **In the tree today** (CSV export step, 2026-10-10): the plan file is strict and accepts `connection.nodes`, `connection.nodesTLS`, `connection.rateLimit` and, under `export`, `output`, `format`, `compress`, `maxFileSize`, `includeSchema`, `schemaOnly`, `csvAnnotations`, `parallelism`, `nodeRateLimit`, `nodeRowRateLimit`, `nodeIdleTimeout`, `sendRetryTimeout` and `selectors`. Every option is declared once in `pkg/transfer/config` with struct tags naming its flag, plan path, `BYDBCTL_*` variable, default and grammar; one-shot switches (`--dry-run`, `--preempt`, `--strict-coverage`, `--output-format`) have a flag and a variable but no plan field. Under `import` (CSV import, 2026-10-19) it accepts `input`, `includeSchema`, `schemaOnly`, `schemaConflictPolicy.{default, rules}` (`rules` is plan-only), `parallelism`, `writeRateLimit`, `nodeRateLimit`, `nodeRowRateLimit`, `writeBatchSize`, `writeBatchBytes`, `writeInflightBatches`, `sendRetryTimeout`, `verify` and `verifyTimeout`; the native import (2026-11-03) adds `partRateLimit` and `partChunkSize`; `import.workDir` belongs to archives and is rejected until those land, as is any other key not listed here. `format: native` exports `.bnc` containers ([Native export](#42-native-export)). Explicit flags override the file, which overrides the `BYDBCTL_*` environment.
 
-**An import reproduces what the export captured**, so a policy exists only where that leaves a real choice — and it does so in exactly one place: a resumed run, and there only for payloads carrying no idempotency key. The API has no idempotency key ([5.5](#55-native-import-as-implemented)), so a native stream or trace part, an element index and the CSV stream / trace payloads can duplicate on re-push or lose on skip. Everything else is pushed as-is. Overlapping sources on a first run are reported as a WARN; `--strict-coverage` turns that into an error.
+**An import reproduces what the export captured**, so there is no duplicate policy: everything is pushed as-is. Running an import again stores native stream and trace parts, element index segments and CSV stream / trace rows a second time ([What a duplicate costs, per catalog](#641-what-a-duplicate-costs-per-catalog)). Overlapping sources on a first run are reported as a WARN; `--strict-coverage` turns that into an error.
 
 `workDir` is **not** a rebuild workspace. Neither import channel reconstructs parts locally: the native channel relays opaque bytes and the CSV channel parses rows into write requests. Unpacking an archived artifact is the only local scratch requirement.
 
@@ -223,7 +213,7 @@ All three verdict columns take closed value sets:
 
 `bydbctl data export` without `--dry-run` runs these steps (`pkg/transfer/exporter.RunExport`):
 
-1. **Check the output directory** — it must not exist or must be empty; anything else is exit `1`. There is no resume yet, so an export never mixes with what an earlier run left behind.
+1. **Check the output directory** — it must not exist or must be empty; anything else is exit `1`. An export therefore never mixes with what an earlier run left behind.
 2. **Connection check** — probe every address in `--nodes` (`GetCurrentNode`, `GetClusterState`). An unreachable candidate, or one that has not discovered any data node yet, is skipped with a `WARN`; refused credentials or an endpoint that is not a liaison fail at once (exit `2`). The first usable liaison is the primary: the schema, `Plan` and `Sessions` calls go through it, and the dry run and `release-session` use only it.
 3. **Fetch and write the schema** — list the groups, validate the selectors, then list every resource of the selected groups through the liaison's registry services and write `schema/<kind>.jsonl` ([Schema files](#441-schema-files)). The mod revision of every stream, measure, trace and property is kept in memory for the CSV check in step 6. With `--include-schema=false` this step lists nothing beyond the groups and writes no `schema/` files, and step 6 skips the revision check. With `--schema-only` the client writes `manifest.json` (`schemaOnly: true`, no units) here and stops: no session, no snapshot, no data.
 4. **Create the session** — one `Plan{selectors, create{preempt}}`. The session id from the first (`created`) frame is printed at once, before the inventory arrives. A node holding another session refuses with `ALREADY_EXISTS`; the client lists the sessions once, prints every occupant with its start time, last heartbeat, catalogs and nodes, and exits `2` ([Taking over an existing session](#482-taking-over-an-existing-session)). Transient failures (`INTERNAL`, `UNAVAILABLE`, `ABORTED`) are attempted up to three times with jittered back-off. A create whose summary still names unreachable nodes is released again and fails, because their data would be missing.
@@ -946,7 +936,7 @@ message UnitFinished {
 | 2 | liaison → data-1 / data-2 | One `Plan{…, create{id="xx…"}}` per node | — |
 | 3 | Each data node | Refuse if any other session directory exists (or remove them all when `preempt` is set), snapshot the selected groups of every selected catalog under `<export-snapshot-path>/<id>`, then commit the `.lease` in all of them; inventory from the snapshot | — |
 | 4 | data-* → liaison → ctl | Stream `PlanResponse{units{node_id, stage, units[…]}}` frames. A data node bounds each frame to 4 MiB, so a large group spans several consecutive frames, and a segment too large for one frame is split into pieces with the same key and disjoint `shard_ids` (only the first piece carries `segment_level`). A single shard too large for one frame is split further into `ShardStat` pieces with the same `shard_id` and disjoint `parts`, in different segment pieces; only the first carries the aggregates. ctl merges the pieces back into one unit per (node, segment) as it collects the frames, concatenating each shard's parts and adding up its aggregates | Forward each frame as it arrives, stamping `node_id`, through one bounded queue drained by a single sender, so a client that stops reading cannot hold back a failed create's rollback; the sender also stops when the call ends, so a create rejected before any unit leaves nothing running; fold a node's `summary` (preempted ids) into the final one |
-| 5 | ctl | Print the `session_id` (from the `created` frame) as soon as it arrives; keep the unit inventory in memory (there is no progress file until resume lands) | — |
+| 5 | ctl | Print the `session_id` (from the `created` frame) as soon as it arrives; keep the unit inventory in memory | — |
 | 6 | ctl | Group entries by `node_id` into one job per node, each with its own `nodes/<node-dir>/` subtree | — |
 
 Only this phase creates snapshots; they are created once and reused for the whole export. The liaison stamps `node_id` on every frame from the upstream connection and does not trust a node's self-report.
@@ -1027,7 +1017,7 @@ Lifecycle:
 1. **Create** — the liaison sends `Plan{create{id}}` to all data nodes.
 2. **Export** — export requests carry the `session_id` to read the matching snapshot.
 3. **Heartbeat** — `bydbctl` sends `Sessions{action=ACTION_HEARTBEAT, session_id}` on a fixed interval.
-4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `Sessions{action=ACTION_RELEASE, session_id}`. **On a fail-fast abort it deliberately does not**: the session is kept, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command; Ctrl-C and `SIGTERM` stop the export the same way and print the same command. Keeping the session is what will let a resumed run continue against the same frozen snapshot; resume itself is not implemented yet ([Remaining work](#49-remaining-work)), so today an interrupted export is re-run into a new, empty directory. There is deliberately no flag for "release on abort": it would make a graceful stop strictly worse than `kill -9`, because a released (or swept) session answers `NOT_FOUND` on every node, so the resumed run would see every node unreachable and have to restart against a new point in time — and `release-session` already covers the case where you really are done.
+4. **Release** — after the export completes and `manifest.json` is written, `bydbctl` calls `Sessions{action=ACTION_RELEASE, session_id}`. **On a fail-fast abort it deliberately does not**: the session is kept, and the client prints the session ID plus the `bydbctl data release-session --id <id>` command; Ctrl-C and `SIGTERM` stop the export the same way and print the same command. An interrupted export is re-run into a new, empty directory. There is no flag for "release on abort": `release-session` covers it, and the lease sweep reclaims a forgotten session.
 5. **Cleanup** — each data node sweeps export snapshots on a one-minute timer and removes any whose lease has expired. A session directory left without a readable lease (a crash mid-create or a failed rollback) is reclaimed once its newest directory is older than a 10-minute orphan grace; until then it still counts as an occupant, so a create without `preempt` answers `ALREADY_EXISTS`. The first sweep runs as soon as the export service starts serving, so after a data-node restart an expired session is reclaimed at once and a live one survives.
 
 | Constant | Value | Why it is not configurable |
@@ -1043,10 +1033,9 @@ The data-node gRPC port has no authentication of its own; the export RPCs are ga
 
 The CSV export step (2026-10-10) completes the export path for CSV: the `Export` RPC on the liaison (a directed relay, also in-process for a standalone server) and on the data node, the four CSV producers, the client session library (create with retries, refusal rendering, heartbeat, release), the receive loop, the schema files, the manifest and the `bydbctl data export` flags. What is still to come, each with where its design lives in this document:
 
-- **Export resume** — `.export-progress.json` ([Export progress file](#71-export-progress-file)), continuing against the same session with `Plan(read{id})`, `pointInTime: mixed`, plan comparison, `export.checkpoint` / `--checkpoint`, `--seal-partial`, and a `bydbctl data progress` command. Today the output directory must be new or empty and an interrupted export starts over.
 - **`--archive tar|tar.gz`** — packing the artifact into one file.
 - **Native format** — landed with the native step (2026-11-03): `.bnc` containers, consumed only by `data import` (there is no offline extract command) ([Native export](#42-native-export), [Native import as implemented](#55-native-import-as-implemented)).
-- **Import** — the CSV import (including property) and the cross-cluster e2e landed with the CSV import step ([CSV import as implemented](#54-csv-import-as-implemented)), the native import with the native step; import resume, and with it an idempotency key for `kind=PART`, remain design.
+- **Import** — the CSV import (including property) and the cross-cluster e2e landed with the CSV import step ([CSV import as implemented](#54-csv-import-as-implemented)), the native import with the native step.
 - **Deferred design items** — a dedicated `bydbctl data sessions` listing command (declined for now: the refusal text already renders the occupant), probe-before-create, pinning the session's node membership, skipping zombie nodes under file discovery, and a stage manifest inside the snapshot.
 
 The end-to-end cases `test/e2e-v2/cases/transfer/csv/` and `test/e2e-v2/cases/transfer/native/` run the same cases, once per format, against one hot and one warm data node behind a liaison: the dry run, `release-session`, the export of each catalog, and the import into a second, empty cluster with its refusals and round trip. Their environment and scripts are shared in `test/e2e-v2/cases/transfer/common/`.
@@ -1079,7 +1068,7 @@ message Node { // api/proto/banyandb/database/v1/database.proto
 8. **Schema import** — create or overwrite per policy, then rerun checks 2–7.
 9. **Data import** — per data type, as below.
 
-Two routing failures must be distinguished: zero nodes returns `nil` plus `no nodes available`, while an out-of-range shard returns `... is a unknown shard`. Separately, `LocateAll` deduplicates its result set, so it can silently return fewer targets than the requested `copies` with no error, log, or warning. The import side must compare `len(targets)` against the requested `copies` itself; `--strict-replicas` cannot use `len(targets)` as its denominator. A shortfall is a WARN by default, recorded and filled in on the next resume; `--strict-replicas` promotes it to an error that aborts the run.
+Two routing failures must be distinguished: zero nodes returns `nil` plus `no nodes available`, while an out-of-range shard returns `... is a unknown shard`. Separately, `LocateAll` deduplicates its result set, so it can silently return fewer targets than the requested `copies` with no error, log, or warning. The import side must compare `len(targets)` against the requested `copies` itself; `--strict-replicas` cannot use `len(targets)` as its denominator. A shortfall is a WARN by default; `--strict-replicas` promotes it to an error that aborts the run.
 
 **Stage routing.** `ImportService` places every `(group, stage)` with the cluster's own node selection: the hot stage with the data node selector the liaison's write queue syncs online writes with, any other stage with the round-robin selector a lifecycle migration uses for it; see [Stage-aware routing](#543-stage-aware-routing). Multi-stage CSV import is therefore supported. The paragraph above about `LocateAll` and `--strict-replicas` describes the native design; the CSV import writes to every available distinct node when a stage has fewer than `copies` nodes and reports the actual count.
 
@@ -1098,20 +1087,6 @@ Fast push is available only when all of the following hold:
 The messages are defined in `api/proto/banyandb/transfer/v1/import.proto` ([API reference](../../../api-reference.md)), which is authoritative. One `ImportParts` stream carries one payload, `ImportPartsRequest.Kind`: a part with its trace secondary index parts (`KIND_PART`), a segment's series index (`KIND_SERIES_INDEX`), a stream shard's element index (`KIND_ELEMENT_INDEX`) or a property shard (`KIND_PROPERTY`). The client names the core part with an empty `part_type`, which the liaison relays as `"core"` on the cluster wire; routing uses the stage route of [5.4.3](#543-stage-aware-routing). `requested_copies` is per shard (replicas + 1); for a series index, whose targets are the union of several shards' nodes, it is not comparable with `len(targets)`. The semantics as implemented are in [5.5](#55-native-import-as-implemented); the rest of this section records the design reasoning.
 
 Duplicate-delivery validation must be **split by `ImportPartsRequest.Kind`**. `(id, part_type)` uniqueness can only be enforced on `PART` streams: index streams carry fixed zero values with `id = 0` and an empty `part_type`, so applying the same rule there — or trying to tell them apart by `part_type` — makes the receiver reject the stream with a `does not support part type` error.
-
-#### Idempotency: `import_op_id`
-
-> Not part of the API: neither `import_op_id` nor `already_applied` exists, and a native rerun stores stream and trace parts and element indexes twice. This subsection records the considered design only.
-
-The receiver commits before it answers — `handleCompletion` calls `FinishSync()` and only then `sendResponse()` (`banyand/queue/sub/chunked_sync.go`, `(*server).handleCompletion`). A lost response therefore makes the client record a failure for a part that **did** land, and resume writes a second copy. Nothing on the receiver can recognise the repeat: `partMetadata` carries no hash, checksum or fingerprint, and its `ID` is `json:"-"` so it is not even persisted.
-
-`import_op_id` closes that. The receiver checks the key against the set of op-ids held by this shard's live parts; on a hit it skips the whole transfer and answers `success=true, already_applied=true`. Otherwise it proceeds and persists the key into the part's own `metadata.json` via `fillFromSyncContext`, which already builds the metadata on the receive side rather than copying it from the sender.
-
-**Why `metadata.json` and not a side log**: `metadata.json` lives inside the part directory, and "create the part directory + introduce it into `.snp`" *is* the atomic commit. The key therefore becomes visible exactly when the part does. Any separate log merely moves the gap somewhere else. The in-memory index costs nothing either — `initTSTable` already reads every live part's metadata at startup.
-
-The one real cost is **merge propagation**: a merged part's metadata is rebuilt, so it must carry the union of its inputs' keys, aged out by a TTL. Skipping propagation degrades safely — a lost key means a replay behaves as it does today (a duplicate), never a wrong result.
-
-**Scope is `kind=PART` only.** `SERIES_INDEX` has no part metadata, but re-pushing it is absorbed by deduplication anyway. `ELEMENT_INDEX` has no part metadata **and** re-pushing it is *not* harmless (×N). CSV has no parts at all. Those two stay with `resumeDuplicationPolicy` ([The ambiguous window](#73-the-ambiguous-window-inflight-and-missing)).
 
 The upstream `id` is a **framing signal, not an identifier**. The receiver always allocates its own part ID with `atomic.AddUint64(&tsTable.curPartID, 1)`, and `fillFromSyncContext` copies six scalars but deliberately not the ID. Its only real use is the receiver's `createNewContext := session.partCtx == nil || session.partCtx.ID != partInfo.Id` check, which decides where one part ends and the next begins. Mixing two part IDs in one stream therefore causes a split plus an orphan deletion (`MustRMAll`), not a silent merge.
 
@@ -1285,7 +1260,7 @@ Completion{
   }
 ```
 
-Parts are sent in ascending part-ID order, which is also the byte order inside the container. That keeps reading sequential and keeps the relative ordering of source and target part IDs aligned. It does **not** reduce the checkpoint to a watermark: `done[].parts` stays a map keyed by part ID, because a part that reached only some of its replicas has to record its own `missing` set.
+Parts are sent in ascending part-ID order, which is also the byte order inside the container. That keeps reading sequential and keeps the relative ordering of source and target part IDs aligned.
 
 **Trace cannot be split across sessions.** Its core part and its secondary index parts share one locally allocated part ID: `NewPartType` reuses the ID within the same `syncPartContext` (`if s.partID == 0` before allocating), and the secondary part is written under that same ID. Across two sessions they receive different IDs and lose each other — and the two halves then fail *differently*, neither of them as an error:
 
@@ -1316,15 +1291,15 @@ The liaison stores nothing: it converts one frame at a time and forwards it, whi
 
 `ImportPartsResponse.targets` reports `{node, success, error}` per node, and the liaison waits for all N before returning. It does **not** retry the part itself — it holds one chunk at a time, and re-pushing a part means re-reading the container, which only the client can do.
 
-The client records the part as **partially complete**, not done. `done[].parts[partID]` already carries its own `nodes` / `missing` pair ([the import progress file](#72-import-progress-file)), so recording the successful subset needs no new structure; a part with a non-empty `missing` does not count towards `progress.doneUnits`, and every outstanding entry is listed as a WARN at the end of the run.
+The client counts the part as **partially complete**, not done, and retries only the failed targets.
 
-**Re-pushing must target only the missing replicas, through `Init.retry_nodes`.** Re-sending the whole part is not equivalent: `data-a` would receive a second copy. Measure still converges by `(seriesID, timestamp, version)`, but **stream and trace are append-only, so the second copy is a permanent, visible duplicate**, and the element index re-introduces a whole segment. So the set actually pushed on resume is:
+**Re-pushing must target only the failed replicas, through `Init.retry_nodes`.** Re-sending the whole part is not equivalent: `data-a` would receive a second copy. Measure still converges by `(seriesID, timestamp, version)`, but **stream and trace are append-only, so the second copy is a permanent, visible duplicate**, and the element index re-introduces a whole segment. So the set actually pushed again is:
 
 ```
-retry_nodes = inflight[worker].nodes  ∖  done[part].nodes
+retry_nodes = targets of the payload  ∖  targets that answered success
 ```
 
-Pushing `inflight.nodes` verbatim re-delivers to replicas that already succeeded. The same rule governs a non-empty `missing` — see [The ambiguous window](#73-the-ambiguous-window-inflight-and-missing), which also explains why a `missing` entry is not by itself proof that the node lacks the data.
+Pushing to every target again re-delivers to replicas that already succeeded. A failed target is not by itself proof that the node lacks the data: the receiver commits before it answers, so a stream or trace part, or an element index, whose target failed after its completion was relayed (`completion_sent`) is not pushed again; see the Retries item of [5.5](#55-native-import-as-implemented).
 
 ### 5.3 CSV data rewrite
 
@@ -1334,8 +1309,8 @@ For CSV, `bydbctl` reads the files directly, rebuilds the corresponding requests
 
 ```protobuf
 service ImportService {
-  // Bidirectional: the CSV checkpoint is recorded per batch, so the
-  // client needs an acknowledgement per batch, not one response at end of stream.
+  // Bidirectional: the client keeps a bounded window of unacknowledged batches,
+  // so it needs an acknowledgement per batch, not one response at end of stream.
   rpc ImportRows(stream ImportRowsRequest) returns (stream ImportRowsResponse);
 }
 
@@ -1394,7 +1369,7 @@ message ImportRowsResponse {
 }
 ```
 
-The RPC is **bidirectional**, not client-streaming. A client-streaming RPC delivers a single response after the client closes the stream, which cannot carry the per-batch acknowledgements that the CSV checkpoint depends on ([the import progress file](#72-import-progress-file)): the cursor may only advance over a batch the server has confirmed. Acknowledgements carry `batch_seq` so the client correlates them explicitly rather than assuming they arrive in request order.
+The RPC is **bidirectional**, not client-streaming. A client-streaming RPC delivers a single response after the client closes the stream, which cannot carry the per-batch acknowledgements the client needs: a batch counts as done only once the server has confirmed it, the client bounds the batches sent and not yet acknowledged ([5.4.7](#547-batches-parallelism-and-sources)), and a failed batch is named by its `batch_seq`. Acknowledgements carry `batch_seq` so the client correlates them explicitly rather than assuming they arrive in request order.
 
 A dedicated import RPC is required rather than reusing the public write API, because the public path regenerates fields the artifact already carries. In particular a measure `version` of `0` is silently replaced with the message ID on the liaison, destroying the deduplication semantics the CSV `_version` column exists to preserve.
 
@@ -1406,13 +1381,13 @@ A dedicated import RPC is required rather than reusing the public write API, bec
 | ③ | Send `RowBatch{…_rows}` in batches | `InternalWriteRequest` per row | Resolve `(EntityValues, ShardID)`, call `Locate(group, name, shard, 0)` and send one internal write request to **replica 0 only** — the write path replicates internally, so the liaison does not fan out. `property_rows` are the exception: they go to `TopicPropertyRepair` and fan out over all `copies` replicas |
 | ④ | Receive the batch response | — | Aggregate success and failure for the batch |
 
-This channel is **not** idempotent on replay, which is why its checkpoint is recorded at record-cursor granularity ([the import progress file](#72-import-progress-file)).
+This channel is **not** idempotent on replay: re-sending a batch duplicates stream and trace rows.
 
 Property rows must be applied with `db.Repair(ctx, id, shardID, property, deleteTime)`. `Update` has no `delete_time` parameter at all — its underlying call hardcodes `0` — so a tombstone imported through `Update` comes back to life. `Delete` searches for an existing document first and is meaningless against a fresh database.
 
 ### 5.4 CSV import as implemented
 
-The CSV import landed on 2026-10-19 (`bydbctl data import`, `pkg/transfer/importer`, the liaison's `ImportService`). Where it differs from the design above, this section is authoritative. Native import and import resume are still future work.
+The CSV import landed on 2026-10-19 (`bydbctl data import`, `pkg/transfer/importer`, the liaison's `ImportService`). Where it differs from the design above, this section is authoritative. The native import is described in [5.5](#55-native-import-as-implemented).
 
 #### 5.4.1 Workflow
 
@@ -1615,7 +1590,7 @@ Errors before step 6 map through `exitcode.For`; every error from step 6 on is `
 
 - `_top_n_result` is transferred verbatim and never recomputed, so it keeps the source's Top-N caliber; an incompatible target `_top_n_result` refuses the import.
 - An acknowledgement is a batch-level acceptance; per-row failures on a data node are only logged and surface in `--verify`.
-- Stream and trace row replay is not idempotent, and there is no resume: re-running after a failure duplicates what had landed.
+- Stream and trace row replay is not idempotent: re-running after a failure duplicates what had landed.
 - G4's emptiness check cannot see unflushed rows; G0 is not implemented.
 - No `.tar` / `.tar.gz` input; it arrives with the export's `--archive`.
 - `--verify` does not cover index structures and needs a quiet target; content equality is proven by the integration and e2e tests, which re-export the target and compare logical rows with the source artifact (`pkg/transfer/rowdiff`). A property is compared by its entity `(group, _name, _id)` at its latest revision only (the largest `_mod_revision`, a tombstone winning over a live row of the same revision; `_delete_time` compared as live or tombstone); older revisions are ignored on both sides.
@@ -1640,7 +1615,7 @@ The native import (2026-11-03) is the CSV import's workflow ([5.4.1](#541-workfl
 - **Retries.** A payload the liaison refuses before answering is sent again within `--send-retry-timeout`: through the next liaison when it is unavailable or busy, through the same one when a schema is not live yet. A frame the liaison refuses as too large (`MESSAGE_TOO_LARGE`) is final, not retried. A payload some targets failed is sent again to those targets only (`Init.retry_nodes`: the liaison narrows the route to those nodes and refuses, with INVALID_ARGUMENT, a retry node that is not in the route), up to three attempts, with the back-off doubling from 1 s to 30 s that stream reopening uses; still failing, it fails the import (exit `3`) with the work items done and not done. A stream or trace part, or an element index, that may already be committed (a failed target with `completion_sent`, or a stream that broke after the completion was sent, reported as UNAVAILABLE/ABORTED without a detail) is not pushed again, through the same or another liaison, since a second copy would store it twice; that fails the import at once. `requested_copies` is per shard, so the copies warning is not given for a series index, whose targets span several shards.
 - **Index deletion masks do not travel.** An index payload carries the `.seg` segments of the source's live generation without its `.snp` manifest, which also holds the masks that hide superseded or deleted documents. The importer sends the segments newest first, so the series index receiver, which keeps the first copy of a document, keeps the newest one; a document the source masked without a newer copy is live again on the target. Carrying the masks (re-encoding live-only segments on export, or a mask with each external segment) is a follow-up in `pkg/index/native`.
 - **Same version on every node.** Empty part files are relayed as zero-length slices, which only a data node of this version writes; as the design requires, do not import during a rolling upgrade.
-- **Idempotency is not implemented.** The API carries no idempotency key. A rerun of a native import stores stream and trace parts, and element index segments, twice, as a CSV rerun stores rows twice.
+- **Reruns.** A rerun of a native import stores stream and trace parts, and element index segments, again, as a CSV rerun stores stream and trace rows again.
 - **Options.** `--part-rate-limit` (`import.partRateLimit`) caps the bytes per second the whole import sends; `--part-chunk-size` (`import.partChunkSize`, 64 KiB to 4 MiB, default 1 MiB) sizes the frames; a size out of that range is a usage error (exit `1`). `--write-rate-limit`, `--liaison-rate-limit` (`connection.rateLimit`), `--node-rate-limit` and `--node-row-rate-limit` do not apply to the part push: the liaison relays part bytes without a bucket of its own, so `--part-rate-limit` is the only native throttle (the import warns when another limit is set). Why a user sets them: a native import copies whole segments, often many GiB, into a cluster that is usually serving live traffic, and every byte the client sends is written by the liaison to each replica's disk, so an unthrottled import can saturate the target's network and disks and slow its queries and writes; `--part-rate-limit` bounds that cost, as `--write-rate-limit` does for CSV. `--part-chunk-size` trades memory for round trips: the liaison holds one frame per target until every target acknowledges it, so a larger chunk means fewer acknowledgements on a high-latency link and a smaller one less memory on the liaison and the receivers, and a finer-grained rate limit; the 4 MiB cap keeps a frame under a data node's default receive limit.
 - **Progress.** The live progress of a shard item moves after each acknowledged part.
 - **Verify** counts the rows of the parts that landed per (catalog, group, target stage); the target's `Plan` counts the same parts, so stream and trace grow by exactly the rows sent. The push ends with `IMPORTED  <m> work item(s) of native files, <n> rows in the imported parts, in <time>`; series index, element index and property payloads count no rows.
@@ -1745,272 +1720,16 @@ Every decision and its reason is printed in the import table's `DUPLICATES` sect
 
 #### 6.4.1 What a duplicate costs, per catalog
 
-Duplication is not a trace problem; it is a problem whose *cost* differs per catalog. Those costs are what set the per-catalog defaults for [`resumeDuplicationPolicy`](#73-the-ambiguous-window-inflight-and-missing), and what an operator weighs when overriding them.
+Duplication is not a trace problem; it is a problem whose *cost* differs per catalog. A duplicate comes from overlapping sources on a first run or from running an import again: nothing on the target recognises a re-imported part, because the same payload imported twice produces two directories with different part IDs and `partMetadata` carries no hash, checksum or fingerprint. The costs hold for both channels; CSV stream and trace rows behave as their native parts.
 
-| Value | Behaviour | Fidelity preserved? |
-|---|---|---|
-| `block` | Do not import; list the affected units and stop. On a TTY this renders as a per-unit prompt, so there is no separate `ask` value | ✅ nothing written |
-| `warn` | Import as-is, and list what was affected with the projected amplification | ✅ |
-| `push` | Import as-is, silently | ✅ |
-| `skip` | Leave the unit out without stopping the run. **Forces `--verify` on** — the one value that can lose data | ✅ drops whole units, never alters rows |
-
-| Catalog | What a duplicate costs | Default |
-|---|---|---|
-| **trace** | Duplicate spans, visible to users, and nothing self-heals | `warn` |
-| **stream** | Queries stay correct (the vectorized path deduplicates by element ID). Disk grows **permanently**: the element index was measured at exactly ×3.000 for three sources, extrapolating to 65 GB at `replicas=1` and 98 GB at `replicas=2` for a 167-segment group | `warn` |
-| **measure** | Queries stay correct (the read path deduplicates by version *before* any merge). Disk grows, and under the production merge policy equally sized parts are never merged back | `warn` |
-| **property** | Union by `(entity, mod_revision)`; no amplification | `push` |
-| **index-mode measure** | docID overwrite; no amplification | `push` |
-
-
-**Nothing defaults to `block`.** Every value preserves fidelity, so the choice among defaults is only about visibility:
-
-- `warn` fails by leaving **duplicate rows**, which users see and report.
-- `block` fails by leaving **units un-imported**, and on trace that is indistinguishable from "there was no traffic in that window". A gap in observability data is silent; a duplicate is not.
-
-An import tool's job is to get the data in, so the defaults err toward completeness and tell you what it cost. The governing rule is **prefer a duplicate over a gap**. An operator who would rather stop sets `block` explicitly — per catalog, or per group when only one group's disk budget is tight.
-
-There is deliberately no `overwrite` value anywhere. A part has no overwrite semantics and there is no API to delete a single part, so "replace the existing copy" cannot be built; the choice really is only reject, re-push, or skip. Row-level deduplication on the CSV channel was designed and rejected: a content key cannot tell a duplicate the source cluster already held from one this import created, so deduplicating it would stop the target reproducing the source.
-
-## 7. Resume
-
-> **Not implemented yet.** The CSV export step writes no progress file and cannot resume: the output directory must be new or empty, and an interrupted export is run again from scratch ([Remaining work](#49-remaining-work)). This section is the design.
-
-Both directions must survive an interruption. Export is the simpler half: it checkpoints per **unit**, appending one to `done` only after every file of that unit has passed its CRC32 check and been renamed. Volume splitting does not change that granularity: all volumes of a unit share one directory prefix, so the whole-directory cleanup on resume still applies. A part, and even one file, may span volumes, so the import side joins every volume of a unit before it groups parts, and checkpoints a part only after the whole logical part is acknowledged — never at the end of a physical volume. For trace, the core part and its secondary index parts travel in one `PART` session, or the receiver keeps a core part whose secondary index never arrives. Index-mode measure and the segment-level series index have no shard axis at all and resume at segment granularity.
-
-Import is more involved.
-
-"Safe" below means **safe to replay automatically**: re-delivering a unit that already landed is harmless. The rest need [The ambiguous window](#73-the-ambiguous-window-inflight-and-missing).
-
-> The `import_op_id` rows below describe the planned resume; neither resume nor the key is implemented ([5.5](#55-native-import-as-implemented)).
-
-| Format | Data type | Checkpoint level | Automatic replay | Re-importing already-successful data |
-|---|---|---|---|---|
-| native | measure | node → segment → shard → part → target node | Safe | The read path keeps the larger version by `(seriesID, timestamp)`, so duplicates are invisible in queries; storage grows and does not merge back |
-| native | series index | node → segment → target node | Safe | First write wins; later writes are discarded silently |
-| native | property | node → group → shard | Safe | Idempotent |
-| native | stream | node → segment → shard → part → target node | Planned: safe once `import_op_id` recognises a replay. **Not safe today** — a rerun stores the parts again | Without the key it would stay queryable (the vectorized path deduplicates by element ID in `pkg/query/vectorized/stream`'s `Distinct`) but storage would grow permanently |
-| native | trace | Same as above | Planned: safe once `import_op_id` recognises a replay. **Not safe today** — a rerun stores the parts again | Without the key there is no deduplication anywhere and **duplicate spans become visible to users** |
-| native | element index | node → segment → shard | **Needs `resumeDuplicationPolicy`** — `import_op_id` does not cover it | **No deduplication**; documents and disk grow linearly and are never reclaimed |
-| CSV | measure | node → segment → shard → split file → record index | Safe | The read path keeps the larger version by `(seriesID, timestamp)`, so duplicates are invisible in queries |
-| CSV | index-mode measure | Same as above | Safe | Idempotent |
-| CSV | property | Same as above | Safe | Idempotent |
-| CSV | stream / trace | Same as above | **Needs `resumeDuplicationPolicy`** | stream behaves as native; trace has no deduplication |
-
-The target side cannot deduplicate a re-imported part *by content*: the same payload imported twice produces two directories with different part IDs, and `partMetadata` carries no hash, checksum, or fingerprint field. `import_op_id` closes that for `kind=PART` by persisting a client-supplied operation key in the part's own `metadata.json`. For every other payload — the element index and all CSV rows — idempotency still rests entirely on the client checkpoint.
-
-### 7.1 Export progress file
-
-Stored by default in `<output>/.export-progress.json`. It holds the `session_id`, the export plan, and the current progress.
-
-```json
-{
-  "kind": "export-progress",
-  "artifactVersion": 1,
-  "format": "native",
-
-  "session": {
-    "id": "9f2a…"
-  },
-
-  "startedAt": "…",
-  "updatedAt": "…",
-  "outputDir": "./backup-20260914",
-
-  "selectorsDigest": "…",
-  "sourceNodesDigest": "…",
-
-  "progress": {
-    "totalUnits": 1440,
-    "doneUnits": 863,
-    "totalBytes": 903641530368,
-    "doneBytes": 541200000000
-  },
-
-  "plan": [
-    {
-      "node": "data-1",
-      "units": ["measure/sw_metric/20260907/0"]
-    }
-  ],
-
-  "inflight": {
-    "data-1": {"unit": "measure/sw_metric/20260907/0", "startedAt": "…"},
-    "data-2": {"unit": "stream/sw_record/20260907/1", "startedAt": "…"}
-  },
-
-  "done": [
-    {
-      "unit": "measure/sw_metric/20260907/0",
-      "node": "data-1",
-      "files": [
-        {
-          "path": "nodes/data-1/measure/sw_metric/seg-20260907/shard-0-00001.bnc",
-          "bytes": 402653184,
-          "crc32": "0x9f2a1b34",
-          "entryCount": 47,
-          "rowCounts": {"service_cpm_minute": 123456}
-        }
-      ]
-    }
-  ]
-}
-```
-
-Because several nodes export in parallel, a dedicated goroutine persists progress so concurrent workers never conflict.
-
-| Time | Action | Persist |
-|---|---|---|
-| `Plan` `created` frame returns | Record `session.id` | Write on receipt — a resumed run needs the ID, and `release-session` cannot release a session that was never written down |
-| `Plan` last frame returns | Record the complete `plan` | Write — no `Export` may be sent until this lands, or a resume cannot tell "this unit had no data" from "this unit never came up" |
-| Worker starts a unit | Set `inflight[node] = {unit, startedAt}` | Write |
-| Each `file_finished` | Validate bytes/crc32 → fsync → rename → keep the entry in worker memory | No |
-| `unit_finished` | Remove `inflight[node]`, append to `done`, update `progress` | Write |
-| All units complete | Delete the progress file **after** `manifest.json` is written | — |
-
-That final ordering is a discipline, not a detail: write `manifest.json` first, then delete the progress file. Reversing it leaves a window in which the artifact has neither a manifest nor a resume record.
-
-Resuming an export reads the progress file, checks its `outputDir` / `selectorsDigest` / `sourceNodesDigest` bindings against this invocation, renews the session through `Plan`, and then deletes, **by path prefix and as whole directories**, everything under `nodes/<node-dir>/<catalog>/<group>/seg-<suffix>/` for each unit still in `inflight` — the prefix is derivable from the key alone. It must not delete "the files of the unfinished unit" by name: those names existed only in the crashed process's memory, and a re-run can emit fewer volumes than the previous attempt, leaving `-004`/`-005` behind to break the manifest-equals-disk check. Checking the bindings first is what makes deleting safe — a mistyped `--checkpoint` is rejected before anything is removed.
-
-### 7.2 Import progress file
-
-Stored by default in `<artifact>/.import-progress.json`. It holds target cluster information and current progress.
-
-```json
-{
-  "kind": "import-progress",
-  "artifactVersion": 1,
-  "format": "csv",
-
-  "manifestDigest": "<digest of the raw manifest.json bytes>",
-  "artifactFilesDigest": "<digest of the (path, bytes, crc32) tuples of every file entry in the manifest: segmentFiles[], shards[].files[], schemaFiles[]>",
-  "targetCluster": "<cluster identity reported by the liaison, plus a digest of the target node-name set>",
-
-
-  "checkpointEveryBatches": 64,
-
-  "exportedAt": "…",
-  "updatedAt": "…",
-
-  "verifyPreBaseline": {"measure/sw_metric/20260907/0": {"data-a": 12345, "data-b": 12345}},
-
-  "progress": {"totalUnits": 1440, "doneUnits": 863},
-
-  "plan": [
-    {
-      "key": "data-1/measure/sw_metric/20260907/0",
-      "channel": "native",
-      "stage": "warm",
-      "copies": 2,
-      "targets": ["data-a", "data-b"]
-    }
-  ],
-
-  "inflight": {
-    "data-1": {
-      "key": "data-1/measure/sw_metric/20260907/0",
-      "kind": "PART",
-      "partID": 7,
-      "sidxNames": [],
-      "nodes": ["data-a", "data-b"],
-      "isRetry": false,
-      "startedAt": "…",
-      "probe": {
-        "totalCount": 123456,
-        "minTimestamp": 1788739200000000000,
-        "maxTimestamp": 1788825599000000000
-      }
-    },
-    "data-2": {
-      "key": "data-2/stream/sw_record/20260907/1",
-      "kind": "ROWS",
-      "slice": "shard-1-00003.csv.gz",
-      "fromRecord": 128000,
-      "records": 64000,
-      "startedAt": "…"
-    }
-  },
-
-  "done": [
-    {
-      "key": "data-1/measure/sw_metric/20260907/0",
-      "parts": {
-        "1": {"nodes": ["data-a", "data-b"], "missing": []},
-        "2": {"nodes": ["data-a"], "missing": ["data-b"]}
-      },
-      "blobs": {
-        "SERIES_INDEX": {"nodes": ["data-a", "data-b"], "missing": []},
-        "ELEMENT_INDEX": {"nodes": [], "missing": ["data-a", "data-b"]}
-      },
-      "slices": {
-        "shard-0-00001.csv.gz": "EOF",
-        "shard-0-00002.csv.gz": 192000
-      }
-    }
-  ]
-}
-```
-
-The plan key is prefixed with the source node. An earlier draft used a scalar `source` field, which cannot express the case where the same `(segment, shard)` must be pushed from two sources after drift — the two records' keys would collide.
-
-Native import records progress per part, tracking successful and missing target nodes separately. Native indexes and property record the whole blob, with no part level. CSV records a cursor per split file, where `EOF` means the file is fully processed.
-
-| Time | Action | Persist |
-|---|---|---|
-| Native: before opening a stream | Set `inflight[worker] = {key, kind, partID, sidxNames, nodes, isRetry}` | Write |
-| Native: after the response | Clear `inflight[worker]`; add successful nodes to `done[].parts[partID].nodes` (or `done[].blobs[kind].nodes`), failed ones to the sibling `missing` | Write |
-| CSV: before a checkpoint range | Set `inflight[worker] = {key, slice, fromRecord, records}` | Write |
-| CSV: after each successful batch | Overwrite `<checkpoint>.cursor` in place with `{key, slice, record}` — one `write()`, no fsync, main file untouched | Written, not synced |
-| CSV: every `checkpointEveryBatches` batches, or when a slice is exhausted | Fold the cursor into `done[].slices[slice]`, clear `inflight[worker]`, fsync, then truncate the cursor file | Write |
-| When a unit completes | Increment `progress.doneUnits` | Write |
-| When all imports complete | Leave the progress file unchanged | — |
-
-Resuming an import reads the progress file and checks it against the current plan, re-verifies the artifact against the target cluster as in the normal workflow, finishes the entries recorded in `inflight`, and continues with the rest.
-
-### 7.3 The ambiguous window: `inflight` and `missing`
-
-Both channels have a window in which work is **committed on the server but not yet recorded by the client**. The shape is the same on both: commit first, record second.
-
-| Channel | Window | Worst case |
-|---|---|---|
-| native | after `targets[]` arrives, before the progress file is renamed | **one part** per worker, so at most `parallelism` parts |
-| CSV | after a batch is sent, before the cursor is written | **one batch** (`import.writeBatchSize`, 1,000 rows by default); only a power loss or kernel panic widens this to `import.checkpointEveryBatches` (64) batches |
-
-**Reversing the order does not help, and neither does checkpointing more often.** Recording before committing turns a failed delivery into a recorded success, which is silent data loss — strictly worse. And no checkpoint frequency closes the gap, because the gap is not an interval the client controls: it is the instant between the server's commit and the client's knowledge of it. Shrinking it changes how many units land in the window, never whether the window exists.
-
-So the design does not claim that resume is automatically safe. `inflight` **bounds** the window to at most one unit per worker, and resume then splits by model (the planned behaviour: resume and `import_op_id` are not implemented yet, see [5.5](#55-native-import-as-implemented)):
-
-| Channel / payload | On resume | Why |
-|---|---|---|
-| native, `kind=PART`, any model | **Re-push** — the receiver recognises `import_op_id` and writes nothing | Exactly-once by construction ([the ImportParts protocol](#521-protocol)) |
-| native, `SERIES_INDEX` | **Re-push** | Deduplication absorbs it; no part metadata to carry a key, and none needed |
-| native, property | **Re-push** | Idempotent via `Repair`, once the equal-revision / differing-delete-state case above is fixed |
-| native, `ELEMENT_INDEX` | **Decided by `resumeDuplicationPolicy`** | No part metadata to carry the key, **and** re-pushing is not harmless: documents and disk grow ×N, never reclaimed |
-| CSV, measure / index-mode / property | **Re-push** | Idempotent or version-converging |
-| CSV, stream / trace | **Decided by `resumeDuplicationPolicy`** | Rows are replayed through the write path; there is no part and therefore no key. Re-pushing leaves a permanent duplicate for stream and a visible one for trace |
-
-Their values, with per-catalog defaults taken from [what a duplicate costs](#641-what-a-duplicate-costs-per-catalog):
-
-| Value | At resume time |
+| Catalog / payload | What a duplicate costs |
 |---|---|
-| `block` | Stop and list the ambiguous units; on a TTY, prompt per unit. Exits **7** — "halted for a human decision; the completed part is valid", kept distinct from 4 (verify found an ERROR-level discrepancy) and 6 (progress file unusable — *this run* wrote nothing, though earlier runs may have) |
-| `warn` | Re-push and say so |
-| `push` | Re-push silently |
-| `skip` | Leave the unit out and **force `--verify` on**; if verify finds a gap, exit **4** and list every skipped unit |
+| **trace** | Duplicate spans, visible to users; there is no deduplication anywhere and nothing self-heals |
+| **stream** | Queries stay correct (the vectorized path deduplicates by element ID in `pkg/query/vectorized/stream`'s `Distinct`). Disk grows **permanently** |
+| **measure** | Queries stay correct (the read path keeps the larger version by `(seriesID, timestamp)` *before* any merge). Disk grows, and under the production merge policy equally sized parts are never merged back |
+| **property** | Union by `(entity, mod_revision)`; idempotent, no amplification |
+| **index-mode measure** | docID overwrite; idempotent, no amplification |
+| series index | First write wins; later writes are discarded silently |
+| element index | **No deduplication**: documents and disk grow linearly and are never reclaimed — measured at exactly ×3.000 for three sources, extrapolating to 65 GB at `replicas=1` and 98 GB at `replicas=2` for a 167-segment group |
 
-There is no `ask` value: `block` renders as a prompt when there is a terminal to prompt on.
-
-#### `missing` is ambiguous too, and must not be re-pushed unconditionally
-
-A `missing` entry in `targets[]` is **not** proof that the node lacks the data. The receiver commits before it answers — `handleCompletion` calls `FinishSync` and *then* sends the response — so "committed, but the response never came back" (node OOM, liaison restart, dropped connection) is faithfully recorded as `missing`. Automatically re-pushing to that node writes a second copy onto a node that already has the data: a permanent visible duplicate for stream and trace, a whole re-introduced segment for the element index.
-
-**`missing` therefore follows the same split as `inflight`**, and that split is by *payload kind*, not by model: every native `kind=PART` re-pushes directly and is recognised by `import_op_id`, as do the series index and property; only `ELEMENT_INDEX` and the CSV stream / trace payloads go through `resumeDuplicationPolicy`. Either way the re-push is targeted with `Init.retry_nodes` ([When only some replicas succeed](#527-when-only-some-replicas-succeed)) and never re-sends the whole part.
-
-#### What this means for the guarantee
-
-With `import_op_id` in place, the native `kind=PART` path is **exactly-once**: a replay is recognised and writes nothing. Everything else — the element index, and every CSV payload — remains **at-least-once with a bounded, enumerable ambiguous set**, because those payloads have no part metadata to carry a durable key.
-
-Two things this does *not* buy, and they are the ones that dominate in practice:
-
-- **It does not reduce multi-source duplication.** `--all-sources`, a coverage misjudgement, or overlap the source cluster already had all produce *genuinely different parts* with different keys. The receiver is right to accept them all. Stream's ×2.38 storage and the element index's ×3.000 were measured on exactly that case, so the key saves nothing there.
-- **It does not make trace duplicates invisible.** It prevents one *cause* of them. Any duplicate arriving by another route is still shown to the user, because neither the trace merger nor the query path deduplicates by span ID outside the cross-node merge.
+There is deliberately no `overwrite` anywhere. A part has no overwrite semantics and there is no API to delete a single part, so "replace the existing copy" cannot be built. Row-level deduplication on the CSV channel was designed and rejected: a content key cannot tell a duplicate the source cluster already held from one this import created, so deduplicating it would stop the target reproducing the source.

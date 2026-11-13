@@ -335,10 +335,7 @@ func (s *server) processChunkWithReordering(stream clusterv1.ChunkedSyncService_
 }
 
 func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
-	calculatedChecksum := queue.ChunkChecksum(req.ChunkData)
-	if calculatedChecksum != req.ChunkChecksum {
-		errMsg := fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s",
-			req.ChunkIndex, req.ChunkChecksum, calculatedChecksum)
+	if errMsg := queue.ChunkChecksumMismatch(req); errMsg != "" {
 		s.log.Warn().Str("session_id", req.SessionId).Msg(errMsg)
 		if s.metrics != nil {
 			op, grp, sn, sr, st := s.resolveSessionLabels(session)

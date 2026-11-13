@@ -59,8 +59,8 @@ type Producer struct {
 // NewProducer creates the native producer of one Export stream. A max_file_size below the
 // smallest volume a container can have is refused.
 func NewProducer(ctx context.Context, init *transferv1.ExportRequest_Init, send func(*transferv1.ExportResponse) error) (*Producer, error) {
-	if size := init.GetMaxFileSize(); size != 0 && size < bnc.MinFileSize {
-		return nil, status.Errorf(codes.InvalidArgument, "native max_file_size %d is below the minimum of %d bytes", size, bnc.MinFileSize)
+	if err := bnc.CheckFileSize(init.GetMaxFileSize()); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "native max_file_size: %v", err)
 	}
 	if init.GetCompress() != transferv1.Compress_COMPRESS_NONE {
 		return nil, status.Errorf(codes.InvalidArgument, "a native export is not compressed, got %s", init.GetCompress())
