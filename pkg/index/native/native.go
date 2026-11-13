@@ -312,12 +312,36 @@ func (g *ReadOnlyGeneration) VisitSelectedDocuments(ctx context.Context, selecti
 // unflushed index (no usable committed generation) returns a count of 0
 // together with the open error, which callers may treat as an empty index.
 func ReadOnlyDocCount(path string) (int64, error) {
+	stats, err := ReadOnlyStats(path)
+	return stats.DocCount, err
+}
+
+// ReadOnlyIndexStats describes the committed generation of an index directory.
+type ReadOnlyIndexStats struct {
+	// DocCount is the number of live, non-deleted documents.
+	DocCount int64
+	// MinTimestamp and MaxTimestamp are the bounds ReadOnlyGeneration.TimeBounds returns;
+	// both are 0 when HasTime is false.
+	MinTimestamp int64
+	MaxTimestamp int64
+	HasTime      bool
+}
+
+// ReadOnlyStats opens the index directory at path read-only, as ReadOnlyDocCount does, and
+// returns its document count and time bounds; the errors are those of ReadOnlyDocCount.
+func ReadOnlyStats(path string) (ReadOnlyIndexStats, error) {
 	generation, err := OpenReadOnlyGeneration(path)
 	if err != nil {
-		return 0, fmt.Errorf("open read-only index %q: %w", path, err)
+		return ReadOnlyIndexStats{}, fmt.Errorf("open read-only index %q: %w", path, err)
 	}
 	defer func() { _ = generation.Close() }()
-	return generation.VisibleDocCount()
+	count, err := generation.VisibleDocCount()
+	if err != nil {
+		return ReadOnlyIndexStats{}, err
+	}
+	stats := ReadOnlyIndexStats{DocCount: count}
+	stats.MinTimestamp, stats.MaxTimestamp, stats.HasTime = generation.TimeBounds()
+	return stats, nil
 }
 
 // ReadOnlyWalkDocuments opens the index directory at path read-only, pins its

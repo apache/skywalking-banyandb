@@ -19,17 +19,23 @@ package data_import_test
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
 	"github.com/onsi/gomega"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/importer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
 // nativeArtifactA is the source exported in the native format, right after artifactA, so
@@ -102,6 +108,43 @@ var _ = ginkgo.Describe("Native import into an empty standalone target", ginkgo.
 	})
 })
 
+// expectRefusedBy asserts that run was refused by gate before it wrote anything to target.
+func expectRefusedBy(target *instance, run transfertest.ImportRun, gate string) {
+	gomega.ExpectWithOffset(1, run.ExitCode()).To(gomega.Equal(exitcode.ExitPreflight), run.Log)
+	gomega.ExpectWithOffset(1, run.Result.Plan.Rejected).To(gomega.ContainElement(gomega.HaveField("Gate", gate)), run.Out)
+	gomega.ExpectWithOffset(1, run.Result.Push).To(gomega.BeNil(), "a refused import pushes nothing")
+	gomega.ExpectWithOffset(1, totalData(target.conn)).To(gomega.BeZero(), "a refused import writes no data")
+}
+
+// editedNativeArtifact copies the native artifact of the source and changes the copy's
+// manifest with edit. The manifest registers no checksum of itself, so the copy still opens.
+func editedNativeArtifact(edit func(m *manifest.Manifest)) string {
+	dst := filepath.Join(ginkgo.GinkgoT().TempDir(), "artifact")
+	gomega.ExpectWithOffset(1, filepath.WalkDir(nativeArtifactA, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(nativeArtifactA, p)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dst, rel), 0o755)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), raw, 0o600)
+	})).To(gomega.Succeed())
+	path := filepath.Join(dst, manifest.FileName)
+	m, err := manifest.Read(path)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
+	edit(m)
+	gomega.ExpectWithOffset(1, manifest.Write(path, m)).To(gomega.Succeed())
+	return dst
+}
+
 var _ = ginkgo.Describe("Native import into a group with another shard number", func() {
 	ginkgo.It("refuses the group's parts by the topology gate and writes nothing", func() {
 		target := startTarget()
@@ -111,9 +154,66 @@ var _ = ginkgo.Describe("Native import into a group with another shard number", 
 		run := runNativeImport(target.addr, func(o *config.Import) {
 			o.ConflictRules = []config.ConflictRule{{Match: "group/" + transfertest.StreamGroup, Policy: config.ConflictPolicyIgnore}}
 		})
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitPreflight), run.Log)
-		gomega.Expect(run.Result.Plan.Rejected).To(gomega.ContainElement(gomega.HaveField("Gate", importer.GateTopology)), run.Out)
-		gomega.Expect(run.Result.Push).To(gomega.BeNil(), "a refused import pushes nothing")
-		gomega.Expect(totalData(target.conn)).To(gomega.BeZero(), "a refused import writes no data")
+		expectRefusedBy(target, run, importer.GateTopology)
+	})
+})
+
+var _ = ginkgo.Describe("Native import into a group whose index rule has another id", func() {
+	ginkgo.It("refuses the group's parts by the index rule gate and writes nothing", func() {
+		var rule *databasev1.IndexRule
+		for _, r := range transfertest.Schemas(nativeArtifactA, schemasync.KindIndexRule, func() *databasev1.IndexRule { return &databasev1.IndexRule{} }) {
+			if r.GetMetadata().GetGroup() == transfertest.StreamGroup {
+				rule = r
+				break
+			}
+		}
+		gomega.Expect(rule).NotTo(gomega.BeNil(), "the artifact has an index rule of group %s", transfertest.StreamGroup)
+		gomega.Expect(rule.GetMetadata().GetId()).NotTo(gomega.BeZero(), "the artifact records the rule's id")
+		target := startTarget()
+		createGroup(target, artifactGroup(transfertest.StreamGroup))
+		onTarget := importer.PrepareForWrite(rule).(*databasev1.IndexRule)
+		onTarget.Metadata.Id = rule.GetMetadata().GetId() + 1
+		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)
+		defer cancel()
+		_, err := databasev1.NewIndexRuleRegistryServiceClient(target.conn).Create(ctx, &databasev1.IndexRuleRegistryServiceCreateRequest{IndexRule: onTarget})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		run := runNativeImport(target.addr, nil)
+		expectRefusedBy(target, run, importer.GateIndexRule)
+	})
+})
+
+var _ = ginkgo.Describe("Native import of an artifact exported in another time zone", func() {
+	ginkgo.It("refuses the segment parts by the time zone gate and writes nothing", func() {
+		target := startTarget()
+		dir := editedNativeArtifact(func(m *manifest.Manifest) {
+			gomega.Expect(m.Source.Nodes).NotTo(gomega.BeEmpty())
+			for i := range m.Source.Nodes {
+				n := &m.Source.Nodes[i]
+				gomega.Expect(n.Timezone).NotTo(gomega.BeEmpty(), "the export records the source node's time zone")
+				// The source and the target run on this host, so any other zone differs from the target's.
+				if n.Timezone == "Pacific/Chatham" {
+					n.Timezone = "Asia/Kathmandu"
+				} else {
+					n.Timezone = "Pacific/Chatham"
+				}
+			}
+		})
+		run := runNativeImport(target.addr, func(o *config.Import) { o.Input = dir })
+		expectRefusedBy(target, run, importer.GateTimezone)
+	})
+})
+
+var _ = ginkgo.Describe("Native import of segments in a file format the target cannot read", func() {
+	ginkgo.It("refuses the segment parts by the version gate and writes nothing", func() {
+		target := startTarget()
+		dir := editedNativeArtifact(func(m *manifest.Manifest) {
+			for i := range m.Units {
+				if m.Units[i].SegmentVersion != "" {
+					m.Units[i].SegmentVersion = "0.0.1"
+				}
+			}
+		})
+		run := runNativeImport(target.addr, func(o *config.Import) { o.Input = dir })
+		expectRefusedBy(target, run, importer.GateVersion)
 	})
 })

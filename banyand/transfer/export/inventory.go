@@ -273,37 +273,33 @@ func statPropertyGroup(groupDir, group string) (*transferv1.UnitInventory, error
 // statIndexMode fills the document count and the time range of an index-mode group's series
 // index; a missing or unflushed index leaves both 0.
 func statIndexMode(dir string, stat *transferv1.SidxStat) error {
-	generation, err := native.OpenReadOnlyGeneration(dir)
+	stats, err := indexStats(dir)
 	if err != nil {
-		if errors.Is(err, native.ErrNoSnapshot) || errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return fmt.Errorf("open index %s: %w", dir, err)
+		return err
 	}
-	defer func() { _ = generation.Close() }()
-	count, err := generation.VisibleDocCount()
-	if err != nil {
-		return fmt.Errorf("count documents of index %s: %w", dir, err)
-	}
-	stat.DocCount = uint64(count)
-	if lo, hi, ok := generation.TimeBounds(); ok {
-		stat.MinTimestamp, stat.MaxTimestamp = lo, hi
-	}
+	stat.DocCount = uint64(stats.DocCount)
+	stat.MinTimestamp, stat.MaxTimestamp = stats.MinTimestamp, stats.MaxTimestamp
 	return nil
 }
 
-// docCount is the committed document count of the native index in dir. An index that was
-// never flushed (or is absent) holds no committed generation and counts 0; any other
-// failure, a corrupt index among them, fails the plan rather than reporting 0 rows.
+// docCount is the committed document count of the native index in dir.
 func docCount(dir string) (uint64, error) {
-	count, err := native.ReadOnlyDocCount(dir)
+	stats, err := indexStats(dir)
+	return uint64(stats.DocCount), err
+}
+
+// indexStats reads the committed generation of the native index in dir. An index that was
+// never flushed (or is absent) holds no committed generation and reads as empty; any other
+// failure, a corrupt index among them, fails the plan rather than reporting 0 rows.
+func indexStats(dir string) (native.ReadOnlyIndexStats, error) {
+	stats, err := native.ReadOnlyStats(dir)
 	if err != nil {
 		if errors.Is(err, native.ErrNoSnapshot) || errors.Is(err, fs.ErrNotExist) {
-			return 0, nil
+			return native.ReadOnlyIndexStats{}, nil
 		}
-		return 0, fmt.Errorf("count documents of index %s: %w", dir, err)
+		return native.ReadOnlyIndexStats{}, fmt.Errorf("read index %s: %w", dir, err)
 	}
-	return uint64(count), nil
+	return stats, nil
 }
 
 func shardIDOf(e os.DirEntry) (uint32, bool) {

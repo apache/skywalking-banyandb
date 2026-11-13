@@ -22,7 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -33,7 +33,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -198,11 +197,7 @@ func (s *importService) openPayload(ctx context.Context, init *transferv1.Import
 		copies:  r.copies,
 		// The file format version guards the source data, so it is the client's; the API and
 		// compatible versions are this liaison's own.
-		version: &clusterv1.VersionInfo{
-			ApiVersion:                  apiversion.Version,
-			FileFormatVersion:           segmentVersion,
-			CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
-		},
+		version: queue.SyncVersionInfo(segmentVersion),
 		metadata: &clusterv1.SyncMetadata{
 			Group:      init.GetGroup(),
 			ShardId:    init.GetShardId(),
@@ -311,45 +306,31 @@ func validSecondaryPartType(name string) bool {
 // payloadNodes resolves the target nodes of a payload: the nodes of its shard, or for a series
 // index the union of the nodes of every shard it covers, narrowed to retry_nodes when set.
 func payloadNodes(r *importRoute, init *transferv1.ImportPartsRequest_Init) ([]string, error) {
+	// A series index without shard_ids covers every shard: nil asks nodes for all of them.
 	shards := []uint32{init.GetShardId()}
 	if init.GetKind() == nativefmt.KindSeriesIndex {
 		shards = init.GetShardIds()
-		if len(shards) == 0 {
-			shards = make([]uint32, r.shardNum)
-			for i := range shards {
-				shards[i] = uint32(i)
-			}
-		}
 	}
-	set := map[string]struct{}{}
 	for _, sh := range shards {
 		if sh >= r.shardNum {
 			return nil, importError(codes.FailedPrecondition, "UNKNOWN_SHARD", nil,
 				fmt.Sprintf("shard %d is not a shard of group %s stage %s (shard number %d)", sh, r.group, r.stage, r.shardNum))
 		}
-		for _, n := range r.targets(sh) {
-			set[n] = struct{}{}
-		}
 	}
-	if len(set) == 0 {
+	nodes := r.nodes(shards...)
+	if len(nodes) == 0 {
 		return nil, status.Errorf(codes.FailedPrecondition, "group %s stage %s has no data node for shards %v", r.group, r.stage, shards)
 	}
-	if retry := init.GetRetryNodes(); len(retry) > 0 {
-		narrowed := map[string]struct{}{}
-		for _, n := range retry {
-			if _, ok := set[n]; !ok {
-				return nil, status.Errorf(codes.InvalidArgument, "retry node %s is not a target of group %s stage %s", n, r.group, r.stage)
-			}
-			narrowed[n] = struct{}{}
+	retry := init.GetRetryNodes()
+	if len(retry) == 0 {
+		return nodes, nil
+	}
+	for _, n := range retry {
+		if !slices.Contains(nodes, n) {
+			return nil, status.Errorf(codes.InvalidArgument, "retry node %s is not a target of group %s stage %s", n, r.group, r.stage)
 		}
-		set = narrowed
 	}
-	nodes := make([]string, 0, len(set))
-	for n := range set {
-		nodes = append(nodes, n)
-	}
-	sort.Strings(nodes)
-	return nodes, nil
+	return slices.DeleteFunc(nodes, func(n string) bool { return !slices.Contains(retry, n) }), nil
 }
 
 // chunk converts one client chunk into a sync frame and sends it to every live target.

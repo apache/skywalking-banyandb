@@ -176,6 +176,17 @@ func ChunkChecksumMismatch(req *clusterv1.SyncPartRequest) string {
 	return fmt.Sprintf("chunk %d checksum mismatch: expected %s, got %s", req.GetChunkIndex(), req.GetChunkChecksum(), sum)
 }
 
+// SyncVersionInfo is the version info a chunked sync sender puts on its frames: this binary's
+// API version and compatible file format versions, with the file format version of the data
+// sent, which is the sender's own unless it relays data written elsewhere.
+func SyncVersionInfo(fileFormatVersion string) *clusterv1.VersionInfo {
+	return &clusterv1.VersionInfo{
+		ApiVersion:                  apiversion.Version,
+		FileFormatVersion:           fileFormatVersion,
+		CompatibleFileFormatVersion: fileformat.CompatibleVersions(),
+	}
+}
+
 // CheckSyncVersion is the version check of a chunked sync receiver: a frame without version info
 // is accepted, otherwise the API version must match and the file format version must be the
 // current or a compatible one. It returns SYNC_STATUS_CHUNK_RECEIVED when the frame may be read,

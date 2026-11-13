@@ -738,6 +738,27 @@ func TestPushParts_TraceSecondaryPartsAndProperty(t *testing.T) {
 	assert.Empty(t, prop.init.GetSegmentVersion())
 }
 
+func TestPushParts_RateLimitSlowsThePush(t *testing.T) {
+	art, entries := nativeArtifactWithPrimary(t, strings.Repeat("x", 30000))
+	push := func(rateLimit float64) time.Duration {
+		f := &fakePartsLiaison{answer: func(int, *recordedPayload) (*transferv1.ImportPartsResponse, error) {
+			return okTargets("d1", "d2"), nil
+		}}
+		opts := nativePushOptions()
+		opts.PartChunkSize, opts.PartRateLimit = 4096, rateLimit
+		start := time.Now()
+		res, err := PushParts(context.Background(), []*cluster.Liaison{f.serve(t)}, art, entries, opts)
+		require.NoError(t, err)
+		require.Len(t, res.Done, 2)
+		return time.Since(start)
+	}
+	// The bucket starts with one second's worth (20000 bytes); the other 10000+ bytes of the
+	// part wait for refills, so the push takes at least half a second.
+	limited := push(20000)
+	assert.GreaterOrEqual(t, limited, 400*time.Millisecond, "a push above one second's worth of the rate waits for the bucket")
+	assert.Less(t, push(0), limited, "an unlimited push does not wait")
+}
+
 func TestPushParts_RateBelowChunkSize(t *testing.T) {
 	art, entries := nativeArtifactWithPrimary(t, strings.Repeat("x", 2000))
 	f := &fakePartsLiaison{answer: func(int, *recordedPayload) (*transferv1.ImportPartsResponse, error) {
