@@ -180,7 +180,8 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 				kept := sharedRetainedBytes(shape.rowBytes*cursorRowFactor, inRangeAvg, uint64(rows), encAvg)
 				retainedReal := int64(retained / series)
 				if assertMargins {
-					require.GreaterOrEqualf(t, float64(kept), 1.1*float64(retainedReal), "%s rows=%d window=%v: retained envelope %d vs real %d", shape.name, rows, frac, kept, retainedReal)
+					require.GreaterOrEqualf(t, float64(kept), 1.1*float64(retainedReal),
+						"%s rows=%d window=%v: retained envelope %d vs real %d", shape.name, rows, frac, kept, retainedReal)
 				}
 				if calibrate && assertMargins {
 					require.GreaterOrEqualf(t, float64(pre), 1.5*float64(alloc), "%s rows=%d window=%v: pre-decode envelope %d vs allocation %d", shape.name, rows, frac, pre, alloc)
