@@ -546,7 +546,7 @@ func (b *scanBudget) reserveCurrent(ctx context.Context, size uint64, r *scanRes
 	if admit && b.node != nil && b.node.pm != nil {
 		if err := b.node.pm.AcquireResource(ctx, size); err != nil {
 			r.release()
-			return err
+			return b.rejected(err, rejectAcquire)
 		}
 	}
 	return nil
