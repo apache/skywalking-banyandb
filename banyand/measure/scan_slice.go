@@ -64,11 +64,14 @@ func scanSliceBudget(ctx context.Context, tracker *vectorized.MemoryTracker, wor
 	return limit - workspace, (limit - workspace) / sliceBudgetShare
 }
 
-// sliceCost is the memory the cursors of unit keep live while a slice of width ns merges, in
-// the worst case where every cursor overlaps it.
+// sliceCost is the memory a slice of width ns needs while it merges, in the worst case where
+// every cursor overlaps it: what each cursor keeps once decoded, plus the transient expansion of
+// the largest block, which a cursor's reservation holds (sharedBlockBytes) until its decode is
+// trued up while the cursors decoded before it keep what they hold.
 func sliceCost(cursors []*blockCursor, perRow uint64, width int64) uint64 {
-	var total uint64
+	var total, largest uint64
 	for _, bc := range cursors {
+		largest = max(largest, bc.bm.uncompressedSizeBytes)
 		span := bc.bm.timestamps.max - bc.bm.timestamps.min + 1
 		rows := bc.bm.count
 		if width < span && span > 0 {
@@ -80,7 +83,10 @@ func sliceCost(cursors []*blockCursor, perRow uint64, width int64) uint64 {
 		}
 		total += uint64(cost)
 	}
-	return total
+	if largest > (math.MaxUint64-total)/decodeTransientFactor {
+		return math.MaxUint64
+	}
+	return total + largest*decodeTransientFactor
 }
 
 // sliceWidth returns the width in nanoseconds of the slices a unit over [lo, hi] is cut into,

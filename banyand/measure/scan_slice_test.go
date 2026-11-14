@@ -59,7 +59,9 @@ func TestTimeSlicedMergeMatchesUnslicedMerge(t *testing.T) {
 				require.Zero(t, reference.scan.stats.slices)
 				closeReference()
 
-				sliced, tracker, _, closeSliced := reuseTestResult(t.Context(), t, fx, q, 64<<20)
+				// The test lease is charged every decode and never refunded, and each slice decodes the
+				// blocks it overlaps again, so the sliced run needs more of it than the reference.
+				sliced, tracker, _, closeSliced := reuseTestResult(t.Context(), t, fx, q, 128<<20)
 				// A budget that holds a few slices' worth of cursors, so the unit is cut.
 				sliced.budget.sliceNeed, sliced.budget.sliceBudget = 2<<20, 2<<20
 				got := drainRows(t, sliced)
@@ -94,6 +96,52 @@ func TestSliceWidthFallsBackToMaxSlices(t *testing.T) {
 	require.Equal(t, minWidth, sliceWidth(cursors, perRow, fits, fits-1, lo, hi),
 		"maxMergeSlices slices fit the allowance, not the slice target")
 	require.Zero(t, sliceWidth(cursors, perRow, fits-1, fits-1, lo, hi), "maxMergeSlices slices fit neither")
+}
+
+// A merge reserves each cursor's pre-decode envelope, which holds the decode's transient
+// expansion until the decode trues it up, while the cursors before it keep what they hold. A
+// unit is left whole only when that fits; otherwise every slice it is cut into must fit.
+func TestSlicedOrWholeMergeFitsItsDecodeReservations(t *testing.T) {
+	verifyNoScanLeaks(t)
+	const encoded = 23 << 10
+	newUnit := func() scanUnit {
+		var unit scanUnit
+		for sid := common.SeriesID(1); sid <= 2; sid++ {
+			bc := generateBlockCursor()
+			bc.bm.seriesID, bc.bm.count, bc.bm.uncompressedSizeBytes = sid, 360, encoded
+			bc.bm.timestamps.min, bc.bm.timestamps.max = 0, 359
+			bc.minTimestamp, bc.maxTimestamp = 0, 359
+			unit.windows = append(unit.windows, seriesWindow{cursors: []*blockCursor{bc}, sid: sid, minTS: 0, maxTS: 359})
+		}
+		return unit
+	}
+	b := &scanBudget{rowBytes: 48, tel: new(scanTelemetry)}
+	perRow := b.perRowBytes()
+	// The allowance is what the two cursors keep once decoded: no room for a decode's expansion.
+	b.sliceNeed = 2 * sharedRetainedBytes(perRow, 360, 360, encoded)
+	b.sliceBudget = b.sliceNeed / sliceBudgetShare
+	b.shared = vectorized.NewMemoryTracker(b.sliceNeed)
+	unit := newUnit()
+	var stats scanStats
+	units := sliceMergeUnit(&unit, b, false, &stats)
+	if units == nil {
+		units = []scanUnit{unit}
+	}
+	for _, u := range units {
+		var held int64
+		for _, w := range u.windows {
+			for _, bc := range w.cursors {
+				before := b.sharedBlockBytes(bc)
+				require.NoErrorf(t, b.shared.Reserve(before), "%d slices: a cursor of [%d, %d] cannot be reserved before its decode",
+					len(units), bc.minTimestamp, bc.maxTimestamp)
+				kept := sharedRetainedBytes(perRow, inRangeRows(bc), bc.bm.count, bc.bm.uncompressedSizeBytes)
+				b.shared.Release(before - kept)
+				held += kept
+			}
+			releaseCursors(w.cursors)
+		}
+		b.shared.Release(held)
+	}
 }
 
 func TestScanSliceBudget(t *testing.T) {
