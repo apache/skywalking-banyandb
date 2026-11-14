@@ -26,7 +26,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -327,7 +329,7 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := reservation.sharedBytes
-	reservation.trueUp(15, 600)
+	reservation.trueUp(15, 600, 0)
 	want := sharedRetainedBytes(6*cursorRowColumnBytes, 15, 600, 40<<10)
 	if reservation.sharedBytes != want || shared.Used() != workspace+want {
 		t.Fatalf("after true-up: reservation %d, tracker %d, want %d over workspace %d", reservation.sharedBytes, shared.Used(), want, workspace)
@@ -335,7 +337,7 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 	if want >= before/4 {
 		t.Fatalf("true-up kept %d of %d", want, before)
 	}
-	reservation.trueUp(600, 600) // never raises the reservation
+	reservation.trueUp(600, 600, 0) // never raises the reservation
 	if reservation.sharedBytes != want {
 		t.Fatalf("true-up raised the reservation to %d", reservation.sharedBytes)
 	}
@@ -393,6 +395,47 @@ func TestCompactedCursorIsChargedItsMeasuredSize(t *testing.T) {
 	require.Equal(t, charged, r.sharedBytes)
 }
 
+// A cursor that keeps most of its block views the decoder's backing array, which a pooled
+// cursor brings from an earlier decode and boundDecodeBacking lets be up to twice the block's
+// encoded size. Its true-up charges that array, not the block's encoded size.
+func TestTrueUpChargesTheDecoderBackingTheCursorKeeps(t *testing.T) {
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(calibrationPoints(1, 360, 400))
+	defer releaseMemPart(mp)
+	ref := partRef{p: openMemPart(mp), cache: storage.NewShardCache("trueup-backing", 0, 0)}
+	qo := queryOptions{schemaTagTypes: map[string]pbv1.ValueType{"entity_id": pbv1.ValueTypeStr}}
+	qo.MeasureQueryOptions.TagProjection = tagProjectionOf("storage-only", "entity_id")
+	qo.MeasureQueryOptions.FieldProjection = []string{"int_value"}
+	qo.minTimestamp, qo.maxTimestamp = 0, 360*calibrationMinute
+	ti := generateTstIter()
+	ti.init([]partRef{ref}, []common.SeriesID{1}, qo.minTimestamp, qo.maxTimestamp)
+	require.True(t, ti.nextBlock())
+	bc := generateBlockCursor()
+	defer releaseBlockCursor(bc)
+	bc.init(ti.piHeap[0].p, ti.piHeap[0].curBlock, qo)
+	require.NoError(t, ti.Error())
+	releaseTstIter(ti)
+
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 1<<30)
+	budget := newScanBudget(1<<30, nil)
+	require.NoError(t, budget.attachShared(ctx, 6, 1024, 1))
+	defer budget.releaseWorkspace()
+	budget.rowBytes = 16 + 24 + 8 // timestamp and version, one string tag, one int field
+	encoded := bc.bm.uncompressedSizeBytes
+	bc.columnValuesDecoder.AdoptBacking(make([]byte, 0, 2*encoded))
+	r := &scanReservation{cursor: bc, sharedBytes: budget.sharedBlockBytes(bc)}
+	require.NoError(t, budget.reserveCurrent(ctx, encoded, r))
+	defer r.release()
+	bc.res = r
+	ok, err := decodeCursor(ctx, bc, false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, bc.compacted, "every row is in range")
+	backing := int64(bc.columnValuesDecoder.BackingCap())
+	require.EqualValues(t, 2*encoded, backing, "the decoder kept the backing it was given")
+	require.GreaterOrEqual(t, r.sharedBytes, backing, "the trued-up reservation covers the backing the cursor views")
+}
+
 // A merge over many series holds every cursor live; with the envelope of each trued up
 // after decode, the set fits a quota that the pre-decode envelope of all of them exceeds.
 func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {
@@ -410,7 +453,7 @@ func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {
 		if err := budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, r); err != nil {
 			t.Fatalf("cursor %d: %v", i, err)
 		}
-		r.trueUp(15, 611)
+		r.trueUp(15, 611, 0)
 		held = append(held, r)
 	}
 	for _, r := range held {

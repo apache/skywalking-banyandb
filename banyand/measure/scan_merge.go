@@ -141,7 +141,7 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 		if bc.compacted {
 			bc.res.trueUpCompacted(len(bc.timestamps), bc.compactedBytes)
 		} else {
-			bc.res.trueUp(len(bc.timestamps), bc.bm.count)
+			bc.res.trueUp(len(bc.timestamps), bc.bm.count, uint64(bc.columnValuesDecoder.BackingCap()))
 		}
 		if budget != nil {
 			tel := budget.telemetry()

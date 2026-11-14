@@ -324,16 +324,17 @@ func (r *scanReservation) release() {
 
 // trueUp shrinks the cursor's shared reservation from the pre-decode worst case to
 // what the decoded cursor keeps (sharedRetainedBytes): the rows inside the query range,
-// at the per-row envelope, plus the decode backing it retains, counted as the block's
-// encoded bytes once and a floor, or for a compacted cursor as its rows' share of them
-// and a smaller floor (trueUpCompacted charges a compacted cursor's measured bytes instead).
+// at the per-row envelope, plus the decode backing it retains, counted as the larger of
+// the block's encoded bytes and backing, the capacity of the decoder's backing array
+// (a pooled array may be up to twice the encoded size, see boundDecodeBacking), and a floor
+// (trueUpCompacted charges a compacted cursor, which views no backing, its measured bytes).
 // The expansion of the whole block, which was transient and is gone once the rows are
 // copied, is handed back, so many cursors can be live at once (a merge over a series
 // per endpoint) without each of them holding that expansion until it is released. It
 // only ever lowers the reservation, and does nothing for a cursor with a reusable slot.
-func (r *scanReservation) trueUp(rows int, blockRows uint64) {
+func (r *scanReservation) trueUp(rows int, blockRows, backing uint64) {
 	if r.canTrueUp() {
-		r.lowerTo(sharedRetainedBytes(r.budget.perRowBytes(), uint64(rows), blockRows, uint64(r.bytes)))
+		r.lowerTo(sharedRetainedBytes(r.budget.perRowBytes(), uint64(rows), blockRows, max(uint64(r.bytes), backing)))
 	}
 }
 
