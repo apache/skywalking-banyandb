@@ -454,3 +454,45 @@ func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
 		t.Fatalf("message: %q, want %q", failure.Error(), want)
 	}
 }
+
+func TestExhaustionNamesTheAllowanceThatRanOut(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	_, release, err := b.AdmitMeasureContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	reservation := &QueryReservation{owner: b, assigned: 1 << 20, refs: 1, incremental: true}
+	if chargeErr := reservation.Charge(600 << 10); chargeErr != nil {
+		t.Fatal(chargeErr)
+	}
+	chargeErr := reservation.Charge(600 << 10)
+	if !errors.Is(chargeErr, ErrQueryResourceExhausted) {
+		t.Fatalf("want ErrQueryResourceExhausted, got %v", chargeErr)
+	}
+	exhausted, ok := ExhaustionReason(chargeErr)
+	if !ok || exhausted.Reason != ReasonPerQueryLimit || exhausted.Limit != 1<<20 || exhausted.Used != 600<<10 || exhausted.Requested != 600<<10 {
+		t.Fatalf("want a per-query limit failure with its figures, got %+v", exhausted)
+	}
+	if reservation.Peak() != 600<<10 {
+		t.Fatalf("peak = %d, want %d", reservation.Peak(), 600<<10)
+	}
+	reservation.Refund(600 << 10)
+	if chargeErr = reservation.Charge(100 << 10); chargeErr != nil || reservation.Peak() != 600<<10 {
+		t.Fatalf("peak must keep the high-water mark after a refund; err %v, peak %d", chargeErr, reservation.Peak())
+	}
+	pool := b.poolLimit()
+	_, poolErr := b.Reserve(context.Background(), b.MaxQuery())
+	if poolErr != nil {
+		t.Fatal(poolErr)
+	}
+	for b.Reserved()+b.MaxQuery() <= pool {
+		if _, err = b.Reserve(context.Background(), b.MaxQuery()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = b.Reserve(context.Background(), b.MaxQuery())
+	if exhausted, ok = ExhaustionReason(err); !ok || exhausted.Reason != ReasonSharedPool {
+		t.Fatalf("want a shared pool failure, got %v", err)
+	}
+}

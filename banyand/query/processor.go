@@ -555,11 +555,10 @@ func appendActiveRowsProjected(dst, src *vectorized.RecordBatch, srcCols []int) 
 // filterStreamBatches narrows every batch's selection to the rows the criteria tag
 // filter keeps, using the SAME columnar operator the index-order scan runs pre-merge.
 //
-// Only a timestamp-order query reaches it. That order caps BEFORE filtering (one row
-// Pull consumes a segment and caps there — see scanResumesAcrossPulls), so its filter
-// must stay AFTER the cap or the merge would fill the limit from rows the row path
-// never saw. The element filter held exactly this position, so moving it onto the
-// columns leaves the documented under-fill unchanged. apache/skywalking#14067 R2.
+// A scan that runs the filter ahead of the merge reports PreMerged and never reaches
+// it; this stage only covers a criteria filter the scan did not take. It must run
+// BEFORE any limit cap, or the cap would fill from rows the filter then rejects
+// (apache/skywalking#14215).
 //
 // projection MUST be the scan's ProjectionTags(), because NewTagFilter indexes its
 // cells in that (tagFamilyIdx, tagIdx) space — the same space the element egress

@@ -26,7 +26,7 @@ import { useAuth } from '../auth/AuthContext.js';
 import { canopyPath } from '../runtime-config.js';
 import { apiDataSource } from '../data/api.js';
 import {
-  IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
+  IconHome, IconMonitor, IconMetadata, IconMeasures, IconStreams, IconTraces,
   IconProperties, IconPipelines, IconSampling, IconQuery, IconChevron, IconCollapse, IconSignOut,
   IconShield, IconViewer, IconIndex, IconGroup, IconTopN,
 } from './icons.js';
@@ -470,6 +470,21 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
             >
               <span className="nav-ico"><IconHome /></span>
               <span className="nav-label">Home</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Monitor */}
+        <div className="nav-node">
+          <div className="nav-rowline">
+            <button
+              className={'nav-row lvl-0' + (active === '/monitor' ? ' is-active' : '')}
+              style={{ paddingLeft: 12 }}
+              onClick={() => navigate('/monitor')}
+              title="Monitor"
+            >
+              <span className="nav-ico"><IconMonitor /></span>
+              <span className="nav-label">Monitor</span>
             </button>
           </div>
         </div>

@@ -22,6 +22,7 @@ import (
 	"math"
 	"sort"
 	"sync/atomic"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -105,6 +106,12 @@ type scanStats struct {
 	// prefetchPeak is the most decodes the scan had requested ahead of the one it
 	// was consuming.
 	prefetchPeak int64
+	// blocks is the number of blocks the scan planned to read.
+	blocks int64
+	// slicedUnits is the number of merge units cut into time slices, and slices the number of
+	// slices they were cut into.
+	slicedUnits int64
+	slices      int64
 	// reservationWaits is the number of times prefetch found no room in the budget
 	// and waited; reservationFails the number of times the cursor the scan needed
 	// could not be reserved.
@@ -139,6 +146,8 @@ type scanUnit struct {
 // windowScan streams the units of one queryResult.
 type windowScan struct {
 	qr       *queryResult
+	span     *scanSpan
+	tel      *scanTelemetry
 	cur      *seriesWindow
 	merge    *timeMerge
 	load     cursorLoader
@@ -159,11 +168,22 @@ type windowScan struct {
 
 // newWindowScan plans the scan over qr.data and takes ownership of its cursors.
 func newWindowScan(qr *queryResult) *windowScan {
+	planStart := time.Now()
 	s := &windowScan{qr: qr, desc: qr.orderByTimestampDesc(), load: decodeCursor}
+	s.span = startScanSpan(qr.ctx)
+	s.tel = new(scanTelemetry)
+	if qr.budget != nil {
+		s.tel = qr.budget.telemetry()
+		qr.budget.qm = qr.qm
+	}
+	s.tel.deep.Store(s.span != nil)
+	s.tel.poolWorkers, s.tel.poolQueued = qr.dp.snapshot()
+	s.stats.blocks = int64(len(qr.data))
 	if !qr.orderByTS && qr.budget != nil && qr.budget.shared != nil && len(qr.data) > 0 && uniqueDecodeProjection(qr.data[0]) {
 		qr.budget.reuse = &scanDecodeReuse{tracker: qr.budget.shared}
 	}
 	s.units = planUnits(qr, groupWindows(qr.data), s.desc)
+	s.units = sliceUnits(s.units, qr.budget, s.desc, &s.stats)
 	for i := range qr.data {
 		qr.data[i] = nil
 	}
@@ -177,7 +197,32 @@ func newWindowScan(qr *queryResult) *windowScan {
 		w.cursors = nil
 	}
 	s.pf = newPrefetcher(qr.ctx, qr.dp, qr.budget, qr.qm, &s.stats, &s.load, s.desc, s.sequence())
+	s.tel.planNS.Add(time.Since(planStart).Nanoseconds())
 	return s
+}
+
+// sliceUnits cuts the merge units that do not fit the slice budget into time slices.
+func sliceUnits(units []scanUnit, budget *scanBudget, desc bool, stats *scanStats) []scanUnit {
+	var out []scanUnit
+	changed := false
+	for i := range units {
+		replacement := sliceMergeUnit(&units[i], budget, desc, stats)
+		if replacement == nil {
+			if changed {
+				out = append(out, units[i])
+			}
+			continue
+		}
+		if !changed {
+			changed = true
+			out = append(make([]scanUnit, 0, len(units)+len(replacement)), units[:i]...)
+		}
+		out = append(out, replacement...)
+	}
+	if !changed {
+		return units
+	}
+	return out
 }
 
 // sequence lists every cursor of the plan in the order the scan decodes them.
@@ -328,7 +373,9 @@ func planSegments(cursors []*blockCursor, desc bool) []scanSegment {
 // segments are visited in time order, and a merge emits its rows in time order), so
 // an aggregation can split the batch into runs without reading its rows.
 func (s *windowScan) next(ctx context.Context) (*model.MeasureBatch, error) {
+	start := time.Now()
 	b, err := s.nextUnmarked(ctx)
+	s.tel.scanNS.Add(time.Since(start).Nanoseconds())
 	if b != nil {
 		b.SeriesKnown = true
 		b.TimeOrder = vectorized.TimeOrderAsc
@@ -610,6 +657,11 @@ func (s *windowScan) takeBuilder() *model.MeasureBatch {
 
 // close releases every cursor and batch the scan still holds. It is idempotent.
 func (s *windowScan) close() {
+	// The decodes are stopped first, so the measurements are final once pf.close returns.
+	defer func() {
+		s.span.finish(s.qr.ctx, &s.stats, s.tel, s.qr.budget)
+		observeScanEnd(s.qr.ctx, s.qr.qm, &s.stats)
+	}()
 	// Stop the decodes first: no worker may read a cursor that is about to be released.
 	s.pf.close()
 	if s.merge != nil {

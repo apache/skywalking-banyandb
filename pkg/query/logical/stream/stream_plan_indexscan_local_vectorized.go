@@ -102,52 +102,17 @@ func scanFromInput(input logical.Plan) *localIndexScan {
 		return in
 	case *tagFilterPlan:
 		if scan, ok := in.parent.(*localIndexScan); ok {
-			// The vec merge reproduces the element set the row scan would hand its
-			// tagFilterPlan, except for duplicate ElementIDs, whose contract is
-			// filter-first — see BuildStreamMergePipeline. Whether the criteria filter
-			// may run AHEAD of the merge depends on the order type — see
-			// scanResumesAcrossPulls. Only an index-order scan takes the filter; a
-			// timestamp-order scan leaves it at the egress, behind the cap.
-			if scanResumesAcrossPulls(scan) && in.tagFilter != nil && in.tagFilter != logical.DummyFilter {
+			// The criteria filter always runs AHEAD of the merge, for every order type,
+			// so the maxElementSize cap keeps the top-N of the FILTERED set. A cap taken
+			// before the filter would only ever offer the first limit elements of each
+			// series to the criterion (apache/skywalking#14215).
+			if in.tagFilter != nil && in.tagFilter != logical.DummyFilter {
 				scan.preMergeFilter, scan.filterRegistry = in.tagFilter, in.s
 			}
 			return scan
 		}
 	}
 	return nil
-}
-
-// scanResumesAcrossPulls reports whether the row scan backing this plan keeps
-// yielding new elements on successive Pulls, which decides whether a criteria
-// (filtered) query may run its tag filter AHEAD of the vec merge.
-//
-// The row path nests three loops: *limit.Execute pulls tagFilterPlan.Execute until
-// it has accumulated limit+offset elements, tagFilterPlan.Execute pulls the scan
-// until a batch yields ≥1 match, and the scan itself caps each batch at
-// maxElementSize. Whether the limit actually gets FILLED therefore depends on the
-// scan resuming:
-//
-//   - index-order (idxResult): the sorted iterator persists across Pulls and each
-//     Pull drains the next maxElementSize entries (query_by_idx.go:262), so row keeps
-//     pulling and DOES fill the limit out of the whole FILTERED ordered set. Vec
-//     bounds the same set by running the tag filter before the merge, so the
-//     maxElementSize cap bounds the top-N of the filtered set rather than truncating
-//     the input the filter has yet to see (duplicate ElementIDs excepted — see
-//     BuildStreamMergePipeline).
-//   - timestamp order (tsResult): one Pull consumes a whole segment and caps the
-//     result at maxElementSize (query_by_ts.go:136,159); the next Pull only advances
-//     to a further segment. For data inside a single segment the scan is then
-//     exhausted, so row returns only the matches from that first capped batch and
-//     legitimately UNDER-fills the limit (e.g. 30 scanned, 2 rejected ⇒ 28 returned).
-//     Vec reproduces that under-fill only by capping BEFORE filtering, so the filter
-//     is NOT pushed down here and stays at the egress.
-//
-// Caveat (documented, not emulated): for timestamp order spanning MULTIPLE segments
-// the row scan does resume per segment, so row could accumulate past the first
-// capped batch where vec stops. Reproducing that needs the scan's segment
-// boundaries, which the vec merge does not see.
-func scanResumesAcrossPulls(scan *localIndexScan) bool {
-	return scan.order != nil && scan.order.Index != nil
 }
 
 // VecTagFilter returns the criteria tag filter, the hidden-tag set, and the schema
@@ -177,7 +142,7 @@ type VecCriteriaFilter struct {
 	// Schema is the projected schema the filter indexes its cells against.
 	Schema logical.Schema
 	// PreMerged reports that the scan runs TagFilter on the columns ahead of the
-	// merge (index order only — see scanResumesAcrossPulls). The egress then owes only
+	// merge, for every order type. The egress then owes only
 	// the hidden-tag removal, because every row it receives already matched;
 	// re-matching per element is waste. apache/skywalking#14067 R1.
 	PreMerged bool
@@ -190,7 +155,7 @@ type VecCriteriaFilter struct {
 // same extraction.
 //
 // preMerged reports that the scan runs this SAME filter on the columns ahead of the
-// merge (index order only — see scanResumesAcrossPulls). The egress then owes only
+// merge, for every order type. The egress then owes only
 // the hidden-tag strip, because every row it receives already passed the filter;
 // re-matching it is waste. apache/skywalking#14067 R1.
 //

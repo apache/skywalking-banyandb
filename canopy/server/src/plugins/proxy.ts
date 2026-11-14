@@ -20,7 +20,7 @@
 import { request as undiciRequest, type Dispatcher } from 'undici';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { checkEndpointSafe, SsrfError } from '../lib/ssrf.js';
-import { enforceRole } from '../lib/role.js';
+import { enforceRole, requireMonitorRole } from '../lib/role.js';
 import type { Config } from '../config.js';
 
 function buildUpstreamAuth(config: Config): string | undefined {
@@ -170,8 +170,9 @@ export async function registerProxy(app: FastifyInstance, config: Config): Promi
   });
 
   // /monitoring/* — forwarded to MONITOR_TARGET with /monitoring prefix STRIPPED.
-  // Same role gate as /api/*: readonly sessions may only use GET/HEAD/OPTIONS.
-  app.all('/monitoring/*', { preHandler: [requireAuth, enforceRole] }, async (request, reply) => {
+  // Only CANOPY_MONITOR_ROLES may read it, like the Monitor page; readonly sessions that
+  // are let in may still only use GET/HEAD/OPTIONS.
+  app.all('/monitoring/*', { preHandler: [requireAuth, requireMonitorRole(config.monitorRoles), enforceRole] }, async (request, reply) => {
     const scopedPath = stripBasePath(request.url, config.basePath);
     const stripped = scopedPath.replace(/^\/monitoring/, '');
     await forwardRequest(config.monitorTarget, stripped, request, reply, config, undefined);

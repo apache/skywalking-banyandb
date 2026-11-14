@@ -79,6 +79,24 @@ type BytesBlockDecoder struct {
 // SetMaxBytes bounds decoded payload bytes held by this decoder; zero disables the bound.
 func (bbd *BytesBlockDecoder) SetMaxBytes(limit int) { bbd.maxBytes = limit }
 
+// BackingCap returns the capacity in bytes of the decoder's backing array.
+func (bbd *BytesBlockDecoder) BackingCap() int { return cap(bbd.data) }
+
+// DetachBacking hands the decoder's backing array to the caller and leaves the decoder
+// empty. Values decoded earlier that view the array stay valid until the caller reuses it.
+func (bbd *BytesBlockDecoder) DetachBacking() []byte {
+	data := bbd.data[:0]
+	bbd.data = nil
+	return data
+}
+
+// AdoptBacking gives an empty decoder a backing array to decode into.
+func (bbd *BytesBlockDecoder) AdoptBacking(data []byte) {
+	if cap(bbd.data) == 0 {
+		bbd.data = data[:0]
+	}
+}
+
 // Reset resets the decoder.
 func (bbd *BytesBlockDecoder) Reset() {
 	bbd.data = bbd.data[:0]

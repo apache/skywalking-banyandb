@@ -21,6 +21,8 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/pkg/errors"
 
@@ -83,6 +85,9 @@ const (
 // error.
 type cursorLoader func(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 
+// decodeBackingPool holds decoder backing arrays released by compacted cursors.
+var decodeBackingPool sync.Pool
+
 // decodeCursor is the default cursorLoader: it decodes the block on the calling
 // goroutine.
 func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error) {
@@ -91,14 +96,50 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 		return false, ctx.Err()
 	default:
 	}
+	started := time.Now()
 	tmpBlock := generateBlock()
+	if backing, hit := decodeBackingPool.Get().(*[]byte); hit {
+		bc.columnValuesDecoder.AdoptBacking(*backing)
+	}
 	ok := bc.loadData(tmpBlock, true)
 	releaseBlock(tmpBlock)
+	var budget *scanBudget
+	if bc.res != nil {
+		budget = bc.res.budget
+	}
+	if budget != nil {
+		elapsed := time.Since(started)
+		budget.telemetry().observeDecode(elapsed, ok)
+		if budget.qm != nil {
+			budget.qm.scanDecodeSeconds.Observe(elapsed.Seconds())
+		}
+	}
+	// compactValues detached the decoder's backing; nothing views it once the temporary
+	// block is released, so the next decode can reuse it.
+	if spare := bc.spareBacking; cap(spare) > 0 {
+		bc.spareBacking = nil
+		decodeBackingPool.Put(&spare)
+	}
 	if !ok {
 		return false, nil
 	}
 	if desc {
 		bc.idx = len(bc.timestamps) - 1
+	}
+	if bc.res != nil {
+		before := bc.res.sharedBytes
+		bc.res.trueUp(len(bc.timestamps), bc.bm.count)
+		if budget != nil {
+			tel := budget.telemetry()
+			tel.estimate.Add(before)
+			tel.estimateKept.Add(bc.res.sharedBytes)
+			if bc.compacted {
+				tel.compacted.Add(1)
+			}
+			if tel.deep.Load() {
+				tel.retained.Add(int64(bc.retainedBytes()))
+			}
+		}
 	}
 	return true, nil
 }

@@ -670,6 +670,9 @@ func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []
 	if err := result.budget.attachShared(ctx, columns, qo.vectorized.BatchSize, len(result.data)); err != nil {
 		return err
 	}
+	if schema, schemaErr := vmeasure.BuildBatchSchema(m.schema, qo.MeasureQueryOptions); schemaErr == nil {
+		result.budget.rowBytes = projectedRowBytes(schema)
+	}
 	result.admit = func(ctx context.Context) error {
 		if quota >= 0 && totalBlockBytes > uint64(quota) {
 			return fmt.Errorf("block scan quota exceeded: used %d bytes, quota is %d bytes", totalBlockBytes, quota)

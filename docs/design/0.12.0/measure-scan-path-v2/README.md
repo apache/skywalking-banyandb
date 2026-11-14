@@ -100,7 +100,10 @@ New metrics, per group, under `banyandb_measure_query_*`: `total_scan_windows`,
 `total_scan_windows_overlapped`, `total_scan_segments_fast`, `total_scan_segments_overlap`,
 `total_scan_merge_rows`, `total_scan_merge_cursors`, `scan_merge_peak_live_cursors`,
 `scan_prefetch_depth`, `scan_decode_queue_wait_seconds`, `total_scan_reservations_waiting` and
-`total_scan_reservations_failed`.
+`total_scan_reservations_failed`. A later change adds `total_scan_reservation_rejections` (labelled by `reason`:
+the allowance that ran out), `query_budget_peak_ratio` (per scan, the most the query lease held over its limit),
+`scan_decode_seconds`, `total_scan_slices` and `total_scan_sliced_units`. The per-query view of the same
+measurements is the `scan-storage` trace span (docs/operation/observability/tracing.md).
 
 ### 2.2 Deviations from the proposal
 

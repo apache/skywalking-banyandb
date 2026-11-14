@@ -40,6 +40,16 @@ export function IconHome({ size = 18 }: IconProps) {
   );
 }
 
+export function IconMonitor({ size = 18 }: IconProps) {
+  return (
+    <Ic size={size}>
+      <rect x="3" y="4" width="18" height="13" rx="2" />
+      <path d="M6.5 11h2.5l1.5-3 2.5 5.5 1.5-2.5h3" />
+      <path d="M9 21h6M12 17v4" />
+    </Ic>
+  );
+}
+
 export function IconMetadata({ size = 18 }: IconProps) {
   return (
     <Ic size={size}>
