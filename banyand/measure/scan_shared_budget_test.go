@@ -347,6 +347,52 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 	budget.releaseWorkspace()
 }
 
+// A compacted cursor is charged the cell bytes it measured, not the rows' share of the
+// block's encoded bytes, also when its rows are not spread evenly over the block's time range.
+func TestCompactedCursorIsChargedItsMeasuredSize(t *testing.T) {
+	// 300 rows at the start of the block and one far later: the in-range estimate before
+	// the decode sees almost nothing of a window that holds 140 rows.
+	fx := newFixture(t, fxPart{
+		{sid: 1, from: 1, to: 300, version: 1},
+		{sid: 1, from: 10000, to: 10000, version: 1},
+	})
+	q := prefetchQuery(1, 140, true, true)
+	qr, closeResult := liveResult(t, fx, q, 64<<20)
+	defer closeResult()
+	qr.budget.rowBytes = projectedRowBytes(qr.batchSchema)
+	require.Len(t, qr.data, 1)
+	bc := qr.data[0]
+	require.EqualValues(t, 301, bc.bm.count)
+	require.Less(t, inRangeRows(bc), uint64(16), "the uniform estimate misses the skew")
+	r := &scanReservation{budget: qr.budget, sharedBytes: qr.budget.sharedBlockBytes(bc)}
+	require.NoError(t, qr.budget.reserveCurrent(qr.ctx, bc.bm.uncompressedSizeBytes, r))
+	bc.res = r
+	ok, err := decodeCursor(qr.ctx, bc, false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, bc.compacted)
+	require.Len(t, bc.timestamps, 140)
+
+	var measured uint64
+	for _, cf := range append([]columnFamily{bc.fields}, bc.tagFamilies...) {
+		for _, c := range cf.columns {
+			for _, v := range c.values {
+				measured += uint64(len(v))
+			}
+		}
+	}
+	require.Positive(t, measured)
+	perRow := qr.budget.perRowBytes()
+	require.Equal(t, compactedRetainedBytes(perRow, 140, measured), r.sharedBytes, "charged the measured cell bytes")
+	require.NotEqual(t, sharedRetainedBytes(perRow, 140, 301, bc.bm.uncompressedSizeBytes), r.sharedBytes,
+		"not the rows' share of the block")
+
+	// A measured size above the reservation does not raise it.
+	charged := r.sharedBytes
+	r.trueUpCompacted(140, 1<<30)
+	require.Equal(t, charged, r.sharedBytes)
+}
+
 // A merge over many series holds every cursor live; with the envelope of each trued up
 // after decode, the set fits a quota that the pre-decode envelope of all of them exceeds.
 func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {

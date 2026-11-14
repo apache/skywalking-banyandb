@@ -494,8 +494,10 @@ type blockCursor struct {
 	idx                 int
 	minTimestamp        int64
 	maxTimestamp        int64
-	refs                atomic.Int32
-	shardID             common.ShardID
+	// compactedBytes is the size of the buffer compactValues copied the cell values into.
+	compactedBytes uint64
+	refs           atomic.Int32
+	shardID        common.ShardID
 	// compacted is set when compactValues released the decoded block.
 	compacted bool
 }
@@ -517,6 +519,7 @@ func (bc *blockCursor) reset() {
 	bc.maxTimestamp = 0
 	bc.spareBacking = nil
 	bc.compacted = false
+	bc.compactedBytes = 0
 	bc.tagProjection = bc.tagProjection[:0]
 	bc.fieldProjection = bc.fieldProjection[:0]
 	bc.schemaTagTypes = nil
@@ -982,6 +985,7 @@ func (bc *blockCursor) compactValues() {
 	})
 	bc.spareBacking = bc.columnValuesDecoder.DetachBacking()
 	bc.compacted = true
+	bc.compactedBytes = uint64(total)
 }
 
 var blockCursorPool = pool.Register[*blockCursor]("measure-blockCursor")

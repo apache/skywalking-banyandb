@@ -326,21 +326,39 @@ func (r *scanReservation) release() {
 // what the decoded cursor keeps (sharedRetainedBytes): the rows inside the query range,
 // at the per-row envelope, plus the decode backing it retains, counted as the block's
 // encoded bytes once and a floor, or for a compacted cursor as its rows' share of them
-// and a smaller floor.
+// and a smaller floor (trueUpCompacted charges a compacted cursor's measured bytes instead).
 // The expansion of the whole block, which was transient and is gone once the rows are
 // copied, is handed back, so many cursors can be live at once (a merge over a series
 // per endpoint) without each of them holding that expansion until it is released. It
 // only ever lowers the reservation, and does nothing for a cursor with a reusable slot.
 func (r *scanReservation) trueUp(rows int, blockRows uint64) {
-	b := r.budget
-	if b == nil || b.shared == nil || r.reuse != nil || r.released.Load() || r.sharedBytes <= 0 {
-		return
+	if r.canTrueUp() {
+		r.lowerTo(sharedRetainedBytes(r.budget.perRowBytes(), uint64(rows), blockRows, uint64(r.bytes)))
 	}
-	kept := sharedRetainedBytes(b.perRowBytes(), uint64(rows), blockRows, uint64(r.bytes))
+}
+
+// trueUpCompacted is trueUp for a cursor compactValues compacted: it charges the cell bytes
+// the cursor measured, valueBytes, instead of estimating them as the rows' share of the
+// block, which is wrong when the rows are not spread evenly over the block's time range.
+// Like trueUp it never raises the reservation: when the measured size exceeds what was
+// reserved before the decode, the cursor stays charged the reservation.
+func (r *scanReservation) trueUpCompacted(rows int, valueBytes uint64) {
+	if r.canTrueUp() {
+		r.lowerTo(compactedRetainedBytes(r.budget.perRowBytes(), uint64(rows), valueBytes))
+	}
+}
+
+func (r *scanReservation) canTrueUp() bool {
+	b := r.budget
+	return b != nil && b.shared != nil && r.reuse == nil && !r.released.Load() && r.sharedBytes > 0
+}
+
+// lowerTo hands back what the reservation holds above kept.
+func (r *scanReservation) lowerTo(kept int64) {
 	if kept >= r.sharedBytes {
 		return
 	}
-	b.shared.Release(r.sharedBytes - kept)
+	r.budget.shared.Release(r.sharedBytes - kept)
 	r.sharedBytes = kept
 }
 
@@ -379,9 +397,19 @@ func sharedRetainedBytes(perRow, rows, count, encodedBytes uint64) int64 {
 		return math.MaxInt64
 	}
 	if count > 0 && rows*2 < count {
-		return int64(compactedFloorBytes + encodedBytes*rows/count + rows*perRow)
+		return compactedRetainedBytes(perRow, rows, encodedBytes*rows/count)
 	}
 	return int64(cursorFloorBytes + encodedBytes + rows*perRow)
+}
+
+// compactedRetainedBytes is what a compacted cursor of rows rows whose cell values hold
+// valueBytes bytes keeps while it is live.
+func compactedRetainedBytes(perRow, rows, valueBytes uint64) int64 {
+	rows = max(rows, 16)
+	if perRow == 0 || rows > math.MaxInt64/perRow || valueBytes > math.MaxInt64/4-rows*perRow-compactedFloorBytes {
+		return math.MaxInt64
+	}
+	return int64(compactedFloorBytes + valueBytes + rows*perRow)
 }
 
 // perRowBytes is what one in-range row of one cursor keeps, from the projected columns' types when the
