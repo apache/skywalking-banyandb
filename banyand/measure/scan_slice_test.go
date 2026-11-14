@@ -18,6 +18,7 @@
 package measure
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -74,10 +75,10 @@ func TestTimeSlicedMergeMatchesUnslicedMerge(t *testing.T) {
 	}
 }
 
-// sliceTestCursor is a cursor planned from metadata only: count rows over [lo, hi] in a block of
-// encoded bytes.
-func sliceTestCursor(lo, hi int64, count, encoded uint64) *blockCursor {
-	bc := &blockCursor{bm: blockMetadata{count: count, uncompressedSizeBytes: encoded}}
+// sliceTestCursor is a cursor planned from metadata only: one row per nanosecond of [lo, hi] in a
+// 1 MiB block.
+func sliceTestCursor(lo, hi int64) *blockCursor {
+	bc := &blockCursor{bm: blockMetadata{count: uint64(hi - lo + 1), uncompressedSizeBytes: 1 << 20}}
 	bc.bm.timestamps.min, bc.bm.timestamps.max = lo, hi
 	return bc
 }
@@ -86,13 +87,137 @@ func sliceTestCursor(lo, hi int64, count, encoded uint64) *blockCursor {
 // into maxMergeSlices slices rather than merged whole, which would exceed the allowance.
 func TestSliceWidthFallsBackToMaxSlices(t *testing.T) {
 	const perRow, lo, hi = 100, 0, 6399
-	cursors := []*blockCursor{sliceTestCursor(lo, hi, 6400, 1<<20), sliceTestCursor(lo, hi, 6400, 1<<20)}
+	cursors := []*blockCursor{sliceTestCursor(lo, hi), sliceTestCursor(lo, hi)}
 	minWidth := int64((hi - lo + 1) / maxMergeSlices)
 	fits := int64(sliceCost(cursors, perRow, minWidth))
 	require.Greater(t, sliceCost(cursors, perRow, hi-lo+1), uint64(fits), "the whole unit exceeds the allowance")
 	require.Equal(t, minWidth, sliceWidth(cursors, perRow, fits, fits-1, lo, hi),
 		"maxMergeSlices slices fit the allowance, not the slice target")
 	require.Zero(t, sliceWidth(cursors, perRow, fits-1, fits-1, lo, hi), "maxMergeSlices slices fit neither")
+}
+
+func TestScanSliceBudget(t *testing.T) {
+	const limit, workspace = 64 << 20, 4 << 20
+	tracker := vectorized.NewMemoryTracker(limit)
+	withLease := func(leaseLimit uint64) context.Context {
+		return query.WithBudgetLease(t.Context(), &scanReuseLease{limit: leaseLimit})
+	}
+	for _, tt := range []struct {
+		ctx              context.Context
+		name             string
+		workspace        int64
+		wantNeed, wantTo int64
+	}{
+		{name: "the tracker's limit", ctx: t.Context(), workspace: workspace, wantNeed: limit - workspace, wantTo: (limit - workspace) / 2},
+		{name: "a smaller lease", ctx: withLease(16 << 20), workspace: workspace, wantNeed: 12 << 20, wantTo: 6 << 20},
+		{name: "a larger lease", ctx: withLease(128 << 20), workspace: workspace, wantNeed: limit - workspace, wantTo: (limit - workspace) / 2},
+		{name: "a lease without a limit", ctx: withLease(0), workspace: workspace, wantNeed: limit - workspace, wantTo: (limit - workspace) / 2},
+		{name: "the workspace takes it all", ctx: t.Context(), workspace: limit},
+		{name: "the workspace takes the lease", ctx: withLease(2 << 20), workspace: workspace},
+	} {
+		need, target := scanSliceBudget(tt.ctx, tracker, tt.workspace)
+		require.Equal(t, tt.wantNeed, need, tt.name)
+		require.Equal(t, tt.wantTo, target, tt.name)
+	}
+}
+
+func TestSliceWidth(t *testing.T) {
+	const perRow, lo, hi = 100, 1000, 7399
+	const span = hi - lo + 1
+	cursors := []*blockCursor{sliceTestCursor(lo, hi), sliceTestCursor(lo, hi)}
+	cost := func(width int64) int64 { return int64(sliceCost(cursors, perRow, width)) }
+	whole := cost(span)
+	require.Zero(t, sliceWidth(cursors[:1], perRow, 1, 1, lo, hi), "one cursor")
+	require.Zero(t, sliceWidth(cursors, perRow, 1, 0, lo, hi), "no slice budget")
+	require.Zero(t, sliceWidth(cursors, perRow, 1, 1, lo, lo), "a one-nanosecond span")
+	require.Zero(t, sliceWidth(cursors, perRow, whole, whole/2, lo, hi), "the unit fits the allowance")
+	minWidth := int64(span / maxMergeSlices)
+	require.Zero(t, sliceWidth(cursors, perRow, cost(minWidth)-1, cost(minWidth)-1, lo, hi), "no width fits")
+
+	for _, budget := range []int64{cost(minWidth), cost(span / 8), cost(span/2) - 1} {
+		w := sliceWidth(cursors, perRow, whole-1, budget, lo, hi)
+		require.GreaterOrEqual(t, w, minWidth)
+		require.Less(t, w, int64(span))
+		require.LessOrEqual(t, cost(w), budget, "the width fits the slice budget")
+		require.Greater(t, cost(w+1), budget, "the width is the widest that fits")
+	}
+}
+
+func TestSliceMergeUnit(t *testing.T) {
+	verifyNoScanLeaks(t)
+	const lo, hi = 0, 6399
+	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 64<<20)
+	budget := newScanBudget(64<<20, nil)
+	require.NoError(t, budget.attachShared(ctx, 6, 1024, 2))
+	defer budget.releaseWorkspace()
+	newUnit := func(series int) (scanUnit, []*blockCursor) {
+		var unit scanUnit
+		var cursors []*blockCursor
+		for sid := common.SeriesID(1); sid <= common.SeriesID(series); sid++ {
+			bc := generateBlockCursor()
+			bc.bm.seriesID, bc.bm.count, bc.bm.uncompressedSizeBytes = sid, 6400, 1<<20
+			bc.bm.timestamps.min, bc.bm.timestamps.max = lo, hi
+			bc.minTimestamp, bc.maxTimestamp = lo, hi
+			unit.windows = append(unit.windows, seriesWindow{cursors: []*blockCursor{bc}, sid: sid, minTS: lo, maxTS: hi})
+			cursors = append(cursors, bc)
+		}
+		return unit, cursors
+	}
+
+	unit, cursors := newUnit(1)
+	var stats scanStats
+	require.Nil(t, sliceMergeUnit(&unit, budget, false, &stats), "a unit of one window is not sliced")
+	require.Equal(t, cursors, unit.windows[0].cursors, "and keeps its cursors")
+	require.EqualValues(t, 1, cursors[0].refs.Load())
+	releaseCursors(cursors)
+
+	for _, desc := range []bool{false, true} {
+		unit, cursors = newUnit(2)
+		perRow := budget.perRowBytes()
+		budget.sliceNeed = int64(sliceCost(cursors, perRow, 1000))
+		budget.sliceBudget = budget.sliceNeed
+		width := sliceWidth(cursors, perRow, budget.sliceNeed, budget.sliceBudget, lo, hi)
+		require.Positive(t, width)
+		stats = scanStats{}
+		units := sliceMergeUnit(&unit, budget, desc, &stats)
+		require.Len(t, units, int((hi-lo+width)/width), "desc=%v", desc)
+		require.EqualValues(t, 1, stats.slicedUnits)
+		require.EqualValues(t, len(units), stats.slices)
+		for _, bc := range cursors {
+			require.Zero(t, bc.refs.Load(), "the replaced unit's cursors are released")
+		}
+		for _, w := range unit.windows {
+			require.Nil(t, w.cursors)
+		}
+		// The slices cover [lo, hi] in order, without gaps or overlaps, and are visited from the
+		// newest for a descending scan.
+		next := int64(lo)
+		for i := range units {
+			u := units[i]
+			if desc {
+				u = units[len(units)-1-i]
+			}
+			require.Len(t, u.windows, 2)
+			from, to := u.windows[0].minTS, u.windows[0].maxTS
+			require.Equal(t, next, from, "desc=%v slice %d", desc, i)
+			require.LessOrEqual(t, to-from+1, width)
+			for _, w := range u.windows {
+				require.Equal(t, from, w.minTS)
+				require.Equal(t, to, w.maxTS)
+				require.Len(t, w.cursors, 1)
+				require.Equal(t, w.sid, w.cursors[0].bm.seriesID)
+				require.Equal(t, from, w.cursors[0].minTimestamp)
+				require.Equal(t, to, w.cursors[0].maxTimestamp)
+			}
+			next = to + 1
+		}
+		require.EqualValues(t, hi+1, next)
+		for _, u := range units {
+			for _, w := range u.windows {
+				releaseCursors(w.cursors)
+			}
+		}
+	}
 }
 
 // liveScanLease is a lease that takes refunds, as the lease of a data node scan does.
