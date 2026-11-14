@@ -83,6 +83,8 @@ const (
 
 // ExhaustedError says which allowance ran out and by how much. It matches
 // ErrQueryResourceExhausted under errors.Is, so callers that test for exhaustion are unchanged.
+// Limit, Used and Requested are bytes, except for ReasonResultWindow, where they count results;
+// for ReasonReleased only Requested is set.
 type ExhaustedError struct {
 	Reason    string
 	Limit     uint64
@@ -91,13 +93,21 @@ type ExhaustedError struct {
 }
 
 func (e *ExhaustedError) Error() string {
-	return fmt.Sprintf("%s: %s (limit %d bytes, used %d, requested %d)", ErrQueryResourceExhausted.Error(), e.Reason, e.Limit, e.Used, e.Requested)
+	switch e.Reason {
+	case ReasonResultWindow:
+		return fmt.Sprintf("%s: %s (limit %d results, used %d, requested %d)", ErrQueryResourceExhausted.Error(), e.Reason, e.Limit, e.Used, e.Requested)
+	case ReasonReleased:
+		return fmt.Sprintf("%s: %s (requested %d bytes)", ErrQueryResourceExhausted.Error(), e.Reason, e.Requested)
+	default:
+		return fmt.Sprintf("%s: %s (limit %d bytes, used %d, requested %d)", ErrQueryResourceExhausted.Error(), e.Reason, e.Limit, e.Used, e.Requested)
+	}
 }
 
 // Unwrap reports ErrQueryResourceExhausted as the cause.
 func (e *ExhaustedError) Unwrap() error { return ErrQueryResourceExhausted }
 
-// ExhaustionReason returns the reason and limit of an exhaustion error, or false when err carries none.
+// ExhaustionReason returns the *ExhaustedError in err's chain, which names the allowance that ran out
+// and its figures, or false when err carries none.
 func ExhaustionReason(err error) (*ExhaustedError, bool) {
 	var exhausted *ExhaustedError
 	if errors.As(err, &exhausted) {

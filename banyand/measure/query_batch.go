@@ -234,8 +234,10 @@ func (qr *queryResult) loadCursorsForBatch() error {
 			default:
 			}
 			tmpBlock := generateBlock()
-			defer releaseBlock(tmpBlock)
-			if !qr.data[i].loadData(tmpBlock, typedNumeric) {
+			loaded := qr.data[i].loadData(tmpBlock, typedNumeric)
+			// Before the cursor is handed back: releasing recycles its spare backing.
+			qr.data[i].releaseLoadBlock(tmpBlock)
+			if !loaded {
 				cursorChan <- i
 				return
 			}

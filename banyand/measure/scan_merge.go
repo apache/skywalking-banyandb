@@ -88,6 +88,18 @@ type cursorLoader func(ctx context.Context, bc *blockCursor, desc bool) (bool, e
 // decodeBackingPool holds decoder backing arrays released by compacted cursors.
 var decodeBackingPool sync.Pool
 
+// releaseLoadBlock releases tmpBlock, the temporary block bc was just loaded from, and
+// then returns the decoder backing compactValues detached to decodeBackingPool: nothing
+// views it once the temporary block is released, so the next decode can reuse it. Every
+// caller of loadData releases its temporary block through it.
+func (bc *blockCursor) releaseLoadBlock(tmpBlock *block) {
+	releaseBlock(tmpBlock)
+	if spare := bc.spareBacking; cap(spare) > 0 {
+		bc.spareBacking = nil
+		decodeBackingPool.Put(&spare)
+	}
+}
+
 // decodeCursor is the default cursorLoader: it decodes the block on the calling
 // goroutine.
 func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error) {
@@ -98,11 +110,15 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 	}
 	started := time.Now()
 	tmpBlock := generateBlock()
-	if backing, hit := decodeBackingPool.Get().(*[]byte); hit {
-		bc.columnValuesDecoder.AdoptBacking(*backing)
+	// A decoder that kept its backing would ignore an adopted one, so take from the pool
+	// only for a decoder without one.
+	if bc.columnValuesDecoder.BackingCap() == 0 {
+		if backing, hit := decodeBackingPool.Get().(*[]byte); hit {
+			bc.columnValuesDecoder.AdoptBacking(*backing)
+		}
 	}
 	ok := bc.loadData(tmpBlock, true)
-	releaseBlock(tmpBlock)
+	bc.releaseLoadBlock(tmpBlock)
 	var budget *scanBudget
 	if bc.res != nil {
 		budget = bc.res.budget
@@ -114,12 +130,6 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 			budget.qm.scanDecodeSeconds.Observe(elapsed.Seconds())
 		}
 	}
-	// compactValues detached the decoder's backing; nothing views it once the temporary
-	// block is released, so the next decode can reuse it.
-	if spare := bc.spareBacking; cap(spare) > 0 {
-		bc.spareBacking = nil
-		decodeBackingPool.Put(&spare)
-	}
 	if !ok {
 		return false, nil
 	}
@@ -128,7 +138,11 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 	}
 	if bc.res != nil {
 		before := bc.res.sharedBytes
-		bc.res.trueUp(len(bc.timestamps), bc.bm.count)
+		if bc.compacted {
+			bc.res.trueUpCompacted(len(bc.timestamps), bc.compactedBytes)
+		} else {
+			bc.res.trueUp(len(bc.timestamps), bc.bm.count, uint64(bc.columnValuesDecoder.BackingCap()))
+		}
 		if budget != nil {
 			tel := budget.telemetry()
 			tel.estimate.Add(before)

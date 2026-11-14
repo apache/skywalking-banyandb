@@ -91,11 +91,9 @@ func (t *scanTelemetry) observeDecode(d time.Duration, ok bool) {
 func (t *scanTelemetry) reject(err error, fallback string) string {
 	reason := fallback
 	detail := err.Error()
-	var exhausted *protector.ExhaustedError
-	switch {
-	case errors.As(err, &exhausted):
+	if exhausted, ok := protector.ExhaustionReason(err); ok {
 		reason = exhausted.Reason
-	case errors.Is(err, vectorized.ErrMemoryBudgetExceeded):
+	} else if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
 		reason = rejectSharedTracker
 	}
 	t.mu.Lock()
@@ -206,7 +204,7 @@ func (s *scanSpan) finish(ctx context.Context, st *scanStats, tel *scanTelemetry
 	num(tracelabels.TagBudgetRetained, tel.retained.Load())
 	if counts, last := tel.rejectSummary(); counts != "" {
 		sp.Tag(tracelabels.TagBudgetRejects, counts)
-		sp.Tag(tracelabels.TagBudgetRejectReason, last)
+		sp.Tag(tracelabels.TagBudgetLastReject, last)
 	}
 	if budget != nil && budget.sliceBudget > 0 {
 		num(tracelabels.TagSliceNeed, budget.sliceNeed)
