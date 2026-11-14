@@ -496,3 +496,27 @@ func TestExhaustionNamesTheAllowanceThatRanOut(t *testing.T) {
 		t.Fatalf("want a shared pool failure, got %v", err)
 	}
 }
+
+func TestExhaustedErrorNamesTheUnitOfItsFigures(t *testing.T) {
+	for _, tt := range []struct {
+		err  *ExhaustedError
+		want string
+	}{
+		{
+			err:  &ExhaustedError{Reason: ReasonPerQueryLimit, Limit: 1 << 20, Used: 600 << 10, Requested: 600 << 10},
+			want: "query memory pool exhausted: per_query_limit (limit 1048576 bytes, used 614400, requested 614400)",
+		},
+		{
+			err:  &ExhaustedError{Reason: ReasonResultWindow, Limit: queryAbsoluteWindow, Used: queryAbsoluteWindow, Requested: 1},
+			want: "query memory pool exhausted: result_window (limit 100000 results, used 100000, requested 1)",
+		},
+		{
+			err:  &ExhaustedError{Reason: ReasonReleased, Requested: 4096},
+			want: "query memory pool exhausted: released (requested 4096 bytes)",
+		},
+	} {
+		if got := tt.err.Error(); got != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.err.Reason, got, tt.want)
+		}
+	}
+}

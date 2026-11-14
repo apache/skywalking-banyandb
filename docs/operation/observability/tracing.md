@@ -81,7 +81,7 @@ the release of the result. The tags are aggregates for the whole scan, never one
 | Did the decode pool help? | `pool_workers`, `pool_queued_at_start`, `prefetch_peak`, `prefetch_hits`, `prefetch_waits` |
 | How close to its limit was the query? | `budget_lease_limit`, `budget_lease_peak`, `budget_shared_limit`, `budget_shared_peak` |
 | Is the memory estimate sound? | `budget_estimate_bytes` (before decode), `budget_estimate_kept_bytes` (after the refund), `budget_retained_bytes` (measured; traced queries only), `compacted_cursors` |
-| What was refused, and by what? | `budget_rejects` (`reason=count` pairs), `budget_reject_reason` (the last one, with limit, used and requested bytes) |
+| What was refused, and by what? | `budget_rejects` (`reason=count` pairs), `budget_reject_reason` (the last one's error, with its limit, used and requested figures: results for `result_window`, bytes otherwise) |
 | Was the merge cut into time slices? | `slice_need_bytes`, `slice_target_bytes`, `slices`, `sliced_units` |
 
 Rejection reasons: `per_query_limit` (the query's own assignment), `shared_pool` (the pool shared by all
