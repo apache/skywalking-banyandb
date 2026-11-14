@@ -87,6 +87,8 @@ func TestTracedScanRecordsPoolAndBudgetTags(t *testing.T) {
 	for sid := common.SeriesID(1); sid <= 40; sid++ {
 		part = append(part, fxRange{sid: sid, from: 1, to: 240, version: 1})
 	}
+	// Series 41's block spans the window by its metadata but has no row in it.
+	part = append(part, fxRange{sid: 41, from: 0, to: 0, version: 1}, fxRange{sid: 41, from: 30, to: 40, version: 1})
 	fx := newFixture(t, part)
 	q := prefetchQuery(1, 20, true, true) // narrow window over wide blocks: the cursors compact
 	result, tracer, closeResult := tracedResult(t, fx, q, 96<<20)
@@ -95,26 +97,115 @@ func TestTracedScanRecordsPoolAndBudgetTags(t *testing.T) {
 	require.Len(t, rows, 40*20)
 
 	tags := scanSpanTags(t, tracer)
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagScanBlocks))
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagScanBlocksDecoded))
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagMergeCursors))
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagMergePeakLive))
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagCompactedCursors))
-	require.Positive(t, tagInt(t, tags, tracelabels.TagDecodeNSTotal))
-	require.GreaterOrEqual(t, tagInt(t, tags, tracelabels.TagDecodeNSMax), int64(1))
-	require.EqualValues(t, 40, tagInt(t, tags, tracelabels.TagPrefetchHits)+tagInt(t, tags, tracelabels.TagPrefetchWaits))
-	require.Positive(t, tagInt(t, tags, tracelabels.TagPlanNS))
-	require.Positive(t, tagInt(t, tags, tracelabels.TagScanNS))
-	require.EqualValues(t, 96<<20, tagInt(t, tags, tracelabels.TagBudgetLeaseLimit))
-	require.EqualValues(t, 96<<20, tagInt(t, tags, tracelabels.TagBudgetSharedLimit))
-	require.Positive(t, tagInt(t, tags, tracelabels.TagBudgetSharedPeak))
-	estimate := tagInt(t, tags, tracelabels.TagBudgetEstimate)
-	kept := tagInt(t, tags, tracelabels.TagBudgetEstimateKept)
-	retained := tagInt(t, tags, tracelabels.TagBudgetRetained)
+	st, tel := &result.scan.stats, result.budget.telemetry()
+	lease, ok := query.BudgetLeaseFromContext(result.ctx)
+	require.True(t, ok)
+	peaker, ok := lease.(leasePeaker)
+	require.True(t, ok, "the test lease tracks its peak, as the production lease does")
+	tracker, ok := vectorized.QueryMemoryTrackerFromContext(result.ctx)
+	require.True(t, ok)
+	// Every tag the span carries, from the measurement it reports.
+	want := map[string]int64{
+		tracelabels.TagScanBlocks:         st.blocks,
+		tracelabels.TagScanBlocksDecoded:  tel.decodes.Load() - tel.decodesEmpty.Load(),
+		tracelabels.TagScanBlocksNoRows:   tel.decodesEmpty.Load(),
+		tracelabels.TagScanWindows:        st.windows,
+		tracelabels.TagMergeUnits:         st.mergeUnits,
+		tracelabels.TagMergeCursors:       st.mergeCursors,
+		tracelabels.TagMergePeakLive:      st.mergePeakLive,
+		tracelabels.TagPrefetchPeak:       st.prefetchPeak,
+		tracelabels.TagPrefetchHits:       tel.hits.Load(),
+		tracelabels.TagPrefetchWaits:      tel.waits.Load(),
+		tracelabels.TagDecodeWaitNS:       tel.waitNS.Load(),
+		tracelabels.TagDecodeNSTotal:      tel.decodeNS.Load(),
+		tracelabels.TagDecodeNSMax:        tel.decodeNSMax.Load(),
+		tracelabels.TagDecodeQueueNS:      tel.queueNS.Load(),
+		tracelabels.TagPlanNS:             tel.planNS.Load(),
+		tracelabels.TagScanNS:             tel.scanNS.Load(),
+		tracelabels.TagMergeNS:            max(tel.scanNS.Load()-tel.waitNS.Load(), 0),
+		tracelabels.TagPoolWorkers:        int64(sharedFixturePool().workers),
+		tracelabels.TagPoolQueued:         int64(tel.poolQueued),
+		tracelabels.TagCompactedCursors:   tel.compacted.Load(),
+		tracelabels.TagBudgetLeaseLimit:   int64(lease.Limit()),
+		tracelabels.TagBudgetLeasePeak:    int64(peaker.Peak()),
+		tracelabels.TagBudgetSharedLimit:  tracker.Limit(),
+		tracelabels.TagBudgetSharedPeak:   tracker.Peak(),
+		tracelabels.TagBudgetEstimate:     tel.estimate.Load(),
+		tracelabels.TagBudgetEstimateKept: tel.estimateKept.Load(),
+		tracelabels.TagBudgetRetained:     tel.retained.Load(),
+		tracelabels.TagSliceNeed:          result.budget.sliceNeed,
+		tracelabels.TagSliceTarget:        result.budget.sliceBudget,
+		tracelabels.TagSlices:             st.slices,
+		tracelabels.TagSlicedUnits:        st.slicedUnits,
+	}
+	got := make(map[string]int64, len(tags))
+	for key := range tags {
+		got[key] = tagInt(t, tags, key)
+	}
+	require.Equal(t, want, got)
+
+	// What the scan of this fixture measures, and the invariants between the tags.
+	require.EqualValues(t, 41, got[tracelabels.TagScanBlocks])
+	require.EqualValues(t, 40, got[tracelabels.TagScanBlocksDecoded])
+	require.EqualValues(t, 1, got[tracelabels.TagScanBlocksNoRows])
+	require.Equal(t, got[tracelabels.TagScanBlocks], got[tracelabels.TagScanBlocksDecoded]+got[tracelabels.TagScanBlocksNoRows])
+	require.EqualValues(t, 40, got[tracelabels.TagMergeCursors], "the cursor with no row in range is not merged")
+	require.EqualValues(t, 40, got[tracelabels.TagMergePeakLive])
+	require.EqualValues(t, 40, got[tracelabels.TagCompactedCursors])
+	require.EqualValues(t, 41, got[tracelabels.TagPrefetchHits]+got[tracelabels.TagPrefetchWaits])
+	require.Positive(t, got[tracelabels.TagScanWindows])
+	require.Positive(t, got[tracelabels.TagMergeUnits])
+	require.Positive(t, got[tracelabels.TagDecodeNSTotal])
+	require.Positive(t, got[tracelabels.TagDecodeNSMax])
+	require.LessOrEqual(t, got[tracelabels.TagDecodeNSMax], got[tracelabels.TagDecodeNSTotal])
+	require.Positive(t, got[tracelabels.TagPlanNS])
+	require.Positive(t, got[tracelabels.TagScanNS])
+	require.LessOrEqual(t, got[tracelabels.TagDecodeWaitNS], got[tracelabels.TagScanNS])
+	require.Equal(t, got[tracelabels.TagScanNS]-got[tracelabels.TagDecodeWaitNS], got[tracelabels.TagMergeNS])
+	require.EqualValues(t, 96<<20, got[tracelabels.TagBudgetLeaseLimit])
+	require.Positive(t, got[tracelabels.TagBudgetLeasePeak], "the scan charged the lease")
+	require.LessOrEqual(t, got[tracelabels.TagBudgetLeasePeak], got[tracelabels.TagBudgetLeaseLimit])
+	require.EqualValues(t, 96<<20, got[tracelabels.TagBudgetSharedLimit])
+	require.Positive(t, got[tracelabels.TagBudgetSharedPeak])
+	require.LessOrEqual(t, got[tracelabels.TagBudgetSharedPeak], got[tracelabels.TagBudgetSharedLimit])
+	estimate := got[tracelabels.TagBudgetEstimate]
+	kept := got[tracelabels.TagBudgetEstimateKept]
+	retained := got[tracelabels.TagBudgetRetained]
 	require.Greater(t, estimate, kept, "the refund after decode lowers the reservation")
 	require.Positive(t, retained, "a traced scan measures what its cursors retained")
 	require.GreaterOrEqual(t, kept, retained, "the envelope covers what the cursors retained")
+	require.Zero(t, got[tracelabels.TagSlices], "a merge that fits is not sliced")
+	require.Zero(t, got[tracelabels.TagSlicedUnits])
 	require.NotContains(t, tags, tracelabels.TagBudgetRejects)
+}
+
+// A traced merge cut into time slices reports the slicing and the budgets that decided it.
+func TestTracedSlicedScanRecordsSliceTags(t *testing.T) {
+	var older, newer fxPart
+	for sid := common.SeriesID(1); sid <= 40; sid++ {
+		older = append(older, fxRange{sid: sid, from: 1, to: 240, version: 1})
+		newer = append(newer, fxRange{sid: sid, from: 200, to: 300, version: 2})
+	}
+	fx := newFixture(t, older, newer)
+	q := prefetchQuery(0, 400, true, true)
+	result, tracer, closeResult := tracedResult(t, fx, q, 64<<20)
+	// A budget that holds a few slices' worth of cursors, so the unit is cut.
+	result.budget.sliceNeed, result.budget.sliceBudget = 2<<20, 2<<20
+	drainRows(t, result)
+	closeResult()
+
+	tags := scanSpanTags(t, tracer)
+	st := &result.scan.stats
+	require.EqualValues(t, 2<<20, tagInt(t, tags, tracelabels.TagSliceNeed))
+	require.EqualValues(t, 2<<20, tagInt(t, tags, tracelabels.TagSliceTarget))
+	slices, units := tagInt(t, tags, tracelabels.TagSlices), tagInt(t, tags, tracelabels.TagSlicedUnits)
+	require.Equal(t, st.slices, slices)
+	require.Equal(t, st.slicedUnits, units)
+	require.GreaterOrEqual(t, units, int64(1))
+	require.Greater(t, slices, units, "each sliced unit is cut into two slices or more")
+	// A block that spans several slices is decoded once per slice.
+	decoded, noRows := tagInt(t, tags, tracelabels.TagScanBlocksDecoded), tagInt(t, tags, tracelabels.TagScanBlocksNoRows)
+	require.Greater(t, decoded+noRows, tagInt(t, tags, tracelabels.TagScanBlocks))
 }
 
 func TestUntracedScanRecordsNoSpan(t *testing.T) {
