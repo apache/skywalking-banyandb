@@ -119,6 +119,15 @@ measurements is the `scan-storage` trace span (docs/operation/observability/trac
 | Frame, numeric and string refactor as steps 1-2 | Shipped as part of the batch-v2 core, not as a separate step. |
 | A cheap overlap counter read on a real cluster before optimizing | The counters shipped; reading them on a real cluster has not happened. |
 
+A later change fits the scan's memory reservations to what blocks hold. It departs from three
+[batch-v2 goals](../measure-batch-v2/README.md#4-goals-and-non-goals) on purpose:
+
+| Batch-v2 goal | As built, and why |
+|---|---|
+| Decode each stored value at most once | A time-ordered merge whose cursors would exceed the query's whole allowance is cut into consecutive time slices, and a block is decoded once per slice it overlaps, at most 64 times (`maxMergeSlices`). A block cannot be decoded in part, so this is the only way such a merge (many series over blocks much wider than the window, as after a merge) runs instead of failing with `query memory pool exhausted`. A merge that fits is not sliced; `total_scan_slices` and the span's `slices` tag show the extra decodes. |
+| Copy a value only when it must outlive the cursor | A cursor that keeps under half its block copies its values into a buffer of their own (compaction), so the rest of the decoded block can be freed instead of staying live as long as the cursor. |
+| Exact memory accounting | A cursor is reserved before its decode for the rows its block metadata puts in the query range, assuming they are spread evenly over the block's time span, instead of for the whole block. After the decode the reservation is lowered, never raised, to what the cursor keeps; a compacted cursor is charged the bytes it measured. Raising would mean a refusal in the middle of a decode. Rows bunched inside the window can therefore keep more than the reservation; the 6x decode-expansion term usually covers it, and a traced query shows it as `budget_retained_bytes` above `budget_estimate_kept_bytes`. |
+
 ### 2.3 Measured results
 
 Real stored blocks; the gate workloads W1-W15 are in
