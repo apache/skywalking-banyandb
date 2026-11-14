@@ -74,6 +74,27 @@ func TestTimeSlicedMergeMatchesUnslicedMerge(t *testing.T) {
 	}
 }
 
+// sliceTestCursor is a cursor planned from metadata only: count rows over [lo, hi] in a block of
+// encoded bytes.
+func sliceTestCursor(lo, hi int64, count, encoded uint64) *blockCursor {
+	bc := &blockCursor{bm: blockMetadata{count: count, uncompressedSizeBytes: encoded}}
+	bc.bm.timestamps.min, bc.bm.timestamps.max = lo, hi
+	return bc
+}
+
+// A unit whose maxMergeSlices slices miss the slice target but fit the whole allowance is cut
+// into maxMergeSlices slices rather than merged whole, which would exceed the allowance.
+func TestSliceWidthFallsBackToMaxSlices(t *testing.T) {
+	const perRow, lo, hi = 100, 0, 6399
+	cursors := []*blockCursor{sliceTestCursor(lo, hi, 6400, 1<<20), sliceTestCursor(lo, hi, 6400, 1<<20)}
+	minWidth := int64((hi - lo + 1) / maxMergeSlices)
+	fits := int64(sliceCost(cursors, perRow, minWidth))
+	require.Greater(t, sliceCost(cursors, perRow, hi-lo+1), uint64(fits), "the whole unit exceeds the allowance")
+	require.Equal(t, minWidth, sliceWidth(cursors, perRow, fits, fits-1, lo, hi),
+		"maxMergeSlices slices fit the allowance, not the slice target")
+	require.Zero(t, sliceWidth(cursors, perRow, fits-1, fits-1, lo, hi), "maxMergeSlices slices fit neither")
+}
+
 // liveScanLease is a lease that takes refunds, as the lease of a data node scan does.
 type liveScanLease struct{ scanReuseLease }
 

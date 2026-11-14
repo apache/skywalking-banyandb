@@ -36,8 +36,10 @@ import (
 // decoded once per slice, which is the price of not keeping its rows.
 //
 // The slice width is derived from block metadata and the budget, not configured: it is the
-// widest slice for which the cursors it opens fit the slice budget. A unit that fits whole,
-// which is every narrow query, is not sliced and runs exactly as before.
+// widest slice for which the cursors it opens fit the slice budget. When even maxMergeSlices
+// slices miss that budget but fit the whole allowance, the unit is cut into maxMergeSlices
+// slices. A unit that fits whole, which is every narrow query, is not sliced and runs exactly
+// as before.
 
 const (
 	// maxMergeSlices bounds the repeated decoding of one block.
@@ -82,7 +84,9 @@ func sliceCost(cursors []*blockCursor, perRow uint64, width int64) uint64 {
 }
 
 // sliceWidth returns the width in nanoseconds of the slices a unit over [lo, hi] is cut into,
-// or 0 when it should not be sliced: it already fits, or slicing cannot make it fit.
+// or 0 when it should not be sliced: it already fits, or slicing cannot make it fit. The width
+// is the widest whose cost fits the slice budget; when even maxMergeSlices slices miss that
+// but fit need, the whole allowance, it is the width of maxMergeSlices slices.
 func sliceWidth(cursors []*blockCursor, perRow uint64, need, budget, lo, hi int64) int64 {
 	span := hi - lo + 1
 	if budget <= 0 || span <= 1 || len(cursors) < 2 {
@@ -92,7 +96,10 @@ func sliceWidth(cursors []*blockCursor, perRow uint64, need, budget, lo, hi int6
 		return 0
 	}
 	minWidth := (span + maxMergeSlices - 1) / maxMergeSlices
-	if sliceCost(cursors, perRow, minWidth) > uint64(budget) {
+	if cost := sliceCost(cursors, perRow, minWidth); cost > uint64(budget) {
+		if cost <= uint64(need) {
+			return minWidth
+		}
 		return 0
 	}
 	good, bad := minWidth, span
