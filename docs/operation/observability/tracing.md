@@ -84,9 +84,11 @@ the release of the result. The tags are aggregates for the whole scan, never one
 | What was refused, and by what? | `budget_rejects` (`reason=count` pairs), `budget_reject_reason` (the last one's error, with its limit, used and requested figures: results for `result_window`, bytes otherwise) |
 | Was the merge cut into time slices? | `slice_need_bytes`, `slice_target_bytes`, `slices`, `sliced_units` |
 
-Rejection reasons: `per_query_limit` (the query's own assignment), `shared_pool` (the pool shared by all
-queries), `node_headroom` (the protector's available memory), `result_window`, `released`, `shared_tracker` (the
-query's memory tracker limit) and `raw_quota` (the per-cursor byte quota).
+Rejection reasons, which are also the `reason` label values of `total_scan_reservation_rejections`:
+`per_query_limit` (the query's own assignment), `shared_pool` (the pool shared by all queries), `node_headroom`
+(the protector's available memory), `result_window`, `released`, `shared_tracker` (the query's memory tracker
+limit), `raw_quota` (the per-cursor byte quota), `acquire` (the protector refused to admit the scan's first
+reservation) and `other` (the shared reservation failed for any other reason).
 
 Reading it: `prefetch_waits` close to `scan_blocks_decoded` with a large `decode_wait_ns` means the scan is
 decode-bound and the pool (or its queue, `decode_queue_ns`) is the place to look; a large `merge_ns` means the
