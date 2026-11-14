@@ -183,6 +183,14 @@ func BenchmarkSortedMergeFilteredTopN(b *testing.B) {
 		b.Run(tc.name+"/uncapped-no-premerge-filter", func(sub *testing.B) {
 			runMergeBenchmark(sub, schema, batches, 0, benchTopN)
 		})
+		// The timestamp-order shape before apache/skywalking#14215: the merge capped
+		// BEFORE the filter, which then ran on at most benchTopN rows at the egress. Its
+		// cost is the capped merge alone, so the gap to the arm below is the price of
+		// filtering every scanned row. It returned too few rows whenever a match sat
+		// beyond the cap, which is the bug.
+		b.Run(tc.name+"/capped-before-filter-old-ts-order", func(sub *testing.B) {
+			runMergeBenchmark(sub, schema, batches, benchTopN, benchTopN)
+		})
 		b.Run(tc.name+"/capped-with-premerge-filter", func(sub *testing.B) {
 			runMergeBenchmark(sub, schema, batches, benchTopN, benchTopN, benchTagFilter(sub, schema))
 		})
