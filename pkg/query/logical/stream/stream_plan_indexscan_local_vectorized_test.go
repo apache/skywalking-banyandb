@@ -157,29 +157,26 @@ func newVecFilteredPlan(t *testing.T, order *logical.OrderBy, projection []model
 	return &limit{Parent: &Parent{Input: filter}}, scan
 }
 
-// TestScanCap_FilteredTimeOrder_CapsMerge locks the row-parity rule a stream soak
-// exposed. For TIMESTAMP order, one row Pull consumes a segment and caps at
-// maxElementSize, and the following Pull only advances to a further segment — so
-// within a segment the row scan is exhausted and row returns just that first capped
-// batch's matches (30 scanned, 2 rejected ⇒ 28, NOT a filled limit of 30). The vec
-// merge must therefore cap and leave the filter AT THE EGRESS, behind that cap,
-// feeding it the same element set. Pushing the filter ahead of the merge here would
-// let the merge fill the limit from rows row never sees, and over-return.
-func TestScanCap_FilteredTimeOrder_CapsMerge(t *testing.T) {
+// TestScanCap_FilteredTimeOrder_PushesFilterDown locks apache/skywalking#14215. A
+// timestamp-order query must run its criteria filter AHEAD of the merge too, so the
+// maxElementSize cap keeps the top-N of the filtered set. A cap taken before the
+// filter would offer the criterion only the first limit elements of each series and
+// miss every match further in.
+func TestScanCap_FilteredTimeOrder_PushesFilterDown(t *testing.T) {
 	projection := []model.TagProjection{{Family: "searchable", Names: []string{"service", "state"}}}
 	plan, scan := newVecFilteredPlan(t, nil, projection)
 
 	require.NotNil(t, VecExecutable(plan), "a filtered time-order query is vec-eligible")
-	require.Nil(t, scan.preMergeFilter,
-		"time-order scans do not resume within a segment, so the filter must stay at the egress behind the cap")
+	require.NotNil(t, scan.preMergeFilter,
+		"the filter must run pre-merge for timestamp order, or the cap hides matches past the first limit rows")
 	criteria, ok := VecTagFilter(plan)
 	require.True(t, ok)
-	require.False(t, criteria.PreMerged,
-		"the egress owns the only Match for timestamp order, so it must not be told to skip it")
+	require.True(t, criteria.PreMerged,
+		"the columns already matched, so the egress must be told to skip the redundant Match")
 }
 
-// TestScanCap_FilteredIndexOrder_PushesFilterDown is the other arm, and the shape
-// #14056 is about. For INDEX order the sorted iterator persists across Pulls (each
+// TestScanCap_FilteredIndexOrder_PushesFilterDown covers the index-order shape of
+// #14056. For INDEX order the sorted iterator persists across Pulls (each
 // drains the next maxElementSize entries), so row keeps pulling and DOES fill the
 // limit. A cap taken BEFORE the filter would starve it, so the filter moves ahead
 // of the merge instead: the merge then orders only surviving rows, and its cap

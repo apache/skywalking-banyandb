@@ -558,26 +558,22 @@ func TestStreamVecDispatch_HiddenOrderTagEmitsFrame(t *testing.T) {
 	require.Equal(t, []string{"old", "other"}, gotServices)
 }
 
-// Under-fill fixture for apache/skywalking#14067 R2. Six rows, a limit of three, so
-// the merge cap genuinely excludes rows, which the three-row oracle table could never
-// do against a limit of ten.
+// Cap fixture for apache/skywalking#14215. Six rows, a limit of three, so the merge
+// cap genuinely excludes rows, which the three-row oracle table could never do
+// against a limit of ten.
 //
-//	ts=1  ID=1  state=open    service=cap-1    <- inside the cap, matches
-//	ts=2  ID=2  state=closed  service=cap-2    <- inside the cap, REJECTED
-//	ts=3  ID=3  state=open    service=cap-3    <- inside the cap, matches
-//	ts=4  ID=4  state=open    service=past-4   <- MATCHES, but beyond the cap
+//	ts=1  ID=1  state=open    service=cap-1    <- matches
+//	ts=2  ID=2  state=closed  service=cap-2    <- REJECTED
+//	ts=3  ID=3  state=open    service=cap-3    <- matches
+//	ts=4  ID=4  state=open    service=past-4   <- matches, position 4 of the scan
 //	ts=5  ID=5  state=open    service=past-5
 //	ts=6  ID=6  state=open    service=past-6
 //
 // Hand-calculated expected answer, ascending timestamp order, criteria state=open,
-// limit 3, offset 0:
-//
-//	cap keeps ts 1,2,3  ->  filter drops ts 2  ->  [cap-1, cap-3]
-//
-// TWO rows for a limit of three. That gap IS the under-fill the row path produced and
-// the issue forbids changing. A filter that ran AHEAD of the cap would see five
-// matching rows and fill the limit with [cap-1, cap-3, past-4], so the literal answer
-// below fails the moment the stage order moves.
+// limit 3, offset 0: the filter runs before the cap, so the cap keeps the first
+// three MATCHES — [cap-1, cap-3, past-4]. A cap taken before the filter would
+// return only [cap-1, cap-3] and hide past-4, a match that sits beyond the first
+// three scanned rows.
 const (
 	oracleCapLimit     = 3
 	oracleCapRejectRow = "cap-2"
@@ -596,7 +592,7 @@ func oracleCapRows() []oracleRow {
 }
 
 // newOracleCapPlan builds the timestamp-order plan over oracleCapRows. Timestamp order
-// means no index rule, so the scan takes no pre-merge filter and no OrderKey column.
+// means no index rule and no OrderKey column.
 func newOracleCapPlan(t *testing.T, req *streamv1.QueryRequest) logical.Plan {
 	t.Helper()
 	executedTags := []string{oracleClientTag, oracleCriteriaTag}
@@ -613,25 +609,23 @@ func newOracleCapPlan(t *testing.T, req *streamv1.QueryRequest) logical.Plan {
 	return plan
 }
 
-// TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap is the
-// apache/skywalking#14067 R2 guard: a timestamp-order scan caps BEFORE it filters, so
-// its filter must stay after the cap or the merge fills the limit from rows the row
-// path never saw.
+// TestStreamVecDispatch_TimeOrderFilterRunsBeforeTheCap is the
+// apache/skywalking#14215 guard: a timestamp-order query must filter BEFORE it caps,
+// so the limit fills from the matching rows wherever they sit among the rejected
+// ones.
 //
 // The expected values are the hand-calculated ones above, not values read back from
 // the protobuf implementation. That matters more now that both egresses share one
 // columnar stage: a frame-against-protobuf comparison would compare the same code
 // with itself and pass whatever the stage did.
-func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
-	wantServices := []string{"cap-1", "cap-3"}
+func TestStreamVecDispatch_TimeOrderFilterRunsBeforeTheCap(t *testing.T) {
+	wantServices := []string{"cap-1", "cap-3", oracleCapBeyondRow}
 
-	assertUnderFilled := func(t *testing.T, got []string) {
+	assertFilled := func(t *testing.T, got []string) {
 		t.Helper()
 		require.Equal(t, wantServices, got,
-			"the timestamp-order answer changed, so the filter no longer sits behind the cap")
-		require.Len(t, got, 2, "the limit is 3 and the answer must stay under-filled at 2")
-		require.NotContains(t, got, oracleCapBeyondRow,
-			"a matching row from beyond the cap came back, so the filter ran ahead of the merge")
+			"the timestamp-order answer changed, so the filter no longer runs ahead of the cap")
+		require.Len(t, got, oracleCapLimit, "the limit is filled from the matching rows")
 		require.NotContains(t, got, oracleCapRejectRow, "a rejected row came back")
 	}
 
@@ -650,7 +644,7 @@ func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
 		require.NoError(t, err)
 		_, hasState := batch.Schema.TagIndex(oracleFamily, oracleCriteriaTag)
 		require.False(t, hasState, "the criteria-only tag %q leaked into the frame", oracleCriteriaTag)
-		assertUnderFilled(t, oracleFrameServices(t, batch))
+		assertFilled(t, oracleFrameServices(t, batch))
 	})
 
 	t.Run("protobuf", func(t *testing.T) {
@@ -663,8 +657,41 @@ func TestStreamVecDispatch_TimeOrderFilterStaysBehindTheCap(t *testing.T) {
 		require.True(t, handled)
 		response, ok := resp.Data().(*streamv1.QueryResponse)
 		require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
-		assertUnderFilled(t, oracleProtoServices(t, response.GetElements()))
+		assertFilled(t, oracleProtoServices(t, response.GetElements()))
 	})
+}
+
+// TestStreamVecDispatch_TimeOrderFilterBeforeCapDescAndOffset covers the shapes the
+// ascending, offset-0 case above leaves out: descending order, and an offset, where
+// the per-node cap is limit+offset. Hand-calculated over oracleCapRows, whose
+// matching rows in ascending order are cap-1, cap-3, past-4, past-5, past-6.
+func TestStreamVecDispatch_TimeOrderFilterBeforeCapDescAndOffset(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		want   []string
+		sort   modelv1.Sort
+		limit  uint32
+		offset uint32
+	}{
+		{name: "desc", sort: modelv1.Sort_SORT_DESC, limit: 2, want: []string{"past-6", "past-5"}},
+		{name: "asc with offset", sort: modelv1.Sort_SORT_ASC, limit: 2, offset: 1, want: []string{"cap-3", oracleCapBeyondRow}},
+		{name: "desc with offset", sort: modelv1.Sort_SORT_DESC, limit: 2, offset: 2, want: []string{"past-4", "cap-3"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newOracleStandaloneProcessor(t)
+			req := oracleRequest([]string{oracleClientTag}, true, "")
+			req.OrderBy.Sort = tc.sort
+			req.Limit = tc.limit
+			req.Offset = tc.offset
+			plan := newOracleCapPlan(t, req)
+
+			handled, resp := p.tryStreamVecDispatch(context.Background(), plan, req, false)
+			require.True(t, handled)
+			response, ok := resp.Data().(*streamv1.QueryResponse)
+			require.True(t, ok, "standalone emitted %T, not a proto response", resp.Data())
+			require.Equal(t, tc.want, oracleProtoServices(t, response.GetElements()))
+		})
+	}
 }
 
 // TestStreamVecDispatch_CancelledFilteredQueryFailsClosed is the
@@ -900,8 +927,7 @@ func TestStreamVecDispatch_MultiGroupFilteredDispatch(t *testing.T) {
 	groupNames := []string{"test", "test-b"}
 	rowsA, rowsB := oracleMultiGroupRows()
 
-	// TIMESTAMP order is the arm the mutation breaks: it pushes no filter down, so
-	// every group's criteria has to run on that group's elements.
+	// TIMESTAMP order, like index order, filters ahead of the merge in every group.
 	t.Run("timestamp order filters each group", func(t *testing.T) {
 		p := newOracleProcessor(t)
 		req := oracleRequest([]string{oracleClientTag}, true, "")
@@ -935,13 +961,9 @@ func TestStreamVecDispatch_MultiGroupFilteredDispatch(t *testing.T) {
 		// timestamp order puts b-open first.
 		require.Equal(t, []string{"b-open", "a-open"}, services)
 
-		// The fixture guard sits BEHIND the answer deliberately. A timestamp-order group
-		// must not push its filter down, or the per-element filter this arm targets never
-		// runs — but checking that first would abort on a forced PreMerged before the
-		// answer assertions above could catch it, which is the whole point of them.
 		for groupIdx, group := range merge.Groups {
-			require.False(t, group.Criteria.PreMerged,
-				"group %d pushed its filter down, so this arm proves nothing", groupIdx)
+			require.True(t, group.Criteria.PreMerged,
+				"group %d must push its filter ahead of the merge", groupIdx)
 		}
 	})
 
