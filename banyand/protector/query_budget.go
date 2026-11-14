@@ -106,7 +106,8 @@ func (e *ExhaustedError) Error() string {
 // Unwrap reports ErrQueryResourceExhausted as the cause.
 func (e *ExhaustedError) Unwrap() error { return ErrQueryResourceExhausted }
 
-// ExhaustionReason returns the reason and limit of an exhaustion error, or false when err carries none.
+// ExhaustionReason returns the *ExhaustedError in err's chain, which names the allowance that ran out
+// and its figures, or false when err carries none.
 func ExhaustionReason(err error) (*ExhaustedError, bool) {
 	var exhausted *ExhaustedError
 	if errors.As(err, &exhausted) {
