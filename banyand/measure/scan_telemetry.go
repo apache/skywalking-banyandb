@@ -91,11 +91,9 @@ func (t *scanTelemetry) observeDecode(d time.Duration, ok bool) {
 func (t *scanTelemetry) reject(err error, fallback string) string {
 	reason := fallback
 	detail := err.Error()
-	var exhausted *protector.ExhaustedError
-	switch {
-	case errors.As(err, &exhausted):
+	if exhausted, ok := protector.ExhaustionReason(err); ok {
 		reason = exhausted.Reason
-	case errors.Is(err, vectorized.ErrMemoryBudgetExceeded):
+	} else if errors.Is(err, vectorized.ErrMemoryBudgetExceeded) {
 		reason = rejectSharedTracker
 	}
 	t.mu.Lock()

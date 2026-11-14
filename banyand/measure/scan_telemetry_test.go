@@ -18,6 +18,9 @@
 package measure
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"testing"
@@ -26,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/tracelabels"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -139,4 +143,20 @@ func TestRejectedReservationIsReportedWithItsReason(t *testing.T) {
 	require.Contains(t, tags, tracelabels.TagBudgetRejects)
 	require.Contains(t, tags[tracelabels.TagBudgetRejects], "shared_tracker=")
 	require.Contains(t, tags[tracelabels.TagBudgetRejectReason], "memory budget exceeded")
+}
+
+func TestScanTelemetryRejectClassifiesReasons(t *testing.T) {
+	var tel scanTelemetry
+	exhausted := fmt.Errorf("reserve: %w", &protector.ExhaustedError{Reason: protector.ReasonPerQueryLimit, Limit: 10, Requested: 20})
+	require.Equal(t, protector.ReasonPerQueryLimit, tel.reject(exhausted, rejectOther), "an exhaustion error names its reason")
+	shared := fmt.Errorf("decode: %w", vectorized.ErrMemoryBudgetExceeded)
+	require.Equal(t, rejectSharedTracker, tel.reject(shared, rejectOther), "the shared tracker's error")
+	require.Equal(t, rejectRawQuota, tel.reject(errors.New("block scan quota exceeded"), rejectRawQuota), "an error naming no reason")
+	// A protector AcquireResource failure wraps the context's error and names no reason.
+	acquire := fmt.Errorf("context canceled: memory acquisition failed: %w", context.DeadlineExceeded)
+	require.Equal(t, rejectAcquire, tel.reject(acquire, rejectAcquire), "a refused admission")
+
+	counts, last := tel.rejectSummary()
+	require.Equal(t, "acquire=1,per_query_limit=1,raw_quota=1,shared_tracker=1", counts)
+	require.Equal(t, acquire.Error(), last)
 }
