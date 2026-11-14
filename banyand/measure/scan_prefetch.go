@@ -20,6 +20,7 @@ package measure
 import (
 	"context"
 	"sort"
+	"time"
 )
 
 // Prefetch (measure scan path v2, step 4b).
@@ -213,7 +214,10 @@ func (pf *prefetcher) take(ctx context.Context, bc *blockCursor) (bool, error) {
 			pf.advance()
 			return false, err
 		}
+		pf.budget.telemetry().waits.Add(1)
+		inline := time.Now()
 		ok, err := (*pf.load)(ctx, bc, pf.desc)
+		pf.budget.telemetry().waitNS.Add(time.Since(inline).Nanoseconds())
 		pf.advance()
 		return ok, err
 	}
@@ -226,7 +230,14 @@ func (pf *prefetcher) take(ctx context.Context, bc *blockCursor) (bool, error) {
 		pf.next = pf.head + 1
 	}
 	pf.promote(it)
-	pf.wait(ctx, &it.task)
+	if it.task.finished() {
+		pf.budget.telemetry().hits.Add(1)
+	} else {
+		pf.budget.telemetry().waits.Add(1)
+		waitStart := time.Now()
+		pf.wait(ctx, &it.task)
+		pf.budget.telemetry().waitNS.Add(time.Since(waitStart).Nanoseconds())
+	}
 	ok, err := it.task.ok, it.task.err
 	pf.advance()
 	pf.pump()

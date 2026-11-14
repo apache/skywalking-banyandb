@@ -67,6 +67,33 @@ distributed-{nodeID}
 └── build-iterator
 ```
 
+### Storage scan span
+
+A data node adds a `scan-storage` span for the storage scan of each traced query. It sits beside the `scan`
+operator span: `scan` counts the rows the pipeline pulled, `scan-storage` says how the blocks behind them were
+read and how the query's memory budget held up. Its duration is the life of the scan, from the first batch to
+the release of the result. The tags are aggregates for the whole scan, never one per block.
+
+| Question | Tags |
+|---|---|
+| What did the scan read? | `scan_blocks`, `scan_blocks_decoded`, `scan_blocks_no_rows`, `scan_windows`, `merge_units`, `merge_cursors`, `merge_peak_live` |
+| Where did the time go? | `plan_ns`, `scan_ns`, `decode_wait_ns`, `merge_ns` (= `scan_ns` − `decode_wait_ns`), `decode_ns_total`, `decode_ns_max`, `decode_queue_ns` |
+| Did the decode pool help? | `pool_workers`, `pool_queued_at_start`, `prefetch_peak`, `prefetch_hits`, `prefetch_waits` |
+| How close to its limit was the query? | `budget_lease_limit`, `budget_lease_peak`, `budget_shared_limit`, `budget_shared_peak` |
+| Is the memory estimate sound? | `budget_estimate_bytes` (before decode), `budget_estimate_kept_bytes` (after the refund), `budget_retained_bytes` (measured; traced queries only), `compacted_cursors` |
+| What was refused, and by what? | `budget_rejects` (`reason=count` pairs), `budget_reject_reason` (the last one, with limit, used and requested bytes) |
+| Was the merge cut into time slices? | `slice_need_bytes`, `slice_target_bytes`, `slices`, `sliced_units` |
+
+Rejection reasons: `per_query_limit` (the query's own assignment), `shared_pool` (the pool shared by all
+queries), `node_headroom` (the protector's available memory), `result_window`, `released`, `shared_tracker` (the
+query's memory tracker limit) and `raw_quota` (the per-cursor byte quota).
+
+Reading it: `prefetch_waits` close to `scan_blocks_decoded` with a large `decode_wait_ns` means the scan is
+decode-bound and the pool (or its queue, `decode_queue_ns`) is the place to look; a large `merge_ns` means the
+time is in merging and batch assembly. `budget_estimate_kept_bytes` should stay above `budget_retained_bytes`; if
+it does not, the envelope under-reserves. `budget_lease_peak` over `budget_lease_limit` is how near the query came
+to `per_query_limit`.
+
 ### Vocabulary
 
 Trace tag keys are exported from `pkg/query/tracelabels` and should be used instead of string literals.
@@ -149,6 +176,37 @@ Trace tag keys are exported from `pkg/query/tracelabels` and should be used inst
 | `TagFrameBytesTotal` | `frame_bytes_total` |
 | `TagErrorMsg` | `error_msg` |
 | `TagIgnoredChildSpans` | `ignored_child_spans` |
+| `TagScanBlocks` | `scan_blocks` |
+| `TagScanBlocksDecoded` | `scan_blocks_decoded` |
+| `TagScanBlocksNoRows` | `scan_blocks_no_rows` |
+| `TagScanWindows` | `scan_windows` |
+| `TagMergeUnits` | `merge_units` |
+| `TagMergeCursors` | `merge_cursors` |
+| `TagMergePeakLive` | `merge_peak_live` |
+| `TagPrefetchPeak` | `prefetch_peak` |
+| `TagPrefetchHits` | `prefetch_hits` |
+| `TagPrefetchWaits` | `prefetch_waits` |
+| `TagDecodeWaitNS` | `decode_wait_ns` |
+| `TagDecodeQueueNS` | `decode_queue_ns` |
+| `TagPlanNS` | `plan_ns` |
+| `TagScanNS` | `scan_ns` |
+| `TagMergeNS` | `merge_ns` |
+| `TagPoolWorkers` | `pool_workers` |
+| `TagPoolQueued` | `pool_queued_at_start` |
+| `TagCompactedCursors` | `compacted_cursors` |
+| `TagBudgetLeaseLimit` | `budget_lease_limit` |
+| `TagBudgetLeasePeak` | `budget_lease_peak` |
+| `TagBudgetSharedLimit` | `budget_shared_limit` |
+| `TagBudgetSharedPeak` | `budget_shared_peak` |
+| `TagBudgetEstimate` | `budget_estimate_bytes` |
+| `TagBudgetEstimateKept` | `budget_estimate_kept_bytes` |
+| `TagBudgetRetained` | `budget_retained_bytes` |
+| `TagBudgetRejects` | `budget_rejects` |
+| `TagBudgetRejectReason` | `budget_reject_reason` |
+| `TagSliceNeed` | `slice_need_bytes` |
+| `TagSliceTarget` | `slice_target_bytes` |
+| `TagSlices` | `slices` |
+| `TagSlicedUnits` | `sliced_units` |
 
 ### Empty-result diagnosis runbook
 
