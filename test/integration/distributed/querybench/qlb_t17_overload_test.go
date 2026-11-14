@@ -353,4 +353,7 @@ func TestQLBT17HeldCapacityContract(t *testing.T) {
 	if p.Admitted == 0 || p.Rejected == "" || p.Recovery != "pass" {
 		t.Fatalf("incomplete capacity evidence: %+v", p)
 	}
+	if err = validateQLBT17CapacityProbe(p); err != nil {
+		t.Fatalf("%v: %+v", err, p)
+	}
 }

@@ -26,6 +26,9 @@ import (
 	"time"
 )
 
+// qlbT17SharedPoolDetail is what protector.ExhaustedError appends to the rejection.
+const qlbT17SharedPoolDetail = ": shared_pool (limit 1610612736 bytes, used 1572864000, requested 50561020)"
+
 func qlbT17ValidOverloadEvidence() qlbT17OverloadEvidence {
 	zero := uint64(0)
 	e := qlbT17OverloadEvidence{
@@ -33,7 +36,7 @@ func qlbT17ValidOverloadEvidence() qlbT17OverloadEvidence {
 		FixtureBaseUnixNanos: time.Unix(1700000000, 0).UnixNano(), CPUQuota: 400000, CPUPeriod: 100000, MemoryLimit: 8 << 30,
 		Probe: qlbT17CapacityProbe{
 			ProtectorLimit: 6 << 30, PoolLimit: 1536 << 20, QueryLimit: 192 << 20, Admitted: 30,
-			Rejected: "query memory pool exhausted", Rollback: "pass", HeldBytes: 1500 << 20, AfterLocalClose: 1500 << 20,
+			Rejected: qlbT17ProbeRejection + qlbT17SharedPoolDetail, Rollback: "pass", HeldBytes: 1500 << 20, AfterLocalClose: 1500 << 20,
 			AfterTransportClose: &zero, Recovery: "pass", FinalBytes: &zero,
 		},
 	}
@@ -54,7 +57,7 @@ func qlbT17ValidOverloadEvidence() qlbT17OverloadEvidence {
 				c.Recovery = append(c.Recovery, call)
 			}
 			if index == 95 {
-				call.Status, call.Error, call.Rows, call.Hash, call.Exact = "ResourceExhausted", qlbT17BroadcastRejection, 0, 0, false
+				call.Status, call.Error, call.Rows, call.Hash, call.Exact = "ResourceExhausted", qlbT17BroadcastRejection+qlbT17SharedPoolDetail, 0, 0, false
 			}
 			c.Calls = append(c.Calls, call)
 		}
