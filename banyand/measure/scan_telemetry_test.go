@@ -52,6 +52,16 @@ func tracedResult(t *testing.T, fx *fxFixture, q *fxQuery, limit uint64) (*query
 
 func scanSpanTags(t *testing.T, tracer *query.Tracer) map[string]string {
 	t.Helper()
+	span := findScanSpan(t, tracer)
+	tags := make(map[string]string, len(span.Tags))
+	for _, tag := range span.Tags {
+		tags[tag.Key] = tag.Value
+	}
+	return tags
+}
+
+func findScanSpan(t *testing.T, tracer *query.Tracer) *commonv1.Span {
+	t.Helper()
 	var find func(spans []*commonv1.Span) *commonv1.Span
 	find = func(spans []*commonv1.Span) *commonv1.Span {
 		for _, sp := range spans {
@@ -66,11 +76,7 @@ func scanSpanTags(t *testing.T, tracer *query.Tracer) map[string]string {
 	}
 	span := find(tracer.ToProto().Spans)
 	require.NotNil(t, span, "a traced scan records a scan-storage span")
-	tags := make(map[string]string, len(span.Tags))
-	for _, tag := range span.Tags {
-		tags[tag.Key] = tag.Value
-	}
-	return tags
+	return span
 }
 
 func tagInt(t *testing.T, tags map[string]string, key string) int64 {
@@ -180,6 +186,29 @@ func TestTracedScanRecordsPoolAndBudgetTags(t *testing.T) {
 }
 
 // A traced merge cut into time slices reports the slicing and the budgets that decided it.
+// Closing a scan again, as its documentation allows, does not finish its span a second time.
+func TestWindowScanCloseIsIdempotent(t *testing.T) {
+	var part fxPart
+	for sid := common.SeriesID(1); sid <= 4; sid++ {
+		part = append(part, fxRange{sid: sid, from: 1, to: 240, version: 1})
+	}
+	fx := newFixture(t, part)
+	q := prefetchQuery(1, 20, true, true)
+	result, tracer, closeResult := tracedResult(t, fx, q, 96<<20)
+	drainRows(t, result)
+	scan := result.scan
+	require.NotNil(t, scan)
+	closeResult()
+	scan.close()
+	var n int
+	for _, tag := range findScanSpan(t, tracer).Tags {
+		if tag.Key == tracelabels.TagScanBlocks {
+			n++
+		}
+	}
+	require.Equal(t, 1, n, "the scan-storage span is tagged once")
+}
+
 func TestTracedSlicedScanRecordsSliceTags(t *testing.T) {
 	var older, newer fxPart
 	for sid := common.SeriesID(1); sid <= 40; sid++ {

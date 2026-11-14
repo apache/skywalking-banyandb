@@ -164,6 +164,7 @@ type windowScan struct {
 	segIdx   int
 	desc     bool
 	started  bool
+	closed   bool
 }
 
 // newWindowScan plans the scan over qr.data and takes ownership of its cursors.
@@ -657,6 +658,11 @@ func (s *windowScan) takeBuilder() *model.MeasureBatch {
 
 // close releases every cursor and batch the scan still holds. It is idempotent.
 func (s *windowScan) close() {
+	// The span and the scan metrics are finished once; a later call has nothing left to release.
+	if s.closed {
+		return
+	}
+	s.closed = true
 	// The decodes are stopped first, so the measurements are final once pf.close returns.
 	defer func() {
 		s.span.finish(s.qr.ctx, &s.stats, s.tel, s.qr.budget)
