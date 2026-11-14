@@ -262,7 +262,7 @@ func TestRejectedReservationIsReportedWithItsReason(t *testing.T) {
 	tags := scanSpanTags(t, tracer)
 	require.Contains(t, tags, tracelabels.TagBudgetRejects)
 	require.Contains(t, tags[tracelabels.TagBudgetRejects], "shared_tracker=")
-	require.Contains(t, tags[tracelabels.TagBudgetRejectReason], "memory budget exceeded")
+	require.Contains(t, tags[tracelabels.TagBudgetLastReject], "memory budget exceeded")
 }
 
 func TestScanTelemetryRejectClassifiesReasons(t *testing.T) {

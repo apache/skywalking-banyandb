@@ -206,13 +206,13 @@ const (
 	// TagCompactedCursors records cursors that copied their in-range rows and released the decoded block.
 	TagCompactedCursors = "compacted_cursors"
 	// TagBudgetLeaseLimit records per-query lease limit in bytes.
-	TagBudgetLeaseLimit = "budget_lease_limit"
+	TagBudgetLeaseLimit = "budget_lease_limit_bytes"
 	// TagBudgetLeasePeak records most bytes the query lease held at once.
-	TagBudgetLeasePeak = "budget_lease_peak"
+	TagBudgetLeasePeak = "budget_lease_peak_bytes"
 	// TagBudgetSharedLimit records limit of the query's shared memory tracker in bytes.
-	TagBudgetSharedLimit = "budget_shared_limit"
+	TagBudgetSharedLimit = "budget_shared_limit_bytes"
 	// TagBudgetSharedPeak records most bytes the shared tracker held at once.
-	TagBudgetSharedPeak = "budget_shared_peak"
+	TagBudgetSharedPeak = "budget_shared_peak_bytes"
 	// TagBudgetEstimate records sum of the pre-decode reservations of the decoded cursors.
 	TagBudgetEstimate = "budget_estimate_bytes"
 	// TagBudgetEstimateKept records sum of the reservations after the refund that follows each decode.
@@ -221,8 +221,9 @@ const (
 	TagBudgetRetained = "budget_retained_bytes"
 	// TagBudgetRejects records reservation rejections by reason, as reason=count pairs.
 	TagBudgetRejects = "budget_rejects"
-	// TagBudgetRejectReason records the last rejection with its limit, used and requested bytes.
-	TagBudgetRejectReason = "budget_reject_reason"
+	// TagBudgetLastReject records the error text of the last rejection, with its limit, used and requested
+	// figures; the reasons are the keys of TagBudgetRejects.
+	TagBudgetLastReject = "budget_last_reject"
 	// TagSliceNeed records bytes a time-ordered merge may hold before it is cut into slices.
 	TagSliceNeed = "slice_need_bytes"
 	// TagSliceTarget records bytes one slice may hold once the merge is sliced.

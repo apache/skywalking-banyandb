@@ -204,7 +204,7 @@ func (s *scanSpan) finish(ctx context.Context, st *scanStats, tel *scanTelemetry
 	num(tracelabels.TagBudgetRetained, tel.retained.Load())
 	if counts, last := tel.rejectSummary(); counts != "" {
 		sp.Tag(tracelabels.TagBudgetRejects, counts)
-		sp.Tag(tracelabels.TagBudgetRejectReason, last)
+		sp.Tag(tracelabels.TagBudgetLastReject, last)
 	}
 	if budget != nil && budget.sliceBudget > 0 {
 		num(tracelabels.TagSliceNeed, budget.sliceNeed)
