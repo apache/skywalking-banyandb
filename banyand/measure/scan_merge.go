@@ -110,8 +110,12 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 	}
 	started := time.Now()
 	tmpBlock := generateBlock()
-	if backing, hit := decodeBackingPool.Get().(*[]byte); hit {
-		bc.columnValuesDecoder.AdoptBacking(*backing)
+	// A decoder that kept its backing would ignore an adopted one, so take from the pool
+	// only for a decoder without one.
+	if bc.columnValuesDecoder.BackingCap() == 0 {
+		if backing, hit := decodeBackingPool.Get().(*[]byte); hit {
+			bc.columnValuesDecoder.AdoptBacking(*backing)
+		}
 	}
 	ok := bc.loadData(tmpBlock, true)
 	bc.releaseLoadBlock(tmpBlock)
