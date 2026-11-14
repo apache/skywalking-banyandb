@@ -148,7 +148,7 @@ func editedNativeArtifact(edit func(m *manifest.Manifest)) string {
 var _ = ginkgo.Describe("Native import into a group with another shard number", func() {
 	ginkgo.It("refuses the group's parts by the topology gate and writes nothing", func() {
 		target := startTarget()
-		g := artifactGroup(transfertest.StreamGroup)
+		g := artifactGroup()
 		g.ResourceOpts.ShardNum += 2
 		createGroup(target, g)
 		run := runNativeImport(target.addr, func(o *config.Import) {
@@ -170,7 +170,7 @@ var _ = ginkgo.Describe("Native import into a group whose index rule has another
 		gomega.Expect(rule).NotTo(gomega.BeNil(), "the artifact has an index rule of group %s", transfertest.StreamGroup)
 		gomega.Expect(rule.GetMetadata().GetId()).NotTo(gomega.BeZero(), "the artifact records the rule's id")
 		target := startTarget()
-		createGroup(target, artifactGroup(transfertest.StreamGroup))
+		createGroup(target, artifactGroup())
 		onTarget := importer.PrepareForWrite(rule).(*databasev1.IndexRule)
 		onTarget.Metadata.Id = rule.GetMetadata().GetId() + 1
 		ctx, cancel := context.WithTimeout(context.Background(), flags.EventuallyTimeout)

@@ -38,8 +38,9 @@ import (
 
 const topNResult = "_top_n_result"
 
-// artifactGroup returns the group schema of the source artifact.
-func artifactGroup(name string) *commonv1.Group {
+// artifactGroup returns the stream group schema of the source artifact.
+func artifactGroup() *commonv1.Group {
+	name := transfertest.StreamGroup
 	for _, g := range transfertest.Schemas(artifactA, "group", func() *commonv1.Group { return &commonv1.Group{} }) {
 		if g.GetMetadata().GetName() == name {
 			return importer.PrepareForWrite(g).(*commonv1.Group)
@@ -178,7 +179,7 @@ var _ = ginkgo.Describe("CSV import of a property the target deleted", ginkgo.Or
 var _ = ginkgo.Describe("CSV import against a conflicting target schema", func() {
 	ginkgo.It("refuses the import and leaves the target untouched", func() {
 		target := startTarget()
-		createGroup(target, artifactGroup(transfertest.StreamGroup))
+		createGroup(target, artifactGroup())
 		var stream *databasev1.Stream
 		for _, s := range transfertest.StreamsOf(artifactA, transfertest.StreamGroup) {
 			if s.GetMetadata().GetName() == transfertest.StreamName {
@@ -205,7 +206,7 @@ var _ = ginkgo.Describe("CSV import against a conflicting target schema", func()
 var _ = ginkgo.Describe("CSV import into a group with another shard number", func() {
 	ginkgo.It("routes the rows by the target's shard number and keeps them equal", func() {
 		target := startTarget()
-		g := artifactGroup(transfertest.StreamGroup)
+		g := artifactGroup()
 		srcShards := g.GetResourceOpts().GetShardNum()
 		// Under srcShards+2 shards some of the suite's stream series land in a shard id the
 		// source does not have; under srcShards+1 they do not.
