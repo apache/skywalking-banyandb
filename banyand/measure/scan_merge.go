@@ -88,6 +88,18 @@ type cursorLoader func(ctx context.Context, bc *blockCursor, desc bool) (bool, e
 // decodeBackingPool holds decoder backing arrays released by compacted cursors.
 var decodeBackingPool sync.Pool
 
+// releaseLoadBlock releases tmpBlock, the temporary block bc was just loaded from, and
+// then returns the decoder backing compactValues detached to decodeBackingPool: nothing
+// views it once the temporary block is released, so the next decode can reuse it. Every
+// caller of loadData releases its temporary block through it.
+func (bc *blockCursor) releaseLoadBlock(tmpBlock *block) {
+	releaseBlock(tmpBlock)
+	if spare := bc.spareBacking; cap(spare) > 0 {
+		bc.spareBacking = nil
+		decodeBackingPool.Put(&spare)
+	}
+}
+
 // decodeCursor is the default cursorLoader: it decodes the block on the calling
 // goroutine.
 func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error) {
@@ -102,7 +114,7 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 		bc.columnValuesDecoder.AdoptBacking(*backing)
 	}
 	ok := bc.loadData(tmpBlock, true)
-	releaseBlock(tmpBlock)
+	bc.releaseLoadBlock(tmpBlock)
 	var budget *scanBudget
 	if bc.res != nil {
 		budget = bc.res.budget
@@ -113,12 +125,6 @@ func decodeCursor(ctx context.Context, bc *blockCursor, desc bool) (bool, error)
 		if budget.qm != nil {
 			budget.qm.scanDecodeSeconds.Observe(elapsed.Seconds())
 		}
-	}
-	// compactValues detached the decoder's backing; nothing views it once the temporary
-	// block is released, so the next decode can reuse it.
-	if spare := bc.spareBacking; cap(spare) > 0 {
-		bc.spareBacking = nil
-		decodeBackingPool.Put(&spare)
 	}
 	if !ok {
 		return false, nil

@@ -20,10 +20,12 @@ package measure
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
@@ -118,6 +120,45 @@ func TestBoundDecodeBackingDropsOversizedPooledBuffers(t *testing.T) {
 	tag := temp.tagFamilies[:cap(temp.tagFamilies)][0].columns[:1][0]
 	if cap(field.values) > 2048 || cap(field.int64s) > 2048 || cap(tag.float64s) > 2048 {
 		t.Fatal("oversized column backing survived")
+	}
+}
+
+// The legacy (TopN) loaders compact a cursor that keeps under half its block, as the
+// window scan does. The decoder backing that compaction detached must not stay on the
+// cursor next to the compacted copy of its values.
+func TestLegacyLoadDoesNotKeepDetachedBacking(t *testing.T) {
+	defer setLegacyBatchScan(setLegacyBatchScan(true))
+	var part fxPart
+	for sid := common.SeriesID(1); sid <= 4; sid++ {
+		part = append(part, fxRange{sid: sid, from: 1, to: 600, version: 1})
+	}
+	// One block of 600 rows per series: over 256 distinct urls, so the url column is not
+	// dictionary encoded and decodes into the cursor's decoder backing.
+	fx := newFixture(t, part)
+	for _, tt := range []struct {
+		maxTS     int64
+		compacted bool
+	}{
+		{maxTS: 299, compacted: true},  // under half the block
+		{maxTS: 300, compacted: false}, // exactly half: not compacted
+	} {
+		q := prefetchQuery(1, tt.maxTS, true, true)
+		qr := fx.newResult(t, q, q.schema(t))
+		t.Cleanup(qr.Release)
+		require.NoError(t, qr.loadCursorsForBatch())
+		require.Len(t, qr.data, 4)
+		for _, bc := range qr.data {
+			require.Len(t, bc.timestamps, int(tt.maxTS))
+			require.Equal(t, tt.compacted, bc.compacted, "rows 1..%d", tt.maxTS)
+			require.Zero(t, cap(bc.spareBacking), "rows 1..%d: the cursor kept the detached backing", tt.maxTS)
+			if tt.compacted {
+				require.Zero(t, bc.columnValuesDecoder.BackingCap())
+			} else {
+				require.Positive(t, bc.columnValuesDecoder.BackingCap())
+			}
+			url := bc.tagFamilies[0].columns[0].values
+			require.Equal(t, fmt.Sprintf("/u/%d/%d/1", bc.bm.seriesID, tt.maxTS), string(url[len(url)-1]))
+		}
 	}
 }
 

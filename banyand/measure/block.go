@@ -484,7 +484,7 @@ type blockCursor struct {
 	timestamps  []int64
 	versions    []int64
 	tagFamilies []columnFamily
-	// spareBacking is the decoder's backing array detached by compactValues; decodeCursor
+	// spareBacking is the decoder's backing array detached by compactValues; releaseLoadBlock
 	// returns it to decodeBackingPool once the temporary block that views it is released.
 	spareBacking        []byte
 	tagProjection       []model.TagProjection

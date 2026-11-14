@@ -954,8 +954,10 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 				default:
 				}
 				tmpBlock := generateBlock()
-				defer releaseBlock(tmpBlock)
-				if !qr.data[idx].loadData(tmpBlock, false) {
+				loaded := qr.data[idx].loadData(tmpBlock, false)
+				// Before the cursor is handed back: releasing recycles its spare backing.
+				qr.data[idx].releaseLoadBlock(tmpBlock)
+				if !loaded {
 					cursorChan <- idx
 					return
 				}
