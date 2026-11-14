@@ -65,14 +65,41 @@ func newDataExportCmd() *cobra.Command {
 }
 
 // validateExport checks the combinations of resolved settings before anything is contacted.
-// The artifact format is checked in both modes, so --format native is refused the same way
-// with or without --dry-run.
+// The artifact format is checked in both modes: a native export defaults to no compression
+// and refuses gzip or a volume limit too small for a container, with or without --dry-run.
 func validateExport(sources config.Sources, opts *config.Export) error {
 	if err := validateOutputFormat(sources, opts.OutputFormat); err != nil {
 		return err
 	}
 	if opts.Format == transferv1.Format_FORMAT_NATIVE {
-		return exitcode.Exit(exitcode.ExitUsage, "native export format is not implemented yet")
+		// A setting a native export does not use is refused when given as a flag or in
+		// plan.yaml, and is ignored when it comes from the environment.
+		for _, s := range []struct {
+			reset     func()
+			flag, why string
+			set       bool
+		}{
+			{
+				func() { opts.Compress = transferv1.Compress_COMPRESS_NONE }, "compress", "a native export is not compressed; use --compress none",
+				opts.Compress != transferv1.Compress_COMPRESS_NONE,
+			},
+			{
+				func() { opts.NodeRowRateLimit = 0 }, "node-row-rate-limit",
+				"a native export moves part bytes and has no rows to limit; it applies to --format csv only", opts.NodeRowRateLimit > 0,
+			},
+			{func() { opts.CSVAnnotations = false }, "csv-annotations", "a native export has no CSV headers; it applies to --format csv only", opts.CSVAnnotations},
+		} {
+			if !s.set {
+				continue
+			}
+			if sources.FromFlag(s.flag) || sources.FromPlan(s.flag) {
+				return exitcode.Exit(exitcode.ExitUsage, "%s: %s", sources.Label(s.flag), s.why)
+			}
+			s.reset()
+		}
+	}
+	if err := exporter.CheckFormat(opts); err != nil {
+		return err
 	}
 	if opts.DryRun {
 		// A real-export setting given explicitly, as a flag or in plan.yaml, contradicts a

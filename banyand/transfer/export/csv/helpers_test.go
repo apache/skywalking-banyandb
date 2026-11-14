@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 )
 
 // exportedFile is one file rebuilt from its frames.
@@ -44,7 +45,7 @@ type exportedFile struct {
 }
 
 // decodeFiles checks the frame order of the files of a unit ((file_started, chunk*,
-// file_finished)*), that every chunk is at most chunkSize bytes and that bytes/crc32 match
+// file_finished)*), that every chunk is at most snapshot.ChunkSize bytes and that bytes/crc32 match
 // the content, and rebuilds the files.
 func decodeFiles(t *testing.T, frames []*transferv1.ExportResponse) []*exportedFile {
 	t.Helper()
@@ -57,7 +58,7 @@ func decodeFiles(t *testing.T, frames []*transferv1.ExportResponse) []*exportedF
 			file = &exportedFile{started: frame.FileStarted}
 		case *transferv1.ExportResponse_Chunk:
 			require.NotNil(t, file, "frame %d: chunk outside a file", i)
-			require.LessOrEqual(t, len(frame.Chunk.GetContent()), chunkSize)
+			require.LessOrEqual(t, len(frame.Chunk.GetContent()), snapshot.ChunkSize)
 			require.NotEmpty(t, frame.Chunk.GetContent())
 			file.content = append(file.content, frame.Chunk.GetContent()...)
 		case *transferv1.ExportResponse_FileFinished:

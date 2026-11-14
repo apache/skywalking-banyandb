@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/crc32"
 	"io"
 	"strings"
 	"time"
@@ -29,7 +28,6 @@ import (
 	"google.golang.org/grpc"
 
 	apidata "github.com/apache/skywalking-banyandb/api/data"
-	apiversion "github.com/apache/skywalking-banyandb/api/proto/banyandb"
 	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -435,11 +433,7 @@ func (c *chunkedSyncClient) streamPartsAsChunks(
 					TotalChunks:    totalChunks,
 				},
 			},
-			VersionInfo: &clusterv1.VersionInfo{
-				ApiVersion:                  apiversion.Version,
-				FileFormatVersion:           storage.GetCurrentVersion(),
-				CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
-			},
+			VersionInfo: queue.SyncVersionInfo(storage.GetCurrentVersion()),
 		}
 
 		if err := stream.Send(completionReq); err != nil {
@@ -462,7 +456,7 @@ func (c *chunkedSyncClient) sendChunk(
 	isFirstChunk bool,
 	metadata *clusterv1.SyncMetadata,
 ) error {
-	chunkChecksum := fmt.Sprintf("%x", crc32.ChecksumIEEE(chunkData))
+	chunkChecksum := queue.ChunkChecksum(chunkData)
 
 	retryCount := 0
 	for {
@@ -472,11 +466,7 @@ func (c *chunkedSyncClient) sendChunk(
 			ChunkData:     chunkData,
 			ChunkChecksum: chunkChecksum,
 			PartsInfo:     partsInfo,
-			VersionInfo: &clusterv1.VersionInfo{
-				ApiVersion:                  apiversion.Version,
-				FileFormatVersion:           storage.GetCurrentVersion(),
-				CompatibleFileFormatVersion: storage.GetCompatibleVersions(),
-			},
+			VersionInfo:   queue.SyncVersionInfo(storage.GetCurrentVersion()),
 		}
 
 		if isFirstChunk {

@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/output"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
@@ -68,7 +69,7 @@ type Env struct {
 }
 
 // CheckOutputDir accepts an output directory that does not exist or is empty. Anything else
-// is refused: this step has no resume, and a fresh export must not mix with leftovers.
+// is refused, so an export never mixes with what an earlier run left behind.
 func CheckOutputDir(dir string) error {
 	if dir == "" {
 		return exitcode.Exit(exitcode.ExitUsage, "no output directory: give --output or export.output in plan.yaml")
@@ -110,8 +111,8 @@ func SelectedGroups(groups []*commonv1.Group, selectors []*transferv1.Selector) 
 // failure keeps it and tells the operator how to release it; the error is an exitcode.ExitError
 // (exit 3 unless the cause carries its own code).
 func RunExport(ctx context.Context, env Env, opts config.Export) error {
-	if opts.Format != transferv1.Format_FORMAT_CSV {
-		return exitcode.Exit(exitcode.ExitUsage, "native export format is not implemented yet")
+	if err := CheckFormat(&opts); err != nil {
+		return err
 	}
 	if opts.SchemaOnly && !opts.IncludeSchema {
 		return exitcode.Exit(exitcode.ExitUsage, "a schema-only export needs the schema; it cannot be combined with --include-schema=false")
@@ -139,7 +140,7 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		}
 		prog.Printf("schema of %d group(s) written to %s", len(groups), filepath.Join(opts.Output, schemasync.Dir))
 	}
-	m := baseManifest(opts.Compress, groups, schema)
+	m := baseManifest(opts.Format, opts.Compress, groups, schema)
 	if opts.SchemaOnly {
 		m.SchemaOnly = true
 		if err := manifest.Write(filepath.Join(opts.Output, manifest.FileName), m); err != nil {
@@ -263,7 +264,7 @@ func exportSession(ctx context.Context, env Env, prog *output.Progress, opts con
 			idleFor:  opts.NodeIdleTimeout,
 		}
 		g.Go(func() error {
-			w.progress = newNodeProgress(prog, job.nodeID, len(job.units), width)
+			w.progress = newNodeProgress(prog, job.nodeID, len(job.units), width, init.GetFormat() != transferv1.Format_FORMAT_NATIVE)
 			runErr := w.run(gctx)
 			w.progress.finish(runErr == nil)
 			return runErr
@@ -299,6 +300,8 @@ func exportSession(ctx context.Context, env Env, prog *output.Progress, opts con
 
 // buildJobs folds the Plan frames into one job per node, each unit kept as the node
 // reported it, and derives each node's directory, refusing two nodes that map to one.
+// cluster.CollectPlanFrames has already merged the pieces of a segment inventory split
+// across Plan frames, so each unit is kept as reported.
 func buildJobs(plan *cluster.PlanResult) ([]*nodeJob, error) {
 	byNode := map[string]*nodeJob{}
 	for _, f := range plan.Frames {
@@ -307,8 +310,9 @@ func buildJobs(plan *cluster.PlanResult) ([]*nodeJob, error) {
 			job = &nodeJob{nodeID: f.GetNodeId(), dir: manifest.NodeDir(f.GetNodeId())}
 			byNode[f.GetNodeId()] = job
 		}
+		stage := transfer.NormalizeStage(f.GetStage())
 		for _, inv := range f.GetUnits() {
-			u := &plannedUnit{stage: transfer.NormalizeStage(f.GetStage()), segment: inv.GetSegment(), property: inv.GetProperty()}
+			u := &plannedUnit{stage: stage, segment: inv.GetSegment(), property: inv.GetProperty()}
 			if u.segment == nil && u.property == nil {
 				return nil, exitcode.Exit(exitcode.ExitRuntime, "plan: node %s reported a unit of no kind", f.GetNodeId())
 			}
@@ -328,21 +332,54 @@ func buildJobs(plan *cluster.PlanResult) ([]*nodeJob, error) {
 	return jobs, nil
 }
 
-// catalogLabel is the manifest spelling of a catalog: STREAM, MEASURE, TRACE, PROPERTY.
+// catalogLabel is the manifest spelling of a catalog (STREAM, MEASURE, TRACE, PROPERTY): the
+// upper-cased selector name that the importer parses back with transfer.CatalogByName.
 func catalogLabel(c commonv1.Catalog) string {
-	return strings.TrimPrefix(c.String(), "CATALOG_")
+	return strings.ToUpper(transfer.CatalogName(c))
 }
 
 // schemaSkippedWarning is the manifest warning of an export without the schema.
 const schemaSkippedWarning = "the schema was not exported (--include-schema=false), so groups[].indexMode is unknown and recorded as false"
 
+// CheckFormat checks the settings a format takes: a native artifact is never compressed, so an
+// unspecified compression becomes none and gzip is refused, and its volume limit must leave
+// room for a container. Any format but csv and native is refused.
+func CheckFormat(opts *config.Export) error {
+	switch opts.Format {
+	case transferv1.Format_FORMAT_CSV:
+		return nil
+	case transferv1.Format_FORMAT_NATIVE:
+	default:
+		return exitcode.Exit(exitcode.ExitUsage, "unsupported artifact format %s", opts.Format)
+	}
+	switch opts.Compress {
+	case transferv1.Compress_COMPRESS_UNSPECIFIED:
+		opts.Compress = transferv1.Compress_COMPRESS_NONE
+	case transferv1.Compress_COMPRESS_NONE:
+	default:
+		return exitcode.Exit(exitcode.ExitUsage, "a native export is not compressed: its column files already are; use --compress none")
+	}
+	if bnc.CheckFileSize(opts.MaxFileSize) != nil {
+		return exitcode.Exit(exitcode.ExitUsage, "a native export needs --max-file-size 0 or at least %d bytes, got %d", bnc.MinFileSize, opts.MaxFileSize)
+	}
+	return nil
+}
+
+// formatLabel is the manifest spelling of an artifact format: csv or native.
+func formatLabel(f transferv1.Format) string {
+	if f == transferv1.Format_FORMAT_NATIVE {
+		return manifest.FormatNative
+	}
+	return manifest.FormatCSV
+}
+
 // baseManifest is the manifest without units and nodes: format, schema files and groups. The
 // groups come from the group list; their index mode from the exported measures, or it is
 // unknown when schema is nil, which a manifest warning says.
-func baseManifest(compress transferv1.Compress, groups []*commonv1.Group, schema *schemasync.Result) *manifest.Manifest {
+func baseManifest(format transferv1.Format, compress transferv1.Compress, groups []*commonv1.Group, schema *schemasync.Result) *manifest.Manifest {
 	m := &manifest.Manifest{
 		ArtifactVersion: manifest.ArtifactVersion,
-		Format:          "csv",
+		Format:          formatLabel(format),
 		Compress:        compressLabel(compress),
 		ExportedAt:      time.Now().UTC().Format(time.RFC3339),
 		SchemaFiles:     []manifest.File{},
@@ -386,20 +423,21 @@ func stageOf(st *commonv1.LifecycleStage) manifest.Stage {
 	}
 }
 
-// compressLabel is the manifest spelling of a compression; RunExport has already resolved
-// UNSPECIFIED to the csv default gzip, and it is labeled that way here too.
+// compressLabel is the manifest spelling of a compression. The option default is gzip and
+// CheckFormat turns an unspecified native compression into none; an UNSPECIFIED left here is
+// labeled gzip.
 func compressLabel(c transferv1.Compress) string {
 	if c == transferv1.Compress_COMPRESS_NONE {
-		return "none"
+		return manifest.CompressNone
 	}
-	return "gzip"
+	return manifest.CompressGzip
 }
 
 // fillManifest adds the source nodes, the units and the unit warnings. Segment
 // units are keyed by (catalog, group, stage, segment) with one source per node. A property
 // unit's key degrades to (catalog, group): every node's shards of the group land in one unit,
 // whose stage is the stage of its first source (jobs are in node order). Shards come from the
-// Plan statistics, their totalCount and rowCounts from the exported files.
+// Plan statistics; unitSource says where their totalCount and rowCounts come from.
 func fillManifest(m *manifest.Manifest, info *cluster.Info, jobs []*nodeJob) {
 	tz := map[string]string{}
 	if info != nil {
@@ -423,10 +461,13 @@ func fillManifest(m *manifest.Manifest, info *cluster.Info, jobs []*nodeJob) {
 				}
 				units[key] = mu
 			}
-			src := unitSource(job.nodeID, u)
+			src := unitSource(job.nodeID, u, m.Format == manifest.FormatNative)
 			for _, sh := range src.Shards {
 				transfer.MergeRange(&mu.MinTimestamp, &mu.MaxTimestamp, sh.MinTimestamp, sh.MaxTimestamp)
 			}
+			// The rows of an index-mode group's series index; 0 for every other unit.
+			sl := u.segment.GetSegmentLevel()
+			transfer.MergeRange(&mu.MinTimestamp, &mu.MaxTimestamp, sl.GetMinTimestamp(), sl.GetMaxTimestamp())
 			mu.Sources = append(mu.Sources, src)
 			for _, w := range u.warnings {
 				m.Warnings = append(m.Warnings, fmt.Sprintf("node %s unit %s: %s", job.nodeID, u.label(), w))
@@ -443,8 +484,12 @@ func fillManifest(m *manifest.Manifest, info *cluster.Info, jobs []*nodeJob) {
 	})
 }
 
-// unitSource is one node's contribution to a unit.
-func unitSource(nodeID string, u *plannedUnit) manifest.UnitSource {
+// unitSource is one node's contribution to a unit. The row counts of a CSV unit come from its
+// files; a native file counts no rows, so a native unit takes them from the Plan statistics:
+// a shard's total count is its Plan aggregate, a property shard's its document count, and
+// the segment-level count that of an index-mode series index. The last two are document
+// counts, upper bounds of the rows.
+func unitSource(nodeID string, u *plannedUnit, native bool) manifest.UnitSource {
 	src := manifest.UnitSource{Node: nodeID, Shards: []manifest.Shard{}}
 	shards := map[uint32]*manifest.Shard{}
 	shard := func(id uint32) *manifest.Shard {
@@ -462,10 +507,19 @@ func unitSource(nodeID string, u *plannedUnit) manifest.UnitSource {
 		for _, p := range st.GetParts() {
 			s.Parts = append(s.Parts, manifest.Part{ID: p.GetId(), MinTimestamp: p.GetMinTimestamp(), MaxTimestamp: p.GetMaxTimestamp(), TotalCount: p.GetTotalCount()})
 		}
+		if native {
+			s.TotalCount = st.GetTotalCount()
+		}
+	}
+	if native {
+		src.TotalCount = u.segment.GetSegmentLevel().GetDocCount()
 	}
 	for _, st := range u.property.GetShards() {
 		s := shard(st.GetShardId())
 		s.DocCount = st.GetDocCount()
+		if native {
+			s.TotalCount = st.GetDocCount()
+		}
 		s.EstimatedCompressedBytes, s.EstimatedUncompressedBytes = st.GetEstimatedBytes(), st.GetEstimatedBytes()
 	}
 	for _, f := range u.files {

@@ -25,6 +25,8 @@ import (
 	"os"
 	"slices"
 	"sync"
+
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // File is one file of a VolumeSet, whole: its path and size, and where its pieces are.
@@ -259,6 +261,12 @@ func (s *VolumeSet) Files() []File {
 	return slices.Clone(s.files)
 }
 
+// VolumeEntries returns the number of entries in the footer of volume i of the set.
+func (s *VolumeSet) VolumeEntries(i int) int {
+	v := &s.volumes[i]
+	return v.end - v.first
+}
+
 // Open returns a reader of the bytes of f, a file of s, across the volumes that hold it; each
 // volume is open only while its piece is read. The Read that returns the last byte of a piece
 // whose bytes do not match its CRC-32 returns ErrChecksum. Close releases the volume being read
@@ -367,10 +375,11 @@ func (s *VolumeSet) Verify(ctx context.Context) ([]Summary, error) {
 		if err != nil {
 			return nil, fmt.Errorf("volume %d: %w", i+1, err)
 		}
-		if n := int(min(verifyBlock, c.size)); len(buf) < n {
+		n := int(min(verifyBlock, c.size))
+		if len(buf) < n {
 			buf = make([]byte, n)
 		}
-		sum, err := c.verify(ctx, buf[:min(int64(len(buf)), c.size)])
+		sum, err := c.verify(ctx, buf[:n])
 		release()
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
@@ -452,10 +461,10 @@ func (s *VolumeSet) Shard() *ShardLayout {
 // when the metadata file is missing.
 func subPart(id uint64, partType string, files []File) (SubPart, bool) {
 	dir := fmt.Sprintf("%016x/", id)
-	metaName := coreMetaFile
+	metaName := nativefmt.CoreMetaFile
 	if partType != "" {
-		dir = secondaryIndexDir + "/" + partType + "/" + dir
-		metaName = secondaryIndexMeta
+		dir = nativefmt.SecondaryIndexDir + "/" + partType + "/" + dir
+		metaName = nativefmt.SecondaryMetaFile
 	}
 	sub := SubPart{PartType: partType}
 	for _, f := range files {

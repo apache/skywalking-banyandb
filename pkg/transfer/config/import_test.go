@@ -50,7 +50,7 @@ func TestResolveImport_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, sources)
 	assert.Equal(t, Import{
-		OutputFormat: "table", OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20,
+		OutputFormat: "table", OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, PartChunkSize: 1 << 20,
 		SendRetryTimeout: 15 * time.Minute, VerifyTimeout: 2 * time.Minute, Parallelism: math.MaxInt,
 		WriteBatchSize: 1000, WriteInflightBatches: 2, IncludeSchema: true, Verify: true,
 	}, *imp)
@@ -81,6 +81,8 @@ import:
   writeBatchSize: 500
   writeBatchBytes: 1MiB
   writeInflightBatches: 4
+  partRateLimit: 20MiB/s
+  partChunkSize: 256KiB
   sendRetryTimeout: 1h
   verify: false
   verifyTimeout: 5m
@@ -96,7 +98,8 @@ func TestResolveImport_Plan(t *testing.T) {
 			{Match: "measure/sw_metric/service_cpm_minute", Policy: ConflictPolicyError},
 			{Match: "stream/sw_record", Policy: ConflictPolicyIgnore},
 		},
-		WriteBatchBytes: 1 << 20, WriteRateLimit: 50000, LiaisonRateLimit: 100 << 20, NodeRateLimit: 50 << 20, NodeRowRateLimit: 1000,
+		WriteBatchBytes: 1 << 20, PartChunkSize: 256 << 10, PartRateLimit: 20 << 20,
+		WriteRateLimit: 50000, LiaisonRateLimit: 100 << 20, NodeRateLimit: 50 << 20, NodeRowRateLimit: 1000,
 		SendRetryTimeout: time.Hour, VerifyTimeout: 5 * time.Minute, Parallelism: 4, WriteBatchSize: 500,
 		WriteInflightBatches: 4, IncludeSchema: true,
 	}, *imp)
@@ -119,6 +122,15 @@ func TestResolveImport_PlanOnlyField(t *testing.T) {
 	assert.NotContains(t, sources, "import.schemaConflictPolicy.rules")
 	assert.Equal(t, "plan.yaml import.schemaConflictPolicy.rules", sources.Label("import.schemaConflictPolicy.rules"),
 		"a plan-only setting at its default is labeled by its plan path")
+}
+
+func TestResolveImport_PartFlags(t *testing.T) {
+	imp, sources, err := resolveImport(t, boundImport(t, "--part-rate-limit", "3GiB/min", "--part-chunk-size", "2MiB"), "", nil)
+	require.NoError(t, err)
+	assert.Equal(t, float64(3<<30)/60, imp.PartRateLimit)
+	assert.Equal(t, uint64(2<<20), imp.PartChunkSize)
+	assert.True(t, sources.FromFlag("part-rate-limit"))
+	require.NoError(t, imp.Validate(sources))
 }
 
 func TestResolveImport_Precedence(t *testing.T) {
@@ -171,7 +183,7 @@ func TestResolveImport_EnvNames(t *testing.T) {
 	imp, _, err := resolveImport(t, boundImport(t), "", env)
 	require.NoError(t, err)
 	assert.Equal(t, Import{
-		Input: "/in", OutputFormat: "json", OnSchemaConflict: ConflictPolicyOverwrite, WriteBatchBytes: 128 << 10,
+		Input: "/in", OutputFormat: "json", OnSchemaConflict: ConflictPolicyOverwrite, WriteBatchBytes: 128 << 10, PartChunkSize: 1 << 20,
 		WriteRateLimit: 10, LiaisonRateLimit: 1 << 20, NodeRateLimit: 2 << 20, NodeRowRateLimit: 20, SendRetryTimeout: time.Minute, VerifyTimeout: 30 * time.Second,
 		Parallelism: 3, WriteBatchSize: 10, WriteInflightBatches: 8, DryRun: true, SchemaOnly: true, StrictCoverage: true,
 	}, *imp)
@@ -201,6 +213,7 @@ func TestResolveImport_Errors(t *testing.T) {
 		{args: []string{"--write-rate-limit", "5MiB/s"}, want: "--write-rate-limit: rate \"5MiB/s\": a row rate takes a plain integer"},
 		{args: []string{"--node-row-rate-limit", "5MiB/s"}, want: "--node-row-rate-limit: rate \"5MiB/s\": a row rate takes a plain integer"},
 		{plan: "import:\n  nodeRateLimit: -1\n", want: "plan.yaml import.nodeRateLimit: rate \"-1\" must not be negative"},
+		{plan: "import:\n  partRateLimit: -1\n", want: "plan.yaml import.partRateLimit: rate \"-1\" must not be negative"},
 		{plan: "import:\n  schemaConflictPolicy:\n    rules: group/a\n", want: "plan.yaml import.schemaConflictPolicy.rules: must be a list of {match, policy}"},
 		{plan: "import:\n  schemaConflictPolicy:\n    rules:\n      - group/a\n", want: "rules: [0]: must be a {match, policy} mapping"},
 		{
@@ -271,7 +284,7 @@ func TestParseCount(t *testing.T) {
 func TestImportValidate(t *testing.T) {
 	base := func() *Import {
 		return &Import{
-			OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, WriteBatchSize: 1000, WriteInflightBatches: 2,
+			OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, PartChunkSize: 1 << 20, WriteBatchSize: 1000, WriteInflightBatches: 2,
 			IncludeSchema: true, Verify: true, VerifyTimeout: 2 * time.Minute,
 		}
 	}
@@ -293,6 +306,11 @@ func TestImportValidate(t *testing.T) {
 		},
 		{mutate: func(i *Import) { i.WriteBatchBytes = 64<<20 + 1 }, want: "--write-batch-bytes: 67108865 bytes is outside"},
 		{mutate: func(i *Import) { i.DryRun, i.WriteBatchBytes = true, 16<<10 }, want: "--write-batch-bytes: 16384 bytes is outside"},
+		{
+			mutate: func(i *Import) { i.PartChunkSize = 64<<10 - 1 }, sources: Sources{"part-chunk-size": "plan.yaml import.partChunkSize"},
+			want: "plan.yaml import.partChunkSize: 65535 bytes is outside [64KiB, 4MiB]",
+		},
+		{mutate: func(i *Import) { i.PartChunkSize = 4<<20 + 1 }, want: "--part-chunk-size: 4194305 bytes is outside [64KiB, 4MiB]"},
 		{mutate: func(i *Import) { i.SchemaOnly, i.IncludeSchema = true, false }, want: "--schema-only needs the schema; it cannot be combined with --include-schema=false"},
 		{mutate: func(i *Import) { i.Verify = false }, sources: Sources{"verify-timeout": "--verify-timeout"}, want: "--verify-timeout has no effect"},
 		{
@@ -386,4 +404,12 @@ func TestResolveImport_ValidateEndToEnd(t *testing.T) {
 	err = imp.Validate(sources)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--write-batch-bytes: 16384 bytes is outside")
+}
+
+func TestSizeLabel(t *testing.T) {
+	assert.Equal(t, "64KiB", sizeLabel(64<<10))
+	assert.Equal(t, "4MiB", sizeLabel(4<<20))
+	assert.Equal(t, "1536KiB", sizeLabel(3<<19))
+	assert.Equal(t, "1000 bytes", sizeLabel(1000))
+	assert.Equal(t, "0 bytes", sizeLabel(0))
 }

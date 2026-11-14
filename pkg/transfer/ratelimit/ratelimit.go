@@ -46,6 +46,16 @@ func New(perSecond uint64, maxBurst int) *rate.Limiter {
 	return rate.NewLimiter(rate.Limit(perSecond), int(min(perSecond, uint64(maxBurst))))
 }
 
+// NewClient returns an import client's bucket of perSecond tokens a second whose burst is one
+// second's worth or one unit, whichever is larger, so one batch or chunk is always taken in a
+// single wait; nil, unlimited, when perSecond is 0.
+func NewClient(perSecond float64, unit int) *rate.Limiter {
+	if perSecond <= 0 {
+		return nil
+	}
+	return rate.NewLimiter(rate.Limit(perSecond), max(int(math.Ceil(perSecond)), unit))
+}
+
 // Wait takes n tokens from l in steps of its burst; a nil bucket never waits. A wait that ends
 // with ctx returns the gRPC status of ctx, and one that would outlast its deadline
 // DeadlineExceeded.

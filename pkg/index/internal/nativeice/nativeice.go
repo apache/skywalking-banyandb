@@ -164,6 +164,35 @@ type SnapshotMetadata struct {
 	Segments []SnapshotSegment
 }
 
+// HasTime reports whether a segment's recorded time bounds hold a timestamp: a segment
+// whose documents carry none records 0 for both.
+func HasTime(timeMin, timeMax uint64) bool {
+	return timeMin != 0 || timeMax != 0
+}
+
+// TimeBounds returns the smallest and largest timestamp the segments of m record. A segment
+// recording no timestamp, or bounds folded across a sign change (min above max), is skipped;
+// ok is false when no segment is left.
+func (m SnapshotMetadata) TimeBounds() (lo, hi int64, ok bool) {
+	for _, s := range m.Segments {
+		if !HasTime(s.TimeMin, s.TimeMax) {
+			continue
+		}
+		minTS, maxTS := int64(s.TimeMin), int64(s.TimeMax)
+		if minTS > maxTS {
+			continue
+		}
+		if !ok || minTS < lo {
+			lo = minTS
+		}
+		if !ok || maxTS > hi {
+			hi = maxTS
+		}
+		ok = true
+	}
+	return lo, hi, ok
+}
+
 // SnapshotMetadata returns a copy of the pinned snapshot's manifest metadata.
 // The returned deletion bitmaps are owned by the caller and may be retained
 // until the Reader closes.

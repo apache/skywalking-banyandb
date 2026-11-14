@@ -33,6 +33,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	schemav1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/schema/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
@@ -72,9 +73,9 @@ func runImportVia(t *testing.T, f *fakeLiaison, liaisons []*cluster.Liaison, opt
 
 func fastPolls(t *testing.T) {
 	t.Helper()
-	base, retry := verifyPollInterval, importRetryBase
-	verifyPollInterval, importRetryBase = 10*time.Millisecond, time.Millisecond
-	t.Cleanup(func() { verifyPollInterval, importRetryBase = base, retry })
+	base, retry := verifyPollInterval, transfer.RetryBase
+	verifyPollInterval, transfer.RetryBase = 10*time.Millisecond, time.Millisecond
+	t.Cleanup(func() { verifyPollInterval, transfer.RetryBase = base, retry })
 }
 
 func TestRunImportWritesSchemaPushesRowsAndVerifies(t *testing.T) {
@@ -342,4 +343,21 @@ func mirrorWithConflict(f *fakeLiaison) {
 	other := testStream("sw_stream", "log")
 	other.TagFamilies[0].Tags = append(other.TagFamilies[0].Tags, &databasev1.TagSpec{Name: "extra", Type: databasev1.TagType_TAG_TYPE_STRING})
 	f.schema.Streams[ResourceKey{"sw_stream", "log"}] = other
+}
+
+func TestLogRatesFollowsTheFormat(t *testing.T) {
+	opts := &config.Import{PartRateLimit: 1 << 20, NodeRateLimit: 50 << 20}
+	var native, csv bytes.Buffer
+	logRates(&native, opts, true)
+	logRates(&csv, opts, false)
+	assert.Contains(t, native.String(), "rate limits: native parts 1048576 bytes/s")
+	assert.Contains(t, native.String(), "WARN --node-rate-limit")
+	assert.NotContains(t, native.String(), "rate limits: node")
+	assert.Contains(t, csv.String(), "rate limits: node 52428800 bytes/s")
+	assert.Contains(t, csv.String(), "WARN --part-rate-limit applies to native parts only")
+	assert.NotContains(t, csv.String(), "rate limits: native parts")
+
+	native.Reset()
+	logRates(&native, &config.Import{}, true)
+	assert.Empty(t, native.String(), "no limit set, nothing logged")
 }

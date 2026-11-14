@@ -58,7 +58,7 @@ bydbctl data export --plan plan.yaml --output ./schema-20261010 --schema-only
 
 The command:
 
-1. checks that `--output` does not exist or is empty (anything else is exit `1`; there is no resume yet);
+1. checks that `--output` does not exist or is empty (anything else is exit `1`);
 2. connects to the liaisons, lists the groups and validates the selectors;
 3. writes the schema of the selected groups to `schema/`; with `--schema-only` it writes `manifest.json` and stops here, without a
    session or any data. With `--include-schema=false` it writes no schema at all and skips the schema revision check below;
@@ -70,8 +70,8 @@ The command:
    exits `2`;
 5. exports every node over its own stream, `--parallelism` nodes at a time, heartbeating the session every 5 minutes. Node `i`
    (nodes sorted by id) streams through liaison `i mod L`; a stream
-   refused as unavailable, busy or not found moves on to the next liaison (see `--send-retry-timeout`). Each file is written as `<file>.tmp`, checked against the size, CRC32 and schema
-   revision the node announces, then renamed;
+   refused as unavailable, busy or not found moves on to the next liaison (see `--send-retry-timeout`). Each file is written as `<file>.tmp`, checked against the size and CRC32 the node announces
+   (CSV files also against the schema revision), then renamed;
 6. writes `manifest.json`, releases the session and prints what was written — a `NODE CATALOG GROUP STAGE UNITS FILES ROWS SIZE TIME`
    table, `TIME` adding up the time the row's units took — followed by
    `export written to <dir>: <units> unit(s), <files> file(s), <size>, <n> warning(s) in <time>`.
@@ -87,8 +87,8 @@ error is printed when the run exits:
 ```
 
 When stdout is a terminal, each exporting node also has a live line below them, redrawn in place as the data arrives: the unit, the
-shard being written (its position among the unit's shards and the unit's part count, or `segment index` for the segment-level file
-of an index-mode measure), the rows and bytes so far, the unit's average transfer rate and the unit's time. The live lines stay
+shard being written (its position among the unit's shards and the unit's part count, or `segment-level` for a segment-level file:
+the rows of an index-mode measure, or a native segment's metadata and series index), the rows (CSV only) and bytes so far, the unit's average transfer rate and the unit's time. The live lines stay
 below the terminal height; the nodes that do not fit are counted on one line. When stdout is not a terminal there is no live
 line; the start of every unit is printed as a line of its own instead
 (`  data-hot1:17912  [3/7] measure/sw_metricsDay seg-20261004 started: 1 shard(s), 2 part(s)`).
@@ -176,8 +176,27 @@ cell); timestamps are Unix nanoseconds. `--csv-annotations` adds a `#datatype` l
 
 #### Native
 
-`--format native` is reserved for a format that carries the data nodes' own part files; it is not implemented yet (exit `1`). The
-design, including the manifest fields, is in [Data export and import](../../design/0.12.0/data-export-import/README.md).
+`--format native` carries the data nodes' own engine files byte for byte, packed into `.bnc` containers: per segment its `metadata`
+file, `sidx-NNNNN.bnc` (the series index) and one `shard-<N>-NNNNN.bnc` per shard (its live parts, their trace secondary index parts and
+the stream element index); per property shard one `shard-<N>-NNNNN.bnc`. It is much faster than CSV in both directions and reproduces
+the stored data exactly, but `bydbctl data import` accepts it only into a target whose shard numbers, segment intervals, time zone,
+segment file format and index rule ids match the source's. A native artifact is never compressed (`--compress` defaults to `none`, `gzip` is exit `1`);
+`--max-file-size` splits a container into volumes and must be `0` or at least `64KiB`. The format, including the manifest fields, is
+described in [Data export and import](../../design/0.12.0/data-export-import/README.md).
+
+Importing a native artifact refuses the whole import (exit `2`, the gate and its reason listed under `PROBLEMS`) when one of these
+differs: `TOPOLOGY` (the shard number or segment interval of the target stage or group), `TZ` (a target data node's time zone),
+`VERSION` (a segment file format a target data node cannot read) or `INDEX_RULE` (an index rule that exists on the target with another
+id; index rules the import creates keep the artifact's ids, so let the import create the schema rather than creating it beforehand).
+Two options apply to the native import only. A native import copies whole segments into a cluster that usually serves live
+traffic, and the liaison writes every byte to each replica; set `--part-rate-limit` so the copy does not saturate the target's
+network and disks. Raise `--part-chunk-size` over a high-latency link to cut acknowledgement round trips, or lower it to reduce the
+memory the liaison and receivers hold per in-flight frame:
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--part-rate-limit` | `import.partRateLimit`, else `BYDBCTL_IMPORT_PART_RATE_LIMIT`, else `0` | total byte rate of the part files the import sends, e.g. `50MiB/s`; `0` = unlimited. `--write-rate-limit`, `--liaison-rate-limit`, `--node-rate-limit` and `--node-row-rate-limit` do not apply to native |
+| `--part-chunk-size` | `import.partChunkSize`, else `BYDBCTL_IMPORT_PART_CHUNK_SIZE`, else `1MiB` | bytes of part files sent in one frame, `64KiB` to `4MiB`; out of range is exit `1` |
 
 ### Flags
 
@@ -190,15 +209,15 @@ Flags of `data export`:
 | `--selector` | `export.selectors` in `plan.yaml` | scope, repeatable: `catalog=<stream\|measure\|trace\|property>[,groups=<g1>;<g2>]`; an empty scope means every group. Separators are `,`, `;` and `=` only |
 | `--parallelism` | `export.parallelism`, else `BYDBCTL_PARALLELISM`, else `max` | number of data nodes exported concurrently: `max` or an integer >= 1, clamped by the node count |
 | `--output` | `export.output`, else `BYDBCTL_OUTPUT` | export directory; required for a real export; must not exist or be empty |
-| `--format` | `export.format`, else `BYDBCTL_FORMAT`, else `csv` | artifact format, see [Formats](#formats): `csv`; `native` is reserved and not implemented yet (exit `1`) |
-| `--compress` | `export.compress`, else `BYDBCTL_COMPRESS`, else `gzip` | `none` or `gzip` |
-| `--max-file-size` | `export.maxFileSize`, else `BYDBCTL_MAX_FILE_SIZE`, else `512MiB` | soft limit of one file's on-disk (compressed) size; a file rolls after the row that reaches it; `0` never rolls. Bare bytes or a unit (`KB`, `KiB`, `MB`, `MiB`, `GB`, `GiB`, ...) |
-| `--csv-annotations` | `export.csvAnnotations`, else `BYDBCTL_CSV_ANNOTATIONS`, else `false` | CSV only: write a `#datatype` line before every CSV header |
-| `--include-schema` | `export.includeSchema`, else `BYDBCTL_INCLUDE_SCHEMA`, else `true` | `false` exports no schema and skips the schema revision check; `groups[].indexMode` is then recorded as `false` with a warning. Cannot be combined with `--schema-only` |
+| `--format` | `export.format`, else `BYDBCTL_FORMAT`, else `csv` | artifact format, see [Formats](#formats): `csv` or `native` |
+| `--compress` | `export.compress`, else `BYDBCTL_COMPRESS`, else `gzip` (`none` for native) | `none` or `gzip`; native accepts only `none` (a `BYDBCTL_COMPRESS` value is ignored for native) |
+| `--max-file-size` | `export.maxFileSize`, else `BYDBCTL_MAX_FILE_SIZE`, else `512MiB` | CSV: soft limit of one file's on-disk (compressed) size; a file rolls after the row that reaches it. Native: hard cap on every `.bnc` volume, footer and trailer included; must be `0` or at least `64KiB`, otherwise exit `1`. `0` never rolls. Bare bytes or a unit (`KB`, `KiB`, `MB`, `MiB`, `GB`, `GiB`, ...) |
+| `--csv-annotations` | `export.csvAnnotations`, else `BYDBCTL_CSV_ANNOTATIONS`, else `false` | CSV only: write a `#datatype` line before every CSV header; refused with `--format native` when set as a flag or in `plan.yaml` |
+| `--include-schema` | `export.includeSchema`, else `BYDBCTL_INCLUDE_SCHEMA`, else `true` | `false` exports no schema and skips the schema revision check (CSV only; a native export never runs it); `groups[].indexMode` is then recorded as `false` with a warning. Cannot be combined with `--schema-only` |
 | `--schema-only` | `export.schemaOnly`, else `BYDBCTL_SCHEMA_ONLY`, else `false` | write `schema/` and `manifest.json` only, without a session or data |
 | `--preempt` | `BYDBCTL_PREEMPT`, else `false` | remove the export session the data nodes hold and take over; the export running on it fails on its next read |
 | `--node-rate-limit` | `export.nodeRateLimit`, else `BYDBCTL_NODE_RATE_LIMIT`, else `0` | byte rate each data node may send (compressed bytes), enforced by the node; `0` = unlimited |
-| `--node-row-rate-limit` | `export.nodeRowRateLimit`, else `BYDBCTL_NODE_ROW_RATE_LIMIT`, else `0` | CSV only: rows each data node may encode per period, enforced by the node; `0` = unlimited |
+| `--node-row-rate-limit` | `export.nodeRowRateLimit`, else `BYDBCTL_NODE_ROW_RATE_LIMIT`, else `0` | CSV only: rows each data node may encode per period, enforced by the node; `0` = unlimited; refused with `--format native` |
 | `--liaison-rate-limit` | `connection.rateLimit`, else `BYDBCTL_LIAISON_RATE_LIMIT`, else `0` | bytes each liaison relays, enforced by the liaison before it forwards each chunk; one bucket per liaison process shared by all its export streams, the stream opened last setting the value; `0` = unlimited |
 | `--node-idle-timeout` | `export.nodeIdleTimeout`, else `BYDBCTL_NODE_IDLE_TIMEOUT`, else `10m` | fail a node stream that delivers nothing for this long; `0` disables it |
 | `--send-retry-timeout` | `export.sendRetryTimeout`, else `BYDBCTL_SEND_RETRY_TIMEOUT`, else `15m` | how long to keep reopening a node stream refused with `UNAVAILABLE`, `RESOURCE_EXHAUSTED` or `NOT_FOUND`, trying the next liaison each time (back-off from 1s, doubling to 30s) |
@@ -219,8 +238,8 @@ stream may go without a single frame, however long the whole export takes. Conne
 under a 3-minute deadline, a dry run under 10 minutes and `release-session` under 3 minutes. Under any rate limit a node stream
 delivers a frame about every second (see above), so only a node that stalls hits the idle timeout.
 
-`plan.yaml` accepts only the keys below; any other key (`export.checkpoint` and the `import:` section included, which arrive with resume
-and the import) is rejected so a typo never falls back to a default silently. Its selectors get the same checks as `--selector` (a group
+`plan.yaml` accepts only the keys below plus the `import.*` keys of `data import` (such as `import.partRateLimit` and `import.partChunkSize`); any other key
+is rejected so a typo never falls back to a default silently. Its selectors get the same checks as `--selector` (a group
 name must not be empty or repeated), and `--selector` replaces them entirely. Explicit flags override the file, which overrides the
 `BYDBCTL_*` environment. `--dry-run`, `--preempt`, `--strict-coverage` and `--output-format` are one-shot switches with no plan field.
 
@@ -234,7 +253,7 @@ connection:
   rateLimit: 800MiB/s    # --liaison-rate-limit; 0 = unlimited
 export:
   output: ./backup-20261010
-  format: csv            # csv; native is reserved
+  format: csv            # csv | native
   compress: gzip         # none | gzip
   maxFileSize: 512MiB    # 0 = never roll
   includeSchema: true
@@ -256,7 +275,7 @@ Exit codes of `data export` and `data release-session`:
 | Code | Meaning |
 |------|---------|
 | `0` | success; release warnings do not change it. It can include data-loss warnings: check `manifest.warnings` before treating the export as complete |
-| `1` | usage error: a bad flag or `plan.yaml`, an unknown selector group, a non-empty `--output`, `--format native` |
+| `1` | usage error: a bad flag or `plan.yaml`, an unknown selector group, a non-empty `--output`, or with `--format native` any of `--compress gzip`, a non-zero `--max-file-size` below 64KiB, a `--node-row-rate-limit` above 0 or `--csv-annotations` (set as a flag or in `plan.yaml`) |
 | `2` | preflight rejection, nothing was exported: no liaison reachable or one refused the credentials, a server without data export, another export session holds the cluster (without `--preempt`), or, in a dry run with `--strict-coverage`, a coverage gap (the report is still printed) |
 | `3` | failure at run time: a node stream failed or stalled, a file failed its size/CRC32 check, the schema changed during the export, the session was lost (its heartbeat answered `FAILED_PRECONDITION`), or a release failed on some node (`release-session`) |
 
@@ -288,8 +307,8 @@ The table output starts with summary lines, then one row per `(node, catalog, gr
 | `SHARDS` | distinct shard ids across those segments (not a sum per segment) |
 | `PARTS` | flushed parts across all segments and shards |
 | `EST-ROWS` | the sum of the parts' row counts. For an index-mode measure it is the document count of the segment series index, an upper bound because it also holds the series of the group's regular measures. For property it counts every stored revision, tombstones included |
-| `EST-SIZE(comp/raw)` | compressed on-disk bytes / uncompressed bytes. comp includes the per-shard and segment-level indexes; raw includes the per-shard indexes, and the segment-level index only for an index-mode measure (where it holds the rows; otherwise it is rebuilt from the parts). For trace, raw counts the span payload only (tags excluded), so it can be smaller than comp; comp is a lower bound. Property stores one form, so both are equal |
-| `TIME-RANGE` | earliest ~ latest timestamp of the parts, UTC, as `MM-DD` (with the year when the bounds fall in different years); `-` when unknown |
+| `EST-SIZE` | estimated on-disk size of the parts and their indexes, what a native export transfers. `-o json` and `-o yaml` also carry the uncompressed size |
+| `TIME-RANGE` | earliest ~ latest timestamp of the parts and, for an index-mode measure group, of its series index, UTC, as `MM-DD` (with the year when the bounds fall in different years); `-` when unknown |
 | `SNAPSHOT` | each data node pins its own snapshot during a real export; the line names how much the largest node needs (its compressed subtotal) so you can check `df` there first |
 
 On stderr the command also prints the effective parallelism and `WARN` lines for a node that reports a stage the group schema does not
@@ -348,4 +367,5 @@ With RBAC enabled the data commands need:
 Pass `-u/-p` or `BYDBCTL_USERNAME`/`BYDBCTL_PASSWORD`, and enable TLS (`--enable-tls`, or `connection.nodesTLS` in `plan.yaml`) so the
 credentials are not sent in clear text. The liaison forwards these calls to the data nodes over the internal cluster port, which carries
 no authentication of its own and must stay unreachable from outside the cluster. An end-to-end example with one hot and one warm data
-node behind a liaison, covering the dry run, `release-session` and the CSV export, lives in `test/e2e-v2/cases/transfer/export/`.
+node behind a liaison, covering the dry run, `release-session`, the export and the import, lives in `test/e2e-v2/cases/transfer/csv/`
+(CSV) and `test/e2e-v2/cases/transfer/native/` (native).

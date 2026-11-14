@@ -958,3 +958,12 @@ func (p *pub) NewExportClient(node string) (transferv1.ExportServiceClient, erro
 	}
 	return transferv1.NewExportServiceClient(c.conn), nil
 }
+
+// NewChunkedSyncRelayClient implements queue.Client on top of the shared connection pool.
+func (p *pub) NewChunkedSyncRelayClient(node string) (clusterv1.ChunkedSyncServiceClient, error) {
+	c, ok := p.connMgr.GetClient(node)
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+	return clusterv1.NewChunkedSyncServiceClient(c.conn), nil
+}

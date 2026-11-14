@@ -107,6 +107,15 @@ func TestRenderGoldenGates(t *testing.T) {
 	checkGolden(t, "plan-gates.table.golden", render(t, "table", p))
 }
 
+// A standalone target has no data nodes to route to, so a group the import creates shows no
+// target nodes rather than ones routed after its schema is written.
+func TestRenderStandaloneShowsNoAfterSchemaTargets(t *testing.T) {
+	p := Decide(decideInputs(t, Flags{}))
+	p.Header.Standalone = true
+	out := string(render(t, "table", p))
+	assert.NotContains(t, out, "after-schema")
+}
+
 func TestResultOfASchemaOnlyPlanPromisesNoData(t *testing.T) {
 	p := Decide(decideInputs(t, Flags{SchemaOnly: true}))
 	require.NotEmpty(t, p.Entries, "the data work items are still decided")
@@ -179,6 +188,36 @@ func TestRenderTimeRangeOfIndexModeOnlyGroup(t *testing.T) {
 		}
 	}
 	assert.True(t, strings.HasSuffix(row, "10-15 ~ 10-16"), row)
+}
+
+// A segment item shows the time range of the rows the export recorded for its unit, not the
+// segment bounds it pushes with, so a group's row keeps the range of its data.
+func TestRenderTimeRangeOfRecordedSegmentRows(t *testing.T) {
+	in := decideInputs(t, Flags{})
+	m := in.Artifact.Manifest
+	m.Source.Nodes = []manifest.Node{{ID: "data-a", Dir: "data-a", Timezone: "UTC"}}
+	m.Groups = []manifest.Group{{Name: "sw_metric", Catalog: "MEASURE", IndexMode: true, Stages: []manifest.Stage{{Name: "hot", SegmentInterval: "7d", TTL: "30d"}}}}
+	rowsLo := time.Date(2026, 10, 18, 1, 0, 0, 0, time.UTC).UnixNano()
+	rowsHi := time.Date(2026, 10, 18, 2, 0, 0, 0, time.UTC).UnixNano()
+	m.Units = []manifest.Unit{{
+		Catalog: "MEASURE", Group: "sw_metric", Stage: "hot", Segment: "20261016",
+		MinTimestamp: rowsLo, MaxTimestamp: rowsHi,
+		Sources: []manifest.UnitSource{{
+			Node: "data-a", SegmentFiles: []manifest.File{dataFile("nodes/data-a/measure/sw_metric/seg-20261016/segment-00001.csv.gz")},
+			RowCounts: map[string]uint64{"idx": 5}, TotalCount: 5,
+		}},
+	}}
+	p := Decide(in)
+	require.Len(t, p.Entries, 1)
+	lo, _ := p.Entries[0].Item.TimeRange()
+	assert.Equal(t, time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC).UnixNano(), lo, "the push still spans the segment")
+	var row string
+	for _, l := range strings.Split(string(render(t, "table", p)), "\n") {
+		if strings.HasPrefix(l, "measure") {
+			row = l
+		}
+	}
+	assert.True(t, strings.HasSuffix(row, "10-18 ~ 10-18"), row)
 }
 
 // The schema is summarized per group; the problems name the missing resources' groups in one

@@ -237,8 +237,8 @@ func listMembers(dir string) []bnc.Member {
 	return out
 }
 
-// pack writes members of dir as the volumes prefix-NNNNN.bnc, numbered from 1 as
-// CountVolumes announces, each at most maxFileSize bytes on disk.
+// pack writes members of dir as the volumes prefix-NNNNN.bnc, numbered from 1, each at most
+// maxFileSize bytes on disk.
 func pack(sink *fileSink, dir, prefix string, members []bnc.Member, maxFileSize uint64) {
 	if len(members) == 0 {
 		return
@@ -251,10 +251,15 @@ func pack(sink *fileSink, dir, prefix string, members []bnc.Member, maxFileSize 
 		gomega.ExpectWithOffset(1, v.Add(context.Background(), m)).To(gomega.Succeed())
 	}
 	gomega.ExpectWithOffset(1, v.Close()).To(gomega.Succeed())
-	count, err := bnc.CountVolumes(members, maxFileSize)
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
-	for i := 1; i <= int(count); i++ {
-		rel := fmt.Sprintf("%s-%05d.bnc", prefix, i)
+	count := 0
+	for rel := range sink.sums {
+		if p, _, ok := bnc.ParseVolumeName(rel); ok && p == prefix {
+			count++
+		}
+	}
+	gomega.ExpectWithOffset(1, count).To(gomega.BeNumerically(">", 0))
+	for i := 1; i <= count; i++ {
+		rel := bnc.VolumeName(prefix, uint32(i))
 		gomega.ExpectWithOffset(1, sink.sums).To(gomega.HaveKey(rel))
 		info, statErr := os.Stat(filepath.Join(sink.root, filepath.FromSlash(rel)))
 		gomega.ExpectWithOffset(1, statErr).NotTo(gomega.HaveOccurred())

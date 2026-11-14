@@ -136,6 +136,8 @@ var (
 	traceBase   time.Time
 	// exportRoot holds every export of the suite, so an export outlives the spec that made it.
 	exportRoot string
+	// csvArtifact is the CSV export of the settled source every Describe compares with.
+	csvArtifact string
 )
 
 // startCluster starts the data nodes with the given labels one after the other, runs the
@@ -265,6 +267,20 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
 		g.Expect(transfertest.PropertyDocs(frames, transfertest.PropertyGroup)).To(gomega.BeNumerically(">=", 4), "property")
 	}, time.Minute, time.Second).Should(gomega.Succeed())
+	// The checks above are lower bounds: a late Top-N or index flush may still land. Wait for
+	// four equal readings 2s apart, spanning past the 5s property flush timeout, so every export sees the same data.
+	ginkgo.By("Waiting for the source totals to settle")
+	last, same := uint64(0), 0
+	gomega.Eventually(func() bool {
+		n := clusterData(source)
+		if n == last {
+			same++
+		} else {
+			last, same = n, 0
+		}
+		return same >= 3
+	}, flags.EventuallyTimeout, 2*time.Second).Should(gomega.BeTrue(), "source plan totals settle")
+	csvArtifact = transfertest.ExportFrom(source.liaisonAddr, exportRoot)
 	return nil
 }, func(_ []byte) {})
 

@@ -18,6 +18,7 @@
 package importer
 
 import (
+	"bytes"
 	"context"
 	"hash/crc32"
 	"os"
@@ -119,7 +120,7 @@ func TestOpenArtifactRejects(t *testing.T) {
 		contains string
 		checksum bool
 	}{
-		{name: "not csv", mutate: func(m *manifest.Manifest) { m.Format = "native" }, contains: "only csv"},
+		{name: "unknown format", mutate: func(m *manifest.Manifest) { m.Format = "parquet" }, contains: "only csv and native"},
 		{name: "newer artifact version", mutate: func(m *manifest.Manifest) { m.ArtifactVersion = 2 }, contains: "artifactVersion 2"},
 		{
 			name: "group of an unknown catalog without schema", contains: `unknown catalog "QUEUE"`,
@@ -240,4 +241,87 @@ func TestOpenArtifactLeavesOutInternalGroups(t *testing.T) {
 	require.Len(t, a.Manifest.Units, 1)
 	assert.Equal(t, "sw_stream", a.Manifest.Units[0].Group)
 	assert.Equal(t, []string{"the artifact holds the server's internal group(s) _deletion_task; they are not imported"}, a.Warnings)
+}
+
+// writeNativeArtifact writes a native artifact without schema whose one shard holds files.
+func writeNativeArtifact(t *testing.T, dir string, files ...manifest.File) {
+	t.Helper()
+	m := &manifest.Manifest{
+		Format: manifest.FormatNative, ArtifactVersion: 1, ExportedAt: "2026-10-19T08:00:00Z",
+		Groups: []manifest.Group{{Name: "sw_stream", Catalog: "STREAM"}},
+		Units: []manifest.Unit{{
+			Catalog: "STREAM", Group: "sw_stream", Stage: "hot", Segment: "20261016",
+			Sources: []manifest.UnitSource{{Node: "data-a", Shards: []manifest.Shard{{Shard: 0, TotalCount: 1, Files: files}}}},
+		}},
+	}
+	require.NoError(t, manifest.Write(filepath.Join(dir, manifest.FileName), m))
+}
+
+func TestOpenArtifactChecksNativeContainers(t *testing.T) {
+	const prefix = "nodes/data-a/stream/sw_stream/seg-20261016/shard-0"
+	newDir := func() (string, manifest.File) {
+		dir := t.TempDir()
+		return dir, writeContainer(t, dir, prefix, member{"a", "AAAA"}, member{"b", "BB"})
+	}
+
+	dir, vol := newDir()
+	writeNativeArtifact(t, dir, vol)
+	_, err := OpenArtifact(context.Background(), dir, true)
+	require.NoError(t, err, "a complete container passes")
+
+	for _, checksum := range []bool{true, false} {
+		dir, vol = newDir()
+		vol.EntryCount = 3
+		writeNativeArtifact(t, dir, vol)
+		_, err = OpenArtifact(context.Background(), dir, checksum)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "has 2 entries, the manifest registers 3")
+		assert.Equal(t, exitcode.ExitPreflight, exitcode.For(err))
+	}
+
+	// Volumes 00001 and 00003 are registered with matching sizes and CRCs, but they do not
+	// make one container.
+	dir, vol = newDir()
+	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(vol.Path)))
+	require.NoError(t, err)
+	third := writeFile(t, dir, prefix+"-00003.bnc", raw)
+	third.EntryCount = vol.EntryCount
+	writeNativeArtifact(t, dir, vol, third)
+	_, err = OpenArtifact(context.Background(), dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "artifact container "+prefix)
+	assert.Equal(t, exitcode.ExitPreflight, exitcode.For(err))
+
+	dir, vol = newDir()
+	vol.EntryCount = 0
+	writeNativeArtifact(t, dir, vol)
+	_, err = OpenArtifact(context.Background(), dir, false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "registers no entryCount")
+
+	// A member byte changed under a manifest that registers the new volume CRC: only the
+	// volume verification, which checks the member checksums, refuses it.
+	dir, vol = newDir()
+	full := filepath.Join(dir, filepath.FromSlash(vol.Path))
+	raw, err = os.ReadFile(full)
+	require.NoError(t, err)
+	at := bytes.Index(raw, []byte("AAAA"))
+	require.GreaterOrEqual(t, at, 0)
+	raw[at] = 'Z'
+	corrupt := writeFile(t, dir, vol.Path, raw)
+	corrupt.EntryCount = vol.EntryCount
+	writeNativeArtifact(t, dir, corrupt)
+	_, err = OpenArtifact(context.Background(), dir, false)
+	require.NoError(t, err, "without data verification only sizes and footers are checked")
+	_, err = OpenArtifact(context.Background(), dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "artifact container "+prefix)
+	assert.Equal(t, exitcode.ExitPreflight, exitcode.For(err))
+
+	dir, _ = newDir()
+	bad := writeFile(t, dir, prefix+"-1.bnc", []byte("x"))
+	writeNativeArtifact(t, dir, bad)
+	_, err = OpenArtifact(context.Background(), dir, true)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is not named as a container volume")
 }

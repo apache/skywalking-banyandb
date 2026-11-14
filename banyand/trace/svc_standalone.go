@@ -93,7 +93,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.StringVar(&s.exportSnapshotDir, "trace-export-snapshot-path", "", storage.ExportSnapshotPathUsage("trace"))
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
-	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", queue.DefaultReceiveMemWaitTimeout,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 
 	// Retention configuration flags

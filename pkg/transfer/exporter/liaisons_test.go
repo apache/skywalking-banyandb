@@ -29,6 +29,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
@@ -88,9 +89,9 @@ func TestRunExport_DealsNodesOverTheLiaisons(t *testing.T) {
 // Opening a stream refused as unavailable or by a liaison that cannot see the node moves on
 // to the next liaison.
 func TestRunExport_MovesToTheNextLiaisonWhenRefused(t *testing.T) {
-	saved := exportRetryBase
-	exportRetryBase = 10 * time.Millisecond
-	t.Cleanup(func() { exportRetryBase = saved })
+	saved := transfer.RetryBase
+	transfer.RetryBase = 10 * time.Millisecond
+	t.Cleanup(func() { transfer.RetryBase = saved })
 	for _, code := range []codes.Code{codes.Unavailable, codes.NotFound} {
 		primary, refusing := exportFake(), exportFake()
 		refusing.exportScript = func(*fakeLiaison, *transferv1.ExportRequest_Init, transferv1.ExportService_ExportServer) error {

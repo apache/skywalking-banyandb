@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/importer"
 )
 
@@ -102,6 +103,9 @@ func loadArtifact(ctx context.Context, dir string, scope map[string]bool, topN T
 	if err != nil {
 		return nil, err
 	}
+	if art.Native() {
+		return nil, fmt.Errorf("%s: rowdiff compares CSV artifacts; export a CSV reference of the source", dir)
+	}
 	m := art.Manifest
 	in := func(group string) bool { return scope == nil || scope[group] }
 	a := &artifact{groups: map[groupKey]*groupData{}}
@@ -125,7 +129,7 @@ func loadArtifact(ctx context.Context, dir string, scope map[string]bool, topN T
 			return nil, err
 		}
 	}
-	gzipAll := m.Compress == "gzip"
+	gzipAll := m.Compress == manifest.CompressGzip
 	for _, u := range m.Units {
 		if !in(u.Group) {
 			continue

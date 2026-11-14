@@ -50,9 +50,8 @@ type syncPartContext struct {
 	partID        uint64
 }
 
-func (s *syncPartContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for stream")
-	return nil
+func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("a stream part does not support part type %q", ctx.PartType)
 }
 
 func (s *syncPartContext) FinishSync() error {
@@ -210,9 +209,8 @@ type syncSeriesContext struct {
 	memWaitTimeout time.Duration
 }
 
-func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for stream")
-	return nil
+func (s *syncSeriesContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("the stream series index does not support part type %q", ctx.PartType)
 }
 
 func (s *syncSeriesContext) FinishSync() error {
@@ -336,9 +334,8 @@ type syncElementIndexContext struct {
 	memWaitTimeout time.Duration
 }
 
-func (s *syncElementIndexContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for stream")
-	return nil
+func (s *syncElementIndexContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("the stream element index does not support part type %q", ctx.PartType)
 }
 
 func (s *syncElementIndexContext) FinishSync() error {

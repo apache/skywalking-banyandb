@@ -259,7 +259,7 @@
     {
       "key": "measure/sw_metric/hot/20261012/shard-0",
       "gate": "TTL",
-      "reason": "every row is older than the target stage's retention",
+      "reason": "the target segments of every row are past the target stage's retention",
       "targetStage": "hot",
       "targetNodes": [
         "dst-hot1"
@@ -350,7 +350,7 @@
     }
   ],
   "gateDetails": [
-    "measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target retention (newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it"
+    "measure/sw_metric/hot seg=20261012 shard=0: every row is in a target segment past the retention (newest 2026-10-12T10:00:00Z, its segment ends 2026-10-13T00:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it"
   ],
   "warnings": [
     "group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row is written to every one of them",

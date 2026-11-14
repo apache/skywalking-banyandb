@@ -23,6 +23,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // Kind classifies a member of a shard container (a stream, measure or trace shard directory).
@@ -40,14 +42,7 @@ const (
 	KindElementIndex
 )
 
-const (
-	partIDLen          = 16
-	snapshotExt        = ".snp"
-	elementIndexDir    = "idx"
-	secondaryIndexDir  = "sidx"
-	coreMetaFile       = "metadata.json"
-	secondaryIndexMeta = "manifest.json"
-)
+const partIDLen = 16
 
 // Class is the classification of a shard container member.
 type Class struct {
@@ -62,18 +57,18 @@ type Class struct {
 func ClassifyShardPath(p string) Class {
 	parts := strings.Split(p, "/")
 	switch {
-	case len(parts) >= 4 && parts[0] == secondaryIndexDir:
+	case len(parts) >= 4 && parts[0] == nativefmt.SecondaryIndexDir:
 		if id, ok := parsePartID(parts[2]); ok && parts[1] != "" {
 			return Class{Kind: KindPart, PartID: id, PartType: parts[1]}
 		}
-	case len(parts) >= 2 && parts[0] == elementIndexDir:
+	case len(parts) >= 2 && parts[0] == nativefmt.ElementIndexDir:
 		return Class{Kind: KindElementIndex}
 	case len(parts) >= 2:
 		if id, ok := parsePartID(parts[0]); ok {
 			return Class{Kind: KindPart, PartID: id}
 		}
-	case len(parts) == 1 && strings.HasSuffix(p, snapshotExt):
-		if _, ok := parsePartID(strings.TrimSuffix(p, snapshotExt)); ok {
+	case len(parts) == 1 && strings.HasSuffix(p, nativefmt.SnapshotExt):
+		if _, ok := parsePartID(strings.TrimSuffix(p, nativefmt.SnapshotExt)); ok {
 			return Class{Kind: KindSnapshot}
 		}
 	}
@@ -185,7 +180,7 @@ func sortByPath[T any](items []T, pathOf func(T) string) {
 func sortNative[T any](items []T, pathOf func(T) string) {
 	slices.SortFunc(items, func(a, b T) int {
 		aPath, bPath := pathOf(a), pathOf(b)
-		aSnp, bSnp := strings.HasSuffix(aPath, snapshotExt), strings.HasSuffix(bPath, snapshotExt)
+		aSnp, bSnp := strings.HasSuffix(aPath, nativefmt.SnapshotExt), strings.HasSuffix(bPath, nativefmt.SnapshotExt)
 		if aSnp != bSnp {
 			if aSnp {
 				return 1

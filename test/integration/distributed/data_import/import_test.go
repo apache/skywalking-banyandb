@@ -57,7 +57,7 @@ var _ = ginkgo.Describe("CSV import between two clusters", ginkgo.Ordered, func(
 	var firstB string
 
 	ginkgo.BeforeAll(func() {
-		artifactA = transfertest.ExportFrom(source.liaisonAddr, exportRoot)
+		artifactA = csvArtifact
 		a := transfertest.ReadArtifact(artifactA, false)
 		var stages []string
 		for _, u := range a.Manifest.Units {
@@ -142,7 +142,7 @@ var _ = ginkgo.Describe("CSV import between two clusters", ginkgo.Ordered, func(
 		gomega.Expect(sum(byStage["warm"])).To(gomega.Equal(uint64(stagedRows)))
 		gomega.Expect(target1.namesOf(hotLabel)).To(gomega.ContainElements(keys(byStage[""])))
 		gomega.Expect(sum(byStage[""])).To(gomega.Equal(uint64(stagedRows)))
-		gomega.Expect(groupShardNum(target1, transfertest.StreamGroup)).To(gomega.Equal(uint32(targetStreamShards)), "ignore keeps the target group")
+		gomega.Expect(streamGroupShardNum(target1)).To(gomega.Equal(uint32(targetStreamShards)), "ignore keeps the target group")
 
 		ginkgo.By("Exporting the target and comparing it with the source artifact")
 		artifactB, reportB = exportRoundTrip(target1, artifactA)
@@ -324,7 +324,7 @@ func exportRoundTrip(c *cluster, artifactA string) (string, *rowdiff.Report) {
 // expectUntouched asserts that c holds only what it was started with: the pre-created stream
 // group, unchanged, no other suite group, and no row.
 func expectUntouched(c *cluster) {
-	gomega.ExpectWithOffset(1, groupShardNum(c, transfertest.StreamGroup)).To(gomega.Equal(uint32(targetStreamShards)))
+	gomega.ExpectWithOffset(1, streamGroupShardNum(c)).To(gomega.Equal(uint32(targetStreamShards)))
 	for _, g := range []string{transfertest.MeasureGroup, transfertest.IndexModeGroup, transfertest.TraceGroup, transfertest.PropertyGroup, stagedGroup} {
 		_, err := databasev1.NewGroupRegistryServiceClient(c.conn).Get(context.Background(), &databasev1.GroupRegistryServiceGetRequest{Group: g})
 		gomega.ExpectWithOffset(1, status.Code(err)).To(gomega.Equal(codes.NotFound), "group %s is not created: %v", g, err)
@@ -340,8 +340,10 @@ func expectUntouched(c *cluster) {
 	}
 }
 
-func groupShardNum(c *cluster, group string) uint32 {
-	resp, err := databasev1.NewGroupRegistryServiceClient(c.conn).Get(context.Background(), &databasev1.GroupRegistryServiceGetRequest{Group: group})
+// streamGroupShardNum returns the shard number of the stream group on the cluster.
+func streamGroupShardNum(c *cluster) uint32 {
+	resp, err := databasev1.NewGroupRegistryServiceClient(c.conn).Get(context.Background(),
+		&databasev1.GroupRegistryServiceGetRequest{Group: transfertest.StreamGroup})
 	gomega.ExpectWithOffset(2, err).NotTo(gomega.HaveOccurred())
 	return resp.GetGroup().GetResourceOpts().GetShardNum()
 }

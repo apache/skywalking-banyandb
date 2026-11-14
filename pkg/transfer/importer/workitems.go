@@ -20,6 +20,7 @@ package importer
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -36,7 +37,8 @@ type WorkItemKind uint8
 const (
 	// ShardItem pushes one shard's files of a segment unit.
 	ShardItem WorkItemKind = iota
-	// SegmentItem pushes the segment-level files of a segment unit (index-mode measures).
+	// SegmentItem pushes the segment-level files of a segment unit: a native segment's series index,
+	// or the index-mode rows of a CSV measure.
 	SegmentItem
 	// PropertyItem pushes one source shard id's files of a property group.
 	PropertyItem
@@ -83,11 +85,20 @@ type WorkItem struct {
 	// Stage is the source stage from the manifest; "" for property.
 	Stage   string `json:"stage"`
 	Segment string `json:"segment,omitempty"`
+	// SegmentVersion is the file format version of the source segment; "" for property.
+	SegmentVersion string `json:"-"`
+	// Shards are the shards of the unit a segment item's index covers, in any source.
+	Shards []uint32 `json:"-"`
 	// Sources are in node name order.
-	Sources []WorkSource     `json:"sources"`
-	Catalog commonv1.Catalog `json:"-"`
-	Shard   uint32           `json:"shard"`
-	Kind    WorkItemKind     `json:"kind"`
+	Sources []WorkSource `json:"sources"`
+	// RowsMinTimestamp and RowsMaxTimestamp are the time range of the unit's rows as the export
+	// recorded it (manifest unit), shown for a segment item instead of the segment bounds its
+	// sources carry; 0 when the export recorded none.
+	RowsMinTimestamp int64            `json:"-"`
+	RowsMaxTimestamp int64            `json:"-"`
+	Catalog          commonv1.Catalog `json:"-"`
+	Shard            uint32           `json:"shard"`
+	Kind             WorkItemKind     `json:"kind"`
 }
 
 // CatalogName is the lower-case catalog name: stream, measure, trace or property.
@@ -134,6 +145,16 @@ func (w *WorkItem) TimeRange() (lo, hi int64) {
 	return lo, hi
 }
 
+// DisplayRange is the time range of the item's rows. A segment item's sources carry the segment
+// bounds the push needs, so it reports the unit's recorded range instead, and the segment bounds
+// only when the artifact recorded none (an older export).
+func (w *WorkItem) DisplayRange() (lo, hi int64) {
+	if w.Kind == SegmentItem && w.RowsMinTimestamp != 0 {
+		return w.RowsMinTimestamp, w.RowsMaxTimestamp
+	}
+	return w.TimeRange()
+}
+
 // WithSources returns a copy of the item holding only the named sources.
 func (w *WorkItem) WithSources(nodes []string) WorkItem {
 	out := *w
@@ -173,7 +194,7 @@ func BuildWorkItems(m *manifest.Manifest) ([]WorkItem, error) {
 		if !ok {
 			return nil, fmt.Errorf("unit %s/%s has unknown catalog %q", u.Group, u.Segment, u.Catalog)
 		}
-		base := WorkItem{Catalog: catalog, Group: u.Group, Stage: u.Stage, Segment: u.Segment}
+		base := WorkItem{Catalog: catalog, Group: u.Group, Stage: u.Stage, Segment: u.Segment, SegmentVersion: u.SegmentVersion}
 		kind := ShardItem
 		if catalog == commonv1.Catalog_CATALOG_PROPERTY {
 			base.Stage, base.Segment, kind = "", "", PropertyItem
@@ -185,6 +206,7 @@ func BuildWorkItems(m *manifest.Manifest) ([]WorkItem, error) {
 				if segment == nil {
 					seg := base
 					seg.Kind = SegmentItem
+					seg.RowsMinTimestamp, seg.RowsMaxTimestamp = u.MinTimestamp, u.MaxTimestamp
 					segment = &seg
 				}
 				ws := WorkSource{
@@ -215,6 +237,7 @@ func BuildWorkItems(m *manifest.Manifest) ([]WorkItem, error) {
 			items = append(items, *item)
 		}
 		if segment != nil {
+			segment.Shards = slices.Sorted(maps.Keys(shards))
 			items = append(items, *segment)
 		}
 	}
@@ -229,7 +252,15 @@ func BuildWorkItems(m *manifest.Manifest) ([]WorkItem, error) {
 // segment in the source node's time zone. Both are zero, with the reason, when the stage or the
 // suffix cannot be resolved.
 func segmentTimeRange(m *manifest.Manifest, u *manifest.Unit, timezone string) (lo, hi int64, err error) {
-	st, ok := sourceStage(m, u.Group, u.Stage)
+	var st manifest.Stage
+	var ok bool
+	if normalizeStage(u.Stage) == transfer.DefaultStageName {
+		// Hot is laid out with the group's own opts; a differing lifecycle stage named hot is
+		// refused by the TOPOLOGY gate.
+		st, ok = sourceGroupDefault(m, u.Group)
+	} else {
+		st, ok = sourceStage(m, u.Group, u.Stage)
+	}
 	if !ok {
 		return 0, 0, fmt.Errorf("the manifest has no stage %q for group %s", u.Stage, u.Group)
 	}

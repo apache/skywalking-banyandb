@@ -127,6 +127,18 @@ func TestBuildReport_SegmentLevelRawBytesOnlyForIndexMode(t *testing.T) {
 	}
 }
 
+// An index-mode segment without shards takes its time range from the series index.
+func TestBuildReport_IndexModeTimeRange(t *testing.T) {
+	indexOnly := unitFrame("a", "", "m", 0, 0, 0)
+	seg := segmentOf(indexOnly)
+	seg.Shards, seg.Unit.ShardIds = nil, nil
+	seg.SegmentLevel.DocCount, seg.SegmentLevel.MinTimestamp, seg.SegmentLevel.MaxTimestamp = 7, 100, 900
+	rep := BuildReport(&cluster.Info{DataNodes: nodes("a")}, &cluster.PlanResult{AnsweredNodes: []string{"a"}, Frames: unitFrames(indexOnly)})
+	if len(rep.Rows) != 1 || rep.Rows[0].MinTimestamp != 100 || rep.Rows[0].MaxTimestamp != 900 || rep.Rows[0].EstRows != 7 {
+		t.Fatalf("the series index range must reach the row: %+v", rep.Rows)
+	}
+}
+
 // propertyFrame is a `units` frame with one property group of two shards on node.
 func propertyFrame(node string) *transferv1.UnitFrame {
 	return &transferv1.UnitFrame{NodeId: node, Units: []*transferv1.UnitInventory{{Kind: &transferv1.UnitInventory_Property{
@@ -158,7 +170,7 @@ func TestBuildReport_PropertyRows(t *testing.T) {
 	if err := Render(&buf, "table", rep); err != nil {
 		t.Fatal(err)
 	}
-	if out := buf.String(); !strings.Contains(out, "a     property  ui     hot    -         2       -      15        3.0 KiB / 3.0 KiB   -") {
+	if out := buf.String(); !strings.Contains(out, "a     property  ui     hot    -         2       -      15        3.0 KiB   -") {
 		t.Fatalf("property rows render their stage and - for SEGMENTS and PARTS:\n%s", out)
 	}
 	if multiSourceKey("measure", "m", "hot", "20260930", 3) != "measure/m/hot/20260930/shard-3" {
@@ -182,8 +194,8 @@ func TestRender_Table(t *testing.T) {
 	for _, want := range []string{
 		"NODES", "⚠", "[c d]",
 		"MULTI-SRC 1 unit(s)", "measure/m/hot/20260930/shard-0",
-		"NODE  CATALOG  GROUP  STAGE  SEGMENTS  SHARDS  PARTS  EST-ROWS  EST-SIZE(comp/raw)  TIME-RANGE",
-		"a     measure  m      hot", "110 B / 300 B", "11-14 ~ 11-15",
+		"NODE  CATALOG  GROUP  STAGE  SEGMENTS  SHARDS  PARTS  EST-ROWS  EST-SIZE  TIME-RANGE",
+		"a     measure  m      hot", "110 B     11-14 ~ 11-15",
 		"MULTI-SRC 1 unit(s)", "measure/m/hot/20260930/shard-0  <- a(5 rows, 11-14 ~ 11-15) + b(6 rows, 11-15 ~ 11-16)",
 		"SNAPSHOT  each data node pins its own snapshot; the largest node (a) needs about 110 B; check df there first",
 	} {

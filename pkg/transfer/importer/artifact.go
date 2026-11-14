@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package importer imports a CSV artifact written by data export into a cluster: it checks
+// Package importer imports a CSV or native artifact written by data export into a cluster: it checks
 // the artifact, compares its schema with the target, decides which units and sources to push
 // and renders that decision.
 package importer
@@ -43,6 +43,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
@@ -133,7 +134,7 @@ func newMessage(kind string) (proto.Message, error) {
 	}
 }
 
-// Artifact is an opened, checked CSV artifact with its decoded schema.
+// Artifact is an opened, checked CSV or native artifact with its decoded schema.
 type Artifact struct {
 	Manifest *manifest.Manifest
 	Schemas
@@ -147,20 +148,26 @@ var (
 	lenientJSON = protojson.UnmarshalOptions{DiscardUnknown: true}
 )
 
+// Native reports whether the artifact holds native part files rather than CSV rows.
+func (a *Artifact) Native() bool { return a.Manifest.Format == manifest.FormatNative }
+
 // OpenArtifact reads and checks the artifact at dir: manifest.json must exist, the format must
-// be csv and artifactVersion at most manifest.ArtifactVersion; every schema and data file must
-// exist with the registered size and, when verifyChecksum is set, CRC-32. Any failure is a
-// preflight rejection. An artifact exported without its schema knows only its groups, from the
-// manifest; its CSV columns are read with the target's schema. The schema files are
-// decoded strictly first, so unknown fields become warnings, then leniently. A canceled ctx
-// stops the checksum pass and maps to the exit code of the cancellation.
-func OpenArtifact(ctx context.Context, dir string, verifyChecksum bool) (*Artifact, error) {
+// be csv or native and artifactVersion at most manifest.ArtifactVersion; every schema file must
+// exist with the registered size and CRC-32, and every data file with the registered size and,
+// when verifyData is set, CRC-32; the containers of a native artifact must open as complete
+// volume sets with the registered entry counts, and with verifyData every volume is verified
+// whole, member checksums included. Any failure is a preflight rejection. An artifact exported
+// without its schema knows only its groups, from the manifest; its CSV columns are read with the
+// target's schema. The schema files are decoded strictly first, so unknown fields become
+// warnings, then leniently. A canceled ctx stops the checksum pass and maps to the exit code of
+// the cancellation.
+func OpenArtifact(ctx context.Context, dir string, verifyData bool) (*Artifact, error) {
 	m, err := manifest.Read(filepath.Join(dir, manifest.FileName))
 	if err != nil {
 		return nil, exitcode.Exit(exitcode.ExitPreflight, "artifact %s: %v", dir, err)
 	}
-	if m.Format != "csv" {
-		return nil, exitcode.Exit(exitcode.ExitPreflight, "artifact %s has format %q; only csv can be imported", dir, m.Format)
+	if m.Format != manifest.FormatCSV && m.Format != manifest.FormatNative {
+		return nil, exitcode.Exit(exitcode.ExitPreflight, "artifact %s has format %q; only csv and native can be imported", dir, m.Format)
 	}
 	if m.ArtifactVersion > manifest.ArtifactVersion {
 		return nil, exitcode.Exit(exitcode.ExitPreflight, "artifact %s has artifactVersion %d; this bydbctl reads up to %d, upgrade it",
@@ -178,15 +185,20 @@ func OpenArtifact(ctx context.Context, dir string, verifyChecksum bool) (*Artifa
 		}
 	}
 	for _, f := range m.SchemaFiles {
-		if err = checkFile(ctx, dir, f, verifyChecksum); err != nil {
+		if err = checkFile(ctx, dir, f, true); err != nil {
 			return nil, err
 		}
 		if err = a.decodeSchemaFile(f.Path); err != nil {
 			return nil, exitcode.Exit(exitcode.ExitPreflight, "artifact %s: %v", dir, err)
 		}
 	}
-	if err = checkDataFiles(ctx, dir, m, verifyChecksum); err != nil {
+	if err = checkDataFiles(ctx, dir, m, verifyData); err != nil {
 		return nil, err
+	}
+	if a.Native() {
+		if err = checkContainers(ctx, dir, m, verifyData); err != nil {
+			return nil, err
+		}
 	}
 	return a, nil
 }
@@ -222,24 +234,86 @@ func schemaGroup(m proto.Message) string {
 }
 
 // checkDataFiles checks every data file of the manifest, up to GOMAXPROCS at a time; the
-// first failure stops the rest.
-func checkDataFiles(ctx context.Context, dir string, m *manifest.Manifest, verifyChecksum bool) error {
+// first failure stops the rest. The CRC-32 of a native volume is left to checkContainer, whose
+// verification reads it once.
+func checkDataFiles(ctx context.Context, dir string, m *manifest.Manifest, verifyData bool) error {
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(runtime.GOMAXPROCS(0))
-	check := func(files []manifest.File) {
+	native := m.Format == manifest.FormatNative
+	for files := range m.FileSets() {
 		for _, f := range files {
-			eg.Go(func() error { return checkFile(egCtx, dir, f, verifyChecksum) })
-		}
-	}
-	for _, u := range m.Units {
-		for _, src := range u.Sources {
-			check(src.SegmentFiles)
-			for _, sh := range src.Shards {
-				check(sh.Files)
-			}
+			verify := verifyData && (!native || !strings.HasSuffix(f.Path, bnc.VolumeExt))
+			eg.Go(func() error { return checkFile(egCtx, dir, f, verify) })
 		}
 	}
 	return eg.Wait()
+}
+
+// checkContainers opens the volume footers of every container of a native artifact, up to
+// GOMAXPROCS containers at a time, before anything is pushed: each volume must hold the entries
+// the manifest registers, and the volumes of a container must make a complete set. An index
+// stream completes a segment when it moves on, which cannot be undone, so a container that
+// cannot be read must refuse the import before the first payload.
+func checkContainers(ctx context.Context, dir string, m *manifest.Manifest, verifyData bool) error {
+	var sets []map[string][]manifest.File
+	for files := range m.FileSets() {
+		containers, err := containerVolumes(files)
+		if err != nil {
+			return exitcode.Exit(exitcode.ExitPreflight, "%v", err)
+		}
+		sets = append(sets, containers)
+	}
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.SetLimit(runtime.GOMAXPROCS(0))
+	for _, containers := range sets {
+		for prefix, vols := range containers {
+			eg.Go(func() error { return checkContainer(egCtx, dir, prefix, vols, verifyData) })
+		}
+	}
+	return eg.Wait()
+}
+
+// checkContainer checks the volumes of one container, given in volume order: every volume must
+// register its entry count, and with verifyData each volume is read once, its size, CRC-32 and
+// entries compared with the manifest. A VolumeSet holds no more than one volume open.
+func checkContainer(ctx context.Context, dir, prefix string, vols []manifest.File, verifyData bool) error {
+	if err := ctx.Err(); err != nil {
+		return exitcode.Exit(exitcode.For(err), "artifact %s: %w", dir, err)
+	}
+	// OpenVolumes rejects a missing, repeated or misplaced volume and a set without its last.
+	vs, err := openVolumes(dir, vols)
+	if err != nil {
+		return exitcode.Exit(exitcode.ExitPreflight, "artifact container %s: %v", prefix, err)
+	}
+	var sums []bnc.Summary
+	if verifyData {
+		sums, err = vs.Verify(ctx)
+	}
+	if closeErr := vs.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return exitcode.Exit(exitcode.For(ctxErr), "artifact %s: %w", dir, ctxErr)
+		}
+		return exitcode.Exit(exitcode.ExitPreflight, "artifact container %s: %v", prefix, err)
+	}
+	for i, f := range vols {
+		if f.EntryCount == 0 {
+			return exitcode.Exit(exitcode.ExitPreflight, "artifact file %s registers no entryCount", f.Path)
+		}
+		if n := vs.VolumeEntries(i); n != int(f.EntryCount) {
+			return exitcode.Exit(exitcode.ExitPreflight, "artifact file %s has %d entries, the manifest registers %d", f.Path, n, f.EntryCount)
+		}
+		if sums == nil {
+			continue
+		}
+		if got := manifest.FormatCRC32(sums[i].CRC32); sums[i].Bytes != f.Bytes || got != f.CRC32 {
+			return exitcode.Exit(exitcode.ExitPreflight, "artifact file %s has %d bytes and crc32 %s, the manifest registers %d and %s",
+				f.Path, sums[i].Bytes, got, f.Bytes, f.CRC32)
+		}
+	}
+	return nil
 }
 
 // checkFile verifies that a registered artifact file exists inside dir with its size and CRC-32.
