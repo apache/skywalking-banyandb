@@ -439,16 +439,21 @@ func TestTrueUpChargesTheDecoderBackingTheCursorKeeps(t *testing.T) {
 // A merge over many series holds every cursor live; with the envelope of each trued up
 // after decode, the set fits a quota that the pre-decode envelope of all of them exceeds.
 func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {
-	const cursors = 100
-	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 96<<20)
+	const cursors, limit = 100, 96 << 20
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), limit)
 	budget := newScanBudget(1<<30, nil)
 	if err := budget.attachShared(ctx, 6, 1024, cursors); err != nil {
 		t.Fatal(err)
 	}
 	defer budget.releaseWorkspace()
+	newCursor := func() *blockCursor {
+		return &blockCursor{bm: blockMetadata{count: 611, uncompressedSizeBytes: 400 << 10}}
+	}
+	require.Greater(t, cursors*budget.sharedBlockBytes(newCursor()), int64(limit),
+		"the pre-decode envelopes of the cursors together exceed the limit")
 	var held []*scanReservation
 	for i := 0; i < cursors; i++ {
-		bc := &blockCursor{bm: blockMetadata{count: 611, uncompressedSizeBytes: 40 << 10}}
+		bc := newCursor()
 		r := &scanReservation{sharedBytes: budget.sharedBlockBytes(bc)}
 		if err := budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, r); err != nil {
 			t.Fatalf("cursor %d: %v", i, err)
