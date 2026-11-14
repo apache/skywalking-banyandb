@@ -369,7 +369,9 @@ func (r *scanReservation) lowerTo(kept int64) {
 // block in range). A live decoded cursor holds about a decoder-backing floor, its
 // encoded block size once, and 10-50 bytes per row and column. The constants below give
 // at least 1.4x the retained size and 2.0x the per-decode allocation measured in every
-// one of those cases, so the figures are an upper bound with margin, not a mean. The per-row cost
+// one of those cases, so the figures are an upper bound with margin, not a mean. The test
+// guards lower floors, so that measurement noise does not fail it: 1.1x the retained size
+// always, and 1.5x the allocation with BYDB_CALIBRATE=1. The per-row cost
 // follows the projected column types (projectedRowBytes) rather than their number.
 const (
 	// cursorFloorBytes is the decoder backing a cursor keeps however few rows it holds.

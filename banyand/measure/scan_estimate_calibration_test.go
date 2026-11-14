@@ -116,12 +116,14 @@ func calibrationShapes() []calibrationShape {
 // TestCalibrateSharedEnvelope measures the heap one decode of a block allocates
 // (what the cursor retains plus the part of the expansion that is not pooled) against
 // the shared envelope, for several block shapes and query windows, and requires the
-// envelope to keep a margin over what a decoded cursor retains. With BYDB_CALIBRATE=1 it
-// also checks the pre-decode envelope against the allocation and prints the table.
+// envelope to keep a margin over what a decoded cursor retains. BYDB_CALIBRATE set to
+// any value logs the table; any value but "2" also checks the pre-decode envelope
+// against the allocation. BYDB_CALIBRATE=2 logs the table without checking any margin,
+// for re-deriving the constants.
 func TestCalibrateSharedEnvelope(t *testing.T) {
-	// The retained-size margin is deterministic and always checked. The allocation
-	// margin reads process-wide counters, and the table is for people, so both are
-	// BYDB_CALIBRATE=1 only.
+	// The retained-size margin is deterministic and checked unless BYDB_CALIBRATE=2. The
+	// allocation margin reads process-wide counters, and the table is for people, so both
+	// need BYDB_CALIBRATE.
 	calibrate := os.Getenv("BYDB_CALIBRATE") != ""
 	assertMargins := os.Getenv("BYDB_CALIBRATE") != "2"
 	const series = 200
