@@ -37,19 +37,28 @@ import (
 )
 
 func TestTimeSlicedMergeMatchesUnslicedMerge(t *testing.T) {
+	var older, newer fxPart
+	for sid := common.SeriesID(1); sid <= 40; sid++ {
+		older = append(older, fxRange{sid: sid, from: 1, to: 240, version: 1})
+		newer = append(newer, fxRange{sid: sid, from: 200, to: 300, version: 2})
+	}
+	fx := newFixture(t, older, newer)
 	for _, asc := range []bool{true, false} {
-		for _, window := range [][2]int64{{0, 400}, {50, 120}, {210, 260}} {
-			name := "desc"
+		for _, tc := range []struct {
+			window [2]int64
+			sliced bool
+		}{
+			{window: [2]int64{0, 400}, sliced: true},
+			// Only the older blocks are in range, and their in-range rows fit: the merge is left whole.
+			{window: [2]int64{50, 120}, sliced: false},
+			{window: [2]int64{210, 260}, sliced: true},
+		} {
+			window := tc.window
+			order := "desc"
 			if asc {
-				name = "asc"
+				order = "asc"
 			}
-			t.Run(name, func(t *testing.T) {
-				var older, newer fxPart
-				for sid := common.SeriesID(1); sid <= 40; sid++ {
-					older = append(older, fxRange{sid: sid, from: 1, to: 240, version: 1})
-					newer = append(newer, fxRange{sid: sid, from: 200, to: 300, version: 2})
-				}
-				fx := newFixture(t, older, newer)
+			t.Run(fmt.Sprintf("%s/%d-%d", order, window[0], window[1]), func(t *testing.T) {
 				q := prefetchQuery(window[0], window[1], true, asc)
 
 				reference, _, _, closeReference := reuseTestResult(t.Context(), t, fx, q, 64<<20)
@@ -66,9 +75,7 @@ func TestTimeSlicedMergeMatchesUnslicedMerge(t *testing.T) {
 				sliced.budget.sliceNeed, sliced.budget.sliceBudget = 2<<20, 2<<20
 				got := drainRows(t, sliced)
 				require.NotNil(t, sliced.scan)
-				if window[1]-window[0] > 100 {
-					require.Positive(t, sliced.scan.stats.slices, "the budget should have cut the merge")
-				}
+				require.Equal(t, tc.sliced, sliced.scan.stats.slices > 0, "slices: %d", sliced.scan.stats.slices)
 				require.Equal(t, want, got)
 				closeSliced()
 				require.Zero(t, tracker.Used(), "slice cursors released their reservations")
