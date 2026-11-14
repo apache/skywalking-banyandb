@@ -323,8 +323,10 @@ func (r *scanReservation) release() {
 }
 
 // trueUp shrinks the cursor's shared reservation from the pre-decode worst case to
-// what the decoded cursor keeps: the rows inside the query range, at the per-row
-// envelope, plus twice the block's encoded bytes for the decode backing it retains.
+// what the decoded cursor keeps (sharedRetainedBytes): the rows inside the query range,
+// at the per-row envelope, plus the decode backing it retains, counted as the block's
+// encoded bytes once and a floor, or for a compacted cursor as its rows' share of them
+// and a smaller floor.
 // The expansion of the whole block, which was transient and is gone once the rows are
 // copied, is handed back, so many cursors can be live at once (a merge over a series
 // per endpoint) without each of them holding that expansion until it is released. It
