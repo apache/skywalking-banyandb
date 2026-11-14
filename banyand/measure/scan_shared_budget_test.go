@@ -299,10 +299,11 @@ func TestSharedBlockBytesChargesOnlyInRangeRows(t *testing.T) {
 	whole := budget.sharedBlockBytes(newCursor(0, 6*hour))
 	narrow := budget.sharedBlockBytes(newCursor(hour, hour+hour/4))
 	disjoint := budget.sharedBlockBytes(newCursor(7*hour, 8*hour))
-	encoded := uint64(23 << 10)
-	// 15 of 360 rows are in range and the floor is 16: the cursor is compacted. A window with
-	// no row in range is charged the same floor.
-	want := sharedRetainedBytes(6*cursorRowColumnBytes, 16, 360, encoded) + int64(decodeTransientFactor*encoded)
+	// 15 of 360 rows are in range and the floor is 16: the cursor is compacted. It keeps a 4 KiB
+	// floor, those rows' share of the 23 KiB encoded block and 16 rows of 6 columns at 48 bytes;
+	// before its decode it also holds six times the encoded block. A window with no row in range
+	// is charged the same.
+	const want = 4<<10 + (23<<10)*16/360 + 16*6*48 + 6*(23<<10)
 	if narrow != want || disjoint != want {
 		t.Fatalf("narrow window charged %d, disjoint %d, want %d (whole block %d)", narrow, disjoint, want, whole)
 	}
@@ -330,7 +331,9 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 	}
 	before := reservation.sharedBytes
 	reservation.trueUp(15, 600, 0)
-	want := sharedRetainedBytes(6*cursorRowColumnBytes, 15, 600, 40<<10)
+	// 15 of 600 rows, floored to 16, compact: a 4 KiB floor, their share of the 40 KiB encoded
+	// block and 16 rows of 6 columns at 48 bytes.
+	const want = 4<<10 + (40<<10)*16/600 + 16*6*48
 	if reservation.sharedBytes != want || shared.Used() != workspace+want {
 		t.Fatalf("after true-up: reservation %d, tracker %d, want %d over workspace %d", reservation.sharedBytes, shared.Used(), want, workspace)
 	}
