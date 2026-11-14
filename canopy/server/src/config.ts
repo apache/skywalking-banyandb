@@ -108,6 +108,8 @@ export interface Config {
   readonly sessionSecret: string;
   readonly banyandbTarget: string;
   readonly monitorTarget: string;
+  // Roles allowed to open the Monitor page; the monitor plugin defaults to admin only.
+  readonly monitorRoles?: readonly Role[];
   readonly upstreamTimeoutMs: number;
   readonly upstreamUsername?: string;
   readonly upstreamPassword?: string;
@@ -530,6 +532,17 @@ function resolveUpstreamPassword(): string | undefined {
   return process.env.BANYANDB_UPSTREAM_PASSWORD || undefined;
 }
 
+export function parseMonitorRoles(value: string | undefined): Role[] {
+  const names = (value ?? 'admin').split(',').map(name => name.trim()).filter(Boolean);
+  const roles = names.map(name => {
+    const role = mapRole(name);
+    if (!role) throw new Error(`CANOPY_MONITOR_ROLES: unknown role "${name}"`);
+    return role;
+  });
+  if (roles.length === 0) throw new Error('CANOPY_MONITOR_ROLES must name at least one role');
+  return [...new Set(roles)];
+}
+
 export function loadConfig(): Config {
   const devNoAuth = process.env.CANOPY_DEV_NOAUTH === 'true';
   const isProd = process.env.NODE_ENV === 'production';
@@ -557,6 +570,7 @@ export function loadConfig(): Config {
     sessionSecret,
     banyandbTarget: process.env.BANYANDB_TARGET || 'http://127.0.0.1:17913',
     monitorTarget: process.env.MONITOR_TARGET || 'http://127.0.0.1:2121',
+    monitorRoles: parseMonitorRoles(process.env.CANOPY_MONITOR_ROLES),
     upstreamTimeoutMs: parseInt(process.env.UPSTREAM_TIMEOUT_MS || '120000', 10),
     upstreamUsername: process.env.BANYANDB_UPSTREAM_USERNAME || undefined,
     upstreamPassword,

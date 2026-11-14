@@ -22,6 +22,7 @@ import Fastify, { FastifyInstance } from 'fastify';
 import { registerSession } from '../src/plugins/session.js';
 import { registerAuth } from '../src/routes/auth.js';
 import { registerProxy } from '../src/plugins/proxy.js';
+import { registerMonitor } from '../src/plugins/monitor.js';
 import { registerStatic } from '../src/plugins/static.js';
 import type { Config } from '../src/config.js';
 import bcrypt from 'bcryptjs';
@@ -79,6 +80,7 @@ async function buildTestApp(configOverrides: Partial<Config> = {}): Promise<Fast
   await registerSession(app, config);
   await registerAuth(app, config);
   await registerProxy(app, config);
+  await registerMonitor(app, config);
   return app;
 }
 
@@ -531,13 +533,27 @@ describe('/monitoring proxy', () => {
     expect(res.statusCode).toBe(401);
   });
 
-  it('authenticated readonly user GET /monitoring/* is permitted', async () => {
+  it('readonly user: GET /monitoring/* is denied by default, like the Monitor page', async () => {
     const cookie = await loginAs(app, 'reader', 'readpass');
     const res = await app.inject({
       method: 'GET', url: '/monitoring/metrics', headers: { cookie },
     });
-    // Strip /monitoring prefix → sent to monitor.test:2121/metrics → 200
-    expect(res.statusCode).toBe(200);
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'forbidden' });
+  });
+
+  it('readonly user let in by CANOPY_MONITOR_ROLES may GET /monitoring/* but still not POST', async () => {
+    const optedIn = await buildTestApp({ monitorRoles: ['admin', 'readonly'] });
+    try {
+      const cookie = await loginAs(optedIn, 'reader', 'readpass');
+      const get = await optedIn.inject({ method: 'GET', url: '/monitoring/metrics', headers: { cookie } });
+      // Strip /monitoring prefix → sent to monitor.test:2121/metrics → 200
+      expect(get.statusCode).toBe(200);
+      const post = await optedIn.inject({ method: 'POST', url: '/monitoring/debug/panic', headers: { cookie }, payload: {} });
+      expect(post.statusCode).toBe(403);
+    } finally {
+      await optedIn.close();
+    }
   });
 
   it('readonly user: POST /monitoring/* returns 403', async () => {
@@ -563,6 +579,178 @@ describe('/monitoring proxy', () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
+  });
+});
+
+describe('/monitor/snapshot', () => {
+  let app: FastifyInstance;
+  let mockAgent: MockAgent;
+  let previousDispatcher: ReturnType<typeof getGlobalDispatcher>;
+
+  const metrics = (cpuSeconds: number, started: number, latencySeconds: number, finished = started) => [
+    '# TYPE process_cpu_seconds_total counter',
+    `process_cpu_seconds_total ${cpuSeconds}`,
+    'banyandb_system_cpu_num 8',
+    'banyandb_system_up_time 29.3',
+    'banyandb_system_memory_state{kind="used_percent"} 0.6',
+    'banyandb_system_disk{kind="used",path="/data/measure"} 400',
+    'banyandb_system_disk{kind="total",path="/data/measure"} 1000',
+    'banyandb_measure_total_file_part_bytes{group="sw_metric",seg="s1",shard="0"} 300',
+    'banyandb_measure_total_file_part_bytes{group="sw_metric",seg="s1",shard="1"} 200',
+    'banyandb_stream_tst_total_file_part_bytes{group="sw_log",seg="s1",shard="0"} 70',
+    `banyandb_liaison_grpc_total_started{group="g",method="query",service="measure"} ${started}`,
+    `banyandb_liaison_grpc_total_finished{group="g",method="query",service="measure"} ${finished}`,
+    `banyandb_liaison_grpc_total_latency{group="g",method="query",service="measure"} ${latencySeconds}`,
+    // The BydbQL wrapper counts the same queries again; the panel must leave it out.
+    `banyandb_liaison_grpc_total_started{group="",method="query",service="bydbql"} ${started * 5}`,
+    `banyandb_liaison_grpc_total_finished{group="",method="query",service="bydbql"} ${finished * 5}`,
+    `banyandb_liaison_grpc_total_latency{group="",method="query",service="bydbql"} ${latencySeconds * 5}`,
+    '',
+  ].join('\n');
+
+  beforeEach(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    mockAgent = new MockAgent();
+    mockAgent.disableNetConnect();
+    setGlobalDispatcher(mockAgent);
+  });
+
+  afterEach(async () => {
+    await app.close();
+    await mockAgent.close();
+    setGlobalDispatcher(previousDispatcher);
+  });
+
+  it('requires a session', async () => {
+    app = await buildTestApp();
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('is admin only by default', async () => {
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'reader', 'readpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toMatchObject({ error: 'forbidden' });
+  });
+
+  it('opens to readonly users when CANOPY_MONITOR_ROLES lists them', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' }).reply(200, metrics(1, 0, 0));
+    app = await buildTestApp({ monitorRoles: ['admin', 'readonly'] });
+    const cookie = await loginAs(app, 'reader', 'readpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('turns a scrape into a standalone node, with rates from the second scrape on', async () => {
+    const pool = mockAgent.get('http://monitor.test:2121');
+    pool.intercept({ path: '/metrics', method: 'GET' }).reply(200, metrics(10, 100, 2));
+    // Ten new queries started, but only one finished, after one second.
+    pool.intercept({ path: '/metrics', method: 'GET' }).reply(200, metrics(12, 110, 3, 101));
+    // Nothing finished since: no average to show.
+    pool.intercept({ path: '/metrics', method: 'GET' }).reply(200, metrics(13, 115, 3, 101));
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const base = Date.now();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(base);
+
+    const first = (await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } })).json();
+    expect(first).toMatchObject({ mode: 'standalone', source: 'monitor.test:2121' });
+    expect(first.nodes[0]).toMatchObject({
+      role: 'standalone', cpuCores: 8, uptimeSeconds: 29.3, memoryUsedRatio: 0.6,
+      disk: [{ path: '/data/measure', usedBytes: 400, totalBytes: 1000 }],
+    });
+    expect(first.nodes[0].cpuUsedCores).toBeUndefined();
+    expect(first.groups).toEqual([
+      { name: 'sw_metric', catalog: 'measure', bytes: 500 },
+      { name: 'sw_log', catalog: 'stream', bytes: 70 },
+    ]);
+
+    now.mockReturnValue(base + 10_000);
+    const second = (await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } })).json();
+    expect(second.nodes[0].cpuUsedCores).toBeCloseTo(0.2);
+    expect(second.nodes[0].query.perSecond).toBeCloseTo(1);
+    expect(second.nodes[0].query.avgLatencyMs).toBeCloseTo(1000);
+    expect(second.nodes[0].cpuHistory).toEqual([{ t: base + 10_000, v: expect.closeTo(0.2) }]);
+    // No write or error counter was ever registered, which means none happened.
+    expect(second.nodes[0].write.perSecond).toBe(0);
+    expect(second.nodes[0].errorsPerMinute).toBe(0);
+
+    now.mockReturnValue(base + 20_000);
+    const third = (await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } })).json();
+    now.mockRestore();
+    expect(third.nodes[0].query.perSecond).toBeCloseTo(0.5);
+    expect(third.nodes[0].query.avgLatencyMs).toBeUndefined();
+  });
+
+  it('does not count a 200 without BanyanDB metrics as a reporting node', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' }).reply(200, 'up 1\n');
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toContain('no BanyanDB metrics');
+  });
+
+  it('stops reading a metrics body past its size limit', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' })
+      .reply(200, metrics(1, 0, 0) + '#'.repeat(8 * 1024 * 1024));
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toContain('more than 8 MiB');
+  });
+
+  it('serves concurrent and back-to-back viewers from one scrape', async () => {
+    // A single intercept: a second scrape would hit the disabled network and fail.
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' }).reply(200, metrics(1, 0, 0));
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const get = () => app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    const [a, b] = await Promise.all([get(), get()]);
+    const c = await get();
+    expect([a.statusCode, b.statusCode, c.statusCode]).toEqual([200, 200, 200]);
+    expect(c.json().scrapedAt).toBe(a.json().scrapedAt);
+  });
+
+  it('keeps history to one sample per five seconds however often viewers poll', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' })
+      .reply(200, metrics(1, 0, 0)).times(31);
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const base = Date.now();
+    const now = vi.spyOn(Date, 'now');
+    let last;
+    for (let i = 0; i <= 30; i++) {
+      now.mockReturnValue(base + i * 3_000);
+      last = (await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } })).json();
+    }
+    now.mockRestore();
+    const times = last.nodes[0].cpuHistory.map((p: { t: number }) => p.t);
+    expect(times.length).toBeLessThanOrEqual(19);
+    for (let i = 1; i < times.length - 1; i++) expect(times[i] - times[i - 1]).toBeGreaterThanOrEqual(5_000);
+  });
+
+  it('reports an unreachable metrics endpoint as 502 with the failing path', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' }).replyWithError(
+      Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
+    );
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(502);
+    expect(res.json()).toMatchObject({ error: 'upstream_error', path: '/metrics' });
+  });
+
+  it('reports a non-200 scrape as 502', async () => {
+    mockAgent.get('http://monitor.test:2121').intercept({ path: '/metrics', method: 'GET' }).reply(503, 'down');
+    app = await buildTestApp();
+    const cookie = await loginAs(app, 'admin', 'adminpass');
+    const res = await app.inject({ method: 'GET', url: '/monitor/snapshot', headers: { cookie } });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().message).toContain('503');
   });
 });
 

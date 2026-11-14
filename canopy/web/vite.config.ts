@@ -34,6 +34,8 @@ export default defineConfig({
       '/api': { target: 'http://127.0.0.1:4000', changeOrigin: true },
       '/auth': { target: 'http://127.0.0.1:4000', changeOrigin: true },
       '/monitoring': { target: 'http://127.0.0.1:4000', changeOrigin: true },
+      // Anchored so the /monitor page itself still loads from Vite.
+      '^/monitor/': { target: 'http://127.0.0.1:4000', changeOrigin: true },
     },
   },
   build: {
