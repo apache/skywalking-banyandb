@@ -159,14 +159,29 @@ func TestSeriesScanReuseRejectsBeforeUnbudgetedDecode(t *testing.T) {
 }
 
 func TestTimeOrderedScanRetainsPerCursorAdmission(t *testing.T) {
-	fx := manySeries(t, 128, 32)
-	q := prefetchQuery(0, 100, true, true)
-	result, tracker, _, closeResult := reuseTestResult(t.Context(), t, fx, q, 16<<20)
-	_, err := drainRowsErr(result)
-	require.Error(t, err)
-	require.Nil(t, result.budget.reuse)
-	closeResult()
-	require.Zero(t, tracker.Used())
+	// A time-ordered scan merges every series at once, so every cursor stays live and keeps
+	// its own admission until the merge consumes it: a limit below their total fails the
+	// scan, and one above it does not.
+	for _, tc := range []struct {
+		name    string
+		limit   uint64
+		wantErr bool
+	}{{"below the live cursors", 3 << 20, true}, {"above the live cursors", 16 << 20, false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := manySeries(t, 128, 32)
+			q := prefetchQuery(0, 100, true, true)
+			result, tracker, _, closeResult := reuseTestResult(t.Context(), t, fx, q, tc.limit)
+			_, err := drainRowsErr(result)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Nil(t, result.budget.reuse)
+			closeResult()
+			require.Zero(t, tracker.Used())
+		})
+	}
 }
 
 func TestSeriesScanReuseReleasesFailedPrefetch(t *testing.T) {

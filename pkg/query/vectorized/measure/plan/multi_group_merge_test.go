@@ -75,7 +75,13 @@ func (e *mgBatchEC) Query(_ context.Context, opts model.MeasureQueryOptions) (mo
 					if tag == "" {
 						tag = "x"
 					}
-					col.(*vectorized.TypedColumn[string]).Append(tag)
+					switch typed := col.(type) {
+					case *vectorized.TypedColumn[string]:
+						typed.Append(tag)
+					case *vectorized.TypedColumn[*modelv1.TagValue]:
+						// A tag the group does not declare is asked for as a generic column.
+						typed.Append(&modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: tag}}})
+					}
 				}
 				batch.Tags = append(batch.Tags, col)
 			case vectorized.RoleField:

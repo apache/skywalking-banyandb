@@ -205,6 +205,11 @@ func AnalyzeDistributed(
 	}
 	nodeTemplate.Limit = limit + nodeTemplate.GetOffset()
 	nodeTemplate.Offset = 0
+	if nodeTemplate.GetAgg() != nil {
+		// A node's partials are reduced before the limit applies: a key cut off by one node's limit would lose
+		// its contribution to the total.
+		nodeTemplate.Limit = math.MaxUint32
+	}
 	// hadTop is captured before clearing Top so the data-node Limit can
 	// be unbounded when the original query is Top-over-Agg. Without this,
 	// each node aggregates its local rows and prunes to Limit before
@@ -602,29 +607,20 @@ func (p *DistributedPlan) openGroupScans(ctx, scanCtx context.Context, set *scan
 // executeAggStream reduces the partials of the data nodes. A non-nil target is the layout every partial is
 // reshaped onto first (multi-group queries).
 func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, req *measurev1.QueryRequest, target *vectorized.BatchSchema) (*BatchResult, error) {
-	keyTagFamily, keyTagNames := distributedGroupByTagKey(req.GetGroupBy())
-	bucketed := req.GetGroupBy().GetTimeBucket() != nil
-	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
-	if aggErr != nil {
-		return nil, aggErr
+	reduce, reduceSpecErr := newAggReduceSpec(req)
+	if reduceSpecErr != nil {
+		return nil, reduceSpecErr
 	}
-	aggSpecs := []vmeasure.AggReduceSpec{{OutputName: aggOutputName(req.GetAgg()), Func: aggFunc}}
-	var topSpec *vmeasure.ReduceTopSpec
-	if top := req.GetTop(); top != nil {
-		topSpec = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
-	}
+	topSpec := reduce.top
 	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
-	newReducer := func() *vmeasure.PartialReducer {
-		return vmeasure.NewPartialReducer(target, keyTagFamily, keyTagNames, bucketed, aggSpecs, p.cfg.BatchSize, tracker)
-	}
 	if p.streamsBuckets(req) {
 		return p.executeBucketStream(ctx, set, req, func() *vmeasure.PartialReducer {
-			return vmeasure.NewPartialReducer(nil, keyTagFamily, keyTagNames, true, aggSpecs, p.cfg.BatchSize, tracker)
+			return vmeasure.NewPartialReducer(nil, reduce.keyTagFamily, reduce.keyTagNames, true, reduce.aggSpecs, p.cfg.BatchSize, tracker)
 		})
 	}
 	reduceSpan, reduceSpanCtx := startTraceSpan(ctx, "reduce-raw-frames")
 	set.summaryCtx = reduceSpanCtx
-	reducer := newReducer()
+	reducer := reduce.newReducer(target, p.cfg.BatchSize, tracker)
 	defer reducer.Close()
 	var frames int
 	for _, src := range set.sources {
@@ -679,6 +675,37 @@ func (p *DistributedPlan) executeAggStream(ctx context.Context, set *scanSet, re
 		batches = topped
 	}
 	return p.batchResultOf(ctx, set, batches, req, nil)
+}
+
+// aggReduceSpec is how the partials of an aggregation request are reduced across data nodes or groups: the group
+// key, the aggregate and the optional Top applied to the reduced rows.
+type aggReduceSpec struct {
+	top          *vmeasure.ReduceTopSpec
+	keyTagFamily string
+	keyTagNames  []string
+	aggSpecs     []vmeasure.AggReduceSpec
+	bucketed     bool
+}
+
+func newAggReduceSpec(req *measurev1.QueryRequest) (*aggReduceSpec, error) {
+	aggFunc, aggErr := distributedAggFunc(req.GetAgg().GetFunction())
+	if aggErr != nil {
+		return nil, aggErr
+	}
+	spec := &aggReduceSpec{
+		bucketed: req.GetGroupBy().GetTimeBucket() != nil,
+		aggSpecs: []vmeasure.AggReduceSpec{{OutputName: aggOutputName(req.GetAgg()), Func: aggFunc}},
+	}
+	spec.keyTagFamily, spec.keyTagNames = distributedGroupByTagKey(req.GetGroupBy())
+	if top := req.GetTop(); top != nil {
+		spec.top = &vmeasure.ReduceTopSpec{FieldName: top.GetFieldName(), N: int(top.GetNumber()), Asc: top.GetFieldValueSort() == modelv1.Sort_SORT_ASC}
+	}
+	return spec, nil
+}
+
+// newReducer returns a reducer of the partials, reshaped onto target when it is not nil.
+func (s *aggReduceSpec) newReducer(target *vectorized.BatchSchema, batchSize int, tracker *vectorized.MemoryTracker) *vmeasure.PartialReducer {
+	return vmeasure.NewPartialReducer(target, s.keyTagFamily, s.keyTagNames, s.bucketed, s.aggSpecs, batchSize, tracker)
 }
 
 func (p *DistributedPlan) failReduce(span *query.Span, err error) error {

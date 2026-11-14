@@ -67,6 +67,45 @@ func QueryFailure(cause error, format string, args ...any) *common.Error {
 	return common.NewError("%s", msg)
 }
 
+// Reasons an allowance was exhausted, as carried by ExhaustedError.
+const (
+	// ReasonPerQueryLimit means the query's own assignment was used up.
+	ReasonPerQueryLimit = "per_query_limit"
+	// ReasonSharedPool means the finite pool shared by all queries had no room.
+	ReasonSharedPool = "shared_pool"
+	// ReasonNodeHeadroom means the protector's sampled available memory left no room.
+	ReasonNodeHeadroom = "node_headroom"
+	// ReasonResultWindow means the query retained the most results one query may.
+	ReasonResultWindow = "result_window"
+	// ReasonReleased means the reservation had already been released.
+	ReasonReleased = "released"
+)
+
+// ExhaustedError says which allowance ran out and by how much. It matches
+// ErrQueryResourceExhausted under errors.Is, so callers that test for exhaustion are unchanged.
+type ExhaustedError struct {
+	Reason    string
+	Limit     uint64
+	Used      uint64
+	Requested uint64
+}
+
+func (e *ExhaustedError) Error() string {
+	return fmt.Sprintf("%s: %s (limit %d bytes, used %d, requested %d)", ErrQueryResourceExhausted.Error(), e.Reason, e.Limit, e.Used, e.Requested)
+}
+
+// Unwrap reports ErrQueryResourceExhausted as the cause.
+func (e *ExhaustedError) Unwrap() error { return ErrQueryResourceExhausted }
+
+// ExhaustionReason returns the reason and limit of an exhaustion error, or false when err carries none.
+func ExhaustionReason(err error) (*ExhaustedError, bool) {
+	var exhausted *ExhaustedError
+	if errors.As(err, &exhausted) {
+		return exhausted, true
+	}
+	return nil, false
+}
+
 // QueryBudget provides an atomic, finite reservation pool for one service.
 // Reservations are estimates and must remain held until response materialization
 // is complete. It intentionally does not modify Memory.AcquireResource semantics.
@@ -81,6 +120,7 @@ type QueryReservation struct {
 	assigned    uint64
 	results     uint64
 	used        atomic.Uint64
+	peak        atomic.Uint64
 	released    atomic.Bool
 	mu          sync.Mutex
 	refs        int32
@@ -100,7 +140,7 @@ func (r *QueryReservation) ChargeResult(bytes uint64) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.results >= queryAbsoluteWindow {
-		return ErrQueryResourceExhausted
+		return &ExhaustedError{Reason: ReasonResultWindow, Limit: queryAbsoluteWindow, Used: r.results, Requested: 1}
 	}
 	if err := r.chargeLocked(bytes); err != nil {
 		return err
@@ -111,11 +151,11 @@ func (r *QueryReservation) ChargeResult(bytes uint64) error {
 
 func (r *QueryReservation) chargeLocked(bytes uint64) error {
 	if r.released.Load() {
-		return ErrQueryResourceExhausted
+		return &ExhaustedError{Reason: ReasonReleased, Requested: bytes}
 	}
 	used := r.used.Load()
 	if bytes > r.assigned-used {
-		return ErrQueryResourceExhausted
+		return &ExhaustedError{Reason: ReasonPerQueryLimit, Limit: r.assigned, Used: used, Requested: bytes}
 	}
 	if r.incremental && bytes > 0 {
 		// Refresh at admission; growth uses the protector's sampled availability
@@ -125,6 +165,9 @@ func (r *QueryReservation) chargeLocked(bytes uint64) error {
 		}
 	}
 	r.used.Store(used + bytes)
+	if used+bytes > r.peak.Load() {
+		r.peak.Store(used + bytes)
+	}
 	return nil
 }
 
@@ -155,6 +198,9 @@ func (r *QueryReservation) Refund(bytes uint64) {
 
 // Limit returns the reservation's assigned byte budget.
 func (r *QueryReservation) Limit() uint64 { return r.assigned }
+
+// Peak returns the most bytes the reservation has held at once.
+func (r *QueryReservation) Peak() uint64 { return r.peak.Load() }
 
 // Used returns the bytes currently charged to the reservation (charges minus refunds).
 func (r *QueryReservation) Used() uint64 { return r.used.Load() }
@@ -270,11 +316,11 @@ func (b *QueryBudget) reserveBytes(bytes uint64, refresh bool) error {
 		pool := b.poolLimit()
 		current := b.reserved.Load()
 		if current > pool || bytes > pool-current {
-			return ErrQueryResourceExhausted
+			return &ExhaustedError{Reason: ReasonSharedPool, Limit: pool, Used: current, Requested: bytes}
 		}
 		available := b.availableSnapshot(refresh)
 		if available < current || bytes > available-current {
-			return ErrQueryResourceExhausted
+			return &ExhaustedError{Reason: ReasonNodeHeadroom, Limit: available, Used: current, Requested: bytes}
 		}
 		if b.reserved.CompareAndSwap(current, current+bytes) {
 			return nil

@@ -1,6 +1,6 @@
 # Self-Stored Logs
 
-Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **implemented**; phases 3 and 4 (the other producers, section 3.7) are **implemented** and under review.
+Status: phase 1 (standalone and data nodes) **implemented**, with its buffering in the queue module (section 3.5); phase 2 (the liaison route, section 3.6) is **implemented**; phases 3 and 4 (the other producers, section 3.7) are **implemented**.
 
 BanyanDB self-stores its metrics into the `_monitoring` group but has no equivalent for its own
 logs: `pkg/logger` writes to a single `io.Writer` fixed at `logger.Init` time, so logs leave the
@@ -254,7 +254,7 @@ The queue package tests the guarantees through the `BufferedPublisher` interface
 
 ### 3.6 Phase 2: the liaison route
 
-Status: **implemented**, under review. The liaison stores its own logs. It has no storage engine, so it writes them as a stream write does: through its write queue.
+Status: **implemented**. The liaison stores its own logs. It has no storage engine, so it writes them as a stream write does: through its write queue.
 
 It follows native metrics. A liaison's native metrics locate shard `0` of their group among the liaisons, publish over the tier-1 client to that liaison's write queue, and the queue syncs part files to the data nodes. Native logs do the same for shard `0` of `_monitoring_log`, with the selector and node registry the liaison's gRPC server uses for stream writes.
 
@@ -320,7 +320,7 @@ Each new assertion is checked to fail when its change is reverted.
 
 ### 3.7 Phases 3 and 4: the other producers
 
-Status: **implemented**, under review. Backup, lifecycle, the FODC agent and the FODC proxy store their own logs. None of them has a storage engine, and only lifecycle has a metadata client.
+Status: **implemented**. Backup, lifecycle, the FODC agent and the FODC proxy store their own logs. None of them has a storage engine, and only lifecycle has a metadata client.
 
 > **Decided: no new receiver.** Each producer writes through a path that already exists, the one a process in its place already uses. A producer beside a data node publishes `TopicStreamWrite` to that node's cluster server, as lifecycle's migration does; the data node writes it to its local storage. A producer beside a liaison or outside the cluster writes through the liaison's public `StreamService/Write`, as any client does; the liaison writes it to its write queue, as for every stream write since phase 2. There is no new proto message, topic, gRPC method or method-policy row. This replaces the receiver of phase 3 that section 3.3 described before.
 

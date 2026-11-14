@@ -348,10 +348,16 @@ func (r *PartialReducer) Groups() int {
 // Finish returns the reduced batches in group-insertion order, bucket-ascending for a bucketed reduction, and the
 // AggValuePath that describes how the value column was resolved. The reducer is spent afterwards.
 func (r *PartialReducer) Finish() ([]*vectorized.RecordBatch, AggValuePath, error) {
+	return r.FinishContext(context.Background())
+}
+
+// FinishContext is Finish that stops with the context's error once ctx is done, between the steps and between
+// the output batches.
+func (r *PartialReducer) FinishContext(ctx context.Context) ([]*vectorized.RecordBatch, AggValuePath, error) {
 	if r.op == nil {
 		return nil, r.path, nil
 	}
-	if finalErr := r.op.Finalize(context.Background()); finalErr != nil {
+	if finalErr := r.op.Finalize(ctx); finalErr != nil {
 		return nil, r.path, fmt.Errorf("ReducePartialBatches: finalize: %w", finalErr)
 	}
 	// Each partial arrives already bucket-ascending (design §7.2 streams
@@ -361,10 +367,16 @@ func (r *PartialReducer) Finish() ([]*vectorized.RecordBatch, AggValuePath, erro
 	// Sort once before draining so the merged result is globally
 	// bucket-ascending, which iteratorFromBatches's offset/limit pagination
 	// (design §7.5) requires to page correctly. A no-op when unbucketed.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, r.path, fmt.Errorf("ReducePartialBatches: %w", ctxErr)
+	}
 	r.op.SortInsertionByBucket()
 	var out []*vectorized.RecordBatch
 	for {
-		nb, nextErr := r.op.NextBatch(context.Background())
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, r.path, fmt.Errorf("ReducePartialBatches: %w", ctxErr)
+		}
+		nb, nextErr := r.op.NextBatch(ctx)
 		if nextErr != nil {
 			return nil, r.path, fmt.Errorf("ReducePartialBatches: next: %w", nextErr)
 		}
@@ -655,6 +667,11 @@ func columnLabel(def vectorized.ColumnDef) string {
 // drive their per-row loop from activeIndices), so an oversized batch is
 // chunked via ConsumeChunked rather than assumed away.
 func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
+	return ApplyTopToReduceContext(context.Background(), reduced, spec, batchSize)
+}
+
+// ApplyTopToReduceContext is ApplyTopToReduce that stops with the context's error once ctx is done.
+func ApplyTopToReduceContext(ctx context.Context, reduced []*vectorized.RecordBatch, spec ReduceTopSpec, batchSize int) ([]*vectorized.RecordBatch, error) {
 	if spec.N <= 0 || len(reduced) == 0 {
 		return reduced, nil
 	}
@@ -671,16 +688,19 @@ func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, bat
 	}
 	top := NewBatchTop(schema, fieldIdx, spec.N, spec.Asc, batchSize)
 	defer top.Close()
-	if initErr := top.Init(context.Background()); initErr != nil {
+	if initErr := top.Init(ctx); initErr != nil {
 		return nil, fmt.Errorf("ApplyTopToReduce: init: %w", initErr)
 	}
 	var scratch *vectorized.RecordBatch
 	for i, b := range reduced {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("ApplyTopToReduce: %w", ctxErr)
+		}
 		if compatErr := schemaCompatible(schema, b.Schema); compatErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: batch %d schema mismatch: %w", i, compatErr)
 		}
 		if b.ActiveLen() <= batchSize {
-			if consumeErr := top.Consume(context.Background(), b); consumeErr != nil {
+			if consumeErr := top.Consume(ctx, b); consumeErr != nil {
 				return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
 			}
 			continue
@@ -688,16 +708,20 @@ func ApplyTopToReduce(reduced []*vectorized.RecordBatch, spec ReduceTopSpec, bat
 		if scratch == nil {
 			scratch = vectorized.NewRecordBatch(schema, batchSize)
 		}
+		// nolint:contextcheck // chunked consumption has no context parameter; cancellation is checked per batch
 		if consumeErr := vectorized.ConsumeChunked(top, scratch, b, batchSize); consumeErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: consume batch %d: %w", i, consumeErr)
 		}
 	}
-	if finalErr := top.Finalize(context.Background()); finalErr != nil {
+	if finalErr := top.Finalize(ctx); finalErr != nil {
 		return nil, fmt.Errorf("ApplyTopToReduce: finalize: %w", finalErr)
 	}
 	var out []*vectorized.RecordBatch
 	for {
-		nb, nextErr := top.NextBatch(context.Background())
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("ApplyTopToReduce: %w", ctxErr)
+		}
+		nb, nextErr := top.NextBatch(ctx)
 		if nextErr != nil {
 			return nil, fmt.Errorf("ApplyTopToReduce: next: %w", nextErr)
 		}
