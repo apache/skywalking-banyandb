@@ -123,6 +123,46 @@ func TestBoundDecodeBackingDropsOversizedPooledBuffers(t *testing.T) {
 	}
 }
 
+// A cursor keeps only its in-range rows, so its pooled timestamps and versions are bounded
+// by twice those rows (at least 16), while the temporary block, which decodes the whole
+// block, is bounded by twice the block's rows.
+func TestBoundDecodeBackingBoundsCursorByInRangeRows(t *testing.T) {
+	const minute = int64(60e9)
+	bc := &blockCursor{
+		bm:              blockMetadata{count: 360, uncompressedSizeBytes: 128},
+		fieldProjection: []string{"value"}, tagProjection: []model.TagProjection{{Family: "default", Names: []string{"id"}}},
+	}
+	bc.bm.timestamps.min, bc.bm.timestamps.max = 0, 360*minute
+	bc.minTimestamp, bc.maxTimestamp = 0, 15*minute-1
+	require.EqualValues(t, 15, inRangeRows(bc))
+	const keptRows, blockRows = 2 * 16, 2 * 360
+	for _, tt := range []struct {
+		timestamps, versions int
+	}{
+		{timestamps: keptRows + 1, versions: keptRows},
+		{timestamps: keptRows, versions: keptRows + 1},
+	} {
+		bc.timestamps, bc.versions = make([]int64, 0, tt.timestamps), make([]int64, 0, tt.versions)
+		temp := &block{timestamps: make([]int64, 0, blockRows), versions: make([]int64, 0, blockRows+1)}
+		bc.boundDecodeBacking(temp)
+		for _, got := range []struct {
+			name      string
+			cap, want int
+		}{
+			{"cursor timestamps", cap(bc.timestamps), tt.timestamps},
+			{"cursor versions", cap(bc.versions), tt.versions},
+		} {
+			if got.want > keptRows {
+				require.Zerof(t, got.cap, "%s of cap %d over the in-range bound %d survived", got.name, got.want, keptRows)
+			} else {
+				require.Equalf(t, got.want, got.cap, "%s within the in-range bound %d was dropped", got.name, keptRows)
+			}
+		}
+		require.Equal(t, blockRows, cap(temp.timestamps), "the temporary block is bounded by the block's rows")
+		require.Zero(t, cap(temp.versions), "temporary block versions over the block bound survived")
+	}
+}
+
 // The legacy (TopN) loaders compact a cursor that keeps under half its block, as the
 // window scan does. The decoder backing that compaction detached must not stay on the
 // cursor next to the compacted copy of its values.
