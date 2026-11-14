@@ -127,10 +127,13 @@ func TestSlicedOrWholeMergeFitsItsDecodeReservations(t *testing.T) {
 	// The allowance is what the two cursors keep once decoded: no room for a decode's expansion.
 	b.sliceNeed = 2 * sharedRetainedBytes(perRow, 360, 360, encoded)
 	b.sliceBudget = b.sliceNeed / sliceBudgetShare
-	b.shared = vectorized.NewMemoryTracker(b.sliceNeed)
+	// Plus room for the clones of the most slices, which stay charged until they are released.
 	unit := newUnit()
+	clones := int64(len(unit.windows)) * maxMergeSlices * sliceCloneBytes(unit.windows[0].cursors[0])
+	b.shared = vectorized.NewMemoryTracker(b.sliceNeed + clones)
 	var stats scanStats
-	units := sliceMergeUnit(&unit, b, false, &stats)
+	units, err := sliceMergeUnit(&unit, b, false, &stats)
+	require.NoError(t, err)
 	if units == nil {
 		units = []scanUnit{unit}
 	}
@@ -221,7 +224,9 @@ func TestSliceMergeUnit(t *testing.T) {
 
 	unit, cursors := newUnit(1)
 	var stats scanStats
-	require.Nil(t, sliceMergeUnit(&unit, budget, false, &stats), "a unit of one window is not sliced")
+	units, err := sliceMergeUnit(&unit, budget, false, &stats)
+	require.NoError(t, err)
+	require.Nil(t, units, "a unit of one window is not sliced")
 	require.Equal(t, cursors, unit.windows[0].cursors, "and keeps its cursors")
 	require.EqualValues(t, 1, cursors[0].refs.Load())
 	releaseCursors(cursors)
@@ -234,7 +239,8 @@ func TestSliceMergeUnit(t *testing.T) {
 		width := sliceWidth(cursors, perRow, budget.sliceNeed, budget.sliceBudget, lo, hi)
 		require.Positive(t, width)
 		stats = scanStats{}
-		units := sliceMergeUnit(&unit, budget, desc, &stats)
+		units, err = sliceMergeUnit(&unit, budget, desc, &stats)
+		require.NoError(t, err)
 		require.Len(t, units, int((hi-lo+width)/width), "desc=%v", desc)
 		require.EqualValues(t, 1, stats.slicedUnits)
 		require.EqualValues(t, len(units), stats.slices)

@@ -184,7 +184,8 @@ func newWindowScan(qr *queryResult) *windowScan {
 		qr.budget.reuse = &scanDecodeReuse{tracker: qr.budget.shared}
 	}
 	s.units = planUnits(qr, groupWindows(qr.data), s.desc)
-	s.units = sliceUnits(s.units, qr.budget, s.desc, &s.stats)
+	// A unit that cannot be sliced fails the scan: its first batch returns the error.
+	s.units, s.err = sliceUnits(s.units, qr.budget, s.desc, &s.stats)
 	for i := range qr.data {
 		qr.data[i] = nil
 	}
@@ -202,12 +203,20 @@ func newWindowScan(qr *queryResult) *windowScan {
 	return s
 }
 
-// sliceUnits cuts the merge units that do not fit the slice budget into time slices.
-func sliceUnits(units []scanUnit, budget *scanBudget, desc bool, stats *scanStats) []scanUnit {
+// sliceUnits cuts the merge units that do not fit the slice budget into time slices. It stops
+// at the first unit that cannot be sliced and returns its error, with the units it has not
+// reached kept as they are, so every cursor stays in the returned plan.
+func sliceUnits(units []scanUnit, budget *scanBudget, desc bool, stats *scanStats) ([]scanUnit, error) {
 	var out []scanUnit
 	changed := false
 	for i := range units {
-		replacement := sliceMergeUnit(&units[i], budget, desc, stats)
+		replacement, err := sliceMergeUnit(&units[i], budget, desc, stats)
+		if err != nil {
+			if !changed {
+				return units, err
+			}
+			return append(out, units[i:]...), err
+		}
 		if replacement == nil {
 			if changed {
 				out = append(out, units[i])
@@ -221,9 +230,9 @@ func sliceUnits(units []scanUnit, budget *scanBudget, desc bool, stats *scanStat
 		out = append(out, replacement...)
 	}
 	if !changed {
-		return units
+		return units, nil
 	}
-	return out
+	return out, nil
 }
 
 // sequence lists every cursor of the plan in the order the scan decodes them.

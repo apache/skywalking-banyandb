@@ -35,6 +35,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -478,12 +479,16 @@ type blockCursor struct {
 	schemaTagTypes map[string]pbv1.ValueType
 	// res is the scan's memory reservation for this cursor, released when the
 	// last reference goes (see releaseBlockCursor). It is nil outside a window scan.
-	res         *scanReservation
-	p           *part
-	fields      columnFamily
-	timestamps  []int64
-	versions    []int64
-	tagFamilies []columnFamily
+	res *scanReservation
+	// sliceTracker is the query tracker a time-slice clone's own memory (sliceCharge bytes) is
+	// charged to, released with the cursor's last reference (see sliceMergeUnit). It is nil for a
+	// cursor that is not a slice clone.
+	sliceTracker *vectorized.MemoryTracker
+	p            *part
+	fields       columnFamily
+	timestamps   []int64
+	versions     []int64
+	tagFamilies  []columnFamily
 	// spareBacking is the decoder's backing array detached by compactValues; releaseLoadBlock
 	// returns it to decodeBackingPool once the temporary block that views it is released.
 	spareBacking        []byte
@@ -492,6 +497,7 @@ type blockCursor struct {
 	columnValuesDecoder encoding.BytesBlockDecoder
 	bm                  blockMetadata
 	idx                 int
+	sliceCharge         int64
 	minTimestamp        int64
 	maxTimestamp        int64
 	// compactedBytes is the size of the buffer compactValues copied the cell values into.
@@ -1040,6 +1046,11 @@ func releaseBlockCursor(bc *blockCursor) {
 	}
 	// Nothing borrows the decoded buffer any more; let the next block reuse it.
 	bc.columnValuesDecoder.Reset()
+	if tracker := bc.sliceTracker; tracker != nil {
+		bc.sliceTracker = nil
+		tracker.Release(bc.sliceCharge)
+		bc.sliceCharge = 0
+	}
 	if res := bc.res; res != nil {
 		bc.res = nil
 		res.release()
