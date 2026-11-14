@@ -271,7 +271,7 @@ func TestStreamPlanChunksMatchesTheUnaryFrame(t *testing.T) {
 			unaryBatch, err := streamframe.Decode(resp.Data().([]byte))
 			require.NoError(t, err)
 			want := oracleFrameServices(t, unaryBatch)
-			require.Equal(t, []string{"cap-1", "cap-3"}, want)
+			require.Equal(t, []string{"cap-1", "cap-3", oracleCapBeyondRow}, want)
 
 			plan := newOracleCapPlan(t, req)
 			sink := &recordingSink{}
