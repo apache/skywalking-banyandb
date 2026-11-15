@@ -20,6 +20,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -27,6 +28,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
 func indexModeServices(sd SeriesData) []string {
@@ -162,4 +164,62 @@ func TestSeriesIndex_IndexModeTimeOrderOnPreviousReleaseFixture(t *testing.T) {
 			require.Len(t, sortedValues, 2)
 		})
 	}
+}
+
+// A time order sorts, so the search reserves 24 bytes per hit for the sort values on top of what an unsorted search
+// reserves; an allocation scope that fits the unsorted search but not that extra reservation must surface the error,
+// not return the rows.
+func TestSeriesIndex_IndexModeTimeOrderReservesSortValues(t *testing.T) {
+	ctx := context.Background()
+	dir, fn := setUp(require.New(t))
+	defer fn()
+	si, err := newSeriesIndex(ctx, dir, 0, 0, nil, &testRootLease{})
+	require.NoError(t, err)
+	defer func() { require.NoError(t, si.Close()) }()
+
+	const hits = 5
+	var docs index.Documents
+	for i := 0; i < hits; i++ {
+		var series pbv1.Series
+		series.Subject = "idx_measure"
+		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("svc-%d", i)}}}}
+		require.NoError(t, series.Marshal())
+		subjectField := index.NewStringField(index.FieldKey{TagName: index.IndexModeName}, "idx_measure")
+		subjectField.Index, subjectField.NoSort = true, true
+		docs = append(docs, index.Document{
+			EntityValues: append([]byte(nil), series.Buffer...),
+			Fields:       []index.Field{subjectField},
+			Timestamp:    int64(1000 * (i + 1)),
+			Version:      1,
+		})
+	}
+	require.NoError(t, si.Insert(docs))
+
+	// search runs one search under an allocation scope capped at limit and returns the bytes it reserved.
+	search := func(order *index.OrderBy, limit int64) (int64, error) {
+		var reserved int64
+		scoped, scope := query.WithAllocationScope(ctx, func(n int64) error {
+			if reserved+n > limit {
+				return fmt.Errorf("allocation exceeded: %d + %d > %d", reserved, n, limit)
+			}
+			reserved += n
+			return nil
+		}, func(int64) {})
+		defer func() { require.NoError(t, scope.Close()) }()
+		_, _, searchErr := si.SearchWithoutSeries(scoped, IndexSearchOpts{IndexModeSubject: "idx_measure", Order: order})
+		return reserved, searchErr
+	}
+	timeDesc := &index.OrderBy{Type: index.OrderByTypeTime, Sort: modelv1.Sort_SORT_DESC}
+	unsortedNeed, err := search(nil, math.MaxInt64)
+	require.NoError(t, err)
+	sortedNeed, err := search(timeDesc, math.MaxInt64)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, sortedNeed, unsortedNeed+hits*24, "a time order reserves its sort values on top of the unsorted search")
+
+	_, err = search(nil, unsortedNeed)
+	require.NoError(t, err, "the unsorted search fits in its own reservation")
+	_, err = search(timeDesc, unsortedNeed)
+	require.ErrorContains(t, err, "allocation exceeded", "a scope that fits the unsorted search must reject the time-ordered one")
+	_, err = search(timeDesc, sortedNeed)
+	require.NoError(t, err, "the time-ordered search fits in its own reservation")
 }
