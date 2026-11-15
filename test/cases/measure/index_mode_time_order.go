@@ -21,6 +21,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	g "github.com/onsi/ginkgo/v2"
 	gm "github.com/onsi/gomega"
@@ -36,7 +37,7 @@ import (
 var _ = g.DescribeTable("Index mode time order", func(query string, wantIDs ...string) {
 	gm.Eventually(func(innerGm gm.Gomega) {
 		client := bydbqlv1.NewBydbQLServiceClient(SharedContext.Connection)
-		resp, err := client.Query(context.Background(), &bydbqlv1.QueryRequest{Query: query})
+		resp, err := client.Query(context.Background(), &bydbqlv1.QueryRequest{Query: indexModeTimeWindow(query)})
 		innerGm.Expect(err).NotTo(gm.HaveOccurred(), query)
 		points := resp.GetMeasureResult().GetDataPoints()
 		var ids []string
@@ -59,35 +60,46 @@ var _ = g.DescribeTable("Index mode time order", func(query string, wantIDs ...s
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 },
 	g.Entry("one segment, ORDER BY DESC returns the newest first",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY DESC"), "3", "2", "1"),
+		indexModeTimeQuery("{{ONE}} ORDER BY DESC"), "3", "2", "1"),
 	g.Entry("one segment, ORDER BY DESC LIMIT 2 returns the two newest",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY DESC LIMIT 2"), "3", "2"),
+		indexModeTimeQuery("{{ONE}} ORDER BY DESC LIMIT 2"), "3", "2"),
 	g.Entry("one segment, ORDER BY ASC returns the oldest first",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY ASC"), "1", "2", "3"),
+		indexModeTimeQuery("{{ONE}} ORDER BY ASC"), "1", "2", "3"),
 	g.Entry("one segment, ORDER BY ASC LIMIT 2 returns the two oldest",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY ASC LIMIT 2"), "1", "2"),
+		indexModeTimeQuery("{{ONE}} ORDER BY ASC LIMIT 2"), "1", "2"),
 	g.Entry("one segment, ORDER BY TIME DESC is the same order",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY TIME DESC"), "3", "2", "1"),
+		indexModeTimeQuery("{{ONE}} ORDER BY TIME DESC"), "3", "2", "1"),
 	g.Entry("two segments, ORDER BY DESC puts the older segment last",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY DESC"), "3", "2", "1", "4"),
+		indexModeTimeQuery("{{TWO}} ORDER BY DESC"), "3", "2", "1", "4"),
 	g.Entry("two segments, ORDER BY DESC LIMIT 2 returns the two newest",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY DESC LIMIT 2"), "3", "2"),
+		indexModeTimeQuery("{{TWO}} ORDER BY DESC LIMIT 2"), "3", "2"),
 	g.Entry("two segments, ORDER BY ASC puts the older segment first",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY ASC"), "4", "1", "2", "3"),
+		indexModeTimeQuery("{{TWO}} ORDER BY ASC"), "4", "1", "2", "3"),
 	g.Entry("two segments, ORDER BY ASC LIMIT 2 returns the two oldest",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY ASC LIMIT 2"), "4", "1"),
+		indexModeTimeQuery("{{TWO}} ORDER BY ASC LIMIT 2"), "4", "1"),
 	g.Entry("two segments, ORDER BY TIME DESC is the same order",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY TIME DESC"), "3", "2", "1", "4"),
+		indexModeTimeQuery("{{TWO}} ORDER BY TIME DESC"), "3", "2", "1", "4"),
 	g.Entry("one segment, ORDER BY DESC LIMIT 1 returns the newest",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY DESC LIMIT 1"), "3"),
+		indexModeTimeQuery("{{ONE}} ORDER BY DESC LIMIT 1"), "3"),
 	g.Entry("one segment, ORDER BY ASC LIMIT 1 returns the oldest",
-		indexModeTimeQuery("TIME > '-15m' ORDER BY ASC LIMIT 1"), "1"),
+		indexModeTimeQuery("{{ONE}} ORDER BY ASC LIMIT 1"), "1"),
 	g.Entry("two segments, ORDER BY DESC LIMIT 1 returns the newest",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY DESC LIMIT 1"), "3"),
+		indexModeTimeQuery("{{TWO}} ORDER BY DESC LIMIT 1"), "3"),
 	g.Entry("two segments, ORDER BY ASC LIMIT 1 returns the oldest",
-		indexModeTimeQuery("TIME > '-3d' ORDER BY ASC LIMIT 1"), "4"),
+		indexModeTimeQuery("{{TWO}} ORDER BY ASC LIMIT 1"), "4"),
 )
 
 func indexModeTimeQuery(tail string) string {
 	return "SELECT id, name FROM MEASURE service_traffic IN index_mode " + strings.TrimSpace(tail)
+}
+
+// indexModeTimeWindow replaces {{ONE}} with a window around the suite's base time that holds ids 1-3 only, and {{TWO}} with
+// one that also reaches id 4, two days earlier. The window is absolute because the suite seeds its data at BaseTime, which
+// a wall-clock "-15m" misses once the suite has run for a while or shifts its base.
+func indexModeTimeWindow(query string) string {
+	window := func(from time.Duration) string {
+		return fmt.Sprintf("TIME BETWEEN '%s' AND '%s'",
+			SharedContext.BaseTime.Add(from).Format(time.RFC3339Nano), SharedContext.BaseTime.Add(5*time.Minute).Format(time.RFC3339Nano))
+	}
+	return strings.NewReplacer("{{ONE}}", window(-20*time.Minute), "{{TWO}}", window(-72*time.Hour)).Replace(query)
 }
