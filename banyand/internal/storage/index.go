@@ -476,11 +476,12 @@ func orderFieldName(order *index.OrderBy) (string, error) {
 //     explicit MatchTermsSet result, even when it is empty, so sorting an
 //     empty candidate set below never panics.
 //  2. Filter: pkg/index/native/criteria.Filter over opts.Criteria.
-//  3. Order: SortHits on the index-rule field only for an index order
-//     (opts.Order.Index != nil); a time order or no order at all keeps the
-//     hits in MatchTermsSet's order and leaves sortedValues nil, matching
-//     the previous release (a sorted index-mode/measure search changes
-//     banyand/measure/query.go's needsSorting decision).
+//  3. Order: SortHits on the index-rule field for an index order
+//     (opts.Order.Index != nil), and on _timestamp for a time order in index
+//     mode (subject != ""). A time order in a series search, or no order at
+//     all, keeps the hits in MatchTermsSet's order and leaves sortedValues
+//     nil (a sorted series search changes banyand/measure/query.go's
+//     needsSorting decision).
 //  4. Results: ProjectHit for the timestamp, "_version" and the projection,
 //     series from the identifier, and ProjectSortValue when sorted. The
 //     unsorted path also charges the query memory budget per the previous
@@ -533,14 +534,17 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		}
 	}
 
-	// sorted selects SortHits/ProjectSortValue only for an index order
-	// (opts.Order.Index != nil), matching the previous release and NIDX-03
-	// §6.2: a time order (resolveOrderBy's {Type: OrderByTypeTime, Index:
-	// nil}) takes the unsorted path below, keeping hits in MatchTermsSet
-	// order and sortedValues nil. Sorting on every non-nil Order
-	// (including time order) would change index-mode output order and flip
-	// banyand/measure/query.go's needsSorting decision.
-	sorted := opts.Order != nil && opts.Order.Index != nil
+	// sorted selects SortHits/ProjectSortValue for an index order
+	// (opts.Order.Index != nil), and for a time order on an index-mode search.
+	// An index-mode row is one document whose _timestamp is the row's
+	// timestamp, so an explicit ORDER BY must order by it, before LIMIT, and
+	// the segments' sorted values then merge by timestamp too
+	// (apache/skywalking#14218). A series search (subject == "") keeps the hit
+	// order for a time order: the blocks carry the timestamps and the scan
+	// orders them, and sorting there would flip banyand/measure/query.go's
+	// needsSorting decision. No order at all stays unsorted, as before.
+	timeOrderSorts := opts.Order != nil && opts.Order.Type == index.OrderByTypeTime && subject != ""
+	sorted := opts.Order != nil && (opts.Order.Index != nil || timeOrderSorts)
 	var sortField string
 	if sorted {
 		sortField, err = orderFieldName(opts.Order)
