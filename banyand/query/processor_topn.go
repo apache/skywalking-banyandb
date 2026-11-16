@@ -164,9 +164,9 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
-				if partial {
-					resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalTopNResponse{Trace: tracer.ToProto()})
-				} else {
+				// A partial answer keeps the error: a trace-only answer has no shards, and the liaison would merge
+				// the other nodes' partials into an incomplete top N.
+				if !partial {
 					resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
 				}
 			default:

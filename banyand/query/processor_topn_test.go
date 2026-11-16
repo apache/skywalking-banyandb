@@ -19,16 +19,26 @@ package query
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/measure"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
 func TestToTopNResponseEmptyAggregateHasNoList(t *testing.T) {
@@ -63,4 +73,65 @@ func TestTopNProcessorRejectsAnInternalRequestOverSeveralGroups(t *testing.T) {
 		_, isErr := resp.Data().(*common.Error)
 		assert.True(t, isErr, "shard IDs of different groups cannot be told apart, and a partial needs a function: %v", resp.Data())
 	}
+}
+
+// failingTopNMeasures serves the source measure of a TopN and a TopN result measure whose scan fails.
+type failingTopNMeasures struct {
+	measure.Service
+	source *databasev1.Measure
+}
+
+func (f *failingTopNMeasures) Measure(md *commonv1.Metadata) (measure.Measure, error) {
+	if md.GetName() == f.source.GetMetadata().GetName() {
+		return &failingMeasure{schema: f.source}, nil
+	}
+	return &failingMeasure{}, nil
+}
+
+type failingMeasure struct {
+	schema *databasev1.Measure
+}
+
+func (f *failingMeasure) Query(context.Context, model.MeasureQueryOptions) (model.MeasureQueryResult, error) {
+	return nil, errors.New("scan failed")
+}
+
+func (f *failingMeasure) GetSchema() *databasev1.Measure { return f.schema }
+
+func (f *failingMeasure) GetIndexRules() []*databasev1.IndexRule { return nil }
+
+// TestTopNProcessorFailsATracedInternalRequest checks that a data node whose internal TopN query fails answers
+// with an error even when the query is traced: an answer without shards would let the liaison merge the other
+// nodes' partials and silently return an incomplete top N.
+func TestTopNProcessorFailsATracedInternalRequest(t *testing.T) {
+	source := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "service_cpm", Group: "g"},
+		Entity:   &databasev1.Entity{TagNames: []string{"service_id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{{
+			Name: "default",
+			Tags: []*databasev1.TagSpec{{Name: "service_id", Type: databasev1.TagType_TAG_TYPE_STRING}},
+		}},
+		Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+	}
+	ctrl := gomock.NewController(t)
+	registry := schema.NewMockTopNAggregation(ctrl)
+	registry.EXPECT().GetTopNAggregation(gomock.Any(), gomock.Any()).Return(&databasev1.TopNAggregation{
+		Metadata: &commonv1.Metadata{Name: "n", Group: "g"}, SourceMeasure: source.GetMetadata(), FieldName: "value",
+	}, nil).AnyTimes()
+	repo := metadata.NewMockRepo(ctrl)
+	repo.EXPECT().TopNAggregationRegistry().Return(registry).AnyTimes()
+	p := &topNQueryProcessor{
+		measureService: &failingTopNMeasures{source: source},
+		queryService:   &queryService{log: logger.GetLogger("topn-test"), metaService: repo},
+	}
+	request := &measurev1.TopNRequest{
+		Groups: []string{"g"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC,
+		Agg:       modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		TimeRange: &modelv1.TimeRange{Begin: timestamppb.New(time.Unix(0, 0)), End: timestamppb.New(time.Unix(3600, 0))},
+		Trace:     true,
+	}
+	resp := p.Rev(context.Background(), bus.NewMessage(1, &measurev1.InternalTopNRequest{Request: request, PartialLimit: 3}))
+	failure, isErr := resp.Data().(*common.Error)
+	require.True(t, isErr, "a failed internal query must answer an error, got %T", resp.Data())
+	assert.Contains(t, failure.Error(), "scan failed")
 }
