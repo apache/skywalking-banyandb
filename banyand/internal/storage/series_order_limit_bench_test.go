@@ -31,7 +31,7 @@ import (
 
 // buildSeriesOrderBenchIndex writes count series of one service in batches, as a normal-mode measure writes its series
 // documents, then closes the index and reopens it from disk. Scores are heavy tailed (log-uniform over nine decades).
-func buildSeriesOrderBenchIndex(b *testing.B, count int, ladder bool) *seriesIndex {
+func buildSeriesOrderBenchIndex(b *testing.B, count int, ladder bool, regionOf func(i int) string) *seriesIndex {
 	b.Helper()
 	dir, fn := setUp(require.New(b))
 	b.Cleanup(fn)
@@ -44,7 +44,7 @@ func buildSeriesOrderBenchIndex(b *testing.B, count int, ladder bool) *seriesInd
 		docs := make([]seriesOrderDoc, 0, batch)
 		for i := done; i < min(done+batch, count); i++ {
 			docs = append(docs, seriesOrderDoc{
-				service: "svc_a", instance: fmt.Sprintf("inst_%07d", i), region: "us",
+				service: "svc_a", instance: fmt.Sprintf("inst_%07d", i), region: regionOf(i),
 				score: int64(math.Exp(rng.Float64() * 20)), hasScore: true,
 			})
 		}
@@ -69,7 +69,7 @@ func BenchmarkSeriesOrderLimit(b *testing.B) {
 				if !ladder {
 					layout = "noladder"
 				}
-				si := buildSeriesOrderBenchIndex(b, count, ladder)
+				si := buildSeriesOrderBenchIndex(b, count, ladder, func(int) string { return "us" })
 				for _, sort := range []modelv1.Sort{modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC} {
 					for _, limit := range []int{100, 0} {
 						name := fmt.Sprintf("%s/%s/limit-%d", layout, sort, limit)
@@ -96,5 +96,57 @@ func BenchmarkSeriesOrderLimit(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkSeriesOrderLimitCriteria runs the ascending search of a ladder index of 100k series with a criteria that keeps
+// about 50 of them, and one that keeps 1%, with a limit of 64 series and without one.
+func BenchmarkSeriesOrderLimitCriteria(b *testing.B) {
+	const count = 100000
+	regionOf := func(i int) string {
+		switch {
+		case i%2083 == 0:
+			return "rare" // 49 series
+		case i%100 == 1:
+			return "pct" // 1000 series
+		default:
+			return "us"
+		}
+	}
+	si := buildSeriesOrderBenchIndex(b, count, true, regionOf)
+	series := []*pbv1.Series{fixtureSeriesPrefix("svc_a")}
+	matching := map[string]int{}
+	for i := 0; i < count; i++ {
+		matching[regionOf(i)]++
+	}
+	for _, tc := range []struct {
+		region string
+		want   int
+	}{{"rare", matching["rare"]}, {"pct", matching["pct"]}} {
+		for _, limit := range []int{64, 0} {
+			name := fmt.Sprintf("%s/limit-%d", tc.region, limit)
+			if limit == 0 {
+				name = tc.region + "/unlimited"
+			}
+			b.Run(name, func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					sd, _, err := si.Search(context.Background(), series, IndexSearchOpts{
+						Order: seriesScoreOrder(modelv1.Sort_SORT_ASC), Limit: limit, Fields: fixtureResolver{},
+						Criteria: fixtureCondition("region", modelv1.Condition_BINARY_OP_EQ, fixtureStrTagValue(tc.region)),
+					})
+					if err != nil {
+						b.Fatal(err)
+					}
+					want := tc.want
+					if limit > 0 {
+						want = min(limit, tc.want)
+					}
+					if len(sd.SeriesList) != want {
+						b.Fatalf("got %d series, want %d", len(sd.SeriesList), want)
+					}
+				}
+			})
+		}
 	}
 }

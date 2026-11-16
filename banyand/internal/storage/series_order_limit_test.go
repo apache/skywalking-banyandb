@@ -29,6 +29,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
@@ -225,4 +226,75 @@ func TestSeriesIndex_SeriesOrderLimitIsIgnoredOtherwise(t *testing.T) {
 			require.False(t, got.sd.LimitApplied)
 		})
 	}
+}
+
+// A search that grows its chunk several times builds the candidates of each native segment once: the same number of builds as a
+// search that needs one chunk.
+func TestSeriesIndex_SeriesOrderLimitBuildsCandidatesOnce(t *testing.T) {
+	si := newEmptyOrderIndex(t)
+	insertSeriesOrderDocs(t, si, seriesOrderDocs(5, 130, 20, 1), true)
+	series := []*pbv1.Series{{Subject: testSubjectSvc, EntityValues: []*modelv1.TagValue{pbv1.AnyTagValue, pbv1.AnyTagValue}}}
+	builds := func(opts IndexSearchOpts) (int64, SeriesData) {
+		before := native.TopFieldCandidateBuilds()
+		got := runSeriesSearch(t, si, series, opts)
+		return native.TopFieldCandidateBuilds() - before, got.sd
+	}
+	oneChunk, _ := builds(IndexSearchOpts{Order: seriesScoreOrder(modelv1.Sort_SORT_ASC), Limit: 1})
+	require.Positive(t, oneChunk)
+	selective := fixtureCondition("region", modelv1.Condition_BINARY_OP_EQ, fixtureStrTagValue("eu"))
+	for _, sort := range []modelv1.Sort{modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC} {
+		// About 32 of the 650 series match: asking for 20 keeps growing the chunk (21, 84, 336) before enough survive.
+		got, sd := builds(IndexSearchOpts{Order: seriesScoreOrder(sort), Limit: 20, Criteria: selective, Fields: fixtureResolver{}})
+		require.Equal(t, oneChunk, got, "the chunks of one search share its candidates")
+		require.Len(t, sd.SeriesList, 20)
+		// Fewer matches than the limit: the chunk outgrows the candidates.
+		got, sd = builds(IndexSearchOpts{Order: seriesScoreOrder(sort), Limit: 100, Criteria: selective, Fields: fixtureResolver{}})
+		require.Equal(t, oneChunk, got)
+		require.False(t, sd.MoreSeries)
+	}
+}
+
+// The same holds for an index-mode search ordered by an index rule whose first chunks are mostly shadowed by a newer segment.
+func TestSeriesIndex_IndexModeIndexOrderLimitBuildsCandidatesOnce(t *testing.T) {
+	rows := make([]orderTestRow, 0, 600)
+	shadowed := make(map[string]struct{})
+	for i := 0; i < 600; i++ {
+		row := orderTestRow{service: fmt.Sprintf("svc-%04d", i), timestamp: int64(i + 1), value: int64(i % 50), hasValue: true}
+		rows = append(rows, row)
+		if i%20 != 0 {
+			var series pbv1.Series
+			series.Subject = "idx_measure"
+			series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: row.service}}}}
+			require.NoError(t, series.Marshal())
+			shadowed[string(series.Buffer)] = struct{}{}
+		}
+	}
+	si := newIndexModeOrderSegment(t, rows, true)
+	run := func(limit int, shadow bool) (int64, SeriesData) {
+		opts := IndexSearchOpts{
+			IndexModeSubject: "idx_measure", Order: &index.OrderBy{
+				Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_ASC,
+				Index: &databasev1.IndexRule{Metadata: &commonv1.Metadata{Id: orderRuleID}},
+			},
+			Limit: limit, TimeRange: limitTestAllTime(),
+			IsShadowed: func(_ context.Context, identifiers [][]byte) (map[string]struct{}, error) {
+				found := make(map[string]struct{})
+				for _, id := range identifiers {
+					if _, ok := shadowed[string(id)]; ok && shadow {
+						found[string(id)] = struct{}{}
+					}
+				}
+				return found, nil
+			},
+		}
+		before := native.TopFieldCandidateBuilds()
+		sd, _, err := si.SearchWithoutSeries(context.Background(), opts)
+		require.NoError(t, err)
+		return native.TopFieldCandidateBuilds() - before, sd
+	}
+	oneChunk, _ := run(1, false)
+	require.Positive(t, oneChunk)
+	got, sd := run(20, true) // 30 unshadowed rows: the chunk grows 20, 80, 320, 600
+	require.Equal(t, oneChunk, got)
+	require.Len(t, sd.SeriesList, 20)
 }

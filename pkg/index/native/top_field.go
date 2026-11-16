@@ -106,25 +106,43 @@ type TopFieldRequest struct {
 	Desc       bool
 }
 
-// TopFieldHits returns at most Limit candidates in the order SortHits gives Field: the smallest doc value first (the largest
-// with Desc), a document without the field last in both directions, ties by identifier, segment and document. A segment
-// whose ladder for Field is complete is not read in full: the descent selects the buckets that can rank inside the first
-// Limit, and only those documents are decoded and ranked. Any other segment, and any segment whose descent cannot prove
-// the result, ranks all its candidates, so the result never depends on whether a ladder exists.
-//
-//nolint:gocyclo // one segment loop with the fallback decisions kept explicit.
-func (v *ReadView) TopFieldHits(ctx context.Context, request TopFieldRequest) ([]QueryHit, error) {
+// topFieldCandidateBuilds counts the per-segment candidate sets a TopFieldPlan has built. Tests read it (through
+// TopFieldCandidateBuilds) to prove that a search that ranks in several chunks builds each segment's candidates once.
+var topFieldCandidateBuilds atomic.Int64
+
+// TopFieldCandidateBuilds returns how many per-segment candidate sets TopFieldHits and TopFieldPlan have built so far.
+// It exists for tests only.
+func TopFieldCandidateBuilds() int64 { return topFieldCandidateBuilds.Load() }
+
+// topPlanSegment is one segment of a TopFieldPlan: its candidates, already narrowed to the time range.
+type topPlanSegment struct {
+	segment    *memorySegment
+	narrowed   *roaringpkg.Bitmap
+	index      uint64
+	projection timeProjection
+}
+
+// TopFieldPlan holds the candidates of a TopFieldRequest, narrowed per segment, so that the first limit documents can be
+// asked for several times (a search that grows its chunk until enough survive a filter) without building the candidates
+// again. The plan reads the view's segments: it must not be used after the view it came from is closed, and its bitmaps
+// are never modified after they are built.
+type TopFieldPlan struct {
+	segments []topPlanSegment
+	view     *ReadView
+	request  TopFieldRequest
+}
+
+// NewTopFieldPlan builds the candidates of request in every segment once. request.Limit is ignored; Top takes the limit.
+func (v *ReadView) NewTopFieldPlan(ctx context.Context, request TopFieldRequest) (*TopFieldPlan, error) {
 	if err := v.check(ctx); err != nil {
 		return nil, err
-	}
-	if request.Limit <= 0 {
-		return nil, fmt.Errorf("top field requires a positive limit: %w", ErrInvalidQuery)
 	}
 	if request.Field == "" {
 		return nil, fmt.Errorf("top field requires a field: %w", ErrInvalidQuery)
 	}
+	plan := &TopFieldPlan{view: v, request: request}
 	if termSetRequestEmpty(request.Candidates) {
-		return nil, nil
+		return plan, nil
 	}
 	if err := validateTermSetRequest(request.Candidates); err != nil {
 		return nil, err
@@ -134,7 +152,6 @@ func (v *ReadView) TopFieldHits(ctx context.Context, request TopFieldRequest) ([
 		return nil, patternErr
 	}
 	timeRange := request.Candidates.Scope.TimeRange
-	var best []sortableHit
 	for segmentIndex := range v.root.segments {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -143,6 +160,7 @@ func (v *ReadView) TopFieldHits(ctx context.Context, request TopFieldRequest) ([
 		if err != nil {
 			return nil, err
 		}
+		topFieldCandidateBuilds.Add(1)
 		candidates, err := exactCandidates(ctx, segment, request.Candidates, patterns)
 		if err != nil {
 			return nil, err
@@ -154,17 +172,79 @@ func (v *ReadView) TopFieldHits(ctx context.Context, request TopFieldRequest) ([
 		if skip || narrowed == nil || narrowed.IsEmpty() {
 			continue
 		}
-		ranked, err := rankSegmentTop(ctx, segment, uint64(segmentIndex), narrowed, projection, request)
+		plan.segments = append(plan.segments, topPlanSegment{segment: segment, narrowed: narrowed, index: uint64(segmentIndex), projection: projection})
+	}
+	return plan, nil
+}
+
+// Top returns at most limit candidates in the order SortHits gives the plan's field, exactly as TopFieldHits does.
+func (p *TopFieldPlan) Top(ctx context.Context, limit int) ([]QueryHit, error) {
+	if limit <= 0 {
+		return nil, fmt.Errorf("top field requires a positive limit: %w", ErrInvalidQuery)
+	}
+	request := p.request
+	request.Limit = limit
+	var best []sortableHit
+	for i := range p.segments {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		entry := &p.segments[i]
+		ranked, err := rankSegmentTop(ctx, entry.segment, entry.index, entry.narrowed, entry.projection, request)
 		if err != nil {
 			return nil, err
 		}
-		best = mergeTopField(best, ranked, request.Limit)
+		best = mergeTopField(best, ranked, limit)
 	}
 	result := make([]QueryHit, len(best))
 	for i := range best {
 		result[i] = best[i].hit
 	}
 	return result, nil
+}
+
+// Candidates returns how many documents the plan ranks among, over all segments.
+func (p *TopFieldPlan) Candidates() uint64 {
+	var total uint64
+	for i := range p.segments {
+		total += p.segments[i].narrowed.GetCardinality()
+	}
+	return total
+}
+
+// Hits returns every candidate of the plan, in segment then document order, without ranking them: the universe a caller
+// ranks itself when the plan's chunks would read most of it anyway.
+func (p *TopFieldPlan) Hits(ctx context.Context) ([]QueryHit, error) {
+	var all []QueryHit
+	timeRange := p.request.Candidates.Scope.TimeRange
+	for i := range p.segments {
+		entry := &p.segments[i]
+		hits, err := projectCandidates(ctx, entry.index, entry.segment, entry.narrowed, timeRange, entry.projection)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, hits...)
+	}
+	return all, nil
+}
+
+// TopFieldHits returns at most Limit candidates in the order SortHits gives Field: the smallest doc value first (the largest
+// with Desc), a document without the field last in both directions, ties by identifier, segment and document. A segment
+// whose ladder for Field is complete is not read in full: the descent selects the buckets that can rank inside the first
+// Limit, and only those documents are decoded and ranked. Any other segment, and any segment whose descent cannot prove
+// the result, ranks all its candidates, so the result never depends on whether a ladder exists.
+func (v *ReadView) TopFieldHits(ctx context.Context, request TopFieldRequest) ([]QueryHit, error) {
+	if request.Limit <= 0 {
+		if err := v.check(ctx); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("top field requires a positive limit: %w", ErrInvalidQuery)
+	}
+	plan, err := v.NewTopFieldPlan(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return plan.Top(ctx, request.Limit)
 }
 
 // rankSegmentTop ranks one segment's narrowed candidates, through the ladder descent when it can prove the result.

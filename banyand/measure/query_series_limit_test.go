@@ -42,6 +42,8 @@ const (
 	limitTestMeasure = "limit_measure"
 	limitScoreRule   = uint32(5)
 	limitGroupRule   = uint32(6)
+	// limitShards spreads the series over several shards of each segment, as a live measure does.
+	limitShards = 2
 )
 
 // limitTestResolver resolves the tag a criteria filters on to the engine field of its index rule.
@@ -116,7 +118,7 @@ func buildLimitFixture(t *testing.T, days []time.Time, window timestamp.TimeRang
 ) *limitFixture {
 	t.Helper()
 	verifyNoScanLeaks(t)
-	db := openTestTSDBForRefTest(t, t.TempDir(), 1, nil)
+	db := openTestTSDBForRefTest(t, t.TempDir(), limitShards, nil)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	schema, rules := newLimitSchema()
 	is := indexSchema{indexRules: rules}
@@ -180,11 +182,13 @@ func buildLimitFixture(t *testing.T, days []time.Time, window timestamp.TimeRang
 			docs = append(docs, index.Document{DocID: uint64(s.id), EntityValues: series.Buffer, Fields: limitFields(s, d)})
 		}
 		require.NoError(t, seg.IndexDB().Insert(docs))
-		tst, err := seg.CreateTSTableIfNotExist(0)
-		require.NoError(t, err)
 		lo, hi := day.Truncate(24*time.Hour), day.Truncate(24*time.Hour).Add(24*time.Hour)
-		fx.write(tst, lo, hi, 1, func(s *limitSeries) []time.Time { return s.times })
-		fx.write(tst, lo, hi, 2, func(s *limitSeries) []time.Time { return s.dups })
+		for shard := 0; shard < limitShards; shard++ {
+			tst, err := seg.CreateTSTableIfNotExist(common.ShardID(shard))
+			require.NoError(t, err)
+			fx.write(tst, shard, lo, hi, 1, func(s *limitSeries) []time.Time { return s.times })
+			fx.write(tst, shard, lo, hi, 2, func(s *limitSeries) []time.Time { return s.dups })
+		}
 		seg.DecRef()
 	}
 	return fx
@@ -212,10 +216,14 @@ func limitFields(s *limitSeries, segment int) []index.Field {
 	return []index.Field{score, group}
 }
 
-// write adds the points pick returns of every series that fall inside [lo, hi) to tst as one part with the given version.
-func (fx *limitFixture) write(tst *tsTable, lo, hi time.Time, version int64, pick func(*limitSeries) []time.Time) {
+// write adds the points pick returns of the series of one shard that fall inside [lo, hi) to tst as one memory part with the
+// given version.
+func (fx *limitFixture) write(tst *tsTable, shard int, lo, hi time.Time, version int64, pick func(*limitSeries) []time.Time) {
 	dps := &dataPoints{}
 	for _, s := range fx.series {
+		if int(uint64(s.id)%limitShards) != shard {
+			continue
+		}
 		for _, ts := range pick(s) {
 			if ts.Before(lo) || !ts.Before(hi) {
 				continue
@@ -242,10 +250,9 @@ type limitPoint struct {
 }
 
 // queryLimitPoints runs one query and returns every data point of the result in order.
-func (fx *limitFixture) queryLimitPoints(t *testing.T, sort modelv1.Sort, limit int, criteria *modelv1.Criteria) []limitPoint {
-	t.Helper()
+func (fx *limitFixture) queryOptions(sort modelv1.Sort, limit int, criteria *modelv1.Criteria) model.MeasureQueryOptions {
 	window := fx.window
-	mqo := model.MeasureQueryOptions{
+	return model.MeasureQueryOptions{
 		Name:      limitTestMeasure,
 		TimeRange: &window,
 		Entities:  [][]*modelv1.TagValue{{strTagValue("svc_a"), pbv1.AnyTagValue}},
@@ -258,20 +265,36 @@ func (fx *limitFixture) queryLimitPoints(t *testing.T, sort modelv1.Sort, limit 
 		Fields:          limitTestResolver{},
 		Limit:           limit,
 	}
-	result, err := fx.m.Query(context.Background(), mqo)
+}
+
+func (fx *limitFixture) queryLimitPoints(t *testing.T, sort modelv1.Sort, limit int, criteria *modelv1.Criteria) []limitPoint {
+	t.Helper()
+	points, err := fx.queryLimitPointsCtx(context.Background(), sort, limit, criteria)
 	require.NoError(t, err)
+	return points
+}
+
+func (fx *limitFixture) queryLimitPointsCtx(ctx context.Context, sort modelv1.Sort, limit int, criteria *modelv1.Criteria) ([]limitPoint, error) {
+	result, err := fx.m.Query(ctx, fx.queryOptions(sort, limit, criteria))
+	if err != nil {
+		return nil, err
+	}
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 	defer result.Release()
 	var points []limitPoint
 	batches, isBatch := result.(model.MeasureBatchResult)
-	require.True(t, isBatch)
+	if !isBatch {
+		return nil, fmt.Errorf("a normal-mode result must pull batches")
+	}
 	for {
-		b, pullErr := batches.PullBatch(context.Background())
-		require.NoError(t, pullErr)
+		b, pullErr := batches.PullBatch(ctx)
+		if pullErr != nil {
+			return nil, pullErr
+		}
 		if b == nil {
-			return points
+			return points, nil
 		}
 		if b.Selection != nil {
 			for _, row := range b.Selection {
@@ -299,7 +322,7 @@ func limitTestWindows() (single, double timestamp.TimeRange, day0, day1 time.Tim
 // are those of the unlimited query, and returns how many limits needed more than one round and how many fell back.
 func requireLimitedEqualsUnlimited(t *testing.T, fx *limitFixture, criteria *modelv1.Criteria) (extraRounds, fallbacks int64) {
 	t.Helper()
-	for _, sort := range []modelv1.Sort{modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC} {
+	for _, sort := range []modelv1.Sort{modelv1.Sort_SORT_ASC, modelv1.Sort_SORT_DESC, modelv1.Sort_SORT_UNSPECIFIED} {
 		want := fx.queryLimitPoints(t, sort, 0, criteria)
 		require.NotEmpty(t, want)
 		for _, limit := range []int{1, 2, 3, 10, 40, 64, 100, 500, 100000} {
@@ -383,4 +406,74 @@ func TestQueryLimitSeriesIgnoredForTimeOrder(t *testing.T) {
 	require.NoError(t, err)
 	result.Release()
 	require.Equal(t, before, seriesLimitRounds.Load()+seriesLimitFallbacks.Load())
+}
+
+// With exclusive bounds the scan still reads the bounds, so the first points are those of the unlimited query.
+func TestQueryLimitedSeriesExclusiveRange(t *testing.T) {
+	window, _, day0, _ := limitTestWindows()
+	window = timestamp.NewTimeRange(window.Start, window.End, false, false)
+	fx := buildLimitFixture(t, []time.Time{day0}, window, 200, limitScoreOf)
+	extra, _ := requireLimitedEqualsUnlimited(t, fx, nil)
+	require.Positive(t, extra)
+}
+
+// guaranteedPoints counts the distinct points of the scanned series strictly inside the bounds: not a row twice, and not a
+// point that sits on a bound, whatever the range flags say.
+func TestGuaranteedPointsCountsDistinctPointsStrictlyInside(t *testing.T) {
+	window, _, day0, _ := limitTestWindows()
+	fx := buildLimitFixture(t, []time.Time{day0}, window, 200, limitScoreOf)
+	want := 0
+	for _, s := range fx.series {
+		if seriesService(s) != "svc_a" {
+			continue
+		}
+		distinct := map[int64]struct{}{}
+		for _, ts := range append(append([]time.Time(nil), s.times...), s.dups...) {
+			if ts.After(window.Start) && ts.Before(window.End) {
+				distinct[ts.UnixNano()] = struct{}{}
+			}
+		}
+		want += len(distinct)
+	}
+	segments, err := fx.db.SelectSegments(window, true)
+	require.NoError(t, err)
+	defer func() {
+		for i := range segments {
+			segments[i].DecRef()
+		}
+	}()
+	mqo := fx.queryOptions(modelv1.Sort_SORT_ASC, 0, nil)
+	series := []*pbv1.Series{{Subject: limitTestMeasure, EntityValues: []*modelv1.TagValue{strTagValue("svc_a"), pbv1.AnyTagValue}}}
+	result, _, err := fx.m.queryRound(context.Background(), mqo, series, segments, 0)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	defer result.Release()
+	start, end := window.Start.UnixNano(), window.End.UnixNano()
+	counted, err := guaranteedPoints(context.Background(), result, start, end, 1<<30)
+	require.NoError(t, err)
+	require.Equal(t, want, counted)
+	counted, err = guaranteedPoints(context.Background(), result, start, end, 5)
+	require.NoError(t, err)
+	require.Equal(t, 5, counted, "it stops at the limit")
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = guaranteedPoints(canceled, result, start, end, 1<<30)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// A query whose context ends between two rounds returns the error and leaves nothing behind (the fixture checks for leaks).
+func TestQueryLimitedSeriesCanceledBetweenRounds(t *testing.T) {
+	window, _, day0, _ := limitTestWindows()
+	fx := buildLimitFixture(t, []time.Time{day0}, window, 200, limitScoreOf)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seriesRoundObserver = func(limit int) {
+		if limit > initialSeriesRound {
+			cancel()
+		}
+	}
+	t.Cleanup(func() { seriesRoundObserver = nil })
+	// Limit 100 needs more than the first 64 series, so a second round starts and finds the context done.
+	_, err := fx.queryLimitPointsCtx(ctx, modelv1.Sort_SORT_ASC, 100, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }

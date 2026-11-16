@@ -720,12 +720,34 @@ func orderLimitedHits(ctx context.Context, hits []native.QueryHit, opts IndexSea
 // reading more of the index costs about as much as reading everything.
 const topFetchCap = 1 << 15
 
+// firstFilteredChunkFactor scales the first chunk of a search whose candidates a criteria, a pattern or shadowing filters.
+const firstFilteredChunkFactor = 16
+
+// fallbackShare is how many times a chunk may be smaller than the candidates before ranking all of them is cheaper: a chunk
+// costs several times what reading a candidate once costs, because the descent and the decode repeat for each chunk.
+const fallbackShare = 16
+
+// nextFetch returns the size of the chunk after one of size fetch that left survivors of the want the search needs. It
+// grows at least fourfold, and further when the survivors say that the filter keeps few of the ranked candidates: the
+// share kept so far, taken as one survivor when none survived (the share is then below one in fetch), predicts how many
+// candidates to rank, plus a quarter.
+func nextFetch(fetch, want, survivors int) int {
+	estimate := want * fetch / max(survivors, 1)
+	return max(fetch*4, estimate+estimate/4)
+}
+
 // hitRanker is how a limited search ranks its candidates: top asks the index for the first fetch candidates in order
 // without reading them all (nil when the index cannot, for example a time order without a time range), and order ranks
 // hits that were already read.
+//
+// all, when set, lists every candidate from the candidates the ranker already built, so the fallback that ranks the whole
+// universe does not build them again.
 type hitRanker struct {
 	top   func(ctx context.Context, fetch int) ([]native.QueryHit, error)
 	order func(ctx context.Context, hits []native.QueryHit) ([]native.QueryHit, error)
+	all   func(ctx context.Context) ([]native.QueryHit, error)
+	// size reports how many candidates the ranker ranks among, once it has built them (zero before).
+	size func() uint64
 }
 
 // newHitRanker returns the ranker of the order of opts over the candidates of one term-set request: the _timestamp trie
@@ -752,9 +774,36 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 	if err != nil {
 		return hitRanker{}, err
 	}
+	// One plan serves every chunk, so the candidates are built once however many times the chunk grows.
+	var plan *native.TopFieldPlan
+	ensurePlan := func(ctx context.Context) (*native.TopFieldPlan, error) {
+		if plan != nil {
+			return plan, nil
+		}
+		var planErr error
+		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Field: field, Desc: desc})
+		return plan, planErr
+	}
 	return hitRanker{
 		top: func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
-			return view.TopFieldHits(ctx, native.TopFieldRequest{Candidates: candidates, Field: field, Limit: fetch, Desc: desc})
+			p, planErr := ensurePlan(ctx)
+			if planErr != nil {
+				return nil, planErr
+			}
+			return p.Top(ctx, fetch)
+		},
+		size: func() uint64 {
+			if plan == nil {
+				return 0
+			}
+			return plan.Candidates()
+		},
+		all: func(ctx context.Context) ([]native.QueryHit, error) {
+			p, planErr := ensurePlan(ctx)
+			if planErr != nil {
+				return nil, planErr
+			}
+			return p.Hits(ctx)
 		},
 		order: func(ctx context.Context, hits []native.QueryHit) ([]native.QueryHit, error) {
 			return view.SortHits(ctx, hits, native.SortRequest{Field: field, Desc: desc})
@@ -784,8 +833,8 @@ func limitedSeriesOrder(series []*pbv1.Series, subject string, opts IndexSearchO
 // limitedSeriesHits returns the first opts.Limit series in order that the series matchers select and the criteria and
 // patterns keep, and whether the index holds more of them beyond those. It asks for one series more than Limit to
 // know. The caller merges the lists of several segments; a segment's first Limit series are enough for that
-// because a series is one document of a segment, so no series takes two places of its list, and the merge stops where a
-// truncated list ends (see measure.searchSeriesList).
+// because the merge stops where a truncated list ends (see measure.searchSeriesListLimited): everything before that point
+// is exact whatever the lists beyond their limits hold.
 func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv1.Series, opts IndexSearchOpts,
 ) (hits []native.QueryHit, more bool, err error) {
 	request, _, err := seriesRequest(series, opts.TimeRange)
@@ -824,7 +873,11 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 			return hits, len(hits) < fetch, topErr
 		}
 		if !filtered {
-			all, universeErr := universe(ctx)
+			listUniverse := universe
+			if ranker.all != nil {
+				listUniverse = ranker.all
+			}
+			all, universeErr := listUniverse(ctx)
 			if universeErr != nil {
 				return nil, false, universeErr
 			}
@@ -842,6 +895,10 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 	}
 	shadowed := make(map[string]bool)
 	fetch := want
+	if opts.Criteria != nil || len(opts.PatternRequests) > 0 || isShadowed != nil {
+		// A filter drops an unknown share of the ranked candidates: start with a chunk that tells that share apart from none.
+		fetch = want * firstFilteredChunkFactor
+	}
 	for {
 		top, exhausted, rankErr := rank(fetch)
 		if rankErr != nil {
@@ -865,8 +922,8 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 		if len(survivors) >= want || exhausted {
 			return survivors[:min(want, len(survivors))], nil
 		}
-		fetch *= 4
-		if fetch > topFetchCap && !filtered {
+		fetch = nextFetch(fetch, want, len(survivors))
+		if !filtered && (fetch > topFetchCap || (ranker.size != nil && ranker.size() > 0 && fetch*fallbackShare >= int(ranker.size()))) {
 			fetch = topFetchCap + 1 // the next rank call falls back to the whole universe
 		}
 	}
