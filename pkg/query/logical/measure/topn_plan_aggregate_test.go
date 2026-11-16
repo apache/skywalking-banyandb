@@ -386,3 +386,23 @@ func TestTopNAggregationStateBudget(t *testing.T) {
 	assert.Contains(t, err.Error(), "per-item state")
 	assert.Equal(t, 1, over.released, "the scan result must be released when the budget is exceeded")
 }
+
+func TestToInternalTopNResponseGroupsTheItemsOfAShard(t *testing.T) {
+	point := func(entity string, shardID uint32) *measurev1.InternalDataPoint {
+		return &measurev1.InternalDataPoint{ShardId: shardID, DataPoint: &measurev1.DataPoint{
+			TagFamilies: []*modelv1.TagFamily{{Tags: []*modelv1.Tag{{Key: "entity", Value: strTagValue(entity)}}}},
+			Fields:      []*measurev1.DataPoint_Field{{Name: "value", Value: &modelv1.FieldValue{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 1}}}}},
+		}}
+	}
+	resp := ToInternalTopNResponse([]*measurev1.InternalDataPoint{point("a", 1), point("b", 2), point("c", 1)})
+	got := map[uint32][]string{}
+	var order []uint32
+	for _, shard := range resp.GetShards() {
+		order = append(order, shard.GetShardId())
+		for _, p := range shard.GetPartials() {
+			got[shard.GetShardId()] = append(got[shard.GetShardId()], p.GetEntity()[0].GetValue().GetStr().GetValue())
+		}
+	}
+	assert.Equal(t, []uint32{1, 2}, order, "one entry per shard")
+	assert.Equal(t, map[uint32][]string{1: {"a", "c"}, 2: {"b"}}, got)
+}

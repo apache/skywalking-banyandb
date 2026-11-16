@@ -338,13 +338,16 @@ func (t *topNAggregateOp[K]) partialAnswer(items map[itemKey]*aggregatedItem[K])
 }
 
 // ToInternalTopNResponse converts the elements of a partial answer into the response of a data node, one entry
-// per shard. The plan emits the elements shard by shard, each shard's items best first.
+// per shard, in the order the shards first appear. The items of a shard keep their order, best first. The liaison
+// counts only the first entry of a shard, so the elements of a shard are grouped whatever their order.
 func ToInternalTopNResponse(idps []*measurev1.InternalDataPoint) *measurev1.InternalTopNResponse {
 	resp := &measurev1.InternalTopNResponse{}
-	var current *measurev1.InternalTopNShard
+	shards := make(map[uint32]*measurev1.InternalTopNShard)
 	for _, idp := range idps {
-		if current == nil || current.ShardId != idp.GetShardId() {
+		current, ok := shards[idp.GetShardId()]
+		if !ok {
 			current = &measurev1.InternalTopNShard{ShardId: idp.GetShardId()}
+			shards[idp.GetShardId()] = current
 			resp.Shards = append(resp.Shards, current)
 		}
 		dp := idp.GetDataPoint()
