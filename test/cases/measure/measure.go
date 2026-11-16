@@ -65,6 +65,13 @@ var measureEntries = []any{
 	g.Entry("order by time desc", helpers.Args{Input: "order_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("order by tag asc", helpers.Args{Input: "order_tag_asc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("order by tag desc", helpers.Args{Input: "order_tag_desc", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	// A normal-mode measure ordered by an index rule with a limit: the series index returns only the first series of the rule's
+	// order and the query asks for more of them when those hold too few points in the time range.
+	g.Entry("order by tag asc limit 2", helpers.Args{Input: "order_tag_asc_limit2", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("order by tag asc limit 4 crosses a tie of the tag", helpers.Args{Input: "order_tag_asc_limit4", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("order by tag asc offset 2 limit 2", helpers.Args{Input: "order_tag_asc_offset2_limit2", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("order by tag desc limit 2", helpers.Args{Input: "order_tag_desc_limit2", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
+	g.Entry("order by tag desc limit 4 crosses a tie of the tag", helpers.Args{Input: "order_tag_desc_limit4", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("limit 3,2", helpers.Args{Input: "limit", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("match a node", helpers.Args{Input: "match_node", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
 	g.Entry("match nodes", helpers.Args{Input: "match_nodes", Duration: 25 * time.Minute, Offset: -20 * time.Minute}),
