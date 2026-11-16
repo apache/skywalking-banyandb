@@ -37,8 +37,10 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// windowValues returns the values of the first published row of the window starting at windowStart.
-func (c *capturePublisher) windowValues(t *testing.T, windowStart time.Time) ([]int64, bool) {
+// windowValues returns the values of the first published row of the window starting at windowStart, and whether
+// that window has been published. It reports a decode error instead of failing the test, because it runs in the
+// condition of require.Eventually, which runs outside the test goroutine.
+func (c *capturePublisher) windowValues(windowStart time.Time) ([]int64, bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, row := range c.rows {
@@ -47,13 +49,15 @@ func (c *capturePublisher) windowValues(t *testing.T, windowStart time.Time) ([]
 		}
 		value := GenerateTopNValueInt()
 		defer ReleaseTopNValue(value)
-		require.NoError(t, value.Unmarshal(row.Request.DataPoint.Fields[0].GetBinaryData(), &encoding.BytesBlockDecoder{}))
+		if err := value.Unmarshal(row.Request.DataPoint.Fields[0].GetBinaryData(), &encoding.BytesBlockDecoder{}); err != nil {
+			return nil, true, err
+		}
 		_, _, values, _ := value.Values()
 		got := append([]int64(nil), values...)
 		sort.Slice(got, func(i, j int) bool { return got[i] < got[j] })
-		return got, true
+		return got, true, nil
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // TestTopNProcessorRanksByItsOwnDirection runs the processors that a TopN aggregation without a field value sort
@@ -98,11 +102,13 @@ func TestTopNProcessorRanksByItsOwnDirection(t *testing.T) {
 				windowStart.Add(3*time.Minute).UnixMilli()))
 
 			var got []int64
+			var decodeErr error
 			require.Eventually(t, func() bool {
 				var ok bool
-				got, ok = publisher.windowValues(t, windowStart)
+				got, ok, decodeErr = publisher.windowValues(windowStart)
 				return ok
 			}, 10*time.Second, 20*time.Millisecond, "the window is never flushed")
+			require.NoError(t, decodeErr)
 			assert.Equal(t, tt.want, got)
 		})
 	}
