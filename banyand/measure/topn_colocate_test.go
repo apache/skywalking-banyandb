@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 )
 
 type capturePublisher struct {
@@ -92,14 +93,13 @@ func TestTopNResultRowsAreCoLocatedOnOneShard(t *testing.T) {
 	}
 	require.Len(t, publisher.rows, len(windows), "one row per group and window, rows of one window must not overwrite each other")
 
-	want, err := topNResultShard(publisher.rows[0].EntityValues, shardNum)
+	// The shard the measure write path locates for the row's series, from the _top_n_result schema.
+	resultMeasure := topnschema.Measure(topnschema.Metadata("g"))
+	row := publisher.rows[0].GetRequest()
+	_, locatorShard, err := partition.NewEntityLocator(resultMeasure.GetTagFamilies(), resultMeasure.GetEntity(), 0).
+		Locate(row.GetMetadata().GetName(), row.GetDataPoint().GetTagFamilies(), shardNum)
 	require.NoError(t, err)
-	// The same derivation as the measure write path (partition.Locator.Locate) uses for the series.
-	entity, err := append(pbv1.EntityValues{pbv1.EntityStrValue(TopNSchemaName)}, publisher.rows[0].EntityValues...).ToEntity()
-	require.NoError(t, err)
-	locatorShard, err := partition.ShardID(entity.Marshal(), shardNum)
-	require.NoError(t, err)
-	assert.Equal(t, uint32(locatorShard), want)
+	want := uint32(locatorShard)
 
 	decoder := &encoding.BytesBlockDecoder{}
 	sums := map[string]int64{}
