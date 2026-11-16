@@ -132,11 +132,12 @@ func (s *importService) group(ctx context.Context, name string) (*commonv1.Group
 func (s *importService) routeFor(ctx context.Context, g *commonv1.Group, stage string) (*importRoute, error) {
 	name := g.GetMetadata().GetName()
 	ro := g.GetResourceOpts()
+	if s.routeTable == nil {
+		// A standalone process keeps one copy of every group, property groups included.
+		return standaloneRoute(name, ro, s.selfNode())
+	}
 	if g.GetCatalog() == commonv1.Catalog_CATALOG_PROPERTY {
 		return propertyRoute(name, ro, s.dataNodes[commonv1.Catalog_CATALOG_PROPERTY])
-	}
-	if s.routeTable == nil {
-		return standaloneRoute(name, ro, s.selfNode())
 	}
 	return s.stageRoute(ctx, g, stage)
 }

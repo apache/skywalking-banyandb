@@ -31,10 +31,12 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // Stored fields of a property document (banyand/property/db/shard.go buildUpdateDocument).
@@ -68,14 +70,14 @@ func producePropertyCSV(run *unitRun, unit *transferv1.PropertyUnit, groupDir st
 	}
 	fixed := fixedColumns(layout)
 	for i, shard := range unit.GetShardIds() {
-		shardDir := filepath.Join(groupDir, fmt.Sprintf("%s%d", shardDirPrefix, shard))
-		prefix := fmt.Sprintf("%s/%s/%s%d", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), csvfmt.EscapePathComponent(group), shardDirPrefix, shard)
+		shardDir := filepath.Join(groupDir, nativefmt.ShardDir(shard))
+		prefix := fmt.Sprintf("%s/%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), csvfmt.EscapePathComponent(group), nativefmt.ShardDir(shard))
 		fw := run.newWriter(layout, prefix, shard, uint32(i), false, revisions)
 		if err = writePropertyShard(run, fw, shardDir, layout, fixed, resources); err != nil {
 			return err
 		}
 		if err = fw.close(); err != nil {
-			return readError("finish "+shardDir, err)
+			return snapshot.ReadError("finish "+shardDir, err)
 		}
 	}
 	return nil
@@ -94,12 +96,12 @@ func writePropertyShard(run *unitRun, fw *fileWriter, shardDir string, layout *c
 			// included, so a missing manifest is a lost snapshot, not an empty shard.
 			err = fmt.Errorf("%w: %w", iofs.ErrNotExist, err)
 		}
-		return readError("open the property index of "+shardDir, err)
+		return snapshot.ReadError("open the property index of "+shardDir, err)
 	}
 	defer func() { _ = generation.Close() }()
 	pw := &propertyShardWriter{run: run, fw: fw, layout: layout, shardDir: shardDir, fixed: fixed, resources: resources, cells: layout.NewRow()}
 	err = generation.VisitLiveDocuments(run.ctx, pw.write)
-	return readError("read properties of "+shardDir, err)
+	return snapshot.ReadError("read properties of "+shardDir, err)
 }
 
 // propertyShardWriter turns the stored documents of one shard into CSV rows.

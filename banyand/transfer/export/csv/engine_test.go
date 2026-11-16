@@ -49,11 +49,13 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 const (
@@ -420,19 +422,19 @@ func produceAll(t *testing.T, meta metadata.Repo, groups []engineGroup, name str
 		segs, err := os.ReadDir(groupDir)
 		require.NoError(t, err)
 		for _, seg := range segs {
-			if !seg.IsDir() || !strings.HasPrefix(seg.Name(), segDirPrefix) {
+			if !seg.IsDir() || !strings.HasPrefix(seg.Name(), nativefmt.SegDirPrefix) {
 				continue
 			}
-			unit := &transferv1.SegmentUnit{Catalog: catalog, Group: g.name, SegmentSuffix: strings.TrimPrefix(seg.Name(), segDirPrefix)}
+			unit := &transferv1.SegmentUnit{Catalog: catalog, Group: g.name, SegmentSuffix: strings.TrimPrefix(seg.Name(), nativefmt.SegDirPrefix)}
 			segDir := filepath.Join(groupDir, seg.Name())
 			shards, readErr := os.ReadDir(segDir)
 			require.NoError(t, readErr)
 			for _, sh := range shards {
-				if id, ok := strings.CutPrefix(sh.Name(), shardDirPrefix); ok && sh.IsDir() {
+				if id, ok := strings.CutPrefix(sh.Name(), nativefmt.ShardDirPrefix); ok && sh.IsDir() {
 					n, parseErr := strconv.ParseUint(id, 10, 32)
 					require.NoError(t, parseErr)
 					// The Plan names only the shards holding parts.
-					partIDs, partsErr := LivePartIDs(filepath.Join(segDir, sh.Name()))
+					partIDs, partsErr := snapshot.LivePartIDs(filepath.Join(segDir, sh.Name()))
 					require.NoError(t, partsErr)
 					if len(partIDs) > 0 {
 						unit.ShardIds = append(unit.ShardIds, uint32(n))
@@ -576,7 +578,7 @@ func TestProducer_RealEngineData(t *testing.T) {
 		name := fmt.Sprintf("stale%04x", attempt)
 		units[commonv1.Catalog_CATALOG_MEASURE] = produceAll(t, metaSvc, groups[1:2], name)[commonv1.Catalog_CATALOG_MEASURE]
 		parts, globErr := filepath.Glob(filepath.Join(rootPath, "measure", "export-snapshots", name, engMeasureGroup,
-			segDirPrefix+"*", "shard-*", strings.Repeat("[0-9a-f]", 16)))
+			nativefmt.SegDirPrefix+"*", "shard-*", strings.Repeat("[0-9a-f]", 16)))
 		req.NoError(globErr)
 		if len(parts) > 1 {
 			break

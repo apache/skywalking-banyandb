@@ -61,9 +61,6 @@ func writeVolumes(t *testing.T, limit uint64, files memFiles, members []Member) 
 // back whole through a VolumeSet. It returns the set.
 func checkVolumes(t *testing.T, sink *memSink, files memFiles, members []Member, limit uint64) *VolumeSet {
 	t.Helper()
-	count, err := CountVolumes(members, limit)
-	require.NoError(t, err)
-	require.Len(t, sink.files, int(count), "CountVolumes announces the volumes")
 	volumes := make([]*Container, 0, len(sink.files))
 	for i, f := range sink.files {
 		require.True(t, f.finished)
@@ -200,8 +197,6 @@ func TestVolumeWriter_MinFileSize(t *testing.T) {
 	for _, limit := range []uint64{1, MinFileSize - 1} {
 		_, err := NewVolumeWriter(&memSink{}, "p", limit, memFiles{}.open)
 		require.Error(t, err, limit)
-		_, err = CountVolumes([]Member{{Path: "a", Size: 1}}, limit)
-		require.Error(t, err, limit)
 	}
 	for _, limit := range []uint64{0, MinFileSize} {
 		_, err := NewVolumeWriter(&memSink{}, "p", limit, memFiles{}.open)
@@ -253,12 +248,6 @@ func TestVolumeWriter_RejectsARepeatAcrossVolumes(t *testing.T) {
 }
 
 func TestVolumeWriter_VolumeLimit(t *testing.T) {
-	_, err := CountVolumes([]Member{{Path: "m", Size: maxVolumes * MinFileSize}}, MinFileSize)
-	require.Error(t, err)
-	n, err := CountVolumes([]Member{{Path: "m", Size: (maxVolumes - 1) * (MinFileSize - 64)}}, MinFileSize)
-	require.NoError(t, err)
-	assert.Less(t, n, uint32(maxVolumes))
-
 	sink := &countingSink{}
 	v, err := NewVolumeWriter(sink, "p", MinFileSize, func(string) (io.ReadCloser, error) {
 		return io.NopCloser(&zeroReader{n: 2 * MinFileSize}), nil
@@ -323,14 +312,6 @@ func TestVolumeWriter_Failures(t *testing.T) {
 		require.Error(t, v.Close())
 		require.Error(t, v.Add(context.Background(), Member{Path: "a"}))
 	})
-}
-
-func TestCountVolumes_Errors(t *testing.T) {
-	_, err := CountVolumes([]Member{{Path: "a", Size: -1}}, 0)
-	require.Error(t, err)
-	n, err := CountVolumes(nil, 0)
-	require.NoError(t, err)
-	assert.Zero(t, n)
 }
 
 func TestVolumeWriter_CanceledContext(t *testing.T) {

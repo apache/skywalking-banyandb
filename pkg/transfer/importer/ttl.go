@@ -24,9 +24,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/output"
@@ -104,8 +106,8 @@ const (
 func segmentBounds(suffix, timezone, segmentInterval string) (start, end time.Time, err error) {
 	loc := time.UTC
 	if timezone != "" {
-		if loc, err = time.LoadLocation(timezone); err != nil {
-			return time.Time{}, time.Time{}, fmt.Errorf("time zone %q: %w", timezone, err)
+		if loc = loadLocation(timezone); loc == nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("time zone %q does not load", timezone)
 		}
 	}
 	num, unit, err := parseIntervalLabel(segmentInterval)
@@ -127,26 +129,23 @@ func segmentBounds(suffix, timezone, segmentInterval string) (start, end time.Ti
 
 // parseIntervalLabel parses the manifest's interval labels "<n>d" and "<n>h".
 func parseIntervalLabel(label string) (int, commonv1.IntervalRule_Unit, error) {
-	if len(label) < 2 {
-		return 0, 0, fmt.Errorf("segment interval %q is not <n>d or <n>h", label)
+	if len(label) >= 2 {
+		if num, err := strconv.Atoi(label[:len(label)-1]); err == nil && num > 0 {
+			switch label[len(label)-1] {
+			case 'd':
+				return num, commonv1.IntervalRule_UNIT_DAY, nil
+			case 'h':
+				return num, commonv1.IntervalRule_UNIT_HOUR, nil
+			}
+		}
 	}
-	num, err := strconv.Atoi(label[:len(label)-1])
-	if err != nil || num <= 0 {
-		return 0, 0, fmt.Errorf("segment interval %q is not <n>d or <n>h", label)
-	}
-	switch label[len(label)-1] {
-	case 'd':
-		return num, commonv1.IntervalRule_UNIT_DAY, nil
-	case 'h':
-		return num, commonv1.IntervalRule_UNIT_HOUR, nil
-	default:
-		return 0, 0, fmt.Errorf("segment interval %q is not <n>d or <n>h", label)
-	}
+	return 0, 0, fmt.Errorf("segment interval %q is not <n>d or <n>h", label)
 }
 
 // sourceStage returns the manifest stage of a unit's group, matched case-insensitively. The
-// group default comes first as "hot", so the last match lets a lifecycle stage named hot
-// take precedence over it, as the routing does.
+// group default comes first as "hot", so the last match returns a lifecycle stage named hot
+// over it; the routing lays out hot with the group's own opts, so a hot unit's layout is read
+// with sourceGroupDefault.
 func sourceStage(m *manifest.Manifest, group, stage string) (manifest.Stage, bool) {
 	for _, g := range m.Groups {
 		if g.Name != group {
@@ -161,14 +160,120 @@ func sourceStage(m *manifest.Manifest, group, stage string) (manifest.Stage, boo
 	return manifest.Stage{}, false
 }
 
+// sourceGroupDefault returns the manifest entry of a group's own opts: the exporter always
+// writes it first in the group's stages, before the lifecycle stages, one of which may also be
+// named hot.
+func sourceGroupDefault(m *manifest.Manifest, group string) (manifest.Stage, bool) {
+	for _, g := range m.Groups {
+		if g.Name == group && len(g.Stages) > 0 {
+			return g.Stages[0], true
+		}
+	}
+	return manifest.Stage{}, false
+}
+
 // ttlDetail is the GATE detail line of an expired work item. It carries no value derived from
 // the current time, so a dry run and the real run print the same line.
-func ttlDetail(item *WorkItem, targetStage string, newest int64, ttl time.Duration, breakdown string, forced bool) string {
+func ttlDetail(item *WorkItem, targetStage string, newest int64, end time.Time, ttl time.Duration, breakdown string, forced bool) string {
 	verdict := "skipped; --force-ttl imports it"
 	if forced {
 		verdict = "imported anyway because of --force-ttl"
 	}
-	return fmt.Sprintf("%s/%s/%s %s: every row is older than the target retention (newest %s, retention %s = %s); %s",
+	return fmt.Sprintf("%s/%s/%s %s: every row is in a target segment past the retention (newest %s, its segment ends %s, retention %s = %s); %s",
 		item.CatalogName(), item.Group, targetStage, item.position(),
-		time.Unix(0, newest).UTC().Format(time.RFC3339), formatDuration(ttl), breakdown, verdict)
+		time.Unix(0, newest).UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), formatDuration(ttl), breakdown, verdict)
+}
+
+// stageSegmentInterval is the segment interval of a group's stage: the named lifecycle stage's,
+// or the group's own for the default stage and a stage the group does not define.
+func stageSegmentInterval(ro *commonv1.ResourceOpts, stage string) *commonv1.IntervalRule {
+	if i := stageIndex(ro, stage); i >= 0 && ro.GetStages()[i].GetSegmentInterval() != nil {
+		return ro.GetStages()[i].GetSegmentInterval()
+	}
+	return ro.GetSegmentInterval()
+}
+
+// itemLocation is the time zone segments of an item are cut in: its first source node's, else UTC.
+func itemLocation(item *WorkItem) *time.Location {
+	if loc := firstLocation(item.Sources, func(s WorkSource) string { return s.Timezone }); loc != nil {
+		return loc
+	}
+	return time.UTC
+}
+
+// firstLocation is the location of the first of items whose zone name is set and loads, else nil.
+func firstLocation[T any](items []T, zone func(T) string) *time.Location {
+	for _, it := range items {
+		if loc := loadLocation(zone(it)); loc != nil {
+			return loc
+		}
+	}
+	return nil
+}
+
+// locations caches time.LoadLocation by zone name, nil for a name that does not load: loading
+// reads the zoneinfo database every time.
+var locations sync.Map
+
+// loadLocation is the location of a zone name, nil for an empty name or one that does not load.
+func loadLocation(name string) *time.Location {
+	if name == "" {
+		return nil
+	}
+	if v, ok := locations.Load(name); ok {
+		return v.(*time.Location)
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		loc = nil
+	}
+	locations.Store(name, loc)
+	return loc
+}
+
+// gridLocation is the time zone the target cuts an item's segments in. A native item keeps the
+// source node's, which the TZ gate makes equal to the target's; a CSV item is written by the
+// target data nodes, so the first route node reporting a loadable zone gives it, else the
+// source node's.
+func gridLocation(in Inputs, item *WorkItem, nodes []string) *time.Location {
+	if (in.Artifact != nil && in.Artifact.Native()) || in.Target == nil {
+		return itemLocation(item)
+	}
+	if loc := firstLocation(targetNodes(in.Target.DataNodes, nodes), (*databasev1.Node).GetTzName); loc != nil {
+		return loc
+	}
+	return itemLocation(item)
+}
+
+// targetSegmentEnd is the exclusive end of the segment the storage layer opens for the instant
+// t: the grid of interval anchored at 1970-01-01 in t's location
+// (banyand/internal/storage IntervalRule.Standard and NextTime). Without an interval it is t.
+func targetSegmentEnd(t time.Time, interval *commonv1.IntervalRule) time.Time {
+	num := int64(interval.GetNum())
+	if num <= 0 {
+		return t
+	}
+	loc := t.Location()
+	switch interval.GetUnit() {
+	case commonv1.IntervalRule_UNIT_DAY:
+		midnight := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+		days := floorDiv(int64(midnight.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, loc)).Hours()+12), 24)
+		start := time.Date(1970, 1, 1+int(floorDiv(days, num)*num), 0, 0, 0, 0, loc)
+		return start.AddDate(0, 0, int(num))
+	case commonv1.IntervalRule_UNIT_HOUR:
+		hour := time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), 0, 0, 0, loc)
+		hours := floorDiv(int64(hour.Sub(time.Date(1970, 1, 1, 0, 0, 0, 0, loc))), int64(time.Hour))
+		start := time.Date(1970, 1, 1, int(floorDiv(hours, num)*num), 0, 0, 0, loc)
+		return start.Add(time.Duration(num) * time.Hour)
+	default:
+		return t
+	}
+}
+
+func floorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
 }

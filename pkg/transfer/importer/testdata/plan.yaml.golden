@@ -173,9 +173,9 @@ entries:
   targetNodes: []
   targetStage: hot
 gateDetails:
-- 'measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target
-  retention (newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl
-  imports it'
+- 'measure/sw_metric/hot seg=20261012 shard=0: every row is in a target segment past
+  the retention (newest 2026-10-12T10:00:00Z, its segment ends 2026-10-13T00:00:00Z,
+  retention 3d = group 3d); skipped; --force-ttl imports it'
 header:
   artifactVersion: 1
   dataNodes: 2
@@ -213,7 +213,7 @@ rejected:
       timezone: UTC
     stage: hot
   key: measure/sw_metric/hot/20261012/shard-0
-  reason: every row is older than the target stage's retention
+  reason: the target segments of every row are past the target stage's retention
   rows: 30
   targetNodes:
   - dst-hot1

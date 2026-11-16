@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 const testSessionID = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -206,7 +207,7 @@ func TestPlanInventory_IndexModeMeasureCarriesSegmentLevelOnly(t *testing.T) {
 	for _, g := range []string{"sw_idx", "sw_plain"} {
 		seg := filepath.Join(fx.backends[commonv1.Catalog_CATALOG_MEASURE].GetDataPath(), g, "seg-20260928")
 		writeFile(t, filepath.Join(seg, "metadata"), []byte(`{"version":"1.5.0"}`))
-		buildIndex(t, filepath.Join(seg, sidxDirName), 2)
+		buildIndex(t, filepath.Join(seg, nativefmt.SeriesIndexDir), 2)
 	}
 
 	frames := collect(t, fx.planner, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_MEASURE}}})

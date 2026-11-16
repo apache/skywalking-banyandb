@@ -34,7 +34,7 @@ import (
 )
 
 // PartTypeCore is the type of the core part.
-const PartTypeCore = "core"
+const PartTypeCore = queue.PartTypeCore
 
 type syncIntroduction struct {
 	synced  map[uint64]struct{}
