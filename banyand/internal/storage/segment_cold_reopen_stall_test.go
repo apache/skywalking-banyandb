@@ -51,15 +51,16 @@ import (
 //  4. incRef does not refresh lastAccessed, so the reopened segment is idle
 //     again at the next reclaimer tick, and the cycle repeats forever.
 //
-// The fixture models the slow reopen with a TSTable creator that sleeps when it
-// opens a shard of the cold (yesterday's) segment, or, for the tests that need
-// a deterministic interleaving, parks on a reopenGate until released.
+// The fixture models the slow reopen with a reopenGate: the TSTable creator
+// parks on the gate when it opens a shard of the gated segment, so a reopen
+// stays in flight until the test releases it. A write queued behind such a
+// reopen never completes on its own, which makes the stall checks independent
+// of how fast the machine is.
 
-const coldReopenDelay = 2 * time.Second
-
-// writeStallBudget is how long a write to the current segment may take. It is
-// far below coldReopenDelay, so a write queued behind the cold reopen fails it.
-const writeStallBudget = 300 * time.Millisecond
+// testWaitTimeout bounds every wait for something that must happen. It only
+// limits how long a failing test hangs: a passing test never waits for it, and
+// a write stuck behind a gated reopen never completes, however long it is.
+const testWaitTimeout = 10 * time.Second
 
 type coldReopenFixture struct {
 	db      *database[*MockTSTable, any]
@@ -68,7 +69,6 @@ type coldReopenFixture struct {
 	// gate holds the reopen of one chosen segment in flight (see holdReopen).
 	gate      reopenGate
 	coldOpens atomic.Int32
-	slowCold  atomic.Bool
 }
 
 func newColdReopenFixture(t *testing.T) *coldReopenFixture {
@@ -89,13 +89,10 @@ func newColdReopenFixture(t *testing.T) *coldReopenFixture {
 		TSTableCreator: func(_ fs.FileSystem, _ string, _ common.Position,
 			_ *logger.Logger, tr timestamp.TimeRange, _, _ any,
 		) (*MockTSTable, error) {
-			f.gate.hit(tr.Start)
 			if tr.Start.Equal(f.coldDay) {
 				f.coldOpens.Add(1)
-				if f.slowCold.Load() {
-					time.Sleep(coldReopenDelay)
-				}
 			}
+			f.gate.hit(tr.Start)
 			return &MockTSTable{}, nil
 		},
 	}
@@ -164,30 +161,26 @@ func (f *coldReopenFixture) makeColdIdle(t *testing.T) {
 	f.coldOpens.Store(0)
 }
 
-// sendTick hands a write timestamp to the rotation task, as database.Tick does
-// for the first write of every 10 minutes. The blocking send returns once the
-// task has received it, so the tick is never dropped.
-func (f *coldReopenFixture) sendTick(ts time.Time) {
-	f.db.tsEventCh <- ts.UnixNano()
-	time.Sleep(20 * time.Millisecond)
+// tickAsync hands a write timestamp to the rotation task, as database.Tick does
+// for the first write of every 10 minutes, and reports once the task has fully
+// processed it (see processRotationTick).
+func (f *coldReopenFixture) tickAsync(ts time.Time) <-chan error {
+	done := make(chan error, 1)
+	go func() {
+		// If the test already failed while this pass was stuck, cleanup closes
+		// the database and its tick channel under the pending send.
+		defer func() { _ = recover() }()
+		processRotationTick(f.db, ts)
+		done <- nil
+	}()
+	return done
 }
 
 // tick hands a write timestamp to the rotation task and waits until the task
 // has finished processing it.
 func (f *coldReopenFixture) tick(t *testing.T, ts time.Time) {
 	t.Helper()
-	f.sendTick(ts)
-	require.Eventually(t, func() bool { return !f.db.rotationProcessOn.Load() },
-		10*time.Second, time.Millisecond, "the rotation task must finish")
-}
-
-// timedWrite measures one write to the hot segment that starts while a cold
-// reopen is in flight.
-func (f *coldReopenFixture) timedWrite(t *testing.T, ts time.Time) time.Duration {
-	t.Helper()
-	start := time.Now()
-	f.write(t, ts)
-	return time.Since(start)
+	requireFinished(t, f.tickAsync(ts), "the rotation pass")
 }
 
 // TestRotationTick_DoesNotReopenIdleClosedSegment: a write tick on the hot
@@ -226,16 +219,16 @@ func TestIdleReclaim_NoCloseReopenCycle(t *testing.T) {
 }
 
 // TestRotationTick_DoesNotStallHotWrites: while the rotation task handles a
-// tick, writes to the hot segment must keep flowing.
+// tick, writes to the hot segment must keep flowing. The cold segment's reopen
+// is gated, so a rotation pass that reopens it never finishes and holds up the
+// write for as long as the gate is closed.
 func TestRotationTick_DoesNotStallHotWrites(t *testing.T) {
 	f := newColdReopenFixture(t)
-	f.slowCold.Store(true)
+	f.holdReopen(t, f.coldDay)
 
-	f.sendTick(f.hotDay.Add(12*time.Hour + 20*time.Minute))
-
-	elapsed := f.timedWrite(t, f.hotDay.Add(12*time.Hour+21*time.Minute))
-	require.Less(t, elapsed, writeStallBudget,
-		"a hot-segment write stalled %s behind the rotation task", elapsed)
+	requireWithin(t, f.tickAsync(f.hotDay.Add(12*time.Hour+20*time.Minute)), "the rotation pass")
+	requireWithin(t, f.writeAsync(f.hotDay.Add(12*time.Hour+21*time.Minute)), "hot write")
+	require.Zero(t, f.coldOpens.Load(), "the rotation pass must not reopen the cold segment")
 }
 
 // TestColdQuery_DoesNotStallHotWrites: a dashboard query over yesterday
@@ -243,28 +236,24 @@ func TestRotationTick_DoesNotStallHotWrites(t *testing.T) {
 // wait for that reopen.
 func TestColdQuery_DoesNotStallHotWrites(t *testing.T) {
 	f := newColdReopenFixture(t)
-	f.slowCold.Store(true)
+	f.holdReopen(t, f.coldDay)
 
-	var wg sync.WaitGroup
-	wg.Add(1)
+	query := make(chan error, 1)
 	go func() {
-		defer wg.Done()
 		tr := timestamp.NewInclusiveTimeRange(f.coldDay.Add(10*time.Hour), f.coldDay.Add(11*time.Hour))
 		ss, err := f.db.SelectSegments(tr, true)
-		if err == nil {
-			for _, s := range ss {
-				s.DecRef()
-			}
+		for _, s := range ss {
+			s.DecRef()
 		}
+		query <- err
 	}()
-	require.Eventually(t, func() bool { return f.coldOpens.Load() > 0 },
-		time.Second, time.Millisecond, "the query must start reopening the cold segment")
+	f.gate.waitEntered(t) // the query is now parked inside the cold reopen
 
-	elapsed := f.timedWrite(t, f.hotDay.Add(12*time.Hour+30*time.Minute))
-	wg.Wait()
+	requireWithin(t, f.writeAsync(f.hotDay.Add(12*time.Hour+30*time.Minute)), "hot write")
+
+	f.gate.unblock()
+	requireFinished(t, query, "the cold query")
 	require.True(t, f.isOpen(t, f.coldDay), "the query must have reopened the cold segment")
-	require.Less(t, elapsed, writeStallBudget,
-		"a hot-segment write stalled %s behind a cold-segment query reopen", elapsed)
 }
 
 // reopenGate blocks the shard-table open of one segment, chosen by its start
@@ -310,7 +299,7 @@ func (g *reopenGate) waitEntered(t *testing.T) {
 	g.mu.Unlock()
 	select {
 	case <-entered:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testWaitTimeout):
 		t.Fatal("the gated segment was never reopened")
 	}
 }
@@ -362,14 +351,16 @@ func (f *coldReopenFixture) startLateWrite(t *testing.T) <-chan error {
 	return done
 }
 
-// requireWithin fails unless done delivers a nil error within writeStallBudget.
+// requireWithin fails unless done delivers a nil error while a gated reopen is
+// still in flight. Anything stuck behind that reopen never delivers, so the
+// generous timeout only bounds how long a failure takes to report.
 func requireWithin(t *testing.T, done <-chan error, what string) {
 	t.Helper()
 	select {
 	case err := <-done:
 		require.NoError(t, err, what)
-	case <-time.After(writeStallBudget):
-		t.Fatalf("%s stalled for more than %s behind a cold-segment reopen", what, writeStallBudget)
+	case <-time.After(testWaitTimeout):
+		t.Fatalf("%s is stuck behind a cold-segment reopen", what)
 	}
 }
 
@@ -379,7 +370,7 @@ func requireFinished(t *testing.T, done <-chan error, what string) {
 	select {
 	case err := <-done:
 		require.NoError(t, err, what)
-	case <-time.After(5 * time.Second):
+	case <-time.After(testWaitTimeout):
 		t.Fatalf("%s did not finish", what)
 	}
 }
@@ -426,7 +417,7 @@ func TestDeleteOldestSegment_DoesNotStallHotWritesDuringColdReopen(t *testing.T)
 		removed <- err
 	}()
 	require.Eventually(t, func() bool { return len(sc.copySegments()) == 1 },
-		time.Second, time.Millisecond, "forced cleanup must drop the oldest segment from the list")
+		testWaitTimeout, time.Millisecond, "forced cleanup must drop the oldest segment from the list")
 	requireWithin(t, f.writeAsync(f.hotDay.Add(12*time.Hour+30*time.Minute)), "hot write")
 
 	f.gate.unblock()

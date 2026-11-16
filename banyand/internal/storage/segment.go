@@ -1256,14 +1256,14 @@ func (sc *segmentController[T, O]) removeOldest() (bool, error) {
 	// directory is gone, which keeps create from reusing the path meanwhile.
 	atomic.StoreUint32(&oldest.mustBeDeleted, 1)
 	sc.removeSeg(oldest.id)
-	remaining := fmt.Sprintf("%v", sc.lst)
+	remaining := append([]*segment[T, O](nil), sc.lst...)
 	sc.Unlock()
 
 	// Delete outside the controller lock: performDelete takes the segment's own
 	// lock, which a concurrent reopen may hold for seconds.
 	oldest.delete()
 
-	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", remaining).Msg("removed oldest segment via forced cleanup")
+	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", fmt.Sprintf("%v", remaining)).Msg("removed oldest segment via forced cleanup")
 	return true, nil
 }
 

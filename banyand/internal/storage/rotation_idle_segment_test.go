@@ -78,7 +78,10 @@ func createIdleClosedSegment(t *testing.T, db *database[*MockTSTable, any], ts t
 	s, err := db.segmentController.createSegment(ts)
 	require.NoError(t, err)
 	s.DecRef()
-	require.True(t, s.closeIfIdle(time.Now().Add(time.Hour).UnixNano()), "segment must be idle-closable")
+	// Age the segment past the idle timeout and close it the way the reclaimer
+	// does, so the real idle check decides.
+	s.lastAccessed.Store(time.Now().Add(-2 * time.Hour).UnixNano())
+	require.True(t, s.closeIfIdle(time.Now().Add(-time.Hour).UnixNano()), "segment must be idle-closable")
 	return s
 }
 

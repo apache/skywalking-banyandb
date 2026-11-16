@@ -335,7 +335,7 @@ func TestSegmentLifecycle_Stress(t *testing.T) {
 	close(stop)
 	wg.Wait()
 	// Let the rotation task drain.
-	require.Eventually(t, func() bool { return !db.rotationProcessOn.Load() }, 10*time.Second, time.Millisecond)
+	require.Eventually(t, func() bool { return !db.rotationProcessOn.Load() }, testWaitTimeout, time.Millisecond)
 
 	// Final invariants.
 	live := map[string]*stressSeg{}

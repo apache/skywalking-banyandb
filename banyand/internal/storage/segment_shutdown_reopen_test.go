@@ -84,14 +84,14 @@ func runShutdownDuringQueryReopen(t *testing.T, shutdown func(db *database[*Mock
 		cold.mu.RLock()
 		defer cold.mu.RUnlock()
 		return cold.shutdown
-	}, 5*time.Second, time.Millisecond, "shutdown must release the older segment first")
+	}, testWaitTimeout, time.Millisecond, "shutdown must release the older segment first")
 	f.gate.unblock()
 
 	requireFinished(t, closed, "shutdown")
 	var r queryResult
 	select {
 	case r = <-query:
-	case <-time.After(5 * time.Second):
+	case <-time.After(testWaitTimeout):
 		t.Fatal("the query did not finish")
 	}
 	require.Nil(t, r.panic, "the query panicked")

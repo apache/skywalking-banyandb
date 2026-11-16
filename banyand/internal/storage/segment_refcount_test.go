@@ -277,7 +277,7 @@ func (g *gatedController) finish(t *testing.T, out <-chan selectResult) selectRe
 	select {
 	case r := <-out:
 		return r
-	case <-time.After(5 * time.Second):
+	case <-time.After(testWaitTimeout):
 		t.Fatal("selectSegments did not return")
 		return selectResult{}
 	}
