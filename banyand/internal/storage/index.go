@@ -24,6 +24,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/pkg/errors"
@@ -477,13 +478,15 @@ func orderFieldName(order *index.OrderBy) (string, error) {
 //     empty candidate set below never panics.
 //  2. Filter: pkg/index/native/criteria.Filter over opts.Criteria.
 //  3. Order: SortHits on the index-rule field for an index order
-//     (opts.Order.Index != nil), and on _timestamp for a time order in index
-//     mode (subject != ""). A time order in a series search, or no order at
-//     all, keeps the hits in MatchTermsSet's order and leaves sortedValues
-//     nil (a sorted series search changes banyand/measure/query.go's
-//     needsSorting decision).
+//     (opts.Order.Index != nil, type index). A time order in index mode
+//     (subject != "") orders by the hits' own timestamps instead: the rows
+//     are projected in storage order and permuted afterwards, so it reads no
+//     doc value per hit and no tag out of storage order. A time order in a
+//     series search, or no order at all, keeps the hits in MatchTermsSet's
+//     order and leaves sortedValues nil (a sorted series search changes
+//     banyand/measure/query.go's needsSorting decision).
 //  4. Results: ProjectHit for the timestamp, "_version" and the projection,
-//     series from the identifier, and ProjectSortValue when sorted. The
+//     series from the identifier, and ProjectSortValue for an index order. The
 //     unsorted path also charges the query memory budget per the previous
 //     release's parseResult/readSeriesDocument; the sorted path never did.
 func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject string, opts IndexSearchOpts,
@@ -545,18 +548,13 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	// needsSorting decision. No order at all stays unsorted, as before.
 	timeOrderSorts := opts.Order != nil && opts.Order.Type == index.OrderByTypeTime && subject != ""
 	sorted := opts.Order != nil && (opts.Order.Index != nil || timeOrderSorts)
+	timeOrder := sorted && opts.Order.Type == index.OrderByTypeTime
 	var sortField string
+	var timeOrderPerm []int
 	if sorted {
-		sortField, err = orderFieldName(opts.Order)
+		hits, timeOrderPerm, sortField, err = orderSearchHits(ctx, view, hits, opts.Order)
 		if err != nil {
 			return SeriesData{}, nil, err
-		}
-		hits, err = view.SortHits(ctx, hits, native.SortRequest{Field: sortField, Desc: opts.Order.Sort == modelv1.Sort_SORT_DESC})
-		if err != nil {
-			return SeriesData{}, nil, err
-		}
-		if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*24); reserveErr != nil {
-			return SeriesData{}, nil, reserveErr
 		}
 		sortedValues = make([][]byte, 0, len(hits))
 	}
@@ -606,7 +604,90 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 			return SeriesData{}, nil, appendErr
 		}
 	}
+	if timeOrder {
+		sd.permute(timeOrderPerm)
+		sortedValues = make([][]byte, len(sd.Timestamps))
+		for i, ts := range sd.Timestamps {
+			sortedValues[i] = native.TimestampSortValue(ts)
+		}
+	}
 	return sd, sortedValues, nil
+}
+
+// orderSearchHits is step 3 of search for a sorted search. An index order sorts the hits with SortHits and returns the
+// field its sort values are read from. A time order sorts by the hits' own timestamps, which the universe already
+// decoded in storage order, so it needs no SortHits pass and no doc-value read per hit: it returns the hits unchanged
+// (the rows are projected in storage order, like the unsorted path, and permuted by the returned indexes afterwards)
+// and an empty sort field (the sort values are derived from the timestamps).
+func orderSearchHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit, order *index.OrderBy,
+) (ordered []native.QueryHit, timePerm []int, sortField string, err error) {
+	sortField, err = orderFieldName(order)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	desc := order.Sort == modelv1.Sort_SORT_DESC
+	if order.Type == index.OrderByTypeTime {
+		if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*24); reserveErr != nil {
+			return nil, nil, "", reserveErr
+		}
+		return hits, timeOrderPermutation(hits, desc), "", nil
+	}
+	ordered, err = view.SortHits(ctx, hits, native.SortRequest{Field: sortField, Desc: desc})
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if reserveErr := query.ReserveAllocation(ctx, uint64(len(ordered))*24); reserveErr != nil {
+		return nil, nil, "", reserveErr
+	}
+	return ordered, nil, sortField, nil
+}
+
+// timeOrderPermutation returns the indexes of hits in timestamp order, ties by identifier, segment and document, the
+// order SortHits gives for the "_timestamp" field, without reading any document.
+func timeOrderPermutation(hits []native.QueryHit, desc bool) []int {
+	perm := make([]int, len(hits))
+	for i := range perm {
+		perm[i] = i
+	}
+	sort.SliceStable(perm, func(i, j int) bool {
+		a, b := hits[perm[i]], hits[perm[j]]
+		if a.Timestamp != b.Timestamp {
+			if desc {
+				return a.Timestamp > b.Timestamp
+			}
+			return a.Timestamp < b.Timestamp
+		}
+		if c := bytes.Compare(a.Identifier, b.Identifier); c != 0 {
+			return c < 0
+		}
+		if a.Segment != b.Segment {
+			return a.Segment < b.Segment
+		}
+		return a.DocumentNumber < b.DocumentNumber
+	})
+	return perm
+}
+
+// permute reorders every parallel row slice so that row i becomes the row that was at perm[i].
+func (sd *SeriesData) permute(perm []int) {
+	sd.SeriesList = permuteRows(sd.SeriesList, perm)
+	sd.Timestamps = permuteRows(sd.Timestamps, perm)
+	sd.Versions = permuteRows(sd.Versions, perm)
+	sd.TimestampSet = permuteRows(sd.TimestampSet, perm)
+	sd.VersionSet = permuteRows(sd.VersionSet, perm)
+	sd.Fields = permuteRows(sd.Fields, perm)
+	sd.MultiValueFields = permuteRows(sd.MultiValueFields, perm)
+}
+
+func permuteRows[E any](rows []E, perm []int) []E {
+	if len(rows) != len(perm) {
+		return rows
+	}
+	out := make([]E, len(rows))
+	for i, from := range perm {
+		out[i] = rows[from]
+	}
+	return out
 }
 
 // appendSearchHit extends sd (and sortedValues, on the sorted path) with one
@@ -700,7 +781,7 @@ func appendSearchHit(ctx context.Context, view *native.ReadView, hit native.Quer
 		}
 	}
 
-	if sorted {
+	if sorted && sortField != "" {
 		sortValue, _, sortErr := view.ProjectSortValue(ctx, hit, sortField)
 		if sortErr != nil {
 			return sortErr
