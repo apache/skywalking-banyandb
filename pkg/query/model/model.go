@@ -142,7 +142,8 @@ type MeasureQueryOptions struct {
 	TagProjection   []TagProjection
 	FieldProjection []string
 	Sort            modelv1.Sort
-	// Limit, when positive, is how many rows the query can use from an index-mode scan: its offset plus limit.
+	// Limit, when positive, is how many rows the query can use from the scan: its offset plus limit. A normal-mode scan
+	// reads it only for an order by an index rule, as a count of data points.
 	// The plan sets it only when nothing between the scan and the limit can drop or reorder rows.
 	Limit         int
 	Number        int32

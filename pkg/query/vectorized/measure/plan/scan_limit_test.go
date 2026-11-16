@@ -29,9 +29,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-// The scan limit is offset plus limit, and only for an index-mode scan ordered by time that nothing but the Limit
-// operator follows.
-func TestIndexModeScanLimit(t *testing.T) {
+// The scan limit is offset plus limit, for an index-mode scan with an order, or a normal-mode scan ordered by an index
+// rule, that nothing but the Limit operator follows.
+func TestScanLimit(t *testing.T) {
 	indexMode := &databasev1.Measure{IndexMode: true}
 	normal := &databasev1.Measure{}
 	timeOrder := &index.OrderBy{Type: index.OrderByTypeTime}
@@ -58,7 +58,28 @@ func TestIndexModeScanLimit(t *testing.T) {
 		{name: "normal measure", measure: normal, order: timeOrder, scan: plainScan, req: req(nil)},
 		{name: "no order", measure: indexMode, scan: plainScan, req: req(nil)},
 		{name: "index order", measure: indexMode, order: indexOrder, scan: plainScan, req: req(nil), want: 25},
-		{name: "index order normal measure", measure: normal, order: indexOrder, scan: plainScan, req: req(nil)},
+		{name: "index order normal measure", measure: normal, order: indexOrder, scan: plainScan, req: req(nil), want: 25},
+		{name: "normal measure no order", measure: normal, scan: plainScan, req: req(nil)},
+		{
+			name: "index order normal measure several groups", measure: normal, order: indexOrder, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Groups = []string{"a", "b"} }),
+		},
+		{
+			name: "index order normal measure top n", measure: normal, order: indexOrder, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Top = &measurev1.QueryRequest_Top{} }),
+		},
+		{
+			name: "index order normal measure group by", measure: normal, order: indexOrder, req: req(nil),
+			scan: &Scan{Params: ScanParams{GroupBy: &model.MeasureGroupBy{}}},
+		},
+		{
+			name: "index order normal measure aggregation", measure: normal, order: indexOrder, req: req(nil),
+			scan: &Scan{Params: ScanParams{Agg: &model.MeasureAgg{}}},
+		},
+		{
+			name: "index order normal measure unbounded", measure: normal, order: indexOrder, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Limit = math.MaxUint32 }),
+		},
 		{
 			name: "index order several groups", measure: indexMode, order: indexOrder, scan: plainScan,
 			req: req(func(r *measurev1.QueryRequest) { r.Groups = []string{"a", "b"} }),
@@ -75,7 +96,7 @@ func TestIndexModeScanLimit(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.want, indexModeScanLimit(tc.req, tc.measure, tc.order, tc.scan))
+			require.Equal(t, tc.want, scanLimit(tc.req, tc.measure, tc.order, tc.scan))
 		})
 	}
 }

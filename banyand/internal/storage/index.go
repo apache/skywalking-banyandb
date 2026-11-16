@@ -402,18 +402,16 @@ func toNativeTimeRange(tr *timestamp.TimeRange) *native.TimeRange {
 	}
 }
 
-// seriesUniverse builds the _id MatchTermsSet universe (NIDX-03 §6.2 step 1,
-// "with series"): one request carrying the exact terms, prefixes and
-// wildcard patterns every series matcher contributes, ORed together exactly
-// as the previous release's boolean should-query did.
-func seriesUniverse(ctx context.Context, view *native.ReadView, series []*pbv1.Series, timeRange *timestamp.TimeRange,
-) ([]native.QueryHit, []index.SeriesMatcher, error) {
+// seriesRequest builds the _id MatchTermsSet request of a series search (NIDX-03 §6.2 step 1, "with series"): one request
+// carrying the exact terms, prefixes and wildcard patterns every series matcher contributes, ORed together exactly as the
+// previous release's boolean should-query did.
+func seriesRequest(series []*pbv1.Series, timeRange *timestamp.TimeRange) (native.TermSetRequest, []index.SeriesMatcher, error) {
 	matchers := make([]index.SeriesMatcher, len(series))
 	var exact, prefix, wildcard [][]byte
 	for i := range series {
 		matcher, err := convertEntityValuesToSeriesMatcher(series[i])
 		if err != nil {
-			return nil, nil, err
+			return native.TermSetRequest{}, nil, err
 		}
 		matchers[i] = matcher
 		switch matcher.Type {
@@ -424,15 +422,33 @@ func seriesUniverse(ctx context.Context, view *native.ReadView, series []*pbv1.S
 		case index.SeriesMatcherTypeWildcard:
 			wildcard = append(wildcard, matcher.Match)
 		default:
-			return nil, nil, errors.Errorf("unsupported series matcher type: %v", matcher.Type)
+			return native.TermSetRequest{}, nil, errors.Errorf("unsupported series matcher type: %v", matcher.Type)
 		}
 	}
-	hits, err := view.MatchTermsSet(ctx, native.TermSetRequest{
+	return native.TermSetRequest{
 		Field: identifierFieldName, Terms: exact, Prefix: prefix, Wildcard: wildcard,
 		Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0),
 		Scope: native.QueryScope{TimeRange: toNativeTimeRange(timeRange)},
-	})
+	}, matchers, nil
+}
+
+// seriesUniverse builds the _id MatchTermsSet universe of a series search from seriesRequest.
+func seriesUniverse(ctx context.Context, view *native.ReadView, series []*pbv1.Series, timeRange *timestamp.TimeRange,
+) ([]native.QueryHit, []index.SeriesMatcher, error) {
+	request, matchers, err := seriesRequest(series, timeRange)
+	if err != nil {
+		return nil, nil, err
+	}
+	hits, err := view.MatchTermsSet(ctx, request)
 	return hits, matchers, err
+}
+
+// subjectRequest builds the _im_name MatchTermsSet request of an index-mode search: one literal term, the measure's name.
+func subjectRequest(subject string, timeRange *timestamp.TimeRange) native.TermSetRequest {
+	return native.TermSetRequest{
+		Field: index.IndexModeName, Terms: [][]byte{convert.StringToBytes(subject)},
+		Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0), Scope: native.QueryScope{TimeRange: toNativeTimeRange(timeRange)},
+	}
 }
 
 // subjectUniverse builds the _im_name MatchTermsSet universe (NIDX-03 §6.2
@@ -443,11 +459,7 @@ func subjectUniverse(ctx context.Context, view *native.ReadView, subject string,
 	if subject == "" {
 		return nil, nil
 	}
-	return view.MatchTermsSet(ctx, native.TermSetRequest{
-		Field: index.IndexModeName, Terms: [][]byte{convert.StringToBytes(subject)},
-		Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0),
-		Scope: native.QueryScope{TimeRange: toNativeTimeRange(timeRange)},
-	})
+	return view.MatchTermsSet(ctx, subjectRequest(subject, timeRange))
 }
 
 // orderFieldName resolves the engine field SortHits/ProjectSortValue sort on
@@ -519,10 +531,14 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	}()
 
 	limited := limitedOrder(series, subject, opts)
+	seriesLimited := limitedSeriesOrder(series, subject, opts)
 	var hits []native.QueryHit
-	if limited {
+	switch {
+	case limited:
 		hits, err = limitedOrderHits(ctx, view, subject, opts)
-	} else {
+	case seriesLimited:
+		hits, sd.MoreSeries, err = limitedSeriesHits(ctx, view, series, opts)
+	default:
 		hits, err = candidateHits(ctx, view, series, subject, opts)
 	}
 	if err != nil {
@@ -544,7 +560,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	var sortField string
 	var timeOrderPerm []int
 	if sorted {
-		if limited {
+		if limited || seriesLimited {
 			hits, timeOrderPerm, sortField, err = orderLimitedHits(ctx, hits, opts)
 			sd.LimitApplied = true
 		} else {
@@ -712,15 +728,11 @@ type hitRanker struct {
 	order func(ctx context.Context, hits []native.QueryHit) ([]native.QueryHit, error)
 }
 
-// newHitRanker returns the ranker of the order of opts: the _timestamp trie for a time order with a time range, and the
-// sort ladder of the index rule's field for an index order.
-func newHitRanker(view *native.ReadView, subject string, opts IndexSearchOpts) (hitRanker, error) {
+// newHitRanker returns the ranker of the order of opts over the candidates of one term-set request: the _timestamp trie
+// for a time order with a time range, and the sort ladder of the index rule's field for an index order.
+func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts IndexSearchOpts) (hitRanker, error) {
 	desc := opts.Order.Sort == modelv1.Sort_SORT_DESC
-	timeRange := toNativeTimeRange(opts.TimeRange)
-	candidates := native.TermSetRequest{
-		Field: index.IndexModeName, Terms: [][]byte{convert.StringToBytes(subject)},
-		Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0), Scope: native.QueryScope{TimeRange: timeRange},
-	}
+	timeRange := candidates.Scope.TimeRange
 	if opts.Order.Type == index.OrderByTypeTime {
 		ranker := hitRanker{order: func(_ context.Context, hits []native.QueryHit) ([]native.QueryHit, error) {
 			ordered := make([]native.QueryHit, len(hits))
@@ -755,7 +767,52 @@ func newHitRanker(view *native.ReadView, subject string, opts IndexSearchOpts) (
 // descent that decodes only about the chunk), filters each chunk, and stops at Limit survivors or when the index has no
 // more. Past topFetchCap, or when the index cannot rank, it ranks the whole filtered universe instead.
 func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
-	ranker, err := newHitRanker(view, subject, opts)
+	universe := func(ctx context.Context) ([]native.QueryHit, error) {
+		return subjectUniverse(ctx, view, subject, opts.TimeRange)
+	}
+	return rankedPrefix(ctx, view, subjectRequest(subject, opts.TimeRange), universe, opts, opts.Limit, opts.IsShadowed)
+}
+
+// limitedSeriesOrder reports that search serves a series search ordered by an index rule with a limit of series: the
+// series matchers are the candidates, and the first Limit of them in the order of the rule's tag are enough. Shadowing
+// is an index-mode concept, so a search that carries IsShadowed is not one of these.
+func limitedSeriesOrder(series []*pbv1.Series, subject string, opts IndexSearchOpts) bool {
+	return len(series) != 0 && subject == "" && opts.Limit > 0 && opts.IsShadowed == nil && opts.Order != nil &&
+		opts.Order.Type == index.OrderByTypeIndex && opts.Order.Index != nil
+}
+
+// limitedSeriesHits returns the first opts.Limit series in order that the series matchers select and the criteria and
+// patterns keep, and whether the index holds more of them beyond those. It asks for one series more than Limit to
+// know. The caller merges the lists of several segments; a segment's first Limit series are enough for that
+// because a series is one document of a segment, so no series takes two places of its list, and the merge stops where a
+// truncated list ends (see measure.searchSeriesList).
+func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv1.Series, opts IndexSearchOpts,
+) (hits []native.QueryHit, more bool, err error) {
+	request, _, err := seriesRequest(series, opts.TimeRange)
+	if err != nil {
+		return nil, false, err
+	}
+	universe := func(ctx context.Context) ([]native.QueryHit, error) {
+		return view.MatchTermsSet(ctx, request)
+	}
+	hits, err = rankedPrefix(ctx, view, request, universe, opts, opts.Limit+1, nil)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(hits) > opts.Limit {
+		return hits[:opts.Limit], true, nil
+	}
+	return hits, false, nil
+}
+
+// rankedPrefix returns the first want hits in the order of opts among the candidates of request that the criteria and
+// patterns keep and isShadowed (when not nil) does not drop, or all of them when there are fewer. universe lists every
+// candidate, for the fallback that ranks the whole filtered universe.
+func rankedPrefix(ctx context.Context, view *native.ReadView, request native.TermSetRequest,
+	universe func(context.Context) ([]native.QueryHit, error), opts IndexSearchOpts, want int,
+	isShadowed func(context.Context, [][]byte) (map[string]struct{}, error),
+) ([]native.QueryHit, error) {
+	ranker, err := newHitRanker(view, request, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -767,11 +824,11 @@ func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string
 			return hits, len(hits) < fetch, topErr
 		}
 		if !filtered {
-			universe, universeErr := subjectUniverse(ctx, view, subject, opts.TimeRange)
+			all, universeErr := universe(ctx)
 			if universeErr != nil {
 				return nil, false, universeErr
 			}
-			kept, filterErr := filterHits(ctx, view, universe, opts)
+			kept, filterErr := filterHits(ctx, view, all, opts)
 			if filterErr != nil {
 				return nil, false, filterErr
 			}
@@ -784,7 +841,7 @@ func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string
 		return ranked[:min(fetch, len(ranked))], fetch >= len(ranked), nil
 	}
 	shadowed := make(map[string]bool)
-	fetch := opts.Limit
+	fetch := want
 	for {
 		top, exhausted, rankErr := rank(fetch)
 		if rankErr != nil {
@@ -799,12 +856,14 @@ func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string
 				return nil, rankErr
 			}
 		}
-		survivors, shadowErr := dropShadowed(ctx, candidates, shadowed, opts.IsShadowed)
-		if shadowErr != nil {
-			return nil, shadowErr
+		survivors := candidates
+		if isShadowed != nil {
+			if survivors, rankErr = dropShadowed(ctx, candidates, shadowed, isShadowed); rankErr != nil {
+				return nil, rankErr
+			}
 		}
-		if len(survivors) >= opts.Limit || exhausted {
-			return survivors[:min(opts.Limit, len(survivors))], nil
+		if len(survivors) >= want || exhausted {
+			return survivors[:min(want, len(survivors))], nil
 		}
 		fetch *= 4
 		if fetch > topFetchCap && !filtered {

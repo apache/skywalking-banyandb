@@ -114,8 +114,10 @@ type IndexSearchOpts struct {
 	PreloadSize int
 	// Limit, when positive, is how many rows the caller can use from this search (its offset plus limit). An
 	// index-mode search with a time order and IsShadowed then returns only the first Limit rows that IsShadowed does not
-	// hold, in time order, reading the stored fields of only those rows, and reports it in SeriesData.LimitApplied. Any
-	// other search ignores it and returns every row.
+	// hold, in time order, reading the stored fields of only those rows, and reports it in SeriesData.LimitApplied. A
+	// series search (Search with series matchers) ordered by an index rule, without IsShadowed, reads Limit as a count of
+	// SERIES: it returns the first Limit series in the rule's order, reports whether more exist in SeriesData.MoreSeries,
+	// and sets LimitApplied. Any other search ignores it and returns every row.
 	Limit int
 }
 
@@ -146,6 +148,9 @@ type SeriesData struct {
 	// LimitApplied reports that the search truncated to IndexSearchOpts.Limit and already applied
 	// IndexSearchOpts.IsShadowed, so the caller must not de-duplicate the rows again.
 	LimitApplied bool
+	// MoreSeries reports, for a series search truncated to IndexSearchOpts.Limit series, that more series than the
+	// returned ones matched, in the order after them.
+	MoreSeries bool
 }
 
 // IndexDB is the interface of index database.
