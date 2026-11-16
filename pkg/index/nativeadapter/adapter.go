@@ -66,6 +66,9 @@ func encodeField(field index.Field) (native.Field, error) {
 		for shift := uint(0); shift <= 60; shift += 4 {
 			nf.Terms = append(nf.Terms, native.Term{Value: numericPrefix(sortable, shift), Frequency: 1})
 		}
+		if field.Numeric && !field.NoSort {
+			nf.Ladder, nf.LadderKey = true, field.NumericKey
+		}
 	default:
 		return native.Field{}, fmt.Errorf("native adapter: unsupported field %T", field.GetTerm())
 	}

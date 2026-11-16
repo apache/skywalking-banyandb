@@ -57,7 +57,16 @@ func TestIndexModeScanLimit(t *testing.T) {
 		{name: "unbounded limit", measure: indexMode, order: timeOrder, scan: plainScan, req: req(func(r *measurev1.QueryRequest) { r.Limit = math.MaxUint32 })},
 		{name: "normal measure", measure: normal, order: timeOrder, scan: plainScan, req: req(nil)},
 		{name: "no order", measure: indexMode, scan: plainScan, req: req(nil)},
-		{name: "index order", measure: indexMode, order: indexOrder, scan: plainScan, req: req(nil)},
+		{name: "index order", measure: indexMode, order: indexOrder, scan: plainScan, req: req(nil), want: 25},
+		{name: "index order normal measure", measure: normal, order: indexOrder, scan: plainScan, req: req(nil)},
+		{
+			name: "index order several groups", measure: indexMode, order: indexOrder, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Groups = []string{"a", "b"} }),
+		},
+		{
+			name: "index order top n", measure: indexMode, order: indexOrder, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Top = &measurev1.QueryRequest_Top{} }),
+		},
 		{name: "several groups", measure: indexMode, order: timeOrder, scan: plainScan, req: req(func(r *measurev1.QueryRequest) { r.Groups = []string{"a", "b"} })},
 		{name: "top n", measure: indexMode, order: timeOrder, scan: plainScan, req: req(func(r *measurev1.QueryRequest) { r.Top = &measurev1.QueryRequest_Top{} })},
 		{

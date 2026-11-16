@@ -203,6 +203,9 @@ func EncodeSeriesDocument(doc index.Document) (native.Document, error) {
 		// dropping data callers expect SortedValue/ProjectHit to return.
 		store := f.Store || !f.Index
 		nf := native.Field{Name: name, Value: value, Store: store, Index: f.Index, Sort: f.Index && !f.NoSort}
+		if f.Numeric && f.Index && !f.NoSort {
+			nf.Ladder, nf.LadderKey = true, f.NumericKey
+		}
 		if f.Index && f.Key.Analyzer != index.AnalyzerUnspecified && f.Key.Analyzer != index.AnalyzerKeyword {
 			terms, analyzeErr := nativeanalysis.Analyze(f.Key.Analyzer, value)
 			if analyzeErr != nil {
@@ -515,10 +518,10 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		err = multierr.Append(err, view.Close())
 	}()
 
-	limited := limitedTimeOrder(series, subject, opts)
+	limited := limitedOrder(series, subject, opts)
 	var hits []native.QueryHit
 	if limited {
-		hits, err = limitedTimeOrderHits(ctx, view, subject, opts)
+		hits, err = limitedOrderHits(ctx, view, subject, opts)
 	} else {
 		hits, err = candidateHits(ctx, view, series, subject, opts)
 	}
@@ -542,7 +545,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	var timeOrderPerm []int
 	if sorted {
 		if limited {
-			hits, timeOrderPerm, err = storageOrderForTimeOrder(ctx, hits, opts.Order.Sort == modelv1.Sort_SORT_DESC)
+			hits, timeOrderPerm, sortField, err = orderLimitedHits(ctx, hits, opts)
 			sd.LimitApplied = true
 		} else {
 			hits, timeOrderPerm, sortField, err = orderSearchHits(ctx, view, hits, opts)
@@ -667,84 +670,145 @@ func filterHits(ctx context.Context, view *native.ReadView, hits []native.QueryH
 	return hits, nil
 }
 
-// limitedTimeOrder reports that search serves an index-mode time order with a limit, and a way to tell which series a
-// newer segment already returned, so it can return only the first Limit rows that nothing shadows.
-func limitedTimeOrder(series []*pbv1.Series, subject string, opts IndexSearchOpts) bool {
-	return len(series) == 0 && subject != "" && opts.Limit > 0 && opts.IsShadowed != nil &&
-		opts.Order != nil && opts.Order.Type == index.OrderByTypeTime
+// limitedOrder reports that search serves an index-mode ordered search with a limit, and a way to tell which series a
+// newer segment already returned, so it can return only the first Limit rows that nothing shadows. The order is the time
+// order or the order of an index rule.
+func limitedOrder(series []*pbv1.Series, subject string, opts IndexSearchOpts) bool {
+	if len(series) != 0 || subject == "" || opts.Limit <= 0 || opts.IsShadowed == nil || opts.Order == nil {
+		return false
+	}
+	switch opts.Order.Type {
+	case index.OrderByTypeTime:
+		return true
+	case index.OrderByTypeIndex:
+		return opts.Order.Index != nil
+	default:
+		return false
+	}
 }
 
-// topTimeFetchCap bounds how many ranked candidates the descent may be asked for before the search gives up on it
-// and ranks the whole filtered universe instead: past it, the criteria or the shadowing drop so many rows that
-// reading more of the trie costs about as much as reading everything.
-const topTimeFetchCap = 1 << 15
+// orderLimitedHits is step 3 of search for a limited search. A time order returns the hits in storage order with the
+// indexes that put the projected rows back in time order. An index order keeps the rank order the search produced and
+// returns the field its sort values are read from.
+func orderLimitedHits(ctx context.Context, hits []native.QueryHit, opts IndexSearchOpts) ([]native.QueryHit, []int, string, error) {
+	if opts.Order.Type == index.OrderByTypeTime {
+		stored, perm, err := storageOrderForTimeOrder(ctx, hits, opts.Order.Sort == modelv1.Sort_SORT_DESC)
+		return stored, perm, "", err
+	}
+	sortField, err := orderFieldName(opts.Order)
+	return hits, nil, sortField, err
+}
 
-// limitedTimeOrderHits returns the first opts.Limit hits in time order, among the candidates of the subject that the
-// criteria keep and that no newer segment shadows. It asks the native index for the best-ranked candidates in growing
-// chunks (a trie descent that decodes only about the chunk), filters each chunk, and stops at Limit survivors or when the
-// index has no more. Past topTimeFetchCap it ranks the whole filtered universe instead.
-func limitedTimeOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+// topFetchCap bounds how many ranked candidates the descent may be asked for before the search gives up on it
+// and ranks the whole filtered universe instead: past it, the criteria or the shadowing drop so many rows that
+// reading more of the index costs about as much as reading everything.
+const topFetchCap = 1 << 15
+
+// hitRanker is how a limited search ranks its candidates: top asks the index for the first fetch candidates in order
+// without reading them all (nil when the index cannot, for example a time order without a time range), and order ranks
+// hits that were already read.
+type hitRanker struct {
+	top   func(ctx context.Context, fetch int) ([]native.QueryHit, error)
+	order func(ctx context.Context, hits []native.QueryHit) ([]native.QueryHit, error)
+}
+
+// newHitRanker returns the ranker of the order of opts: the _timestamp trie for a time order with a time range, and the
+// sort ladder of the index rule's field for an index order.
+func newHitRanker(view *native.ReadView, subject string, opts IndexSearchOpts) (hitRanker, error) {
 	desc := opts.Order.Sort == modelv1.Sort_SORT_DESC
 	timeRange := toNativeTimeRange(opts.TimeRange)
-	var ranked []native.QueryHit // the whole filtered universe in time order, once the descent is given up
+	candidates := native.TermSetRequest{
+		Field: index.IndexModeName, Terms: [][]byte{convert.StringToBytes(subject)},
+		Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0), Scope: native.QueryScope{TimeRange: timeRange},
+	}
+	if opts.Order.Type == index.OrderByTypeTime {
+		ranker := hitRanker{order: func(_ context.Context, hits []native.QueryHit) ([]native.QueryHit, error) {
+			ordered := make([]native.QueryHit, len(hits))
+			for i, at := range timeOrderPermutation(hits, desc) {
+				ordered[i] = hits[at]
+			}
+			return ordered, nil
+		}}
+		if timeRange != nil {
+			ranker.top = func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
+				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Limit: fetch, Desc: desc})
+			}
+		}
+		return ranker, nil
+	}
+	field, err := orderFieldName(opts.Order)
+	if err != nil {
+		return hitRanker{}, err
+	}
+	return hitRanker{
+		top: func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
+			return view.TopFieldHits(ctx, native.TopFieldRequest{Candidates: candidates, Field: field, Limit: fetch, Desc: desc})
+		},
+		order: func(ctx context.Context, hits []native.QueryHit) ([]native.QueryHit, error) {
+			return view.SortHits(ctx, hits, native.SortRequest{Field: field, Desc: desc})
+		},
+	}, nil
+}
+
+// limitedOrderHits returns the first opts.Limit hits in order, among the candidates of the subject that the criteria keep
+// and that no newer segment shadows. It asks the native index for the best-ranked candidates in growing chunks (a
+// descent that decodes only about the chunk), filters each chunk, and stops at Limit survivors or when the index has no
+// more. Past topFetchCap, or when the index cannot rank, it ranks the whole filtered universe instead.
+func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+	ranker, err := newHitRanker(view, subject, opts)
+	if err != nil {
+		return nil, err
+	}
+	var ranked []native.QueryHit // the whole filtered universe in order, once the descent is given up
 	filtered := false
 	rank := func(fetch int) ([]native.QueryHit, bool, error) {
-		if !filtered && timeRange != nil && fetch <= topTimeFetchCap {
-			hits, err := view.TopTimeHits(ctx, native.TopTimeRequest{
-				Candidates: native.TermSetRequest{
-					Field: index.IndexModeName, Terms: [][]byte{convert.StringToBytes(subject)},
-					Mode: native.MatchAnyTerm, MaxTerms: ^uint64(0), Scope: native.QueryScope{TimeRange: timeRange},
-				},
-				Limit: fetch, Desc: desc,
-			})
-			return hits, len(hits) < fetch, err
+		if !filtered && ranker.top != nil && fetch <= topFetchCap {
+			hits, topErr := ranker.top(ctx, fetch)
+			return hits, len(hits) < fetch, topErr
 		}
 		if !filtered {
-			universe, err := subjectUniverse(ctx, view, subject, opts.TimeRange)
-			if err != nil {
-				return nil, false, err
+			universe, universeErr := subjectUniverse(ctx, view, subject, opts.TimeRange)
+			if universeErr != nil {
+				return nil, false, universeErr
 			}
-			ranked, err = filterHits(ctx, view, universe, opts)
-			if err != nil {
-				return nil, false, err
+			kept, filterErr := filterHits(ctx, view, universe, opts)
+			if filterErr != nil {
+				return nil, false, filterErr
 			}
-			perm := timeOrderPermutation(ranked, desc)
-			ordered := make([]native.QueryHit, len(ranked))
-			for i, at := range perm {
-				ordered[i] = ranked[at]
+			ranked, filterErr = ranker.order(ctx, kept)
+			if filterErr != nil {
+				return nil, false, filterErr
 			}
-			ranked, filtered = ordered, true
+			filtered = true
 		}
 		return ranked[:min(fetch, len(ranked))], fetch >= len(ranked), nil
 	}
 	shadowed := make(map[string]bool)
 	fetch := opts.Limit
 	for {
-		top, exhausted, err := rank(fetch)
-		if err != nil {
-			return nil, err
+		top, exhausted, rankErr := rank(fetch)
+		if rankErr != nil {
+			return nil, rankErr
 		}
 		candidates := top
 		if !filtered {
-			if candidates, err = filterHits(ctx, view, top, opts); err != nil {
-				return nil, err
+			if candidates, rankErr = filterHits(ctx, view, top, opts); rankErr != nil {
+				return nil, rankErr
 			}
-			ordered := make([]native.QueryHit, len(candidates))
-			for i, at := range timeOrderPermutation(candidates, desc) {
-				ordered[i] = candidates[at]
+			if candidates, rankErr = ranker.order(ctx, candidates); rankErr != nil {
+				return nil, rankErr
 			}
-			candidates = ordered
 		}
-		survivors, err := dropShadowed(ctx, candidates, shadowed, opts.IsShadowed)
-		if err != nil {
-			return nil, err
+		survivors, shadowErr := dropShadowed(ctx, candidates, shadowed, opts.IsShadowed)
+		if shadowErr != nil {
+			return nil, shadowErr
 		}
 		if len(survivors) >= opts.Limit || exhausted {
 			return survivors[:min(opts.Limit, len(survivors))], nil
 		}
 		fetch *= 4
-		if fetch > topTimeFetchCap && !filtered {
-			fetch = topTimeFetchCap + 1 // the next rank call falls back to the whole universe
+		if fetch > topFetchCap && !filtered {
+			fetch = topFetchCap + 1 // the next rank call falls back to the whole universe
 		}
 	}
 }

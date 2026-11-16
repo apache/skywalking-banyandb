@@ -101,11 +101,16 @@ func NewBytesField(key FieldKey, value []byte) Field {
 
 // Field is a indexed item in a document.
 type Field struct {
-	term   IsTermValue
-	Key    FieldKey
-	NoSort bool
-	Store  bool
-	Index  bool
+	term IsTermValue
+	Key  FieldKey
+	// NumericKey is the order-preserving int64 of the value of a Numeric field.
+	NumericKey int64
+	NoSort     bool
+	Store      bool
+	Index      bool
+	// Numeric marks a scalar numeric value that is eligible for the sort ladder: the index may keep a multi-level numeric
+	// index of NumericKey so that an ordered, limited search does not read every document.
+	Numeric bool
 }
 
 // GetTerm returns the term value of the field.

@@ -575,17 +575,20 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		TimeRange:            mqo.TimeRange,
 	}
 	seriesFilter := make(map[common.SeriesID]struct{})
-	limited := mqo.Limit > 0 && mqo.Order != nil && mqo.Order.Type == index.OrderByTypeTime
+	limited := mqo.Limit > 0 && mqo.Order != nil
+	// Only a time order ranks by the rows' timestamps, which is what lets a segment's time range prune it; an index
+	// order ranks by a tag value that a segment's time range says nothing about.
+	timeLimited := limited && mqo.Order.Type == index.OrderByTypeTime
 	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
 	var kept []int64 // timestamps of the rows the limited searches kept, to prune older segments
 	for i := range segments {
-		if limited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
+		if timeLimited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
 			continue
 		}
 		segOpts := opts
 		if limited {
-			// The search returns only the first Limit rows that no newer segment shadows, in time order, so a series
-			// a newer segment holds cannot take a place in the limit.
+			// The search returns only the first Limit rows that no newer segment shadows, in the query's order, so a
+			// series a newer segment holds cannot take a place in the limit.
 			segOpts.Limit = mqo.Limit
 			segOpts.IsShadowed = shadowedByNewer(segments[:i], existing)
 		}
@@ -605,7 +608,7 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		if len(sr.SeriesList) < 1 {
 			continue
 		}
-		if sr.LimitApplied {
+		if sr.LimitApplied && timeLimited {
 			kept = append(kept, sr.Timestamps...)
 		}
 		r.segResults.results = append(r.segResults.results, sr)

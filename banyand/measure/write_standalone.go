@@ -328,6 +328,7 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 					f.Store = true
 					f.Index = true
 					f.NoSort = r.GetNoSort()
+					markNumericField(&f, t.Type, tagValue)
 					fields = append(fields, f)
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -401,6 +402,9 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
 				f.Store = true
 				f.Index = toIndex
 				f.NoSort = r.GetNoSort()
+				if toIndex {
+					markNumericField(&f, t.Type, tagValue)
+				}
 				fields = append(fields, f)
 			} else {
 				for _, val := range encodeTagValue.valueArr {
@@ -601,6 +605,15 @@ func getSourceFamilyAndTagMap(spec *measurev1.DataPointSpec, tagFamilySpec *data
 		srcFamily = req.DataPoint.TagFamilies[i]
 	}
 	return srcFamily, specTagMap
+}
+
+// markNumericField makes a scalar int index field eligible for the sort ladder. Arrays are excluded: a multi-valued field
+// sorts by its smallest value, which a ladder over every value cannot rank.
+func markNumericField(f *index.Field, tagType databasev1.TagType, tagValue *modelv1.TagValue) {
+	if tagType != databasev1.TagType_TAG_TYPE_INT || f.NoSort || tagValue.GetInt() == nil {
+		return
+	}
+	f.Numeric, f.NumericKey = true, tagValue.GetInt().GetValue()
 }
 
 func encodeTagValue(name string, tagType databasev1.TagType, tagValue *modelv1.TagValue) *nameValue {

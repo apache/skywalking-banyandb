@@ -35,6 +35,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
+	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -471,6 +472,7 @@ func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1
 		}
 		f := index.NewIntField(fieldKey, v.Value)
 		f.NoSort = noSort
+		f.Numeric, f.NumericKey = true, encoding.Float64ToSortableInt64(f.GetFloat())
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_STRING:
 		v := tagVal.GetStr()
