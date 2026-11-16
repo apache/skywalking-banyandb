@@ -167,17 +167,24 @@ type itemHeap[K streaming.TopSortKey] struct {
 
 func (h *itemHeap[K]) Len() int { return len(h.items) }
 
-// better reports whether a ranks before b. Equal aggregates are ranked by the item key, so that the items
-// kept at the cutoff do not depend on the scan order.
+// better reports whether a ranks before b.
 func (h *itemHeap[K]) better(a, b *aggregatedItem[K]) bool {
-	left, right := a.mapFunc.Val(), b.mapFunc.Val()
-	if left != right {
-		if h.sortDesc {
-			return left > right
+	return CompareTopNItems(a.mapFunc.Val(), a.key, b.mapFunc.Val(), b.key, h.sortDesc) < 0
+}
+
+// CompareTopNItems ranks two aggregated TopN items, given their aggregates and keys (see TopNItemKey): it returns
+// a negative number when a ranks before b, a positive one when b ranks before a, and 0 when they are the same item.
+// The better aggregate in the sort direction ranks first, and equal aggregates are ranked by the key, so that the
+// items kept at a cutoff depend neither on the scan order nor on the order of the answers. The data nodes and the
+// liaison rank with it, so that a data node's local cutoff agrees with the liaison's ranking.
+func CompareTopNItems[K streaming.TopSortKey](aVal K, aKey string, bVal K, bKey string, sortDesc bool) int {
+	if aVal != bVal {
+		if (aVal > bVal) == sortDesc {
+			return -1
 		}
-		return left < right
+		return 1
 	}
-	return a.key < b.key
+	return strings.Compare(aKey, bKey)
 }
 
 func (h *itemHeap[K]) Less(i, j int) bool { return h.better(h.items[j], h.items[i]) }

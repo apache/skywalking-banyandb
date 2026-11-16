@@ -273,11 +273,17 @@ func topNEntityKey(dp *measurev1.DataPoint) (string, bool) {
 	if len(dp.GetTagFamilies()) == 0 || len(dp.GetTagFamilies()[0].GetTags()) == 0 {
 		return "", false
 	}
-	entityValues := make(pbv1.EntityValues, 0, len(dp.GetTagFamilies()[0].GetTags()))
-	for _, tag := range dp.GetTagFamilies()[0].GetTags() {
-		entityValues = append(entityValues, tag.Value)
+	return TopNItemKey(dp.GetTagFamilies()[0].GetTags()), true
+}
+
+// TopNItemKey returns the key that identifies a TopN item by its entity tags. The data nodes and the liaison key
+// the items of an aggregated TopN query with it, so that they tell the same items apart.
+func TopNItemKey(entity []*modelv1.Tag) string {
+	entityValues := make(pbv1.EntityValues, 0, len(entity))
+	for _, tag := range entity {
+		entityValues = append(entityValues, tag.GetValue())
 	}
-	return entityValues.String(), true
+	return entityValues.String()
 }
 
 // topNResultIterator iterates over the data points a TopN plan answers, one at a time.

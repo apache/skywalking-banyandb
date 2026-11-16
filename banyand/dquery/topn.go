@@ -22,7 +22,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	"go.uber.org/multierr"
@@ -42,9 +41,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	pkgquery "github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
+	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
 )
 
 const defaultTopNQueryTimeout = 10 * time.Second
@@ -323,7 +322,7 @@ type topNShardKey struct {
 // answer that arrives is used, whatever its values. The partials of one item from different shards are combined
 // (sums and counts are added, the maximum of the maxima and the minimum of the minima are taken, and MEAN is the
 // sum of the sums divided by the sum of the counts), then the top N items are returned in the requested order.
-// Equal aggregates are ranked by the item, so that the cutoff does not depend on the order of the answers.
+// Items are keyed and ranked as the data nodes key and rank them (logical_measure.TopNItemKey and CompareTopNItems).
 func mergeTopNPartials[K streaming.TopSortKey](
 	answers [][]bus.Future,
 	topN int32,
@@ -371,11 +370,7 @@ func mergeTopNPartials[K streaming.TopSortKey](
 						allErr = multierr.Append(allErr, partialErr)
 						continue
 					}
-					entityValues := make(pbv1.EntityValues, 0, len(p.GetEntity()))
-					for _, e := range p.GetEntity() {
-						entityValues = append(entityValues, e.GetValue())
-					}
-					itemKey := entityValues.String()
+					itemKey := logical_measure.TopNItemKey(p.GetEntity())
 					item, exist := byKey[itemKey]
 					if !exist {
 						reduce, reduceErr := aggregation.NewReduce[K](agg)
@@ -398,13 +393,7 @@ func mergeTopNPartials[K streaming.TopSortKey](
 		item.val = item.reduce.Val()
 	}
 	slices.SortFunc(items, func(a, b *mergedItem) int {
-		if a.val != b.val {
-			if (a.val > b.val) == desc {
-				return -1
-			}
-			return 1
-		}
-		return strings.Compare(a.key, b.key)
+		return logical_measure.CompareTopNItems(a.val, a.key, b.val, b.key, desc)
 	})
 	if topN >= 0 && len(items) > int(topN) {
 		items = items[:topN]
