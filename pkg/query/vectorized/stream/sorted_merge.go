@@ -44,6 +44,10 @@ type mergeRowRef struct {
 type mergeBatch struct {
 	charged  uint64
 	retained int
+	// size is the number of rows the batch holds.
+	size int
+	// move marks, during one compaction, a batch whose retained rows are being copied out of it.
+	move bool
 }
 
 // SortedMerge is a globally-ordering breaker over stream RecordBatches.
@@ -67,12 +71,14 @@ type SortedMerge struct {
 	pruneAt   int
 	pos       int
 	arriveSeq int
-	orderKey  int
-	tsIdx     int
-	elemIdx   int
-	desc      bool
-	eof       bool
-	closed    bool
+	// compactions counts the prunes that moved rows into batches of their own.
+	compactions int
+	orderKey    int
+	tsIdx       int
+	elemIdx     int
+	desc        bool
+	eof         bool
+	closed      bool
 }
 
 // NewSortedMerge constructs a stream global-merge breaker over the given schema.
@@ -156,7 +162,7 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 	if lease, admitted := query.BudgetLeaseFromContext(ctx); admitted {
 		s.lease = lease
 	}
-	src := &mergeBatch{charged: chargeBytes}
+	src := &mergeBatch{charged: chargeBytes, size: batch.ActiveLen()}
 	if chargeBytes > 0 {
 		s.live = append(s.live, src)
 	}
@@ -180,6 +186,7 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 		s.sortRows()
 		s.capByDistinctElementID()
 		s.refundDropped()
+		return s.compactSparse(ctx)
 	}
 	return nil
 }
@@ -197,12 +204,127 @@ func (s *SortedMerge) Consume(ctx context.Context, batch *vectorized.RecordBatch
 // distinct ElementIDs — an element's first row in sort order is the only one the
 // downstream Distinct can ever emit, so later duplicates are dropped here rather
 // than carried.
-func (s *SortedMerge) Finalize(context.Context) error {
+func (s *SortedMerge) Finalize(ctx context.Context) error {
 	s.sortRows()
 	if s.maxRows > 0 {
 		s.capByDistinctElementID()
 		s.refundDropped()
+		return s.compactSparse(ctx)
 	}
+	return nil
+}
+
+// sparseBatchRatio is how thinly the merge may keep a batch before it is compacted: a batch of which it
+// retains under 1/sparseBatchRatio of the rows is copied out, and so is any batch of at most
+// batchSize/sparseBatchRatio rows, which are consolidated into full ones.
+const sparseBatchRatio = 8
+
+// compactSparse copies the rows the merge keeps out of the batches that hold mostly rows it dropped,
+// into batches of their own, and releases the charge of the batches they leave.
+//
+// The merge references rows inside the batches it consumed and charges each whole batch, so a batch
+// stays alive and charged for as long as one retained row points into it. A top-N over many series
+// keeps its N rows in up to N different batches of thousands of rows each. Copying the survivors
+// bounds what the merge holds by the rows it keeps, not by the batches they came from.
+//
+// Only the rows' home changes: the order of s.rows, each row's arrival sequence and every cell value
+// are untouched, so the sort and the ElementID rule see exactly what they saw before. The copies are
+// charged before anything is repointed, so a charge that fails leaves the merge as it was. Compacted
+// batches are full of retained rows, so they are not copied again unless they are small enough to be
+// consolidated, which bounds the work per prune by the rows kept.
+func (s *SortedMerge) compactSparse(ctx context.Context) error {
+	if len(s.live) == 0 {
+		return nil
+	}
+	small := max(s.batchSize/sparseBatchRatio, 1)
+	var (
+		movers    int
+		moving    int
+		oldCharge uint64
+		last      *mergeBatch
+	)
+	for _, mb := range s.live {
+		mb.move = mb.retained > 0 && (mb.retained*sparseBatchRatio < mb.size || mb.size <= small)
+		if mb.move {
+			movers++
+			moving += mb.retained
+			oldCharge += mb.charged
+			last = mb
+		}
+	}
+	// Nothing to move, or one batch that is already nothing but retained rows.
+	if movers == 0 || (movers == 1 && moving == last.size) {
+		return nil
+	}
+	type staged struct {
+		dst  *mergeBatch
+		to   *vectorized.RecordBatch
+		from int
+		row  int
+	}
+	var (
+		moves    = make([]staged, 0, moving)
+		dsts     []*mergeBatch
+		batches  []*vectorized.RecordBatch
+		cur      *vectorized.RecordBatch
+		curBatch *mergeBatch
+	)
+	seal := func() {
+		if cur == nil {
+			return
+		}
+		curBatch.size, curBatch.retained = cur.Len, cur.Len
+		curBatch.charged = vectorized.EstimatedRetainedBytes(cur)
+		dsts, batches = append(dsts, curBatch), append(batches, cur)
+		cur, curBatch = nil, nil
+	}
+	remaining := moving
+	for rowIdx := range s.rows {
+		ref := s.rows[rowIdx]
+		if !ref.src.move {
+			continue
+		}
+		if cur == nil {
+			cur, curBatch = vectorized.NewRecordBatch(s.schema, min(remaining, s.batchSize)), &mergeBatch{}
+		}
+		if appendErr := appendMergeRow(cur, ref); appendErr != nil {
+			return appendErr
+		}
+		moves = append(moves, staged{from: rowIdx, to: cur, dst: curBatch, row: cur.Len - 1})
+		remaining--
+		if cur.Len >= s.batchSize {
+			seal()
+		}
+	}
+	seal()
+	var newCharge uint64
+	for _, mb := range dsts {
+		newCharge += mb.charged
+	}
+	if newCharge >= oldCharge {
+		return nil
+	}
+	if chargeErr := query.Charge(ctx, newCharge); chargeErr != nil {
+		return chargeErr
+	}
+	for _, mv := range moves {
+		ref := &s.rows[mv.from]
+		ref.batch, ref.src, ref.row = mv.to, mv.dst, mv.row
+	}
+	kept := s.live[:0]
+	for _, mb := range s.live {
+		if !mb.move {
+			kept = append(kept, mb)
+			continue
+		}
+		if s.lease != nil {
+			s.lease.Refund(mb.charged)
+		}
+	}
+	clear(s.live[len(kept):])
+	kept = append(kept, dsts...)
+	s.live = kept
+	s.compactions++
 	return nil
 }
 
