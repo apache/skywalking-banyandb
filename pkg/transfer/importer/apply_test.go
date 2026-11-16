@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -65,4 +67,39 @@ func TestAwaitSchemaSplitsKeysUnderTheBarrierCap(t *testing.T) {
 		}
 		assert.Equal(t, n, seen)
 	}
+}
+
+func TestWriteSchemaKeepsIndexRuleIDsOnCreate(t *testing.T) {
+	art := NewSchemas()
+	src := testIndexRule("g", "level")
+	src.Metadata.Id = 7
+	art.IndexRules[ResourceKey{"g", "level"}] = src
+	orig := proto.Clone(src)
+	write := func(f *fakeLiaison, disposition Disposition, keep bool) {
+		t.Helper()
+		action := SchemaAction{
+			Kind: schemasync.KindIndexRule, Group: "g", Name: "level", Disposition: disposition, Spec: PrepareForWrite(src),
+		}
+		_, err := WriteSchema(t.Context(), f.serve(t).Conn, []SchemaAction{action}, &art, keep)
+		require.NoError(t, err)
+	}
+	stored := func(f *fakeLiaison) uint32 {
+		return f.schema.IndexRules[ResourceKey{"g", "level"}].GetMetadata().GetId()
+	}
+
+	f := newFakeLiaison()
+	write(f, DispositionCreate, true)
+	assert.Equal(t, uint32(7), stored(f), "a native import creates the rule with the artifact's id")
+	assert.True(t, proto.Equal(orig, src), "the artifact's rule is not changed")
+
+	f = newFakeLiaison()
+	write(f, DispositionCreate, false)
+	assert.Equal(t, uint32(0), stored(f), "a CSV import leaves the id to the target")
+
+	f = newFakeLiaison()
+	target := testIndexRule("g", "level")
+	target.Metadata.Id = 9
+	f.schema.IndexRules[ResourceKey{"g", "level"}] = target
+	write(f, DispositionOverwrite, true)
+	assert.Equal(t, uint32(0), stored(f), "an update sends no artifact id; the registry keeps the target's")
 }

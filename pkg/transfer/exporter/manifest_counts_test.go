@@ -126,7 +126,7 @@ func countsPlan() *cluster.PlanResult {
 			func() *transferv1.UnitInventory {
 				inv := segmentInv(commonv1.Catalog_CATALOG_MEASURE, "sw_idx", "20261005",
 					shardStat(0, 3000, 3500, 0), shardStat(1, 3100, 3900, 0))
-				inv.GetSegment().SegmentLevel = &transferv1.SidxStat{EstimatedBytes: 2048, DocCount: 90}
+				inv.GetSegment().SegmentLevel = &transferv1.SidxStat{EstimatedBytes: 2048, DocCount: 90, MinTimestamp: 2500, MaxTimestamp: 3950}
 				return inv
 			}(),
 			segmentInv(commonv1.Catalog_CATALOG_STREAM, "sw_rep", "20261006",
@@ -222,7 +222,7 @@ func countsJobs(t *testing.T) []*nodeJob {
 func countsManifest(t *testing.T) (*manifest.Manifest, []*nodeJob) {
 	t.Helper()
 	jobs := countsJobs(t)
-	m := baseManifest(transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{
+	m := baseManifest(transferv1.Format_FORMAT_CSV, transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{
 		group("sw_stream", commonv1.Catalog_CATALOG_STREAM), group("sw_metric", commonv1.Catalog_CATALOG_MEASURE),
 		group("sw_idx", commonv1.Catalog_CATALOG_MEASURE), group("sw_rep", commonv1.Catalog_CATALOG_STREAM),
 		group("ui_template", commonv1.Catalog_CATALOG_PROPERTY),
@@ -382,7 +382,8 @@ func TestFillManifest_RolledFilesOfManyShardsAndNodes(t *testing.T) {
 func TestFillManifest_IndexModeSegmentFilesCountOnTheSource(t *testing.T) {
 	m, _ := countsManifest(t)
 	u := unitOf(t, m, "MEASURE", "sw_idx", "20261005")
-	if u.MinTimestamp != 3000 || u.MaxTimestamp != 3900 || len(u.Sources) != 1 {
+	// The unit's range covers the index-mode rows of the series index, not only the shards.
+	if u.MinTimestamp != 2500 || u.MaxTimestamp != 3950 || len(u.Sources) != 1 {
 		t.Fatalf("unit: %+v", u)
 	}
 	checkSources(t, u, []string{

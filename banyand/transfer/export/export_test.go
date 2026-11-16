@@ -162,12 +162,34 @@ func TestExport_UnspecifiedCompressIsInvalid(t *testing.T) {
 	require.Empty(t, stream.sent)
 }
 
-func TestExport_NativeIsUnimplemented(t *testing.T) {
+func TestExport_NativePropertyUnit(t *testing.T) {
+	s, root, _ := propertyFixture(t, 40, 64<<10)
+	before := hashTree(t, root)
+	stream := newFakeExportStream(initFrame(testSessionID, transferv1.Format_FORMAT_NATIVE, transferv1.Compress_COMPRESS_NONE),
+		propertyFrame(testPropGroup, 0))
+	require.NoError(t, s.Export(stream))
+
+	units := decodeFrames(t, stream.sent)
+	require.Len(t, units, 1)
+	require.Len(t, units[0].files, 1)
+	f := units[0].files[0]
+	require.Equal(t, "property/sw_prop/shard-0-00001.bnc", f.started.GetRelativePath())
+	require.Positive(t, f.finished.GetEntryCount())
+	require.Empty(t, f.finished.GetRowCounts())
+	require.Empty(t, f.finished.GetSchemaModRevisions())
+	require.Equal(t, before, hashTree(t, root), "the export must not change the snapshot")
+}
+
+func TestExport_NativeRefusesCompressionAndSmallVolumes(t *testing.T) {
 	s, _, _ := propertyFixture(t, 1, 8)
-	stream := newFakeExportStream(initFrame(testSessionID, transferv1.Format_FORMAT_NATIVE, transferv1.Compress_COMPRESS_NONE))
-	err := s.Export(stream)
-	require.Equal(t, codes.Unimplemented, status.Code(err), err)
-	require.Contains(t, err.Error(), "native export is not implemented yet")
+	err := s.Export(newFakeExportStream(initFrame(testSessionID, transferv1.Format_FORMAT_NATIVE, transferv1.Compress_COMPRESS_GZIP)))
+	require.Equal(t, codes.InvalidArgument, status.Code(err), err)
+
+	init := initFrame(testSessionID, transferv1.Format_FORMAT_NATIVE, transferv1.Compress_COMPRESS_NONE)
+	init.GetInit().MaxFileSize = 1024
+	stream := newFakeExportStream(init)
+	err = s.Export(stream)
+	require.Equal(t, codes.InvalidArgument, status.Code(err), err)
 	require.Empty(t, stream.sent)
 }
 
@@ -240,6 +262,20 @@ func TestExport_LocateAfterConcurrentReleaseIsFailedPrecondition(t *testing.T) {
 	_, err = s.locateInSession(testSessionID, roots, commonv1.Catalog_CATALOG_PROPERTY, testPropGroup, "", []uint32{0})
 	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
 	require.Contains(t, err.Error(), "export session "+testSessionID+" is gone (released or preempted)")
+}
+
+// An Internal failure of a unit's totals or production is the session's once the session is
+// gone: the release removes the snapshot the unit was read from.
+func TestExport_InternalAfterReleaseIsFailedPrecondition(t *testing.T) {
+	s, _, _ := propertyFixture(t, 1, 8)
+	internal := status.Error(codes.Internal, "property shard holds no file")
+	require.Equal(t, codes.Internal, status.Code(s.sessionGoneOr(testSessionID, internal)))
+	invalid := status.Error(codes.InvalidArgument, "bad")
+	_, err := s.planner.sessions.release(testSessionID)
+	require.NoError(t, err)
+	err = s.sessionGoneOr(testSessionID, internal)
+	require.Equal(t, codes.FailedPrecondition, status.Code(err), err)
+	require.Equal(t, codes.InvalidArgument, status.Code(s.sessionGoneOr(testSessionID, invalid)))
 }
 
 // The rates of Init reach the producer: at one row per second, a unit of several rows does
