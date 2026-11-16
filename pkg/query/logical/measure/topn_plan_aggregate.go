@@ -32,7 +32,6 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/aggregation"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -221,31 +220,17 @@ func (t *topNAggregateOp[K]) Execute(ctx context.Context) (mit executor.MIterato
 	defer func() {
 		err = multierr.Append(err, iter.Close())
 	}()
-	var zero K
-	var extractValue func(dp *measurev1.DataPoint) K
-	switch any(zero).(type) {
-	case float64:
-		extractValue = func(dp *measurev1.DataPoint) K {
-			return K(dp.GetFields()[t.fieldIdx].GetValue().GetFloat().GetValue())
-		}
-	default:
-		extractValue = func(dp *measurev1.DataPoint) K {
-			return K(dp.GetFields()[t.fieldIdx].GetValue().GetInt().GetValue())
-		}
-	}
+	extractValue := topNFieldValue[K](t.fieldIdx)
 	items := make(map[itemKey]*aggregatedItem[K])
 	var retained int64
 	for iter.Next() {
 		for _, idp := range iter.Current() {
 			dp := idp.GetDataPoint()
-			if len(dp.GetTagFamilies()) == 0 || len(dp.GetTagFamilies()[0].GetTags()) == 0 {
+			entityKey, hasEntity := topNEntityKey(dp)
+			if !hasEntity {
 				continue
 			}
-			entityValues := make(pbv1.EntityValues, 0, len(dp.GetTagFamilies()[0].GetTags()))
-			for _, tag := range dp.GetTagFamilies()[0].GetTags() {
-				entityValues = append(entityValues, tag.Value)
-			}
-			key := itemKey{entity: entityValues.String()}
+			key := itemKey{entity: entityKey}
 			if t.partial() {
 				key.shardID = idp.GetShardId()
 			}
@@ -296,7 +281,7 @@ func (t *topNAggregateOp[K]) finalAnswer(items map[itemKey]*aggregatedItem[K]) (
 			Fields:      []*measurev1.DataPoint_Field{{Name: item.fieldName, Value: fieldValue}},
 		}})
 	}
-	return &topNDistinctIterator{elements: elements, index: -1}, nil
+	return &topNResultIterator{elements: elements, index: -1}, nil
 }
 
 // partialAnswer returns, shard by shard, the partial aggregates of the best partialLimit items of each shard.
@@ -334,7 +319,7 @@ func (t *topNAggregateOp[K]) partialAnswer(items map[itemKey]*aggregatedItem[K])
 			})
 		}
 	}
-	return &topNDistinctIterator{elements: elements, index: -1}, nil
+	return &topNResultIterator{elements: elements, index: -1}, nil
 }
 
 // ToInternalTopNResponse converts the elements of a partial answer into the response of a data node, one entry

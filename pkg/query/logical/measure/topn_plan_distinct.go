@@ -236,54 +236,65 @@ func (t *topNDistinctOp[K]) Execute(ctx context.Context) (mit executor.MIterator
 		err = multierr.Append(err, iter.Close())
 	}()
 	edHeap := newEntityDedupTopN[K](t.topN, t.sortDesc)
-	var zero K
-	var extractValue func(dp *measurev1.DataPoint) K
-	switch any(zero).(type) {
-	case float64:
-		extractValue = func(dp *measurev1.DataPoint) K {
-			return K(dp.GetFields()[t.fieldIdx].GetValue().GetFloat().GetValue())
-		}
-	default:
-		extractValue = func(dp *measurev1.DataPoint) K {
-			return K(dp.GetFields()[t.fieldIdx].GetValue().GetInt().GetValue())
-		}
-	}
+	extractValue := topNFieldValue[K](t.fieldIdx)
 	for iter.Next() {
 		dataPoints := iter.Current()
 		for _, idp := range dataPoints {
 			dp := idp.GetDataPoint()
-			if len(dp.GetTagFamilies()) == 0 || len(dp.GetTagFamilies()[0].GetTags()) == 0 {
+			entityKey, ok := topNEntityKey(dp)
+			if !ok {
 				continue
 			}
-			entityValues := make(pbv1.EntityValues, 0, len(dp.GetTagFamilies()[0].GetTags()))
-			for _, tag := range dp.GetTagFamilies()[0].GetTags() {
-				entityValues = append(entityValues, tag.Value)
-			}
-			entityKey := entityValues.String()
 			edHeap.Put(entityKey, extractValue(dp), idp)
 		}
 	}
-	return &topNDistinctIterator{
+	return &topNResultIterator{
 		elements: edHeap.Elements(),
 		index:    -1,
 	}, nil
 }
 
-// topNDistinctIterator iterates over the top N distinct entity results.
-type topNDistinctIterator struct {
+// topNFieldValue returns a function that reads the TopN value of a scanned data point from its field at fieldIdx.
+func topNFieldValue[K streaming.TopSortKey](fieldIdx int) func(dp *measurev1.DataPoint) K {
+	var zero K
+	if _, isFloat := any(zero).(float64); isFloat {
+		return func(dp *measurev1.DataPoint) K {
+			return K(dp.GetFields()[fieldIdx].GetValue().GetFloat().GetValue())
+		}
+	}
+	return func(dp *measurev1.DataPoint) K {
+		return K(dp.GetFields()[fieldIdx].GetValue().GetInt().GetValue())
+	}
+}
+
+// topNEntityKey returns the key of the item a scanned data point belongs to, built from its entity tags,
+// and false when the data point has no entity.
+func topNEntityKey(dp *measurev1.DataPoint) (string, bool) {
+	if len(dp.GetTagFamilies()) == 0 || len(dp.GetTagFamilies()[0].GetTags()) == 0 {
+		return "", false
+	}
+	entityValues := make(pbv1.EntityValues, 0, len(dp.GetTagFamilies()[0].GetTags()))
+	for _, tag := range dp.GetTagFamilies()[0].GetTags() {
+		entityValues = append(entityValues, tag.Value)
+	}
+	return entityValues.String(), true
+}
+
+// topNResultIterator iterates over the data points a TopN plan answers, one at a time.
+type topNResultIterator struct {
 	elements []*measurev1.InternalDataPoint
 	index    int
 }
 
-func (t *topNDistinctIterator) Next() bool {
+func (t *topNResultIterator) Next() bool {
 	t.index++
 	return t.index < len(t.elements)
 }
 
-func (t *topNDistinctIterator) Current() []*measurev1.InternalDataPoint {
+func (t *topNResultIterator) Current() []*measurev1.InternalDataPoint {
 	return []*measurev1.InternalDataPoint{t.elements[t.index]}
 }
 
-func (t *topNDistinctIterator) Close() error {
+func (t *topNResultIterator) Close() error {
 	return nil
 }
