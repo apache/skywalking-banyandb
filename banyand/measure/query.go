@@ -574,29 +574,39 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		MultiValueProjection: multiValueProjection,
 		TimeRange:            mqo.TimeRange,
 	}
-	seriesFilter := storage.NewSeriesSet()
-	if mqo.Limit > 0 {
-		// The search truncates to the limit and de-duplicates against the series that newer segments returned, so
-		// a series a newer segment shadows cannot take a place in the limit.
-		opts.Limit = mqo.Limit
-		opts.SeenSeries = seriesFilter
-	}
+	seriesFilter := make(map[common.SeriesID]struct{})
+	limited := mqo.Limit > 0 && mqo.Order != nil && mqo.Order.Type == index.OrderByTypeTime
+	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
+	var kept []int64 // timestamps of the rows the limited searches kept, to prune older segments
 	for i := range segments {
+		if limited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
+			continue
+		}
+		segOpts := opts
+		if limited {
+			// The search returns only the first Limit rows that no newer segment shadows, in time order, so a series
+			// a newer segment holds cannot take a place in the limit.
+			segOpts.Limit = mqo.Limit
+			segOpts.IsShadowed = shadowedByNewer(segments[:i], existing)
+		}
 		sr := &segResult{}
-		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, opts)
+		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, segOpts)
 		if err != nil {
 			return nil, err
 		}
 		for j := 0; j < len(sr.SeriesList) && !sr.LimitApplied; j++ {
-			if seriesFilter.Contains(uint64(sr.SeriesList[j].ID)) {
+			if _, seen := seriesFilter[sr.SeriesList[j].ID]; seen {
 				sr.remove(j)
 				j--
 				continue
 			}
-			seriesFilter.Insert(uint64(sr.SeriesList[j].ID))
+			seriesFilter[sr.SeriesList[j].ID] = struct{}{}
 		}
 		if len(sr.SeriesList) < 1 {
 			continue
+		}
+		if sr.LimitApplied {
+			kept = append(kept, sr.Timestamps...)
 		}
 		r.segResults.results = append(r.segResults.results, sr)
 	}
@@ -616,6 +626,59 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 
 	heap.Init(&r.segResults)
 	return r, nil
+}
+
+// shadowedByNewer returns the check an index-mode search runs on its candidates: which identifiers a newer segment
+// already holds for the same query, so that the segment's row is the one that stands and the older one is dropped.
+func shadowedByNewer(newer []storage.Segment[*tsTable, option], opts storage.IndexSearchOpts) func(context.Context, [][]byte) (map[string]struct{}, error) {
+	return func(ctx context.Context, identifiers [][]byte) (map[string]struct{}, error) {
+		shadowed := make(map[string]struct{})
+		remaining := identifiers
+		for i := range newer {
+			if len(remaining) == 0 {
+				break
+			}
+			found, err := newer[i].IndexDB().ExistingIdentifiers(ctx, remaining, opts)
+			if err != nil {
+				return nil, err
+			}
+			if len(found) == 0 {
+				continue
+			}
+			next := remaining[:0:0]
+			for _, id := range remaining {
+				if _, ok := found[string(id)]; ok {
+					shadowed[string(id)] = struct{}{}
+				} else {
+					next = append(next, id)
+				}
+			}
+			remaining = next
+		}
+		return shadowed, nil
+	}
+}
+
+// segmentCannotBeatKept reports that no row of a segment spanning rng can rank inside the first limit of the kept
+// timestamps: they are final (newer segments already dropped what they shadow), and a segment lies entirely beyond the
+// limit-th one. A tie at the limit-th timestamp may still displace it, so only a strictly worse range is pruned.
+func segmentCannotBeatKept(rng timestamp.TimeRange, kept []int64, limit int, desc bool) bool {
+	if len(kept) < limit {
+		return false
+	}
+	sorted := make([]int64, len(kept))
+	copy(sorted, kept)
+	sort.Slice(sorted, func(i, j int) bool {
+		if desc {
+			return sorted[i] > sorted[j]
+		}
+		return sorted[i] < sorted[j]
+	})
+	threshold := sorted[limit-1]
+	if desc {
+		return rng.End.UnixNano() <= threshold
+	}
+	return rng.Start.UnixNano() > threshold
 }
 
 func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []partRef, qo queryOptions) error {

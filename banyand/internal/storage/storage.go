@@ -108,33 +108,16 @@ type IndexSearchOpts struct {
 	// value sequence is also returned in SeriesData.MultiValueFields.
 	// Other projections retain their last-value-wins behavior.
 	MultiValueProjection map[string]struct{}
-	// SeenSeries is the set of series that segments searched earlier already returned. With Limit it makes the
-	// search drop those series before it truncates, and it receives every series this search keeps a candidate.
-	SeenSeries  SeriesSet
+	// IsShadowed reports which of the identifiers a newer segment already returns for this query (same subject, time
+	// range, criteria and patterns). With Limit it lets an index-mode search drop shadowed rows before it truncates.
+	IsShadowed  func(ctx context.Context, identifiers [][]byte) (map[string]struct{}, error)
 	PreloadSize int
 	// Limit, when positive, is how many rows the caller can use from this search (its offset plus limit). An
-	// index-mode search with a time order then sorts the candidates by timestamp in memory and reads the stored
-	// fields of only the first Limit rows that SeenSeries does not already hold, and reports it in
-	// SeriesData.LimitApplied. Any other search ignores it and returns every row.
+	// index-mode search with a time order and IsShadowed then returns only the first Limit rows that IsShadowed does not
+	// hold, in time order, reading the stored fields of only those rows, and reports it in SeriesData.LimitApplied. Any
+	// other search ignores it and returns every row.
 	Limit int
 }
-
-// SeriesSet is a set of series IDs that segments already returned, newest segment first.
-type SeriesSet interface {
-	Contains(id uint64) bool
-	Insert(id uint64)
-}
-
-// seriesIDSet is a hash set of series IDs. A series ID is a 64-bit hash, so a bitmap keyed by it degrades to a sorted
-// array insert (a memmove of the whole key list) per new ID.
-type seriesIDSet map[uint64]struct{}
-
-// NewSeriesSet returns an empty hash-backed SeriesSet.
-func NewSeriesSet() SeriesSet { return seriesIDSet{} }
-
-func (s seriesIDSet) Contains(id uint64) bool { _, ok := s[id]; return ok }
-
-func (s seriesIDSet) Insert(id uint64) { s[id] = struct{}{} }
 
 // FieldResult is the result of a field.
 type FieldResult map[string][]byte
@@ -161,7 +144,7 @@ type SeriesData struct {
 	TimestampSet     []bool
 	VersionSet       []bool
 	// LimitApplied reports that the search truncated to IndexSearchOpts.Limit and already applied
-	// IndexSearchOpts.SeenSeries, so the caller must not de-duplicate the rows again.
+	// IndexSearchOpts.IsShadowed, so the caller must not de-duplicate the rows again.
 	LimitApplied bool
 }
 
@@ -171,6 +154,9 @@ type IndexDB interface {
 	Update(docs index.Documents) error
 	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (SeriesData, [][]byte, error)
 	SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error)
+	// ExistingIdentifiers returns which of the identifiers this index holds a document for among the candidates the
+	// subject, time range, criteria and patterns of opts select.
+	ExistingIdentifiers(ctx context.Context, identifiers [][]byte, opts IndexSearchOpts) (map[string]struct{}, error)
 	EnableExternalSegments() (index.ExternalSegmentStreamer, error)
 	Stats() (dataCount int64, dataSizeBytes int64)
 }
