@@ -79,8 +79,8 @@ func TestTopNResultRowsAreCoLocatedOnOneShard(t *testing.T) {
 			FieldName:      "value",
 			CountersNumber: 10,
 		},
-		modelv1.Sort_SORT_DESC, nil, nil, &captureClient{publisher: publisher}, "",
-	).withShardNum(func(string) uint32 { return shardNum })
+		modelv1.Sort_SORT_DESC, nil, nil, &captureClient{publisher: publisher}, "", func(string) uint32 { return shardNum },
+	)
 
 	windows := []map[string][]*streaming.Tuple2[int64]{
 		{"g": {topNTuple("e0", 10), topNTuple("e1", 60)}},

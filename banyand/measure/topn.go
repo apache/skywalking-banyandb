@@ -400,6 +400,7 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 	streamingFlow flow.Flow,
 	pipeline queue.Client,
 	nodeID string,
+	shardNum func(group string) uint32,
 ) *topNStreamingProcessor[K] {
 	return &topNStreamingProcessor[K]{
 		m:             m,
@@ -414,12 +415,8 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 		streamingFlow: streamingFlow,
 		pipeline:      pipeline,
 		nodeID:        nodeID,
+		shardNum:      shardNum,
 	}
-}
-
-func (t *topNStreamingProcessor[K]) withShardNum(shardNum func(group string) uint32) *topNStreamingProcessor[K] {
-	t.shardNum = shardNum
-	return t
 }
 
 func (t *topNStreamingProcessor[K]) In() chan<- flow.StreamRecord {
@@ -576,10 +573,7 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 				},
 			},
 		}
-		var shardNum uint32
-		if t.shardNum != nil {
-			shardNum = t.shardNum(t.topNSchema.GetMetadata().GetGroup())
-		}
+		shardNum := t.shardNum(t.topNSchema.GetMetadata().GetGroup())
 		// The row is stored where its own series is located, not on the source shard of its last tuple, so that
 		// all the windows of one group live on one data node and that node can aggregate them completely.
 		shardID, shardErr := topNResultShard(entityValues, shardNum)
@@ -890,12 +884,12 @@ func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *data
 
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 			processorList[i] = newTopNStreamingProcessor[float64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).withShardNum(manager.shardNum).start(ctx)
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, manager.shardNum,
+			).start(ctx)
 		} else {
 			processorList[i] = newTopNStreamingProcessor[int64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).withShardNum(manager.shardNum).start(ctx)
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, manager.shardNum,
+			).start(ctx)
 		}
 	}
 	manager.processorList = append(manager.processorList, processorList...)

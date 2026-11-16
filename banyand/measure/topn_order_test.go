@@ -106,7 +106,8 @@ func TestTopNProcessorRanksByItsOwnDirection(t *testing.T) {
 					LruSize:        5,
 				},
 				tt.sort, srcCh, streaming.New("topn-order-test", src), &captureClient{publisher: publisher}, "",
-			).withShardNum(func(string) uint32 { return 2 }).start(context.Background())
+				func(string) uint32 { return 2 },
+			).start(context.Background())
 			defer func() { require.NoError(t, proc.Close()) }()
 
 			for i, v := range []int64{30, 10, 40, 20} {
