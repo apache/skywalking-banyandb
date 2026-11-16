@@ -278,7 +278,7 @@ func trieWalkLevel(
 		}
 		posting, found, postingErr := segment.handle.reader.TermPostingBitmapContext(ctx, field, bucketTerm(id, shift))
 		if postingErr != nil {
-			return nil, 0, fmt.Errorf("read _timestamp bucket posting: %w", postingErr)
+			return nil, 0, fmt.Errorf("read %s bucket posting: %w", field, postingErr)
 		}
 		if !found {
 			continue

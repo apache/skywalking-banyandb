@@ -49,11 +49,24 @@ type orderTestRow struct {
 // ladder the measure writer attaches to a scalar int index-rule tag.
 func newIndexModeOrderSegment(t *testing.T, rows []orderTestRow, ladder bool) *seriesIndex {
 	t.Helper()
+	si := newEmptyOrderIndex(t)
+	insertOrderRows(t, si, rows, ladder)
+	return si
+}
+
+func newEmptyOrderIndex(t *testing.T) *seriesIndex {
+	t.Helper()
 	dir, fn := setUp(require.New(t))
 	t.Cleanup(fn)
 	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, si.Close()) })
+	return si
+}
+
+// insertOrderRows admits rows as one native segment of si.
+func insertOrderRows(t *testing.T, si *seriesIndex, rows []orderTestRow, ladder bool) {
+	t.Helper()
 	var docs index.Documents
 	for _, row := range rows {
 		var series pbv1.Series
@@ -76,7 +89,6 @@ func newIndexModeOrderSegment(t *testing.T, rows []orderTestRow, ladder bool) *s
 		})
 	}
 	require.NoError(t, si.Insert(docs))
-	return si
 }
 
 type orderedRow struct {
@@ -205,6 +217,38 @@ func TestSeriesIndex_IndexModeIndexOrderLimitReachesPastShadowedRows(t *testing.
 				want := searchOrderSegments(t, segments, order, 0, limit, limitTestAllTime())
 				got := searchOrderSegments(t, segments, order, limit, limit, limitTestAllTime())
 				require.Equal(t, want, got, "ladder %v order %v limit %d", ladder, order, limit)
+			}
+		}
+	}
+}
+
+// Segments written before the ladder existed hold the numeric field without it. A search over a legacy segment, a ladder
+// segment, and an index that holds both kinds of native segment must give the full ordered search's rows.
+func TestSeriesIndex_IndexModeIndexOrderLimitMixesLegacyAndLadderSegments(t *testing.T) {
+	const pool, perBatch = 2000, 500
+	rng := rand.New(rand.NewSource(17)) //nolint:gosec // deterministic test data
+	batch := func(seg int) []orderTestRow {
+		rows := make([]orderTestRow, 0, perBatch)
+		for i, p := range rng.Perm(pool)[:perBatch] {
+			rows = append(rows, orderTestRow{
+				service: fmt.Sprintf("svc-%04d", p), value: rng.Int63n(200) - 100, hasValue: rng.Intn(20) != 0,
+				timestamp: int64(seg+1)*1_000_000 + int64(i) + 1,
+			})
+		}
+		return rows
+	}
+	newest := newIndexModeOrderSegment(t, batch(3), true)
+	legacy := newIndexModeOrderSegment(t, batch(2), false)
+	mixed := newEmptyOrderIndex(t) // two native segments: legacy rows, then ladder rows
+	insertOrderRows(t, mixed, batch(1), false)
+	insertOrderRows(t, mixed, batch(0), true)
+	segments := []*seriesIndex{newest, legacy, mixed}
+	for name, timeRange := range map[string]*timestamp.TimeRange{"range": limitTestAllTime(), "norange": nil} {
+		for _, order := range []modelv1.Sort{modelv1.Sort_SORT_DESC, modelv1.Sort_SORT_ASC} {
+			for _, limit := range []int{1, 5, 40, 300, 5000} {
+				want := searchOrderSegments(t, segments, order, 0, limit, timeRange)
+				got := searchOrderSegments(t, segments, order, limit, limit, timeRange)
+				require.Equal(t, want, got, "%s order %v limit %d", name, order, limit)
 			}
 		}
 	}

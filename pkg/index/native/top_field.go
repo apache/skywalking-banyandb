@@ -49,6 +49,10 @@ func ladderEncodeField(field Field) nativeice.EncodeField {
 // ladder, not the exhaustive fallback, served a request.
 var ladderDescents atomic.Int64
 
+// ladderFallbacks counts the descents whose result could not be trusted and was replaced by ranking every candidate. Tests
+// read it to prove that a request was served by the descent itself.
+var ladderFallbacks atomic.Int64
+
 // ladderComplete reports that every document of the segment that carries the sort field is also on the field's ladder, the
 // only state in which a descent may stand in for ranking every candidate. A segment written without the ladder, or merged
 // from segments of which some were, has fewer ladder documents than field documents and reports false.
@@ -85,6 +89,7 @@ func ladderSelection(
 		return nil, false, err
 	}
 	if selected.GetCardinality() < limit {
+		ladderFallbacks.Add(1)
 		return nil, false, nil
 	}
 	return selected, true, nil
@@ -183,6 +188,7 @@ func rankSegmentTop(
 			if uint64(len(hits)) == selected.GetCardinality() {
 				return rankHits(ctx, segment, hits, request)
 			}
+			ladderFallbacks.Add(1)
 		}
 	}
 	hits, err := projectCandidates(ctx, segmentIndex, segment, narrowed, timeRange, projection)

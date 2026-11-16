@@ -317,6 +317,7 @@ func (c *SortCursor) scanLadderFirstPage(ctx context.Context, current sortCursor
 	// A selected document that the projection skipped (it has no timestamp, or lies outside an unnarrowed time range) may
 	// have displaced one that belongs to the page, so only a scan without skips is trusted.
 	if skipped > 0 {
+		ladderFallbacks.Add(1)
 		return false, nil
 	}
 	for _, item := range local.items {
