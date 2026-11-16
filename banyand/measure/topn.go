@@ -1275,10 +1275,10 @@ func MergeTopNBinaryValues(
 	timestamp uint64, leftVersion, rightVersion int64, fieldType databasev1.FieldType,
 ) ([]byte, error) {
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
-		topNPostAggregator := CreateTopNPostProcessorFloat(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+		topNPostAggregator := CreateTopNPostProcessorFloat(topN, sort)
 		return mergeTopNBinaryValues[float64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 	}
-	topNPostAggregator := CreateTopNPostProcessorInt(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+	topNPostAggregator := CreateTopNPostProcessorInt(topN, sort)
 	return mergeTopNBinaryValues[int64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 }
 
