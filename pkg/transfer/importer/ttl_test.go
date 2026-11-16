@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
@@ -111,9 +112,78 @@ func TestSegmentBounds(t *testing.T) {
 func TestTTLDetailHasNoNowDerivedValue(t *testing.T) {
 	item := &WorkItem{Catalog: catMeasure, Group: "sw_metricsHour", Stage: "hot", Segment: "2026101600", Kind: ShardItem}
 	newest := time.Date(2026, 10, 16, 5, 0, 0, 0, time.UTC).UnixNano()
-	line := ttlDetail(item, "hot", newest, 24*time.Hour, "group 1d", false)
-	assert.Equal(t, "measure/sw_metricsHour/hot seg=2026101600 shard=0: every row is older than the target retention "+
-		"(newest 2026-10-16T05:00:00Z, retention 1d = group 1d); skipped; --force-ttl imports it", line)
+	end := time.Date(2026, 10, 16, 6, 0, 0, 0, time.UTC)
+	line := ttlDetail(item, "hot", newest, end, 24*time.Hour, "group 1d", false)
+	assert.Equal(t, "measure/sw_metricsHour/hot seg=2026101600 shard=0: every row is in a target segment past the retention "+
+		"(newest 2026-10-16T05:00:00Z, its segment ends 2026-10-16T06:00:00Z, retention 1d = group 1d); skipped; --force-ttl imports it", line)
+}
+
+func TestTargetSegmentEndFollowsTheStorageGrid(t *testing.T) {
+	at := time.Date(2026, 10, 19, 13, 30, 0, 0, time.UTC)
+	day := func(n uint32) *commonv1.IntervalRule {
+		return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: n}
+	}
+	hour := func(n uint32) *commonv1.IntervalRule {
+		return &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_HOUR, Num: n}
+	}
+	assert.Equal(t, time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC), targetSegmentEnd(at, day(1)))
+	assert.Equal(t, time.Date(2026, 10, 19, 14, 0, 0, 0, time.UTC), targetSegmentEnd(at, hour(1)))
+	assert.Equal(t, time.Date(2026, 10, 19, 15, 0, 0, 0, time.UTC), targetSegmentEnd(at, hour(3)))
+	// 15-day buckets anchored at 1970-01-01: 2026-10-19 is day 20745, bucket [20745, 20760).
+	assert.Equal(t, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC), targetSegmentEnd(at, day(15)))
+	assert.Equal(t, at, targetSegmentEnd(at, nil), "no interval leaves the instant")
+}
+
+func TestTTLGateKeepsARowOfALiveSegment(t *testing.T) {
+	item := &WorkItem{
+		Catalog: catMeasure, Group: "g", Stage: "hot", Segment: "20261019", Kind: ShardItem,
+		Sources: []WorkSource{{Node: "a", MaxTimestamp: time.Date(2026, 10, 31, 0, 0, 0, 0, time.UTC).UnixNano()}},
+	}
+	target := NewTargetState()
+	target.Groups["g"] = &commonv1.Group{ResourceOpts: &commonv1.ResourceOpts{
+		Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
+		SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 15},
+	}}
+	// The newest row is three days old, but its 15-day segment ends on 11-03, after the deadline.
+	in := Inputs{Now: time.Date(2026, 11, 3, 19, 0, 0, 0, time.UTC), Target: target}
+	assert.Empty(t, ttlGate(in, &Plan{}, item, "hot", nil), "a segment that has not expired keeps its rows visible")
+	in.Now = time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC)
+	assert.NotEmpty(t, ttlGate(in, &Plan{}, item, "hot", nil), "once the segment ends before the deadline the rows are expired")
+}
+
+func TestTTLGateUsesTheTargetGridZone(t *testing.T) {
+	// The newest row is 2026-10-20T10:00Z, 18:00 in Shanghai: its 1d segment ends at
+	// 2026-10-20T16:00Z on the Shanghai grid and at 2026-10-21T00:00Z on the UTC grid. The 7d
+	// deadline, 2026-10-20T20:00Z, falls between them.
+	item := &WorkItem{
+		Catalog: catMeasure, Group: "g", Stage: "hot", Segment: "20261020", Kind: ShardItem,
+		Sources: []WorkSource{{Node: "a", Timezone: "Asia/Shanghai", MaxTimestamp: time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC).UnixNano()}},
+	}
+	newInputs := func(format string) Inputs {
+		target := NewTargetState()
+		target.Groups["g"] = &commonv1.Group{ResourceOpts: &commonv1.ResourceOpts{Ttl: dayRule(7), SegmentInterval: dayRule(1)}}
+		target.DataNodes = []*databasev1.Node{{Metadata: &commonv1.Metadata{Name: "d1"}, TzName: "UTC"}}
+		return Inputs{
+			Now:      time.Date(2026, 10, 27, 20, 0, 0, 0, time.UTC),
+			Target:   target,
+			Artifact: &Artifact{Manifest: &manifest.Manifest{Format: format}, Schemas: NewSchemas()},
+		}
+	}
+	assert.Empty(t, ttlGate(newInputs("csv"), &Plan{}, item, "hot", []string{"d1"}),
+		"a CSV row lands in the target's UTC segment, which is still live")
+	assert.NotEmpty(t, ttlGate(newInputs(manifest.FormatNative), &Plan{}, item, "hot", []string{"d1"}),
+		"a native part keeps the source's Shanghai segment, which has expired, even on a UTC target")
+}
+
+func TestSourceGroupDefaultIsTheFirstStage(t *testing.T) {
+	m := &manifest.Manifest{Groups: []manifest.Group{{Name: "g", Stages: []manifest.Stage{
+		{Name: "hot", ShardNum: 2}, {Name: "hot", ShardNum: 4},
+	}}}}
+	st, ok := sourceGroupDefault(m, "g")
+	require.True(t, ok)
+	assert.Equal(t, uint32(2), st.ShardNum, "the group's own opts come first")
+	_, ok = sourceGroupDefault(m, "other")
+	assert.False(t, ok)
 }
 
 func TestSourceStagePrefersLifecycleHot(t *testing.T) {

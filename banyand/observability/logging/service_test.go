@@ -135,6 +135,10 @@ func (f *fakeClient) NewNodeSchemaStatusClient(string) (clusterv1.NodeSchemaStat
 func (f *fakeClient) NewExportClient(string) (transferv1.ExportServiceClient, error) {
 	return nil, errors.New("not supported")
 }
+
+func (f *fakeClient) NewChunkedSyncRelayClient(string) (clusterv1.ChunkedSyncServiceClient, error) {
+	return nil, queue.ErrNotImplemented
+}
 func (f *fakeClient) SetSelfNode(_, _, _ string)              {}
 func (f *fakeClient) Register(bus.Topic, schema.EventHandler) {}
 func (f *fakeClient) OnAddOrUpdate(schema.Metadata)           {}

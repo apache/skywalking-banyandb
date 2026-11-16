@@ -139,12 +139,19 @@ func listResources(ctx context.Context, conn *grpc.ClientConn, state *TargetStat
 // Unauthenticated) is a Blocker: the push spreads over every liaison. Any other failure is
 // returned.
 func collectRoutes(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, state *TargetState, rewritten map[string]bool) error {
-	// A manifest BuildWorkItems rejects is an artifact error Decide reports.
-	items, _ := BuildWorkItems(art.Manifest)
 	seen := map[RouteKey]bool{}
 	var keys []RouteKey
-	for i := range items {
-		k := NewRouteKey(items[i].Group, items[i].Stage)
+	for _, u := range art.Manifest.Units {
+		// A unit of an unknown catalog is an artifact error Decide reports.
+		catalog, ok := transfer.CatalogByName(strings.ToLower(u.Catalog))
+		if !ok || len(u.Sources) == 0 {
+			continue
+		}
+		stage := u.Stage
+		if catalog == commonv1.Catalog_CATALOG_PROPERTY {
+			stage = ""
+		}
+		k := NewRouteKey(u.Group, stage)
 		_, has := state.Groups[k.Group]
 		if seen[k] || (!has && !rewritten[k.Group]) {
 			continue

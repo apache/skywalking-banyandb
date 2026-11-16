@@ -21,15 +21,23 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
+	"strconv"
+	"strings"
 )
 
 const (
 	// MinFileSize is the smallest volume limit a VolumeWriter accepts, far above the trailer
 	// and the footer entry of the longest path, so that every volume holds file bytes.
 	MinFileSize = 64 << 10
-	// maxVolumes keeps volume numbers at five digits, so that volume names sort in order.
+	// maxVolumes bounds the volume numbers; names pad them to its width (volumeDigits).
 	maxVolumes = 99999
+	// VolumeExt is the extension of a volume file.
+	VolumeExt = ".bnc"
 )
+
+// volumeDigits is the width volume numbers are zero-padded to, so that volume names sort in order.
+var volumeDigits = len(strconv.Itoa(maxVolumes))
 
 // Sink receives the volumes of a VolumeWriter. Write gets at most WriteSize bytes, and the
 // slice is reused once Write returns: a Sink that keeps the bytes must copy them. A file is
@@ -66,13 +74,15 @@ type VolumeWriter struct {
 // disk, footer and trailer included; 0 never splits, and any other value below MinFileSize is
 // an error. open returns the bytes of a member by its path.
 func NewVolumeWriter(sink Sink, pathPrefix string, maxFileSize uint64, open func(path string) (io.ReadCloser, error)) (*VolumeWriter, error) {
-	if err := checkFileSize(maxFileSize); err != nil {
+	if err := CheckFileSize(maxFileSize); err != nil {
 		return nil, err
 	}
 	return &VolumeWriter{sink: sink, prefix: pathPrefix, plan: volumePlan{limit: maxFileSize}, open: open, paths: newPathSet()}, nil
 }
 
-func checkFileSize(maxFileSize uint64) error {
+// CheckFileSize refuses a volume limit a VolumeWriter does not accept: any non-zero value
+// below MinFileSize.
+func CheckFileSize(maxFileSize uint64) error {
 	if maxFileSize != 0 && maxFileSize < MinFileSize {
 		return fmt.Errorf("a volume limit of %d bytes is below the minimum of %d", maxFileSize, MinFileSize)
 	}
@@ -146,7 +156,7 @@ func (v *VolumeWriter) copy(ctx context.Context, m Member, r io.Reader) error {
 }
 
 func (v *VolumeWriter) start() error {
-	if err := v.sink.StartFile(fmt.Sprintf("%s-%05d.bnc", v.prefix, v.plan.n), v.plan.n); err != nil {
+	if err := v.sink.StartFile(VolumeName(v.prefix, v.plan.n), v.plan.n); err != nil {
 		return v.fail(err)
 	}
 	if v.buf == nil {
@@ -192,33 +202,7 @@ func (v *VolumeWriter) fail(err error) error {
 	return err
 }
 
-// CountVolumes returns the volumes a VolumeWriter produces for members, so a producer can
-// announce its files before it writes them. It fails where the VolumeWriter would: on a limit
-// below MinFileSize, a negative size, or beyond the 99999 volumes a name can number.
-func CountVolumes(members []Member, maxFileSize uint64) (uint32, error) {
-	if err := checkFileSize(maxFileSize); err != nil {
-		return 0, err
-	}
-	plan := volumePlan{limit: maxFileSize}
-	for _, m := range members {
-		if m.Size < 0 {
-			return 0, fmt.Errorf("member %q has a negative size %d", m.Path, m.Size)
-		}
-		for off := int64(0); ; {
-			take, _, err := plan.place(m.Path, off, m.Size)
-			if err != nil {
-				return 0, err
-			}
-			if off += take; off == m.Size {
-				break
-			}
-		}
-	}
-	return plan.n, nil
-}
-
-// volumePlan fills volumes up to the limit. VolumeWriter follows it while writing and
-// CountVolumes runs it alone, so both always agree.
+// volumePlan fills volumes up to the limit; VolumeWriter follows it while writing.
 type volumePlan struct {
 	limit   uint64
 	members uint64 // member bytes of the open volume
@@ -289,4 +273,39 @@ func (s sinkWriter) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// VolumeName is the path of volume seq (from 1) of the container at prefix: "<prefix>-NNNNN.bnc".
+func VolumeName(prefix string, seq uint32) string {
+	return fmt.Sprintf("%s-%0*d%s", prefix, volumeDigits, seq, VolumeExt)
+}
+
+// ParseVolumeName splits a volume path "<prefix>-NNNNN.bnc" into its container prefix and volume
+// number; ok is false for any other path.
+func ParseVolumeName(p string) (prefix string, seq uint32, ok bool) {
+	name, found := strings.CutSuffix(p, VolumeExt)
+	i := strings.LastIndex(name, "-")
+	if !found || i < 0 || len(name)-i-1 != volumeDigits {
+		return "", 0, false
+	}
+	n, err := strconv.ParseUint(name[i+1:], 10, 32)
+	if err != nil || n == 0 {
+		return "", 0, false
+	}
+	return name[:i], uint32(n), true
+}
+
+// GroupVolumes groups the volume paths among paths by container prefix, each group in volume
+// order; a path that is not a volume name is left out.
+func GroupVolumes(paths []string) map[string][]string {
+	out := map[string][]string{}
+	for _, p := range paths {
+		if prefix, _, ok := ParseVolumeName(p); ok {
+			out[prefix] = append(out[prefix], p)
+		}
+	}
+	for _, vols := range out {
+		slices.Sort(vols)
+	}
+	return out
 }

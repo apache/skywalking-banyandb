@@ -44,6 +44,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/api/data"
+	clusterv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/cluster/v1"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -294,6 +295,9 @@ type fakeImportClient struct {
 	queue.Client
 	publishErr map[string]error
 	closeErr   map[string]*common.Error
+	// relay, when it has a node, answers that node's chunked sync relay client; relayErr fails it.
+	relay    map[string]clusterv1.ChunkedSyncServiceClient
+	relayErr map[string]error
 	// onClose, when set, runs when the batch publisher of a node is closed and may fail it.
 	onClose   func(node string, payloads []any) *common.Error
 	published []importPublished
@@ -303,6 +307,16 @@ type fakeImportClient struct {
 	// frames lists, per node batch in the order they were closed, the frames it carried.
 	frames []nodeFrames
 	mu     sync.Mutex
+}
+
+func (c *fakeImportClient) NewChunkedSyncRelayClient(node string) (clusterv1.ChunkedSyncServiceClient, error) {
+	if err := c.relayErr[node]; err != nil {
+		return nil, err
+	}
+	if r, ok := c.relay[node]; ok {
+		return r, nil
+	}
+	return nil, fmt.Errorf("no relay for node %s", node)
 }
 
 // nodeFrames are the frames one batch publisher sent to one node, in order.
@@ -1900,5 +1914,16 @@ func BenchmarkImportWrite(b *testing.B) {
 			}
 			b.ReportMetric(float64(b.N*benchBatchRows)/b.Elapsed().Seconds(), "rows/s")
 		})
+	}
+}
+
+func TestRouteFor_StandalonePropertyKeepsOneCopy(t *testing.T) {
+	f := newImportFixture(t, nil)
+	r, err := f.svc.routeFor(context.Background(), testGroups()[testPropertyGroup], "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.copies != 1 || !slices.Equal(r.nodes(), []string{testSelfNode}) {
+		t.Fatalf("standalone property route = %+v, want one copy on %s", r, testSelfNode)
 	}
 }

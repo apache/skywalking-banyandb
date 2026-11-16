@@ -123,7 +123,7 @@ message SyncPartRequest {
   string session_id = 1; // Unique session identifier for this sync operation.
   uint32 chunk_index = 2; // Current chunk index (0-based).
   bytes chunk_data = 4; // Actual chunk data.
-  string chunk_checksum = 5; // CRC32 checksum for this chunk.
+  string chunk_checksum = 5; // Lowercase hexadecimal CRC-32 (IEEE) of chunk_data, without zero padding (queue.ChunkChecksum).
   repeated PartInfo parts_info = 6; // Information about parts contained in this chunk.
 
   oneof content {
@@ -153,8 +153,10 @@ message PartInfo {
 // Information about an individual file within a part.
 message FileInfo {
   string name = 1; // File identifier (e.g., "primary", "timestamps", "tagFamilies:seriesId").
-  uint32 offset = 2; // Byte offset within the part where this file starts.
-  uint32 size = 3; // Size of this file in bytes.
+  uint32 offset = 2; // Byte offset of this file's slice within this request's chunk_data.
+  // Length in bytes of this file's slice in this chunk; a file may span several chunks, and a
+  // zero-length file is a size-0 slice, which may sit at offset == len(chunk_data).
+  uint32 size = 3;
 }
 
 // SyncMetadata contains metadata for the sync operation.

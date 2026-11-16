@@ -79,6 +79,10 @@ func logSchemaSource(log io.Writer, art *Artifact, opts *config.Import) error {
 	if opts.SchemaOnly {
 		return exitcode.Exit(exitcode.ExitUsage, "--schema-only needs a schema, and artifact %s was exported without one", opts.Input)
 	}
+	if art.Native() {
+		fmt.Fprintf(log, "info: artifact %s carries no schema; its native parts are imported into the target's schema\n", opts.Input)
+		return nil
+	}
 	fmt.Fprintf(log, "info: artifact %s carries no schema; its CSV columns are read with the target's schema\n", opts.Input)
 	return nil
 }
@@ -102,7 +106,8 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	if env.Now != nil {
 		now = env.Now
 	}
-	art, err := OpenArtifact(ctx, opts.Input, true)
+	// A schema-only import reads no data file, so it checks their sizes only.
+	art, err := OpenArtifact(ctx, opts.Input, !opts.SchemaOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -111,7 +116,13 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	}
 	conn := env.Liaisons.Primary()
 	d := decider{liaisons: env.Liaisons.All, cluster: env.Cluster, art: art, opts: &opts, endpoint: env.Cluster.Liaison + " (ROLE_LIAISON)"}
-	first, err := d.decide(ctx, now(), !opts.SchemaOnly)
+	wait := phaseWaiter{log: env.Log, terminal: env.Terminal}
+	var first *decision
+	err = wait.run(ctx, "reading the target cluster and comparing the schema", func() (decideErr error) {
+		// Native parts are relayed as they are, so there are no rows to check.
+		first, decideErr = d.decide(ctx, now(), !opts.SchemaOnly && !art.Native())
+		return decideErr
+	})
 	if err != nil {
 		return nil, exitcode.Exit(exitcode.For(err), "%w", err)
 	}
@@ -131,7 +142,7 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	}
 
 	// From here on the target is being changed: every failure is a runtime failure.
-	if res.SchemaWrites, err = writeAndAwaitSchema(ctx, conn, first.diff, art, &opts, env.Log); err != nil {
+	if res.SchemaWrites, err = writeAndAwaitSchema(ctx, conn, first.diff, art, &opts, env.Log, wait); err != nil {
 		return res, err
 	}
 	if opts.SchemaOnly {
@@ -139,7 +150,11 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 		return res, nil
 	}
 	// The rows were checked against the predicted schema before anything was written.
-	second, err := d.decide(ctx, now(), false)
+	var second *decision
+	err = wait.run(ctx, "re-checking the plan after the schema write", func() (decideErr error) {
+		second, decideErr = d.decide(ctx, now(), false)
+		return decideErr
+	})
 	if err != nil {
 		return res, exitcode.Exit(exitcode.ExitRuntime, "re-check the plan after the schema write: %w", err)
 	}
@@ -172,18 +187,8 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 			return res, exitcode.Exit(exitcode.ExitRuntime, "verify baseline: %w", err)
 		}
 	}
-	workers, reason := WorkerCount(opts.Parallelism, entries)
-	window := max(1, opts.WriteInflightBatches)
-	fmt.Fprintf(env.Log, "parallelism: %d (%s); up to %d batch(es) in flight per stream, so at most %.1f MiB of rows per worker\n",
-		workers, reason, window, float64(uint64(window)*opts.WriteBatchBytes)/(1<<20))
-	logRates(env.Log, &opts)
 	start := time.Now()
-	prog := output.NewProgress(env.Log, env.Terminal, "group(s) importing")
-	prog.Start(ctx)
-	// Workers print concurrently; through the progress no line tears the live lines.
-	push, err := Push(ctx, env.Liaisons.All, art, &second.state.Schemas, entries,
-		PushOptions{Log: prog.Wrap(env.Log), Hook: env.Hook, Import: opts, Progress: prog})
-	prog.Close()
+	push, err := pushEntries(ctx, env, art, opts, &second.state.Schemas, entries)
 	res.Push = push
 	if err != nil {
 		return res, err
@@ -192,7 +197,13 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	for _, n := range push.Rows {
 		rows += n
 	}
-	fmt.Fprintf(env.Log, "IMPORTED  %d rows of %d work item(s) in %s\n", rows, len(push.Done), output.FormatElapsed(time.Since(start)))
+	elapsed := output.FormatElapsed(time.Since(start))
+	if art.Native() {
+		// Series-index, element-index and property payloads count no rows.
+		fmt.Fprintf(env.Log, "IMPORTED  %d work item(s) of native files, %d rows in the imported parts, in %s\n", len(push.Done), rows, elapsed)
+	} else {
+		fmt.Fprintf(env.Log, "IMPORTED  %d rows of %d work item(s) in %s\n", rows, len(push.Done), elapsed)
+	}
 	if !verify {
 		return res, nil
 	}
@@ -212,12 +223,51 @@ func RunImport(ctx context.Context, env Env, opts config.Import) (*Result, error
 	return res, nil
 }
 
+// pushEntries logs the parallelism and the rates and pushes the entries: the part files of a
+// native artifact, the rows of a CSV one. target is the target schema the rows are assembled for.
+func pushEntries(ctx context.Context, env Env, art *Artifact, opts config.Import, target *Schemas, entries []Entry) (*PushResult, error) {
+	workers, reason := WorkerCount(opts.Parallelism, entries)
+	if art.Native() {
+		fmt.Fprintf(env.Log, "parallelism: %d (%s); one payload of up to %d KiB frames in flight per worker\n", workers, reason, opts.PartChunkSize>>10)
+	} else {
+		window := max(1, opts.WriteInflightBatches)
+		fmt.Fprintf(env.Log, "parallelism: %d (%s); up to %d batch(es) in flight per stream, so at most %.1f MiB of rows per worker\n",
+			workers, reason, window, float64(uint64(window)*opts.WriteBatchBytes)/(1<<20))
+	}
+	logRates(env.Log, &opts, art.Native())
+	prog := output.NewProgress(env.Log, env.Terminal, "group(s) importing")
+	prog.Start(ctx)
+	defer prog.Close()
+	// Workers print concurrently; through the progress no line tears the live lines.
+	pushOpts := PushOptions{Log: prog.Wrap(env.Log), Hook: env.Hook, Import: opts, Progress: prog}
+	if art.Native() {
+		return PushParts(ctx, env.Liaisons.All, art, entries, pushOpts)
+	}
+	return Push(ctx, env.Liaisons.All, art, target, entries, pushOpts)
+}
+
 // logRates logs the rate limits of the push when any is set, the wire values the liaisons and
-// the data nodes apply.
-func logRates(log io.Writer, opts *config.Import) {
+// the data nodes apply. A native push applies only the part limit and a CSV push only the
+// others, so a limit the artifact's format ignores is warned about instead.
+func logRates(log io.Writer, opts *config.Import, native bool) {
+	part := ratelimit.PerSecond(opts.PartRateLimit)
 	node := ratelimit.Proto(opts.NodeRateLimit, opts.NodeRowRateLimit)
 	liaison, client := ratelimit.PerSecond(opts.LiaisonRateLimit), ratelimit.PerSecond(opts.WriteRateLimit)
-	if node.GetBytesPerSecond() == 0 && node.GetRowsPerSecond() == 0 && liaison == 0 && client == 0 {
+	rowLimits := node.GetBytesPerSecond() != 0 || node.GetRowsPerSecond() != 0 || liaison != 0 || client != 0
+	if native {
+		if part > 0 {
+			fmt.Fprintf(log, "rate limits: native parts %d bytes/s across the import\n", part)
+		}
+		if rowLimits {
+			fmt.Fprintln(log, "WARN --node-rate-limit, --node-row-rate-limit, --liaison-rate-limit and --write-rate-limit "+
+				"apply to CSV rows only; the native parts are limited by --part-rate-limit alone")
+		}
+		return
+	}
+	if part > 0 {
+		fmt.Fprintln(log, "WARN --part-rate-limit applies to native parts only; this CSV import ignores it")
+	}
+	if !rowLimits {
 		return
 	}
 	fmt.Fprintf(log, "rate limits: node %d bytes/s, %d rows/s per target node; "+
@@ -227,17 +277,24 @@ func logRates(log io.Writer, opts *config.Import) {
 
 // writeAndAwaitSchema writes the planned schema changes and waits until every node applied
 // them; it reports how many resources were written.
-func writeAndAwaitSchema(ctx context.Context, conn *grpc.ClientConn, diff *SchemaDiff, art *Artifact, opts *config.Import, log io.Writer) (int, error) {
+func writeAndAwaitSchema(ctx context.Context, conn *grpc.ClientConn, diff *SchemaDiff, art *Artifact, opts *config.Import, log io.Writer,
+	wait phaseWaiter,
+) (int, error) {
 	writes := diff.Writes()
 	if !opts.IncludeSchema || len(writes) == 0 {
 		return 0, nil
 	}
-	req, err := WriteSchema(ctx, conn, writes, &art.Schemas)
+	written := 0
+	err := wait.run(ctx, fmt.Sprintf("writing %d schema resource(s) and waiting for every node to apply them", len(writes)), func() error {
+		req, writeErr := WriteSchema(ctx, conn, writes, &art.Schemas, art.Native())
+		if writeErr != nil {
+			return writeErr
+		}
+		written = len(writes)
+		return AwaitSchema(ctx, conn, req, schemaWaitTimeout)
+	})
 	if err != nil {
-		return 0, err
-	}
-	if err = AwaitSchema(ctx, conn, req, schemaWaitTimeout); err != nil {
-		return len(writes), err
+		return written, err
 	}
 	fmt.Fprintf(log, "schema: %d resource(s) written and applied on every node\n", len(writes))
 	return len(writes), nil
@@ -273,8 +330,12 @@ func (d *decider) decide(ctx context.Context, now time.Time, checkRows bool) (*d
 	}
 	diff := DiffSchemas(&d.art.Schemas, state, schemaOpts)
 	predicted := PredictState(state, diff.Actions)
+	ruleIDs := make(map[ResourceKey]uint32, len(state.IndexRules))
+	for k, r := range state.IndexRules {
+		ruleIDs[k] = r.GetMetadata().GetId()
+	}
 	plan := Decide(Inputs{
-		Now: now, Artifact: d.art, Target: predicted, Endpoint: d.endpoint, Actions: diff.Actions,
+		Now: now, Artifact: d.art, Target: predicted, Endpoint: d.endpoint, Actions: diff.Actions, TargetIndexRuleIDs: ruleIDs,
 		Flags: Flags{ForceTTL: d.opts.ForceTTL, AllSources: d.opts.AllSources, StrictCoverage: d.opts.StrictCoverage, SchemaOnly: d.opts.SchemaOnly},
 	})
 	if checkRows && !plan.SchemaBlocked() && len(plan.Errors) == 0 && len(plan.Entries) > 0 {

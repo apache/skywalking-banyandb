@@ -115,6 +115,22 @@ func (g *ReadOnlyGeneration) ReferencedFiles() []string {
 	return files
 }
 
+// NewestGenerationFiles returns the file names ReferencedFiles would return for the generation
+// OpenReadOnlyGenerationStrict opens in dir, after the same strict validation, but without
+// page-cache advice and with no file left open: for a caller that needs only the names.
+func NewestGenerationFiles(dir string) ([]string, error) {
+	metadata, err := nativeice.ReadStrictSnapshotMetadata(dir, nil)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]string, 0, len(metadata.Segments)+1)
+	files = append(files, nativeICEFileName(metadata.ID, ".snp"))
+	for _, segment := range metadata.Segments {
+		files = append(files, nativeICEFileName(segment.ID, ".seg"))
+	}
+	return files, nil
+}
+
 // nativeICEFileName reproduces the on-disk name Encode/PublishSnapshot gives
 // one manifest or segment file. It is duplicated here (rather than exported
 // from pkg/index/internal/nativeice, an internal package pkg/index/native
@@ -184,6 +200,18 @@ func (g *ReadOnlyGeneration) VisibleDocCount() (int64, error) {
 		return 0, nil
 	}
 	return g.reader.VisibleDocCount()
+}
+
+// TimeBounds returns the smallest and largest "_timestamp" the pinned generation's segments
+// record in their footers, without reading any document. The footers count deleted documents
+// too, so the range may be wider than the live documents. A segment recording no timestamp,
+// or bounds folded across a sign change (min above max), is skipped; ok is false when no
+// segment is left.
+func (g *ReadOnlyGeneration) TimeBounds() (lo, hi int64, ok bool) {
+	if g == nil || g.reader == nil {
+		return 0, 0, false
+	}
+	return g.reader.SnapshotMetadata().TimeBounds()
 }
 
 // DecodeTimestamp decodes one series/property document's stored "_timestamp"
@@ -284,12 +312,36 @@ func (g *ReadOnlyGeneration) VisitSelectedDocuments(ctx context.Context, selecti
 // unflushed index (no usable committed generation) returns a count of 0
 // together with the open error, which callers may treat as an empty index.
 func ReadOnlyDocCount(path string) (int64, error) {
+	stats, err := ReadOnlyStats(path)
+	return stats.DocCount, err
+}
+
+// ReadOnlyIndexStats describes the committed generation of an index directory.
+type ReadOnlyIndexStats struct {
+	// DocCount is the number of live, non-deleted documents.
+	DocCount int64
+	// MinTimestamp and MaxTimestamp are the bounds ReadOnlyGeneration.TimeBounds returns;
+	// both are 0 when HasTime is false.
+	MinTimestamp int64
+	MaxTimestamp int64
+	HasTime      bool
+}
+
+// ReadOnlyStats opens the index directory at path read-only, as ReadOnlyDocCount does, and
+// returns its document count and time bounds; the errors are those of ReadOnlyDocCount.
+func ReadOnlyStats(path string) (ReadOnlyIndexStats, error) {
 	generation, err := OpenReadOnlyGeneration(path)
 	if err != nil {
-		return 0, fmt.Errorf("open read-only index %q: %w", path, err)
+		return ReadOnlyIndexStats{}, fmt.Errorf("open read-only index %q: %w", path, err)
 	}
 	defer func() { _ = generation.Close() }()
-	return generation.VisibleDocCount()
+	count, err := generation.VisibleDocCount()
+	if err != nil {
+		return ReadOnlyIndexStats{}, err
+	}
+	stats := ReadOnlyIndexStats{DocCount: count}
+	stats.MinTimestamp, stats.MaxTimestamp, stats.HasTime = generation.TimeBounds()
+	return stats, nil
 }
 
 // ReadOnlyWalkDocuments opens the index directory at path read-only, pins its

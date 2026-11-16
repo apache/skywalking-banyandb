@@ -1,0 +1,156 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Transfer e2e, run once per export format: this file runs every case with FORMAT=csv and
+# ../native/e2e.yaml runs the same cases with FORMAT=native; only that word and the per-format
+# expectations under expected/ differ. The environment, the scripts, the export checker (a Go
+# program built in setup) and the format-independent expectations live in ../common.
+#
+# Docker compose (../common/docker-compose.yml): a source cluster of one hot and one warm data node
+# behind a liaison (file-based node discovery) fed by OAP + trace-mocker, and an empty destination
+# cluster of the same topology (liaison_dst, data_dst_hot1, data_dst_warm1; host ports
+# 27912/27913). Setup only prepares the source: it builds bydbctl and the export checker for the
+# host, waits for the mocker, runs the lifecycle agent once inside the hot node so the warm node
+# holds the segments whose end is older than the one-day hot TTL, reports a few events through OAP
+# so the stream catalog is guaranteed current rows, creates a UI template so the property catalog
+# holds data, then stops OAP and trace-mocker and waits for the source rows to settle
+# (scripts/quiesce.sh), so that every export of the source holds the same rows.
+#
+# Every check runs in verify, in order: releasing an unknown session; the export dry run through
+# --nodes and through a plan file; a real export of each catalog and a --schema-only one, each
+# validated by the export checker; the degraded dry run while the warm node is stopped; then the
+# import cases into the destination (scripts/import-common.sh): an import without the schema that
+# the empty destination refuses, a schema conflict that refuses the import, a dry run whose
+# decision table the real import must repeat, the round trip that re-exports the destination as
+# CSV and compares it with the CSV export of the source row by row and by queries, and a dry run
+# of an artifact claiming another shard number (refused by the TOPOLOGY gate for native parts,
+# re-routed for CSV rows). The import cases share state through markers in a fixed work directory
+# that the setup empties, so a retry never imports twice.
+#
+# Run locally after building the testing image (see test/docker/Dockerfile; TARGET_OS=linux):
+#   set -a; source <(grep -v '^#' test/e2e-v2/script/env); set +a
+#   TAG=local e2e run -c test/e2e-v2/cases/transfer/csv/e2e.yaml
+
+setup:
+  env: compose
+  file: ../common/docker-compose.yml
+  timeout: 25m
+  init-system-environment: ../../../script/env
+  steps:
+    - name: set PATH
+      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+    - name: build bydbctl for the host
+      command: go build -o /tmp/skywalking-infra-e2e/bin/bydbctl ./bydbctl/cmd/cli
+    - name: build the export checker for the host
+      command: go build -o /tmp/skywalking-infra-e2e/bin/export-checker ./test/e2e-v2/cases/transfer/common/checker
+    - name: wait for trace-mocker data on the hot node
+      command: bash test/e2e-v2/cases/transfer/common/scripts/wait-for-data.sh
+    - name: migrate segments older than the hot TTL to the warm node
+      command: bash test/e2e-v2/cases/transfer/common/scripts/run-lifecycle.sh
+    - name: install swctl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
+    - name: report events so the stream catalog holds data
+      command: bash test/e2e-v2/cases/transfer/common/scripts/report-events.sh ${oap_host}:${oap_11800} ${oap_host}:${oap_12800}
+    # OAP 11 no longer writes UI templates at startup, so the property group would stay empty.
+    # One template created through ui-management gives the property catalog data to export.
+    - name: create a UI template so the property catalog holds data
+      command: |
+        printf '%s' '{"name":"transfer-e2e"}' > /tmp/transfer-uitpl.json
+        swctl --display json --admin-url=http://${oap_host}:${oap_17128} admin ui-template create --id transfer-e2e -f /tmp/transfer-uitpl.json
+    - name: reset the work directory of the import cases
+      command: FORMAT=csv bash -c 'source test/e2e-v2/cases/transfer/common/scripts/common.sh && source test/e2e-v2/cases/transfer/common/scripts/import-common.sh && rm -rf "$IMPORT_WORK"'
+    - name: stop OAP and trace-mocker and wait for the source rows to settle
+      command: bash test/e2e-v2/cases/transfer/common/scripts/quiesce.sh ${liaison_host}:${liaison_17912}
+
+verify:
+  # Every case is idempotent (export.sh exports into a new directory and releases the session of a
+  # failed export; degraded.sh restarts the warm node on every exit path; the import cases replay
+  # their report once passed), so a case is retried until the data it pins has settled: the liaison
+  # answering ExportService and the warm node exposing the parts the lifecycle run migrated.
+  # 30 retries 10s apart give about five minutes.
+  retry:
+    count: 30
+    interval: 10s
+  fail-fast: true
+  cases:
+    # Releasing a session no data node holds: every node answers none through the liaison's
+    # Sessions fan-out, so bydbctl reports the unknown session and exits 2.
+    - query: >-
+        rc=0; out=$(bydbctl data release-session --id deadbeefdeadbeefdeadbeefdeadbeef --nodes ${liaison_host}:${liaison_17912} 2>&1) || rc=$?;
+        echo "exitCode: $rc";
+        echo "message: $(echo "$out" | grep -o 'export session deadbeefdeadbeefdeadbeefdeadbeef is not held on any data node')"
+      expected: ../common/expected/release-session.yaml
+    - query: >-
+        bydbctl data export --dry-run --format csv --nodes ${liaison_host}:${liaison_17912}
+        --selector catalog=stream --selector catalog=measure --selector catalog=trace --selector catalog=property -o yaml
+      expected: ../common/expected/dry-run.yaml
+    - query: bydbctl data export --dry-run --format csv --plan test/e2e-v2/cases/transfer/common/plan.yaml -o yaml
+      expected: ../common/expected/dry-run.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/export.sh ${liaison_host}:${liaison_17912} stream
+      expected: expected/export-stream.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/export.sh ${liaison_host}:${liaison_17912} measure
+      expected: expected/export-measure.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/export.sh ${liaison_host}:${liaison_17912} trace
+      expected: expected/export-trace.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/export.sh ${liaison_host}:${liaison_17912} property
+      expected: expected/export-property.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/export.sh ${liaison_host}:${liaison_17912} schema-only
+      expected: expected/export-schema-only.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/degraded.sh ${liaison_host}:${liaison_17912}
+      expected: ../common/expected/degraded.yaml
+    # Import cases, in this order (see scripts/import-common.sh for the markers that make them
+    # safe to retry). The source liaison is only needed to freeze the artifacts and for the queries.
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/import-noschema.sh ${liaison_host}:${liaison_17912}
+      expected: ../common/expected/import-noschema.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/import-conflict.sh ${liaison_host}:${liaison_17912}
+      expected: ../common/expected/import-conflict.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/import-dryrun.sh
+      expected: ../common/expected/import-dryrun.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/import-roundtrip.sh ${liaison_host}:${liaison_17912}
+      expected: ../common/expected/import-roundtrip.yaml
+    - query: FORMAT=csv bash test/e2e-v2/cases/transfer/common/scripts/topology.sh
+      expected: expected/topology.yaml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - service: data-hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+          - /tmp/lifecycle-report/ # only present once run-lifecycle.sh ran; missing before that
+      - service: data-warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
