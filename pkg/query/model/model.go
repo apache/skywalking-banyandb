@@ -142,8 +142,11 @@ type MeasureQueryOptions struct {
 	TagProjection   []TagProjection
 	FieldProjection []string
 	Sort            modelv1.Sort
-	Number          int32
-	TopNFieldType   databasev1.FieldType
+	// Limit, when positive, is how many rows the query can use from an index-mode scan: its offset plus limit.
+	// The plan sets it only when nothing between the scan and the limit can drop or reorder rows.
+	Limit         int
+	Number        int32
+	TopNFieldType databasev1.FieldType
 }
 
 // MeasureResult is the result of a query.

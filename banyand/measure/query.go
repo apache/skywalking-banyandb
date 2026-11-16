@@ -574,14 +574,20 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		MultiValueProjection: multiValueProjection,
 		TimeRange:            mqo.TimeRange,
 	}
-	seriesFilter := roaring.NewPostingList()
+	seriesFilter := storage.NewSeriesSet()
+	if mqo.Limit > 0 {
+		// The search truncates to the limit and de-duplicates against the series that newer segments returned, so
+		// a series a newer segment shadows cannot take a place in the limit.
+		opts.Limit = mqo.Limit
+		opts.SeenSeries = seriesFilter
+	}
 	for i := range segments {
 		sr := &segResult{}
 		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, opts)
 		if err != nil {
 			return nil, err
 		}
-		for j := 0; j < len(sr.SeriesList); j++ {
+		for j := 0; j < len(sr.SeriesList) && !sr.LimitApplied; j++ {
 			if seriesFilter.Contains(uint64(sr.SeriesList[j].ID)) {
 				sr.remove(j)
 				j--
@@ -1227,9 +1233,9 @@ type tagFamilyLocation struct {
 }
 
 type segResult struct {
-	storage.SeriesData
 	sortedValues [][]byte
-	i            int
+	storage.SeriesData
+	i int
 }
 
 func (sr *segResult) multiValueRow(row int) map[string][][]byte {

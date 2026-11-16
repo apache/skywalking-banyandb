@@ -552,7 +552,7 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 	var sortField string
 	var timeOrderPerm []int
 	if sorted {
-		hits, timeOrderPerm, sortField, err = orderSearchHits(ctx, view, hits, opts.Order)
+		hits, timeOrderPerm, sortField, sd.LimitApplied, err = orderSearchHits(ctx, view, hits, opts)
 		if err != nil {
 			return SeriesData{}, nil, err
 		}
@@ -616,30 +616,68 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 
 // orderSearchHits is step 3 of search for a sorted search. An index order sorts the hits with SortHits and returns the
 // field its sort values are read from. A time order sorts by the hits' own timestamps, which the universe already
-// decoded in storage order, so it needs no SortHits pass and no doc-value read per hit: it returns the hits unchanged
-// (the rows are projected in storage order, like the unsorted path, and permuted by the returned indexes afterwards)
-// and an empty sort field (the sort values are derived from the timestamps).
-func orderSearchHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit, order *index.OrderBy,
-) (ordered []native.QueryHit, timePerm []int, sortField string, err error) {
-	sortField, err = orderFieldName(order)
+// decoded in storage order, so it needs no SortHits pass and no doc-value read per hit: it returns the hits in storage
+// order (the rows are projected in that order, like the unsorted path, and permuted by the returned indexes afterwards)
+// and an empty sort field (the sort values are derived from the timestamps). With opts.Limit and opts.SeenSeries it also
+// truncates the hits to the first Limit that no earlier segment shadows, and reports it as limited.
+func orderSearchHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit, opts IndexSearchOpts,
+) (ordered []native.QueryHit, timePerm []int, sortField string, limited bool, err error) {
+	sortField, err = orderFieldName(opts.Order)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", false, err
 	}
-	desc := order.Sort == modelv1.Sort_SORT_DESC
-	if order.Type == index.OrderByTypeTime {
+	desc := opts.Order.Sort == modelv1.Sort_SORT_DESC
+	if opts.Order.Type == index.OrderByTypeTime {
 		if reserveErr := query.ReserveAllocation(ctx, uint64(len(hits))*24); reserveErr != nil {
-			return nil, nil, "", reserveErr
+			return nil, nil, "", false, reserveErr
 		}
-		return hits, timeOrderPermutation(hits, desc), "", nil
+		timePerm = timeOrderPermutation(hits, desc)
+		if opts.Limit > 0 && opts.SeenSeries != nil {
+			hits = limitTimeOrderedHits(hits, timePerm, opts.Limit, opts.SeenSeries)
+			return hits, timeOrderPermutation(hits, desc), "", true, nil
+		}
+		return hits, timePerm, "", false, nil
 	}
 	ordered, err = view.SortHits(ctx, hits, native.SortRequest{Field: sortField, Desc: desc})
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, "", false, err
 	}
 	if reserveErr := query.ReserveAllocation(ctx, uint64(len(ordered))*24); reserveErr != nil {
-		return nil, nil, "", reserveErr
+		return nil, nil, "", false, reserveErr
 	}
-	return ordered, nil, sortField, nil
+	return ordered, nil, sortField, false, nil
+}
+
+// limitTimeOrderedHits keeps the first limit hits of perm (the time order of hits) whose series seen does not hold,
+// returned in their storage order so that the caller projects them with sequential reads. Every candidate series, kept or
+// not, is added to seen afterwards: a later (older) segment must not return a series that this one shadows, even when the
+// row that shadows it falls beyond the limit. A series that appears twice in hits counts once, at its first row in
+// time order.
+func limitTimeOrderedHits(hits []native.QueryHit, perm []int, limit int, seen SeriesSet) []native.QueryHit {
+	candidates := make(map[uint64]struct{}, len(hits))
+	kept := make([]int, 0, min(limit, len(hits)))
+	for _, at := range perm {
+		id := convert.Hash(hits[at].Identifier)
+		if seen.Contains(id) {
+			continue
+		}
+		if _, dup := candidates[id]; dup {
+			continue
+		}
+		candidates[id] = struct{}{}
+		if len(kept) < limit {
+			kept = append(kept, at)
+		}
+	}
+	for id := range candidates {
+		seen.Insert(id)
+	}
+	sort.Ints(kept)
+	out := make([]native.QueryHit, len(kept))
+	for i, at := range kept {
+		out[i] = hits[at]
+	}
+	return out
 }
 
 // timeOrderPermutation returns the indexes of hits in timestamp order, ties by identifier, segment and document, the

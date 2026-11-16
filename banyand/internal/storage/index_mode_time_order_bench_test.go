@@ -66,24 +66,31 @@ func BenchmarkIndexModeSearchOrder(b *testing.B) {
 			require.NoError(b, err)
 			defer func() { require.NoError(b, si.Close()) }()
 
+			timeDesc := &index.OrderBy{Type: index.OrderByTypeTime, Sort: modelv1.Sort_SORT_DESC}
 			for _, tc := range []struct {
 				order *index.OrderBy
 				name  string
+				limit int
 			}{
 				{name: "no-order"},
-				{name: "time-desc", order: &index.OrderBy{Type: index.OrderByTypeTime, Sort: modelv1.Sort_SORT_DESC}},
+				{name: "time-desc", order: timeDesc},
+				{name: "time-desc-limit-100", order: timeDesc, limit: 100},
 			} {
 				b.Run(tc.name, func(b *testing.B) {
 					b.ReportAllocs()
 					for i := 0; i < b.N; i++ {
-						sd, _, searchErr := si.SearchWithoutSeries(ctx, IndexSearchOpts{
-							IndexModeSubject: "idx_measure", Order: tc.order, Projection: []index.FieldKey{nameKey},
-						})
+						opts := IndexSearchOpts{IndexModeSubject: "idx_measure", Order: tc.order, Projection: []index.FieldKey{nameKey}}
+						want := rows
+						if tc.limit > 0 {
+							opts.Limit, opts.SeenSeries = tc.limit, NewSeriesSet()
+							want = min(tc.limit, rows)
+						}
+						sd, _, searchErr := si.SearchWithoutSeries(ctx, opts)
 						if searchErr != nil {
 							b.Fatal(searchErr)
 						}
-						if len(sd.SeriesList) != rows {
-							b.Fatalf("got %d rows", len(sd.SeriesList))
+						if len(sd.SeriesList) != want {
+							b.Fatalf("got %d rows, want %d", len(sd.SeriesList), want)
 						}
 					}
 				})

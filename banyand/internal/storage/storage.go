@@ -108,8 +108,33 @@ type IndexSearchOpts struct {
 	// value sequence is also returned in SeriesData.MultiValueFields.
 	// Other projections retain their last-value-wins behavior.
 	MultiValueProjection map[string]struct{}
-	PreloadSize          int
+	// SeenSeries is the set of series that segments searched earlier already returned. With Limit it makes the
+	// search drop those series before it truncates, and it receives every series this search keeps a candidate.
+	SeenSeries  SeriesSet
+	PreloadSize int
+	// Limit, when positive, is how many rows the caller can use from this search (its offset plus limit). An
+	// index-mode search with a time order then sorts the candidates by timestamp in memory and reads the stored
+	// fields of only the first Limit rows that SeenSeries does not already hold, and reports it in
+	// SeriesData.LimitApplied. Any other search ignores it and returns every row.
+	Limit int
 }
+
+// SeriesSet is a set of series IDs that segments already returned, newest segment first.
+type SeriesSet interface {
+	Contains(id uint64) bool
+	Insert(id uint64)
+}
+
+// seriesIDSet is a hash set of series IDs. A series ID is a 64-bit hash, so a bitmap keyed by it degrades to a sorted
+// array insert (a memmove of the whole key list) per new ID.
+type seriesIDSet map[uint64]struct{}
+
+// NewSeriesSet returns an empty hash-backed SeriesSet.
+func NewSeriesSet() SeriesSet { return seriesIDSet{} }
+
+func (s seriesIDSet) Contains(id uint64) bool { _, ok := s[id]; return ok }
+
+func (s seriesIDSet) Insert(id uint64) { s[id] = struct{}{} }
 
 // FieldResult is the result of a field.
 type FieldResult map[string][]byte
@@ -135,6 +160,9 @@ type SeriesData struct {
 	Versions         []int64
 	TimestampSet     []bool
 	VersionSet       []bool
+	// LimitApplied reports that the search truncated to IndexSearchOpts.Limit and already applied
+	// IndexSearchOpts.SeenSeries, so the caller must not de-duplicate the rows again.
+	LimitApplied bool
 }
 
 // IndexDB is the interface of index database.

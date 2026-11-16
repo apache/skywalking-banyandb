@@ -6,6 +6,7 @@ Release Notes.
 
 ### Features
 
+- Push the `LIMIT` and `OFFSET` of an index-mode measure query ordered by time down to the index search, so it reads the stored tags of only the rows it can return instead of every candidate. The search sorts the candidates' timestamps in memory, drops the series that a newer segment already returned before it truncates (a shadowed series cannot take a place in the limit), and projects the first offset plus limit rows. Group-by, aggregation, top-N, several groups, an index order and an unbounded limit keep the full search.
 - Add a Canopy Monitor page for standalone nodes: CPU, memory, disk by path, write rate, query rate with average latency, errors, and storage per group, scraped from the node's `/metrics` through `GET /monitor/snapshot`. Monitoring data, including the raw `/monitoring/*` proxy, is admin only unless `CANOPY_MONITOR_ROLES` opens it to other roles.
 - Add Canopy sampling pipeline management with Form/YAML editing, independent MERGE, FINALIZE and stage rules, and session-expiry recovery.
 - [Breaking Change] Trace sampling requires explicit MERGE/FINALIZE event selection; empty events no longer default to MERGE. Add `PIPELINE_EVENT_MERGE` to existing configurations that relied on the implicit default before upgrading. Stage-only pipelines remain supported.

@@ -381,8 +381,31 @@ func prepareBatchDispatch(req *measurev1.QueryRequest, metadata *commonv1.Metada
 		Agg:             scan.Params.Agg,
 		TagProjection:   scan.Params.TagProjection,
 		FieldProjection: scan.Params.FieldProjection,
+		Limit:           indexModeScanLimit(req, measureSchema, indexOrder, scan),
 	}
 	return dispatchPreparation{plan: p, scan: scan, options: opts, hidden: hidden}, nil
+}
+
+// indexModeScanLimit returns how many rows the plan can use from the scan, offset plus limit, when the scan is an
+// index-mode scan ordered by time and only the Limit operator follows it: no group-by, aggregation or top-N that could
+// need rows beyond the limit. It returns 0, meaning every row, for any other plan.
+func indexModeScanLimit(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, order *index.OrderBy, scan *Scan) int {
+	if !measureSchema.GetIndexMode() || len(req.GetGroups()) != 1 || order == nil || order.Type != index.OrderByTypeTime ||
+		scan.Params.GroupBy != nil || scan.Params.Agg != nil || req.GetTop() != nil {
+		return 0
+	}
+	limit := req.GetLimit()
+	if limit == 0 {
+		limit = defaultLimit
+	}
+	if limit == math.MaxUint32 {
+		return 0
+	}
+	total := uint64(req.GetOffset()) + uint64(limit)
+	if total > math.MaxInt32 {
+		return 0
+	}
+	return int(total)
 }
 
 // resolveOrderBy mirrors the row path's PushDownOrder optimizer rule.
