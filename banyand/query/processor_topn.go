@@ -24,7 +24,7 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -34,9 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/measure"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
-	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	logical_measure "github.com/apache/skywalking-banyandb/pkg/query/logical/measure"
@@ -100,16 +98,27 @@ func (t *topNQueryProcessor) prepareGroupsContext(ctx context.Context, request *
 }
 
 func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
-	request, ok := message.Data().(*measurev1.TopNRequest)
+	// A TopNRequest comes from a client of a standalone server, or from a liaison that predates the internal
+	// TopN query; an InternalTopNRequest comes from a liaison that merges per-shard partial aggregates.
+	var request *measurev1.TopNRequest
+	var partialLimit int32
+	switch d := message.Data().(type) {
+	case *measurev1.TopNRequest:
+		request = d
+	case *measurev1.InternalTopNRequest:
+		request = d.GetRequest()
+		partialLimit = d.GetPartialLimit()
+	}
 	n := time.Now()
 	now := n.UnixNano()
-	if !ok {
+	if request == nil {
 		t.log.Warn().Msg("invalid event data type")
 		return
 	}
+	partial := partialLimit > 0
 	ml := t.log.Named("topn", strings.Join(request.Groups, ","), request.Name)
 	if e := ml.Debug(); e.Enabled() {
-		e.RawJSON("req", logger.Proto(request)).Msg("received a topn event for groups: " + strings.Join(request.Groups, ","))
+		e.RawJSON("req", logger.Proto(request)).Int32("partial_limit", partialLimit).Msg("received a topn event for groups: " + strings.Join(request.Groups, ","))
 	}
 	if request.GetFieldValueSort() == modelv1.Sort_SORT_UNSPECIFIED {
 		t.log.Warn().Msg("invalid requested sort direction")
@@ -118,13 +127,19 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	if e := t.log.Debug(); e.Enabled() {
 		e.Stringer("req", request).Msg("received a topN query event")
 	}
+	if partial && (len(request.GetGroups()) != 1 || request.GetAgg() == modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED) {
+		// Shard IDs identify a shard only within one group, and a partial needs an aggregation function.
+		resp = bus.NewMessage(bus.MessageID(now), common.NewError("an internal topn query needs one group and an aggregation function, got %d groups and %s",
+			len(request.GetGroups()), request.GetAgg()))
+		return
+	}
 	// Process all groups
 	qc, err := t.prepareGroupsContext(ctx, request, ml)
 	if err != nil {
 		return
 	}
 
-	plan, err := logical_measure.TopNAnalyze(request, qc.sourceMeasureSchemas, qc.topNSchemas, qc.ecc)
+	plan, err := logical_measure.TopNAnalyze(request, partialLimit, qc.sourceMeasureSchemas, qc.topNSchemas, qc.ecc)
 	if err != nil {
 		resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(err, "fail to analyze the query request for topn %s: %v", request.Name, err))
 		return
@@ -145,9 +160,15 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 			switch d := data.(type) {
 			case *measurev1.TopNResponse:
 				d.Trace = tracer.ToProto()
+			case *measurev1.InternalTopNResponse:
+				d.Trace = tracer.ToProto()
 			case *common.Error:
 				span.Error(errors.New(d.Error()))
-				resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+				if partial {
+					resp = bus.NewMessage(bus.MessageID(now), &measurev1.InternalTopNResponse{Trace: tracer.ToProto()})
+				} else {
+					resp = bus.NewMessage(bus.MessageID(now), &measurev1.QueryResponse{Trace: tracer.ToProto()})
+				}
 			default:
 				panic("unexpected data type")
 			}
@@ -166,7 +187,7 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 	}()
 
-	result := make([]*measurev1.DataPoint, 0)
+	result := make([]*measurev1.InternalDataPoint, 0)
 	func() {
 		var r int
 		if tracer != nil {
@@ -179,55 +200,16 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 		for mIterator.Next() {
 			r++
-			current := mIterator.Current()
-			if len(current) > 0 {
-				result = append(result, current[0].GetDataPoint())
-			}
+			result = append(result, mIterator.Current()...)
 		}
 	}()
 
-	if request.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED {
-		// Standalone mode: use TopNPostProcessor for aggregation
-		if len(result) == 0 {
-			resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{})
-			return
-		}
-		fieldName := qc.topNSchemas[0].GetFieldName()
-		isFloatField := false
-		fieldIdx := slices.IndexFunc(qc.sourceMeasureSchemas[0].GetFields(), func(spec *databasev1.FieldSpec) bool {
-			return spec.GetName() == fieldName
-		})
-		if fieldIdx >= 0 {
-			isFloatField = qc.sourceMeasureSchemas[0].GetFields()[fieldIdx].GetFieldType() == databasev1.FieldType_FIELD_TYPE_FLOAT
-		}
-		var lists []*measurev1.TopNList
-		var aggErr error
-		if isFloatField {
-			lists, aggErr = aggregateTopNResults(
-				measure.CreateTopNPostProcessorFloat(request.GetTopN(), request.GetAgg(), request.GetFieldValueSort()),
-				result,
-				func(dp *measurev1.DataPoint) float64 {
-					return dp.GetFields()[0].GetValue().GetFloat().GetValue()
-				},
-			)
-		} else {
-			lists, aggErr = aggregateTopNResults(
-				measure.CreateTopNPostProcessorInt(request.GetTopN(), request.GetAgg(), request.GetFieldValueSort()),
-				result,
-				func(dp *measurev1.DataPoint) int64 {
-					return dp.GetFields()[0].GetValue().GetInt().GetValue()
-				},
-			)
-		}
-		if aggErr != nil {
-			ml.Error().Err(aggErr).RawJSON("req", logger.Proto(request)).Msg("fail to aggregate topN results")
-			resp = bus.NewMessage(bus.MessageID(now), protector.QueryFailure(aggErr, "fail to aggregate topN results for measure %s: %v", request.Name, aggErr))
-			return
-		}
-		resp = bus.NewMessage(bus.MessageID(now), &measurev1.TopNResponse{Lists: lists})
+	if partial {
+		resp = bus.NewMessage(bus.MessageID(now), logical_measure.ToInternalTopNResponse(result))
 	} else {
-		// Standalone mode without aggregation or distributed DataNode mode: return top N distinct entities directly
-		resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result))
+		// With an aggregation function the plan has already aggregated every value of each item and
+		// ranked the items by the aggregated value, so the result is returned as is.
+		resp = bus.NewMessage(bus.MessageID(now), toTopNResponse(result, request.GetAgg() != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED))
 	}
 	if !request.Trace && t.slowQuery > 0 {
 		latency := time.Since(n)
@@ -238,37 +220,15 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 	return
 }
 
-// aggregateTopNResults aggregates TopN data points using the given post processor and value extractor.
-func aggregateTopNResults[K streaming.TopSortKey](
-	aggregator measure.PostProcessor[K],
-	result []*measurev1.DataPoint,
-	extractValue func(*measurev1.DataPoint) K,
-) ([]*measurev1.TopNList, error) {
-	var tags []string
-	for _, dp := range result {
-		dpTags := dp.GetTagFamilies()[0].GetTags()
-		if tags == nil {
-			tags = make([]string, len(dpTags))
-			for i, tag := range dpTags {
-				tags[i] = tag.Key
-			}
-		}
-		entityValues := make(pbv1.EntityValues, 0, len(dpTags))
-		for _, tag := range dpTags {
-			entityValues = append(entityValues, tag.Value)
-		}
-		aggregator.Put(entityValues,
-			extractValue(dp),
-			uint64(dp.GetTimestamp().AsTime().UnixMilli()),
-			dp.GetVersion())
+func toTopNResponse(idps []*measurev1.InternalDataPoint, aggregated bool) *measurev1.TopNResponse {
+	if aggregated && len(idps) == 0 {
+		// An aggregation over no data answers with no list, as the distributed liaison does.
+		return &measurev1.TopNResponse{}
 	}
-	return aggregator.Val(tags)
-}
-
-func toTopNResponse(dps []*measurev1.DataPoint) *measurev1.TopNResponse {
 	topNList := make([]*measurev1.TopNList, 0)
-	topNItems := make([]*measurev1.TopNList_Item, len(dps))
-	for i, dp := range dps {
+	topNItems := make([]*measurev1.TopNList_Item, len(idps))
+	for i, idp := range idps {
+		dp := idp.GetDataPoint()
 		topNItems[i] = &measurev1.TopNList_Item{
 			Entity:    dp.GetTagFamilies()[0].GetTags(),
 			Value:     dp.GetFields()[0].GetValue(),
@@ -276,8 +236,10 @@ func toTopNResponse(dps []*measurev1.DataPoint) *measurev1.TopNResponse {
 			Timestamp: dp.GetTimestamp(),
 		}
 	}
-	topNList = append(topNList, &measurev1.TopNList{
-		Items: topNItems,
-	})
+	list := &measurev1.TopNList{Items: topNItems}
+	if aggregated {
+		list.Timestamp = timestamppb.Now()
+	}
+	topNList = append(topNList, list)
 	return &measurev1.TopNResponse{Lists: topNList}
 }

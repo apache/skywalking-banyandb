@@ -190,6 +190,8 @@ Tags in `group_by_tag_names` are used as dimensions. These tags can be searched 
 
 `lru_size` is a late data optimizing flag. The higher the number, the more late data, but the more memory space is consumed.
 
+A TopN query with an aggregation function (`AGGREGATE BY` in BydbQL) aggregates every stored value of an entity in the time range, then ranks the entities by the aggregated value. It can only aggregate what the windows retained: `COUNT`, for example, counts the windows in which an entity made the stored list. In a cluster, all the windows of one group-by value in one lifecycle stage are stored on one shard, so each data node aggregates its shards and returns its local top N, which the liaison merges into the exact result. A query spanning several lifecycle stages (or groups) finds each group-by value on one shard per stage; each shard then returns its best `counters_number` entities with their partial aggregates, and the merged result is exact as long as no shard holds more entities than that in the range, approximate otherwise. This holds for TopN data written by a release with this layout.
+
 [TopNAggregation Registration Operations](../api-reference.md#topnaggregationregistryservice)
 
 ### Streams

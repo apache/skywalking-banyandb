@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -58,9 +59,13 @@ const (
 	timeBucketFormat         = "200601021504"
 	resultPersistencyTimeout = 10 * time.Second
 	maxFlushInterval         = time.Minute
-	maxTopNValuesCount       = 1 << 17 // sanity upper bound: 131072 elements = ~1MB per unmarshal, far above TopN CountersNumber
+	maxTopNValuesCount       = MaxTopNValuesCount
 	topNWriteQueueCapacity   = 1024
 )
+
+// MaxTopNValuesCount is the sanity upper bound of the entries of one TopN value: 131072 elements is about 1MB
+// per unmarshal, far above the TopN counters number. A merged TopN value must stay within it to be decodable.
+const MaxTopNValuesCount = 1 << 17
 
 var (
 	_ io.Closer = (*topNProcessorManager)(nil)
@@ -104,6 +109,7 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 			l:        sr.l,
 			pipeline: pipeline,
 			nodeID:   sr.nodeID,
+			shardNum: sr.groupShardNum,
 		})
 		manager = m.(*topNProcessorManager)
 		return manager
@@ -124,6 +130,7 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 				l:        sr.l,
 				pipeline: pipeline,
 				nodeID:   sr.nodeID,
+				shardNum: sr.groupShardNum,
 			}
 			manager.registeredTasks = append(manager.registeredTasks, pre.registeredTasks...)
 		} else {
@@ -135,11 +142,39 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 			l:        sr.l,
 			pipeline: pipeline,
 			nodeID:   sr.nodeID,
+			shardNum: sr.groupShardNum,
 		}
 	}
 	manager.init(ctx, sourceMeasure.GetSchema())
 	sr.topNProcessorMap.Store(key, manager)
 	return manager
+}
+
+// groupShardNum returns the shard number of a group, or 0 when the group is not loaded.
+func (sr *schemaRepo) groupShardNum(group string) uint32 {
+	g, ok := sr.LoadGroup(group)
+	if !ok {
+		return 0
+	}
+	return g.GetSchema().GetResourceOpts().GetShardNum()
+}
+
+// topNResultShard returns the shard that stores the TopN result series identified by entityValues. It is derived
+// from the series identity exactly as partition.Locator.Locate derives it for any measure write, so that every
+// window of one TopN series lands on the same shard, and therefore on the same data node.
+func topNResultShard(entityValues []*modelv1.TagValue, shardNum uint32) (uint32, error) {
+	if shardNum == 0 {
+		return 0, errors.New("the shard number of the top-n result group is unknown")
+	}
+	evs := make(pbv1.EntityValues, 0, len(entityValues)+1)
+	evs = append(evs, pbv1.EntityStrValue(TopNSchemaName))
+	evs = append(evs, entityValues...)
+	entity, err := evs.ToEntity()
+	if err != nil {
+		return 0, err
+	}
+	id, err := partition.ShardID(entity.Marshal(), shardNum)
+	return uint32(id), err
 }
 
 func (sr *schemaRepo) stopSteamingManager(sourceMeasure *commonv1.Metadata) {
@@ -349,6 +384,7 @@ type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	l             *logger.Logger
 	stopCh        chan struct{}
 	src           chan interface{}
+	shardNum      func(group string) uint32
 	nodeID        string
 	flow.ComponentState
 	interval      time.Duration
@@ -383,6 +419,11 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 		pipeline:      pipeline,
 		nodeID:        nodeID,
 	}
+}
+
+func (t *topNStreamingProcessor[K]) withShardNum(shardNum func(group string) uint32) *topNStreamingProcessor[K] {
+	t.shardNum = shardNum
+	return t
 }
 
 func (t *topNStreamingProcessor[K]) In() chan<- flow.StreamRecord {
@@ -487,11 +528,11 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 		}
 		topNValue.Reset()
 		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
-		var shardID uint32
+		// A group batch mixes tuples of several source shards. They are still aggregated into one row: rows of
+		// one group and window share a series and a timestamp, so a row per source shard would overwrite each other.
 		for _, tuple := range tuples {
 			data := tuple.V2.Data().(flow.Data)
 			topNValue.addValue(tuple.V1, data[0].([]*modelv1.TagValue))
-			shardID = data[3].(uint32)
 		}
 
 		var fieldType databasev1.FieldType
@@ -538,6 +579,16 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 					},
 				},
 			},
+		}
+		var shardNum uint32
+		if t.shardNum != nil {
+			shardNum = t.shardNum(t.topNSchema.GetMetadata().GetGroup())
+		}
+		// The row is stored where its own series is located, not on the source shard of its last tuple, so that
+		// all the windows of one group live on one data node and that node can aggregate them completely.
+		shardID, shardErr := topNResultShard(entityValues, shardNum)
+		if shardErr != nil {
+			return fmt.Errorf("locate the shard of top-n result %s/%s: %w", t.topNSchema.GetMetadata().GetName(), group, shardErr)
 		}
 		buf = buf[:0]
 		if buf, err = topNValue.marshal(buf); err != nil {
@@ -593,7 +644,8 @@ func (t *topNStreamingProcessor[K]) start(ctx context.Context) *topNStreamingPro
 		streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
 			return record.Data().(flow.Data)[4].(uint64)
 		}),
-		orderBy(t.topNSchema.GetFieldValueSort()),
+		// A TopN aggregation without a field value sort runs one processor per direction, so each ranks by its own.
+		orderBy(t.sortDirection),
 		streaming.WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 			return record.Data().(flow.Data)[1].(string)
 		}),
@@ -635,6 +687,7 @@ type topNProcessorManager struct {
 	inputCh         chan topNWrite
 	stopCh          chan struct{}
 	dispatcher      *run.Task
+	shardNum        func(group string) uint32
 	nodeID          string
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []topNProcessor
@@ -846,11 +899,11 @@ func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *data
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 			processorList[i] = newTopNStreamingProcessor[float64](
 				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).start(ctx)
+			).withShardNum(manager.shardNum).start(ctx)
 		} else {
 			processorList[i] = newTopNStreamingProcessor[int64](
 				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
-			).start(ctx)
+			).withShardNum(manager.shardNum).start(ctx)
 		}
 	}
 	manager.processorList = append(manager.processorList, processorList...)

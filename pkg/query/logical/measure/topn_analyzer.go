@@ -32,8 +32,10 @@ import (
 )
 
 // TopNAnalyze converts logical expressions to executable operation tree represented by Plan.
-func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*databasev1.Measure, topNAggSchemaList []*databasev1.TopNAggregation,
-	ecc []executor.MeasureExecutionContext,
+// A positive partialLimit asks for the per-shard partial aggregates of a data node instead of final values,
+// see topNAggregate; it only applies when the criteria carry an aggregation function.
+func TopNAnalyze(criteria *measurev1.TopNRequest, partialLimit int32, sourceMeasureSchemaList []*databasev1.Measure,
+	topNAggSchemaList []*databasev1.TopNAggregation, ecc []executor.MeasureExecutionContext,
 ) (logical.Plan, error) {
 	// Ensure input slices have identical lengths
 	if len(sourceMeasureSchemaList) != len(topNAggSchemaList) || len(sourceMeasureSchemaList) != len(ecc) {
@@ -90,13 +92,27 @@ func TopNAnalyze(criteria *measurev1.TopNRequest, sourceMeasureSchemaList []*dat
 		}
 	}
 
+	aggFunc := criteria.GetAgg()
+	aggregate := aggFunc != modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
+	// An aggregation must see every stored value of an item. When the storage merges several rows of one
+	// window (a window is flushed more than once, and every liaison writes its own), it keeps only the best
+	// Number entries of the merged list, so the trim is lifted to the largest list the TopN value decoder
+	// accepts; with N it would drop items of every window before they are aggregated.
+	scanNumber := criteria.GetTopN()
+	if aggregate {
+		scanNumber = measure.MaxTopNValuesCount
+	}
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
-		plan = buildTopNPlan[float64](criteria, timeRange, topNAggSchemaList, ecc)
+		plan = buildTopNPlan[float64](criteria, timeRange, topNAggSchemaList, ecc, scanNumber)
 	} else {
-		plan = buildTopNPlan[int64](criteria, timeRange, topNAggSchemaList, ecc)
+		plan = buildTopNPlan[int64](criteria, timeRange, topNAggSchemaList, ecc, scanNumber)
 	}
 
-	plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName, fieldType)
+	if aggregate {
+		plan = topNAggregate(plan, criteria.GetTopN(), partialLimit, criteria.GetFieldValueSort(), aggFunc, topNAggSchema.FieldName, fieldType)
+	} else {
+		plan = topNDistinct(plan, criteria.GetTopN(), criteria.GetFieldValueSort(), topNAggSchema.FieldName, fieldType)
+	}
 
 	p, err := plan.Analyze(s)
 	if err != nil {
@@ -158,7 +174,7 @@ func buildVirtualSchema(sourceMeasureSchema *databasev1.Measure, fieldName strin
 }
 
 func buildTopNPlan[K streaming.TopSortKey](criteria *measurev1.TopNRequest, timeRange *modelv1.TimeRange,
-	topNAggSchemaList []*databasev1.TopNAggregation, ecc []executor.MeasureExecutionContext,
+	topNAggSchemaList []*databasev1.TopNAggregation, ecc []executor.MeasureExecutionContext, number int32,
 ) logical.UnresolvedPlan {
 	if len(topNAggSchemaList) == 1 {
 		return &unresolvedLocalScan[K]{
@@ -169,7 +185,7 @@ func buildTopNPlan[K streaming.TopSortKey](criteria *measurev1.TopNRequest, time
 			sort:        criteria.FieldValueSort,
 			groupByTags: topNAggSchemaList[0].GetGroupByTagNames(),
 			ec:          ecc[0],
-			number:      criteria.GetTopN(),
+			number:      number,
 		}
 	}
 	subPlans := make([]*unresolvedLocalScan[K], 0, len(topNAggSchemaList))
@@ -182,7 +198,7 @@ func buildTopNPlan[K streaming.TopSortKey](criteria *measurev1.TopNRequest, time
 			sort:        criteria.FieldValueSort,
 			groupByTags: topNAggSchemaList[i].GetGroupByTagNames(),
 			ec:          ecc[i],
-			number:      criteria.GetTopN(),
+			number:      number,
 		})
 	}
 	return &unresolvedTopNMerger[K]{subPlans: subPlans}

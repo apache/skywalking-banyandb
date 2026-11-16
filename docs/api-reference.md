@@ -57,6 +57,10 @@
     - [QueryResponse.GroupStatusesEntry](#banyandb-measure-v1-QueryResponse-GroupStatusesEntry)
   
 - [banyandb/measure/v1/topn.proto](#banyandb_measure_v1_topn-proto)
+    - [InternalTopNPartial](#banyandb-measure-v1-InternalTopNPartial)
+    - [InternalTopNRequest](#banyandb-measure-v1-InternalTopNRequest)
+    - [InternalTopNResponse](#banyandb-measure-v1-InternalTopNResponse)
+    - [InternalTopNShard](#banyandb-measure-v1-InternalTopNShard)
     - [TopNList](#banyandb-measure-v1-TopNList)
     - [TopNList.Item](#banyandb-measure-v1-TopNList-Item)
     - [TopNRequest](#banyandb-measure-v1-TopNRequest)
@@ -1358,6 +1362,71 @@ QueryResponse is the response for a query to the Query module.
 <p align="right"><a href="#top">Top</a></p>
 
 ## banyandb/measure/v1/topn.proto
+
+
+
+<a name="banyandb-measure-v1-InternalTopNPartial"></a>
+
+### InternalTopNPartial
+InternalTopNPartial is the partial aggregate of one item over the windows a shard holds in the time range.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| entity | [banyandb.model.v1.Tag](#banyandb-model-v1-Tag) | repeated | entity identifies the item. |
+| partial | [banyandb.model.v1.FieldValue](#banyandb-model-v1-FieldValue) | repeated | partial is the partial aggregate: the sum and then the count for MEAN, the sum for SUM, the count for COUNT, the maximum for MAX and the minimum for MIN. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalTopNRequest"></a>
+
+### InternalTopNRequest
+InternalTopNRequest is the request a liaison sends to the data nodes for a distributed TopN query
+with an aggregation function. It is internal to a cluster.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| request | [TopNRequest](#banyandb-measure-v1-TopNRequest) |  | request is the client&#39;s request. Its agg is the function the partial aggregates are computed for. |
+| partial_limit | [int32](#int32) |  | partial_limit is how many items a data node returns for each shard, ranked by the aggregate of the windows that shard holds. |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalTopNResponse"></a>
+
+### InternalTopNResponse
+InternalTopNResponse is a data node&#39;s answer to an InternalTopNRequest.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shards | [InternalTopNShard](#banyandb-measure-v1-InternalTopNShard) | repeated | shards contains one answer per shard the data node holds. |
+| trace | [banyandb.common.v1.Trace](#banyandb-common-v1-Trace) |  | trace contains the trace information of the query when trace is enabled |
+
+
+
+
+
+
+<a name="banyandb-measure-v1-InternalTopNShard"></a>
+
+### InternalTopNShard
+InternalTopNShard is the answer of one shard of a data node.
+
+
+| Field | Type | Label | Description |
+| ----- | ---- | ----- | ----------- |
+| shard_id | [uint32](#uint32) |  | shard_id is the shard the partial aggregates were computed from. |
+| partials | [InternalTopNPartial](#banyandb-measure-v1-InternalTopNPartial) | repeated | partials are the shard&#39;s best items, ranked by their aggregate over the shard&#39;s windows. |
+
+
+
 
 
 
