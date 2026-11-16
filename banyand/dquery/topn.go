@@ -240,31 +240,38 @@ func (tt topNTarget) nodeSelectors() map[string][]string {
 
 // partialLimit decides how many items each shard returns.
 //
-// With one target, the query reads one lifecycle stage of one group, where all the windows of a TopN group are
-// stored on one shard (the TopN processor stores each result row on the shard of its own series). A shard's
-// aggregate of an item of that TopN group is then complete, and its local top N contains every item of the
+// A query aggregates within one TopN group. When it reads one lifecycle stage of one group and one TopN group
+// (its conditions pin the value of every group-by tag, or the TopN has no group-by tags), all the windows of
+// that TopN group are stored on one shard (the TopN processor stores each result row on the shard of its own
+// series). A shard's aggregate of an item is then complete, and its local top N contains every item of the
 // global top N that it holds, so N is enough and the answer is exact.
 //
-// With several targets (lifecycle stages, or groups), the windows of a TopN group are spread over one shard per
-// target and each shard only aggregates a part of them: an item can rank below N on every shard and still belong
-// to the global top N. Each shard then returns its best K items, "more than the request asks": K is the counters
-// number of the TopN aggregation (the size of the list the TopN keeps for every window), and at least N. Every
-// window keeps at most K items of a TopN group, so a shard returns all of them unless the items of the group
-// change over the range; the merged result is exact then, and approximate otherwise, which is consistent with
-// the pre-built TopN being approximate itself.
+// Otherwise the windows of an item are spread over several shards and each shard only aggregates a part of
+// them: over one shard per target when the query spans lifecycle stages or groups, and over the shards of the
+// TopN groups the item is reported under when the query reads every group-by value. An item can then rank below
+// N on every shard and still belong to the global top N. Each shard returns its best K items, "more than the
+// request asks": K is the counters number of the TopN aggregation (the size of the list the TopN keeps for
+// every window), and at least N. Every window keeps at most K items of a TopN group, so a shard returns all of
+// them unless the items change over the range; the merged result is exact then, and approximate otherwise,
+// which is consistent with the pre-built TopN being approximate itself.
 func (t *topNQueryProcessor) partialLimit(ctx context.Context, request *measurev1.TopNRequest, targets int) (int32, error) {
-	limit := request.GetTopN()
-	if targets <= 1 {
-		return limit, nil
-	}
+	topN := request.GetTopN()
+	limit := topN
+	spread := targets > 1
 	for _, g := range request.GetGroups() {
 		topNAgg, err := t.metaService.TopNAggregationRegistry().GetTopNAggregation(ctx, &commonv1.Metadata{Group: g, Name: request.GetName()})
 		if err != nil {
 			return 0, fmt.Errorf("failed to get topN aggregation %s/%s: %w", g, request.GetName(), err)
 		}
+		if len(request.GetConditions()) == 0 && len(topNAgg.GetGroupByTagNames()) > 0 {
+			spread = true
+		}
 		if counters := topNAgg.GetCountersNumber(); counters > limit {
 			limit = counters
 		}
+	}
+	if !spread {
+		return topN, nil
 	}
 	return limit, nil
 }

@@ -218,6 +218,20 @@ func TestTopNPartialLimit(t *testing.T) {
 	limit, err = p.partialLimit(context.Background(), &measurev1.TopNRequest{Groups: []string{"h"}, Name: "n", TopN: 10}, 2)
 	require.NoError(t, err)
 	assert.EqualValues(t, 10, limit, "never less than N")
+
+	grouped := &topNQueryProcessor{queryService: &queryService{metaService: topNRuleRepo(t, []string{"http.uri"}, 1000)}}
+	limit, err = grouped.partialLimit(context.Background(), &measurev1.TopNRequest{Groups: []string{"g"}, Name: "n", TopN: 10}, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, limit, "a query reading every group-by value returns the counters number of the TopN")
+	pinned := &measurev1.TopNRequest{Groups: []string{"g"}, Name: "n", TopN: 10, Conditions: []*modelv1.Condition{{
+		Name: "http.uri", Op: modelv1.Condition_BINARY_OP_EQ, Value: pbv1.EntityStrValue("/home"),
+	}}}
+	limit, err = grouped.partialLimit(context.Background(), pinned, 1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 10, limit, "a query pinning one group-by value in one stage returns the local top N")
+	limit, err = grouped.partialLimit(context.Background(), pinned, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1000, limit, "a query pinning one group-by value but spanning stages returns the counters number")
 }
 
 // windowValue is one item's value in a stored TopN window.
@@ -382,4 +396,38 @@ func TestDistributedTopNAggregatesAcrossStages(t *testing.T) {
 		[]bus.Future{answerAsDataNode(t, hot, meanAgg, desc, 3)},
 		[]bus.Future{answerAsDataNode(t, warm, meanAgg, desc, 3)})
 	assert.Equal(t, []rankedItem{{"b", 60}, {"c", 60}, {"a", 33}}, mean, "the mean of a is 100/3 over its three windows")
+}
+
+// TestDistributedTopNOneTargetEntityUnderTwoGroupByValues queries one group in one stage, one target. The TopN
+// groups by a tag outside the entity, so entity a is reported under two group-by values, whose result series are
+// stored on shard 0 and shard 1. The query has no condition, so it reads every group-by value and must aggregate
+// every value of a: 60 + 60 = 120.
+func TestDistributedTopNOneTargetEntityUnderTwoGroupByValues(t *testing.T) {
+	const topN = 1
+	p := &topNQueryProcessor{queryService: &queryService{metaService: topNRuleRepo(t, []string{"http.uri"}, 1000)}}
+	limit, err := p.partialLimit(context.Background(),
+		&measurev1.TopNRequest{Groups: []string{"g"}, Name: "n", TopN: topN}, len(topNTargets([]string{"g"}, nil)))
+	require.NoError(t, err)
+
+	shard0 := []storedWindow{{minute: 1, shardID: 0, values: []windowValue{{"b", 100}, {"a", 60}}}}
+	shard1 := []storedWindow{{minute: 1, shardID: 1, values: []windowValue{{"c", 100}, {"a", 60}}}}
+	got := merge(t, topN, desc, sumAgg, []bus.Future{
+		answerAsDataNode(t, shard0, sumAgg, desc, limit),
+		answerAsDataNode(t, shard1, sumAgg, desc, limit),
+	})
+	assert.Equal(t, []rankedItem{{"a", 120}}, got, "SUM of a over all its windows is 120, above b and c (100)")
+}
+
+// topNRuleRepo serves, for every group, a TopN rule with the given group-by tags and counters number.
+func topNRuleRepo(t *testing.T, groupByTagNames []string, countersNumber int32) metadata.Repo {
+	t.Helper()
+	ctrl := gomock.NewController(t)
+	registry := schema.NewMockTopNAggregation(ctrl)
+	registry.EXPECT().GetTopNAggregation(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, md *commonv1.Metadata) (*databasev1.TopNAggregation, error) {
+			return &databasev1.TopNAggregation{Metadata: md, GroupByTagNames: groupByTagNames, CountersNumber: countersNumber}, nil
+		}).AnyTimes()
+	repo := metadata.NewMockRepo(ctrl)
+	repo.EXPECT().TopNAggregationRegistry().Return(registry).AnyTimes()
+	return repo
 }
