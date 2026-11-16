@@ -39,6 +39,17 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
+const (
+	mean  = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN
+	sum   = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
+	maxFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX
+	minFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN
+	count = modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
+	none  = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
+	desc  = modelv1.Sort_SORT_DESC
+	asc   = modelv1.Sort_SORT_ASC
+)
+
 type entityValue struct {
 	entity string
 	value  int64
@@ -206,16 +217,6 @@ func TestTopNAggregateOpAggregatesEveryWindow(t *testing.T) {
 		{{"svc_2", 50}},
 		{{"svc_3", 180}},
 	}
-	const (
-		mean  = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN
-		sum   = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
-		maxFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX
-		minFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN
-		count = modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
-		none  = modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED
-		desc  = modelv1.Sort_SORT_DESC
-		asc   = modelv1.Sort_SORT_ASC
-	)
 	tests := []struct {
 		name    string
 		windows [][]entityValue
@@ -272,15 +273,6 @@ func runTopNPartials(t *testing.T, ec *fakeTopNContext, agg modelv1.AggregationF
 }
 
 func TestTopNAggregateOpAnswersPartialsPerShard(t *testing.T) {
-	const (
-		mean  = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MEAN
-		sum   = modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM
-		maxFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MAX
-		minFn = modelv1.AggregationFunction_AGGREGATION_FUNCTION_MIN
-		count = modelv1.AggregationFunction_AGGREGATION_FUNCTION_COUNT
-		desc  = modelv1.Sort_SORT_DESC
-		asc   = modelv1.Sort_SORT_ASC
-	)
 	// The issue's windows on shard 3, and two windows of other items on shard 1.
 	ec := func() *fakeTopNContext {
 		return &fakeTopNContext{
@@ -336,16 +328,7 @@ func TestTopNAggregateOpFinalAnswerMergesShards(t *testing.T) {
 }
 
 func TestTopNAggregateOpReleasesTheScanOnError(t *testing.T) {
-	source := &databasev1.Measure{
-		Metadata: &commonv1.Metadata{Name: "source", Group: "g"},
-		Entity:   &databasev1.Entity{TagNames: []string{"entity"}},
-		TagFamilies: []*databasev1.TagFamilySpec{{
-			Name: "default",
-			Tags: []*databasev1.TagSpec{{Name: "entity", Type: databasev1.TagType_TAG_TYPE_STRING}},
-		}},
-		Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
-	}
-	rule := &databasev1.TopNAggregation{FieldName: "value", GroupByTagNames: []string{"entity"}}
+	source, rule := topNTestSchemas()
 	// An unknown aggregation function fails while the first entity is registered, in the middle of the scan.
 	request := &measurev1.TopNRequest{
 		Name: "rule", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC,
@@ -360,16 +343,7 @@ func TestTopNAggregateOpReleasesTheScanOnError(t *testing.T) {
 }
 
 func TestTopNAggregateOpQueryError(t *testing.T) {
-	source := &databasev1.Measure{
-		Metadata: &commonv1.Metadata{Name: "source", Group: "g"},
-		Entity:   &databasev1.Entity{TagNames: []string{"entity"}},
-		TagFamilies: []*databasev1.TagFamilySpec{{
-			Name: "default",
-			Tags: []*databasev1.TagSpec{{Name: "entity", Type: databasev1.TagType_TAG_TYPE_STRING}},
-		}},
-		Fields: []*databasev1.FieldSpec{{Name: "value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
-	}
-	rule := &databasev1.TopNAggregation{FieldName: "value", GroupByTagNames: []string{"entity"}}
+	source, rule := topNTestSchemas()
 	request := &measurev1.TopNRequest{
 		Name: "rule", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC,
 		Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
