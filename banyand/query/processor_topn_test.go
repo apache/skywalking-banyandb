@@ -68,7 +68,10 @@ func TestToTopNResponseAggregateStampsTheList(t *testing.T) {
 func TestTopNProcessorRejectsAnInvalidInternalRequest(t *testing.T) {
 	p := &topNQueryProcessor{queryService: &queryService{log: logger.GetLogger("topn-test")}}
 	for name, request := range map[string]*measurev1.TopNRequest{
-		"several groups":          {Groups: []string{"g", "h"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC, Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		"several groups": {
+			Groups: []string{"g", "h"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC,
+			Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		},
 		"no aggregation function": {Groups: []string{"g"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC},
 	} {
 		t.Run(name, func(t *testing.T) {
