@@ -394,6 +394,7 @@ func runTraceOffGridCase(t *testing.T, ir storage.IntervalRule) {
 		schemaRepo: newTestSchemaRepo(db, groupName),
 	}
 	handler, err := callback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		PartType:     PartTypeCore,
 		ID:           1,
 		Group:        groupName,
 		ShardID:      0,
@@ -437,6 +438,7 @@ func TestSegmentCreateTS_ConsistencyAcrossPaths(t *testing.T) {
 
 	chunkCallback := &syncChunkCallback{l: logger.GetLogger("test-trace-pathA"), schemaRepo: repo}
 	handlerA, err := chunkCallback.CreatePartHandler(&queue.ChunkedSyncPartContext{
+		PartType:     PartTypeCore,
 		ID:           1,
 		Group:        groupName,
 		ShardID:      0,

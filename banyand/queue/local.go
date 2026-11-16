@@ -47,6 +47,7 @@ type local struct {
 	exportServer    transferv1.ExportServiceServer
 	stopCh          chan struct{}
 	streamListeners map[bus.Topic]bus.StreamListener
+	chunkedSync     localChunkedSync
 	streamMu        sync.RWMutex
 }
 
@@ -314,7 +315,15 @@ func (l *localBatchPublisher) Close() (map[string]*common.Error, error) {
 	return nil, nil
 }
 
-func (l *local) RegisterChunkedSyncHandler(_ bus.Topic, _ ChunkedSyncHandler) {
+// RegisterChunkedSyncHandler keeps the handler for the in-process relay client.
+func (l *local) RegisterChunkedSyncHandler(topic bus.Topic, handler ChunkedSyncHandler) {
+	l.chunkedSync.register(topic, handler)
+}
+
+// NewChunkedSyncRelayClient returns the in-process ChunkedSyncService of this process,
+// whatever the node name: a standalone process is its own only data node.
+func (l *local) NewChunkedSyncRelayClient(_ string) (clusterv1.ChunkedSyncServiceClient, error) {
+	return localSyncRelayClient{sync: &l.chunkedSync}, nil
 }
 
 func (l *local) NewChunkedSyncClient(node string, _ uint32) (ChunkedSyncClient, error) {

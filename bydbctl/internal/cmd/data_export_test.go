@@ -222,8 +222,8 @@ var _ = Describe("Data Export Dry Run", func() {
 			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
 			Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 		}
-		_, _, err := run("data", "export", "--format=native", "--output", filepath.Join(dataDir, "out"), "--nodes", grpcAddr)
-		Expect(err).To(MatchError(ContainSubstring("native export format is not implemented yet")))
+		_, _, err := run("data", "export", "--format=native", "--compress=gzip", "--output", filepath.Join(dataDir, "out"), "--nodes", grpcAddr)
+		Expect(err).To(MatchError(ContainSubstring("a native export is not compressed")))
 		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
 		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage))
 	})

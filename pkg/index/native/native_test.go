@@ -162,6 +162,46 @@ func TestReadOnlyGenerationVisibleDocCountNilSafe(t *testing.T) {
 	require.Zero(t, count)
 }
 
+func TestReadOnlyGenerationTimeBounds(t *testing.T) {
+	const base = int64(1_700_000_000_000_000_000)
+	path := t.TempDir()
+	owner, err := NewOwner(OwnerOptions{Lease: pathBoundLease{expected: path}, Path: path})
+	require.NoError(t, err)
+	// Two batches, so the bounds span more than one segment; a document without a
+	// timestamp does not widen them.
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("a"), Timestamp: base + 500},
+		{Identifier: []byte("b"), Timestamp: base + 100},
+	}}))
+	require.NoError(t, owner.Batch(context.Background(), Batch{Documents: []Document{
+		{Identifier: []byte("c"), Timestamp: base + 900},
+		{Identifier: []byte("undated")},
+	}}))
+	require.NoError(t, owner.Close())
+
+	generation, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, generation.Close()) }()
+	lo, hi, ok := generation.TimeBounds()
+	require.True(t, ok)
+	require.Equal(t, base+100, lo)
+	require.Equal(t, base+900, hi)
+}
+
+func TestReadOnlyGenerationTimeBoundsWithoutTimestamps(t *testing.T) {
+	path := t.TempDir()
+	require.NoError(t, nativeice.Encode(path, nativeice.Generation{Documents: []nativeice.EncodeDocument{{Identifier: []byte("a")}}}))
+	generation, err := OpenReadOnlyGeneration(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, generation.Close()) }()
+	_, _, ok := generation.TimeBounds()
+	require.False(t, ok)
+
+	var nilGeneration *ReadOnlyGeneration
+	_, _, ok = nilGeneration.TimeBounds()
+	require.False(t, ok)
+}
+
 func TestDecodeTimestampRoundTripsNativeICEEncoding(t *testing.T) {
 	const want = int64(1700000000123456789)
 	// DecodeTimestamp must pair with EncodePrefixCodedInt64, the same
@@ -224,6 +264,22 @@ func TestReadOnlyGenerationReferencedFiles(t *testing.T) {
 	defer func() { require.NoError(t, reader.Close()) }()
 
 	require.ElementsMatch(t, []string{"000000000003.seg", "000000000007.snp"}, reader.ReferencedFiles())
+}
+
+func TestNewestGenerationFilesMatchesReferencedFiles(t *testing.T) {
+	path := t.TempDir()
+	_, err := NewestGenerationFiles(path)
+	require.ErrorIs(t, err, ErrNoSnapshot)
+	require.NoError(t, nativeice.Encode(path, nativeice.Generation{
+		SnapshotID: 7, SegmentID: 3,
+		Documents: []nativeice.EncodeDocument{{Identifier: []byte("a")}},
+	}))
+	reader, err := OpenReadOnlyGenerationStrict(path)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, reader.Close()) }()
+	files, err := NewestGenerationFiles(path)
+	require.NoError(t, err)
+	require.ElementsMatch(t, reader.ReferencedFiles(), files)
 }
 
 func TestReadOnlyGenerationReferencedFilesNilSafe(t *testing.T) {

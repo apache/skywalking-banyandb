@@ -29,6 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/output"
 )
 
@@ -64,13 +65,25 @@ func renderTable(out io.Writer, p *Plan) error {
 	rows := tableRows(p)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "CATALOG\tGROUP\tSTAGE\tUNITS\tSOURCES\tROWS\tSCHEMA\tCHANNEL\tTARGET-NODES\tSTATUS\tTIME-RANGE(UTC)")
+	rewritten := rewrittenGroups(p.Schema)
+	afterSchema := false
 	for _, r := range rows {
+		targets := joinSet(r.targets)
+		if len(r.targets) == 0 && !h.Standalone && rewritten[r.group] {
+			// The liaison routes a group by its stored schema, which the import writes first.
+			targets, afterSchema = "after-schema", true
+		}
 		channel := "row replay"
-		if r.catalog == "property" {
+		switch {
+		case h.Format == manifest.FormatNative && r.catalog == "property":
+			channel = "property/parts"
+		case h.Format == manifest.FormatNative:
+			channel = "part-push"
+		case r.catalog == "property":
 			channel = "property/repair"
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", r.catalog, r.group, stageLabel(r.stage), len(r.units), len(r.nodes),
-			output.HumanCount(r.rows), groupDisposition(p.Schema, r.group), channel, joinSet(r.targets), r.gate(), output.TimeRange(r.lo, r.hi))
+			output.HumanCount(r.rows), groupDisposition(p.Schema, r.group), channel, targets, r.gate(), output.TimeRange(r.lo, r.hi))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -98,6 +111,10 @@ func renderTable(out io.Writer, p *Plan) error {
 	}
 	renderSchema(w, p)
 	renderProblems(w, p)
+	if afterSchema {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
+	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "RESULT    %s\n", result(p))
 	return w.Flush()
@@ -286,14 +303,11 @@ func refusalReasons(p *Plan) string {
 	why = append(why, p.Errors...)
 	if !p.SchemaOnly {
 		why = append(why, p.Blockers...)
-		if p.rejectedBy(GateRoute) {
-			why = append(why, "a target route cannot be written to")
-		}
-		if p.rejectedBy(GateRows) {
-			why = append(why, "rows fail the row check")
-		}
-		if p.rejectedBy(GateCoverage) {
-			why = append(why, "--strict-coverage refuses multi-source units")
+		for _, g := range refusingGates {
+			if !p.rejectedBy(g.gate) {
+				continue
+			}
+			why = append(why, g.why)
 		}
 	}
 	if len(why) == 0 {
@@ -325,7 +339,7 @@ func tableRows(p *Plan) []*tableRow {
 		for _, s := range item.Sources {
 			r.nodes[s.Node] = struct{}{}
 		}
-		lo, hi := item.TimeRange()
+		lo, hi := item.DisplayRange()
 		transfer.MergeRange(&r.lo, &r.hi, lo, hi)
 		r.rows += item.Rows()
 		for _, n := range targets {
@@ -341,11 +355,10 @@ func tableRows(p *Plan) []*tableRow {
 	for i := range p.Rejected {
 		rej := &p.Rejected[i]
 		r := add(&rej.Item, rej.TargetStage, rej.TargetNodes)
-		switch rej.Gate {
-		case GateSchema, GateRoute, GateRows, GateCoverage:
-			r.blocked = true
-		case GateTTL:
+		if rej.Gate == GateTTL {
 			r.ttl = true
+		} else {
+			r.blocked = true
 		}
 	}
 	slices.SortFunc(rows, func(a, b *tableRow) int { return strings.Compare(a.key, b.key) })

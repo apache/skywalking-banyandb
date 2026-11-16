@@ -20,6 +20,7 @@ package rowdiff
 import (
 	"encoding/base64"
 	"fmt"
+	"hash/crc32"
 	"maps"
 	"os"
 	"path"
@@ -218,7 +219,7 @@ func writeArtifact(t *testing.T, spec artifactSpec) string {
 		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		m.SchemaFiles = append(m.SchemaFiles, manifest.File{Path: rel, Bytes: uint64(len(content))})
+		m.SchemaFiles = append(m.SchemaFiles, manifest.File{Path: rel, Bytes: uint64(len(content)), CRC32: manifest.FormatCRC32(crc32.ChecksumIEEE([]byte(content)))})
 	}
 	groups := map[string]bool{}
 	for ui, u := range spec.units {
@@ -633,5 +634,17 @@ func TestTopNResultCopiesAreMerged(t *testing.T) {
 	expectKinds(t, rep, KindValueMismatch)
 	if d := rep.Diffs[0].Detail; !strings.Contains(d, `_field.value: A="a=5,b=5,c=5" B="b=5,c=5"`) {
 		t.Fatalf("detail = %s", d)
+	}
+}
+
+func TestNativeArtifactIsRefused(t *testing.T) {
+	dir := t.TempDir()
+	m := &manifest.Manifest{Format: manifest.FormatNative, ArtifactVersion: 1, ExportedAt: "2026-10-19T08:00:00Z"}
+	if err := manifest.Write(filepath.Join(dir, manifest.FileName), m); err != nil {
+		t.Fatal(err)
+	}
+	csvDir := writeArtifact(t, artifactSpec{schemas: allSchemas(), units: baseUnits()})
+	if _, err := Compare(csvDir, dir, Options{}); err == nil || !strings.Contains(err.Error(), "rowdiff compares CSV artifacts") {
+		t.Fatalf("Compare() error = %v, want the native artifact refused", err)
 	}
 }

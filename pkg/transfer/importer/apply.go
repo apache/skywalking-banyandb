@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -53,12 +54,25 @@ var barrierKinds = map[string]string{
 // answered, plus the _top_n_result of every measure group it creates when the artifact has
 // one in that group (the target creates it asynchronously). A resource created by someone
 // else since the comparison makes Create fail with ALREADY_EXISTS; that and every other
-// failure is a runtime error (exit 3): earlier resources stay written.
-func WriteSchema(ctx context.Context, conn *grpc.ClientConn, writes []SchemaAction, art *Schemas) (*schemav1.AwaitSchemaAppliedRequest, error) {
+// failure is a runtime error (exit 3): earlier resources stay written. With keepIndexRuleIDs,
+// an index rule is created with the artifact's id instead of one the target assigns: native
+// index files key their stored fields by the rule id.
+func WriteSchema(ctx context.Context, conn *grpc.ClientConn, writes []SchemaAction, art *Schemas,
+	keepIndexRuleIDs bool,
+) (*schemav1.AwaitSchemaAppliedRequest, error) {
 	req := &schemav1.AwaitSchemaAppliedRequest{}
 	for i := range writes {
 		w := &writes[i]
 		create := w.Disposition == DispositionCreate
+		if rule, isRule := w.Spec.(*databasev1.IndexRule); isRule && create && keepIndexRuleIDs {
+			if src := art.IndexRules[ResourceKey{Group: w.Group, Name: w.Name}]; src.GetMetadata().GetId() != 0 {
+				kept := *w
+				spec := proto.Clone(rule).(*databasev1.IndexRule)
+				spec.Metadata.Id = src.GetMetadata().GetId()
+				kept.Spec = spec
+				w = &kept
+			}
+		}
 		rev, err := writeOne(ctx, conn, w)
 		if err != nil {
 			verb := "update"

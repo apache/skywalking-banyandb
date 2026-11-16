@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"iter"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +33,20 @@ const ArtifactVersion = 1
 
 // FileName is the manifest file name at the artifact root.
 const FileName = "manifest.json"
+
+// The artifact formats, as Manifest.Format spells them.
+const (
+	// FormatCSV is an artifact of logical rows in CSV files.
+	FormatCSV = "csv"
+	// FormatNative is an artifact of engine files packed into .bnc containers.
+	FormatNative = "native"
+)
+
+// The file compressions, as Manifest.Compress spells them.
+const (
+	CompressNone = "none"
+	CompressGzip = "gzip"
+)
 
 // Manifest is the content of manifest.json.
 type Manifest struct {
@@ -62,7 +77,8 @@ type Node struct {
 	Timezone string `json:"timezone"`
 }
 
-// Group describes an exported group.
+// Group describes an exported group. Stages[0] is always the group's own opts, named hot; the
+// lifecycle stages follow in order, and one of them may also be named hot.
 type Group struct {
 	Name      string  `json:"name"`
 	Catalog   string  `json:"catalog"`
@@ -93,6 +109,8 @@ type Unit struct {
 
 // UnitSource is the contribution of one source node to a unit. RowCounts and TotalCount count
 // the rows of SegmentFiles; the rows of a shard's files are counted on the shard.
+// For a native artifact, TotalCount is the document count of an index-mode series index from
+// the Plan (0 for a group without index-mode measures), an upper bound of its rows.
 type UnitSource struct {
 	RowCounts    map[string]uint64 `json:"rowCounts,omitempty"`
 	Node         string            `json:"node"`
@@ -101,7 +119,9 @@ type UnitSource struct {
 	TotalCount   uint64            `json:"totalCount,omitempty"`
 }
 
-// Shard is the contribution of one source node to one shard of a unit.
+// Shard is the contribution of one source node to one shard of a unit. For a native artifact,
+// TotalCount is the Plan's aggregate total count of the shard (ShardStat.total_count), or the
+// document count of a property shard, which includes superseded versions and tombstones.
 type Shard struct {
 	RowCounts                  map[string]uint64 `json:"rowCounts"`
 	Parts                      []Part            `json:"parts"`
@@ -123,12 +143,32 @@ type Part struct {
 	TotalCount   uint64 `json:"totalCount"`
 }
 
-// File registers one artifact file. Path is relative to the artifact root.
+// File registers one artifact file. Path is relative to the artifact root. EntryCount is
+// required (above 0) for a .bnc volume and omitted for plain and CSV files.
 type File struct {
 	Path       string `json:"path"`
 	CRC32      string `json:"crc32"`
 	Bytes      uint64 `json:"bytes"`
 	EntryCount uint32 `json:"entryCount,omitempty"`
+}
+
+// FileSets yields the data file sets of the manifest: the segment files of every unit source,
+// then the files of each of its shards.
+func (m *Manifest) FileSets() iter.Seq[[]File] {
+	return func(yield func([]File) bool) {
+		for _, u := range m.Units {
+			for _, src := range u.Sources {
+				if !yield(src.SegmentFiles) {
+					return
+				}
+				for _, sh := range src.Shards {
+					if !yield(sh.Files) {
+						return
+					}
+				}
+			}
+		}
+	}
 }
 
 // nodeDirPrefixLen bounds the readable prefix of a node directory name.

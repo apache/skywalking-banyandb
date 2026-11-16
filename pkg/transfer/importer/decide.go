@@ -59,8 +59,11 @@ type Inputs struct {
 	Target *TargetState
 	// Endpoint names the liaison for the header, e.g. "liaison-dst:17912 (ROLE_LIAISON)".
 	Endpoint string
-	Actions  []SchemaAction
-	Flags    Flags
+	// TargetIndexRuleIDs are the ids of the index rules the target holds before the schema
+	// write; a native import needs the artifact's ids.
+	TargetIndexRuleIDs map[ResourceKey]uint32
+	Actions            []SchemaAction
+	Flags              Flags
 }
 
 // Header describes the target and the artifact.
@@ -124,6 +127,8 @@ type MultiSourceDecision struct {
 
 // Plan is the decision of an import: what is pushed where, what is refused and why.
 type Plan struct {
+	// nativeCache holds what the native gates derived per group during Decide.
+	nativeCache *nativeDecision
 	Entries     []Entry               `json:"entries"`
 	Rejected    []Rejection           `json:"rejected"`
 	MultiSource []MultiSourceDecision `json:"multiSource"`
@@ -148,9 +153,23 @@ func (p *Plan) SchemaBlocked() bool {
 	return slices.ContainsFunc(p.Schema, func(a SchemaAction) bool { return a.Disposition.Blocking() })
 }
 
+// refusingGate is a gate whose any rejection refuses the import; why explains it in a refusal.
+type refusingGate struct{ gate, why string }
+
+// refusingGates are the refusing gates in the order a refusal explains them.
+var refusingGates = []refusingGate{
+	{GateRoute, "a target route cannot be written to"},
+	{GateRows, "rows fail the row check"},
+	{GateCoverage, "--strict-coverage refuses multi-source units"},
+	{GateTopology, "native parts fail the " + GateTopology + " gate"},
+	{GateTimezone, "native parts fail the " + GateTimezone + " gate"},
+	{GateVersion, "native parts fail the " + GateVersion + " gate"},
+	{GateIndexRule, "native parts fail the " + GateIndexRule + " gate"},
+}
+
 // Refused reports whether the import must stop before writing anything: a blocking schema
 // action, an artifact error, or, unless only the schema is imported, a target blocker, a
-// --strict-coverage, route or rows rejection, or every work item rejected.
+// rejection by one of the refusingGates, or every work item rejected.
 func (p *Plan) Refused() bool {
 	if p.SchemaBlocked() || len(p.Errors) > 0 {
 		return true
@@ -158,7 +177,7 @@ func (p *Plan) Refused() bool {
 	if p.SchemaOnly {
 		return false
 	}
-	if len(p.Blockers) > 0 || p.rejectedBy(GateCoverage) || p.rejectedBy(GateRoute) || p.rejectedBy(GateRows) {
+	if len(p.Blockers) > 0 || slices.ContainsFunc(refusingGates, func(g refusingGate) bool { return p.rejectedBy(g.gate) }) {
 		return true
 	}
 	return len(p.Entries) == 0 && len(p.Rejected) > 0
@@ -183,12 +202,22 @@ func Decide(in Inputs) *Plan {
 		Schema: append([]SchemaAction{}, in.Actions...), GateDetails: []string{}, Warnings: slices.Concat(in.Artifact.Warnings, in.Target.Notes),
 		Blockers: slices.Clone(in.Target.Blockers), SchemaOnly: in.Flags.SchemaOnly,
 	}
+	if in.Artifact.Native() && !in.Artifact.HasSchema() {
+		p.Warnings = append(p.Warnings, "the artifact carries no schema, so the INDEX_RULE gate cannot check that the target's index rules "+
+			"have the ids its native index files are keyed by; export with the schema to have them checked")
+	}
 	items, err := BuildWorkItems(m)
 	if err != nil {
 		p.Errors = append(p.Errors, err.Error())
 	}
-	for i := range items {
-		decideItem(in, p, &items[i])
+	// A native segment item's series index follows the core parts its unit's shard items select,
+	// so the segment items are decided after every other item.
+	for _, segments := range []bool{false, true} {
+		for i := range items {
+			if (items[i].Kind == SegmentItem) == segments {
+				decideItem(in, p, &items[i])
+			}
+		}
 	}
 	slices.SortFunc(p.Entries, func(a, b Entry) int { return compareItems(a.Item, b.Item) })
 	slices.SortFunc(p.Rejected, func(a, b Rejection) int {
@@ -237,12 +266,17 @@ func decideItem(in Inputs, p *Plan, item *WorkItem) {
 		}
 	}
 	picked := item.WithSources(chosen)
+	native := in.Artifact.Native()
+	if native && item.Kind == SegmentItem {
+		picked = restrictSegmentSources(in, p, &picked)
+	}
 	if !slices.ContainsFunc(picked.Sources, func(s WorkSource) bool { return len(s.Files) > 0 }) {
 		return
 	}
 	targetStage := mapStage(in, p, &picked)
 	copies, nodes := resolveRoute(in, p, &picked, targetStage)
 	reject := func(gate, reason string) {
+		p.recordShardSources(native, &picked)
 		p.Rejected = append(p.Rejected, Rejection{
 			Item: picked, TargetStage: targetStage, TargetNodes: nodes, Gate: gate, Reason: reason,
 		})
@@ -256,19 +290,31 @@ func decideItem(in Inputs, p *Plan, item *WorkItem) {
 		p.GateDetails = append(p.GateDetails, fmt.Sprintf("%s: the target route cannot be written to: %s", key, issue))
 		return
 	}
+	if native {
+		if gate, reason := nativeGate(in, p, &picked, targetStage, nodes); gate != "" {
+			reject(gate, reason)
+			p.GateDetails = append(p.GateDetails, fmt.Sprintf("%s: %s %s", key, gate, reason))
+			return
+		}
+		if picked.Kind == SegmentItem && picked.timeErr != nil {
+			p.Errors = append(p.Errors, fmt.Sprintf("%s: the time range of the segment-level files cannot be resolved: %v", key, picked.timeErr))
+			return
+		}
+	}
 	var ttlDetailLine string
 	if item.Catalog != commonv1.Catalog_CATALOG_PROPERTY {
-		ttlDetailLine = ttlGate(in, p, &picked, targetStage)
+		ttlDetailLine = ttlGate(in, p, &picked, targetStage, nodes)
 		if ttlDetailLine != "" && !in.Flags.ForceTTL {
 			p.GateDetails = append(p.GateDetails, ttlDetailLine)
-			reject(GateTTL, "every row is older than the target stage's retention")
+			reject(GateTTL, "the target segments of every row are past the target stage's retention")
 			return
 		}
 	}
 	// Index-mode segment items of a measure are deduplicated by version and the target keeps
 	// each property's latest revision, so only the other items can duplicate rows when several
-	// sources are pushed.
-	duplicable := item.Kind == ShardItem || (item.Kind == SegmentItem && item.Catalog != commonv1.Catalog_CATALOG_MEASURE)
+	// sources are pushed. A native segment item is the segment's series index, whose receiver
+	// keeps the first copy of each document, so it never duplicates rows.
+	duplicable := item.Kind == ShardItem || (!native && item.Kind == SegmentItem && item.Catalog != commonv1.Catalog_CATALOG_MEASURE)
 	if in.Flags.StrictCoverage && duplicable && len(picked.Sources) > 1 {
 		reason := fmt.Sprintf("%d sources would be pushed and --strict-coverage refuses multi-source units", len(picked.Sources))
 		reject(GateCoverage, reason)
@@ -280,6 +326,7 @@ func decideItem(in Inputs, p *Plan, item *WorkItem) {
 		p.GateDetails = append(p.GateDetails, ttlDetailLine)
 		p.Warnings = append(p.Warnings, key+": imported although expired (--force-ttl); the rows are invisible to queries and removed by the next retention run")
 	}
+	p.recordShardSources(native, &picked)
 	p.Entries = append(p.Entries, Entry{
 		Item: picked, TargetStage: targetStage, Copies: copies, TargetNodes: nodes, TTLExpired: expired,
 	})
@@ -340,7 +387,7 @@ func schemaRejection(actions []SchemaAction, item *WorkItem) string {
 // ttlGate returns the detail line of an item every row of which is older than now − the
 // cumulative TTL of the target stage, and "" otherwise. A standalone target matches no stage
 // and keeps the group ttl only.
-func ttlGate(in Inputs, p *Plan, item *WorkItem, targetStage string) string {
+func ttlGate(in Inputs, p *Plan, item *WorkItem, targetStage string, nodes []string) string {
 	ro := in.Target.Groups[item.Group].GetResourceOpts()
 	if ro.GetTtl() == nil {
 		return ""
@@ -359,10 +406,17 @@ func ttlGate(in Inputs, p *Plan, item *WorkItem, targetStage string) string {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("%s: TTL gate skipped: %v", item.Key(), err))
 		return ""
 	}
-	if newest == 0 || newest >= in.Now.Add(-ttl).UnixNano() {
+	if newest == 0 {
 		return ""
 	}
-	return ttlDetail(item, targetStage, newest, ttl, ttlBreakdown(ro, ttlStage), in.Flags.ForceTTL)
+	// Retention removes, and queries hide, a whole segment once its end is before the deadline;
+	// a row older than the deadline in a segment that ends after it stays visible. So the gate
+	// asks whether the target segment holding the newest row has expired.
+	end := targetSegmentEnd(time.Unix(0, newest).In(gridLocation(in, item, nodes)), stageSegmentInterval(ro, ttlStage))
+	if !end.Before(in.Now.Add(-ttl)) {
+		return ""
+	}
+	return ttlDetail(item, targetStage, newest, end, ttl, ttlBreakdown(ro, ttlStage), in.Flags.ForceTTL)
 }
 
 // newestTime is the newest row time of an item: the largest maxTimestamp of its sources'
@@ -397,12 +451,38 @@ func resolveRoute(in Inputs, p *Plan, item *WorkItem, targetStage string) (uint3
 		}
 		return replicas + 1, []string{}
 	}
-	nodes := nonNil(routeView{r: r}.nodes())
-	if uint32(len(nodes)) < r.GetCopies() {
+	v := routeView{r: r}
+	stageNodes := v.nodes()
+	if uint32(len(stageNodes)) < r.GetCopies() {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("group %s stage %s: %d copies wanted but only %d node(s) match; each row is written to every one of them",
-			item.Group, stage, r.GetCopies(), len(nodes)))
+			item.Group, stage, r.GetCopies(), len(stageNodes)))
 	}
-	return r.GetCopies(), nodes
+	nodes := stageNodes
+	if in.Artifact.Native() {
+		// An empty list means every node to the gates, so a shard the route lacks keeps the stage's nodes.
+		if payload := nativePayloadNodes(v, item); len(payload) > 0 {
+			nodes = payload
+		}
+	}
+	return r.GetCopies(), nonNil(nodes)
+}
+
+// nativePayloadNodes are the nodes the liaison relays a native item's payloads to, as its
+// payloadNodes resolves them: the nodes of the item's shard, or for a segment item's series
+// index the union of the nodes of every shard it covers, every shard when it names none.
+func nativePayloadNodes(v routeView, item *WorkItem) []string {
+	shards := []uint32{item.Shard}
+	if item.Kind == SegmentItem {
+		if len(item.Shards) == 0 {
+			return v.nodes()
+		}
+		shards = item.Shards
+	}
+	var out []string
+	for _, shard := range shards {
+		out = append(out, v.targets(shard)...)
+	}
+	return transfer.UniqueSorted(out)
 }
 
 // ComparePlans lists how b differs from a in what is pushed where and what the gates refuse;

@@ -33,8 +33,9 @@ option go_package = "github.com/apache/skywalking-banyandb/api/proto/banyandb/tr
 option java_package = "org.apache.skywalking.banyandb.transfer.v1";
 
 // ImportService is served by the liaison gRPC endpoint (17912) in both cluster and
-// standalone deployments. It replays the rows of a CSV artifact into the data nodes of a
-// target stage. Every method must be registered in GlobalMethodPolicies(), otherwise the
+// standalone deployments. It imports an artifact into the data nodes of a target stage:
+// ImportRows replays the rows of a CSV artifact, ImportParts relays the files of a native one.
+// Every method must be registered in GlobalMethodPolicies(), otherwise the
 // liaison refuses to start.
 service ImportService {
   // ImportRows replays rows of one (catalog, group, stage). The first request frame is init;
@@ -46,6 +47,15 @@ service ImportService {
   rpc ImportRows(stream ImportRowsRequest) returns (stream ImportRowsResponse);
   // Targets reports, read-only, the data nodes each shard of one (group, stage) is written to.
   rpc Targets(TargetsRequest) returns (TargetsResponse);
+  // ImportParts relays the files of one payload of a native artifact (one part with its trace
+  // secondary index parts, one segment's series index, one shard's element index, or one
+  // property shard) to every target data node of the payload's (group, stage, shard) over the
+  // chunked sync protocol. The first frame is init, then chunks, then one completion; the
+  // liaison forwards every chunk to all targets and waits for all of them before it reads the
+  // next, and answers once every target finished, reporting each target on its own. A frame
+  // over the liaison's receive size limit ends the stream with RESOURCE_EXHAUSTED and the
+  // MESSAGE_TOO_LARGE detail, which a retry cannot fix.
+  rpc ImportParts(stream ImportPartsRequest) returns (ImportPartsResponse);
 }
 
 message ImportRowsRequest {
@@ -184,4 +194,119 @@ message ImportWrite {
 message ImportWriteInit {
   // rate_limit is the import's Init.rate_limit; unset means unlimited.
   RateLimit rate_limit = 1;
+}
+
+// ImportPartsRequest is one frame of an ImportParts stream.
+message ImportPartsRequest {
+  // Kind is what one ImportParts stream carries. The liaison refuses a (catalog, kind) pair not
+  // listed below with INVALID_ARGUMENT.
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // KIND_PART is one core part, plus the trace secondary index parts sharing its id (stream,
+    // measure, trace).
+    KIND_PART = 1;
+    // KIND_SERIES_INDEX is the series index segments of one segment; it is sent to the union of
+    // the nodes of the shards in Init.shard_ids (stream, measure, trace).
+    KIND_SERIES_INDEX = 2;
+    // KIND_ELEMENT_INDEX is the element index segments of one stream shard (stream only).
+    KIND_ELEMENT_INDEX = 3;
+    // KIND_PROPERTY is the native index files of one property shard (property only).
+    KIND_PROPERTY = 4;
+  }
+  // PartInfo describes one part of a KIND_PART stream, or the time range of an index stream.
+  message PartInfo {
+    // id is the source part id. Every entry of a KIND_PART payload carries the same id, the core
+    // part's; the entries are told apart by part_type. Index and property payloads leave it 0.
+    uint64 id = 1;
+    // part_type is empty for a core part, which the liaison relays as the cluster wire's "core",
+    // and the index name for a trace secondary index part. Index payloads leave it empty.
+    string part_type = 2;
+    uint64 compressed_size_bytes = 3;
+    uint64 uncompressed_size_bytes = 4;
+    uint64 total_count = 5;
+    uint64 blocks_count = 6;
+    int64 min_timestamp = 7;
+    int64 max_timestamp = 8;
+    int64 min_key = 9;
+    int64 max_key = 10;
+  }
+  // Init opens the stream for one payload.
+  message Init {
+    common.v1.Catalog catalog = 1 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    string group = 2 [(validate.rules).string.min_len = 1];
+    // stage is the lifecycle stage of the target group; empty means "hot". Ignored for
+    // KIND_PROPERTY, whose groups have no stages.
+    string stage = 3;
+    // shard_id is the shard of a KIND_PART, KIND_ELEMENT_INDEX or KIND_PROPERTY payload; it is
+    // ignored for KIND_SERIES_INDEX.
+    uint32 shard_id = 4;
+    // shard_ids are the shards a KIND_SERIES_INDEX payload covers; its targets are the union of
+    // their nodes, and an empty list means every shard of the target stage. Ignored for other
+    // kinds.
+    repeated uint32 shard_ids = 5;
+    Kind kind = 6 [(validate.rules).enum = {
+      defined_only: true
+      not_in: [0]
+    }];
+    // segment_version is the file format version of the source segment; the data nodes refuse
+    // a version they cannot read. KIND_PROPERTY carries no segment, so it may leave this empty,
+    // and the liaison then sends its own file format version.
+    string segment_version = 7;
+    // parts lists the parts of a KIND_PART payload, core part first; an index payload carries
+    // one entry with its time range, id 0 and no part type; a KIND_PROPERTY payload carries none.
+    repeated PartInfo parts = 8 [(validate.rules).repeated.max_items = 1024];
+    // retry_nodes, when set, restricts the payload to these nodes of its targets; a node outside
+    // the targets is refused.
+    repeated string retry_nodes = 9;
+  }
+  // FileSlice is a piece of one file in a chunk; the slices of a chunk follow each other.
+  message FileSlice {
+    // name is the file name as it is on disk, such as "primary.bin" or "000000000012.seg".
+    string name = 1 [(validate.rules).string.min_len = 1];
+    uint32 size = 2;
+    // part_index indexes Init.parts.
+    uint32 part_index = 3;
+  }
+  // Chunk carries the next bytes of the payload. The liaison relays each chunk as one SyncPart
+  // frame to every target.
+  message Chunk {
+    // data is at most 4 MiB (4194304 bytes); a larger chunk is refused with INVALID_ARGUMENT. A
+    // data node's --max-recv-msg-size must exceed that plus the frame overhead.
+    bytes data = 1;
+    repeated FileSlice files = 2;
+  }
+  // Completion ends the payload. total_bytes and total_chunks must equal the bytes and chunks
+  // sent; a payload carries at least one chunk.
+  message Completion {
+    uint64 total_bytes = 1;
+    uint32 total_chunks = 2;
+  }
+  oneof frame {
+    option (validate.required) = true;
+    Init init = 1;
+    Chunk chunk = 2;
+    Completion completion = 3;
+  }
+}
+
+// ImportPartsResponse reports every target of one payload.
+message ImportPartsResponse {
+  // TargetResult is the result of one target data node.
+  message TargetResult {
+    string node = 1;
+    bool success = 2;
+    string error = 3;
+    // completion_sent tells that the completion reached this target and its failure came after
+    // it (the stream broke before the answer), so the target may have committed the payload. A
+    // client must not push such a payload again when storing it twice duplicates data.
+    bool completion_sent = 4;
+  }
+  // requested_copies is the copies the target stage asks for per shard (replicas + 1). For
+  // KIND_SERIES_INDEX, whose targets are the union of several shards' nodes, it is not
+  // comparable with the number of targets.
+  uint32 requested_copies = 1;
+  repeated TargetResult targets = 2;
 }

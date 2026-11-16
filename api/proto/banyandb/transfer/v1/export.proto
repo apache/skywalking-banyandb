@@ -41,8 +41,8 @@ service ExportService {
   rpc Sessions(SessionsRequest) returns (stream SessionsResponse);
   // Export streams the files of one data node's units out of an export session snapshot.
   // The first request frame is init (session, target node, format, limits); every later
-  // frame carries exactly one unit, and the client sends the next unit only after it has
-  // received unit_finished for the previous one. The liaison forwards the stream to
+  // frame carries exactly one unit. The node produces units one at a time in request order, and
+  // the client may send the next unit before unit_finished for the previous one. The liaison forwards the stream to
   // init.target_node; it may split a chunk into smaller ones with the same rows to apply its
   // byte rate. Export neither creates nor removes the snapshot.
   rpc Export(stream ExportRequest) returns (stream ExportResponse);
@@ -162,6 +162,12 @@ message SidxStat {
   // plus the series entries of the group's regular measures, so the value is an upper bound
   // of the rows.
   uint64 doc_count = 2;
+  // Range of the "_timestamp" values the series index's segment footers record (unix
+  // nanoseconds), read alongside doc_count and 0 when it is not computed or the index records
+  // none. The footers count deleted documents and the series entries of regular measures too, so
+  // the range may be wider than the index-mode rows.
+  int64 min_timestamp = 3;
+  int64 max_timestamp = 4;
 }
 
 // PlanRequest selects what to enumerate and which view to read. Without a session it reads
@@ -314,8 +320,8 @@ message SessionLease {
 // Format is the artifact format of one export.
 enum Format {
   FORMAT_UNSPECIFIED = 0;
-  // FORMAT_NATIVE packs the engine files byte for byte into .bnc containers. Not implemented
-  // yet: data nodes answer UNIMPLEMENTED.
+  // FORMAT_NATIVE packs the engine files byte for byte into .bnc containers; it is never
+  // compressed. ImportService.ImportParts imports it.
   FORMAT_NATIVE = 1;
   // FORMAT_CSV writes logical rows, one CSV stream per unit and shard.
   FORMAT_CSV = 2;
@@ -351,7 +357,9 @@ message ExportRequest {
       defined_only: true
       not_in: [0]
     }];
-    // Soft upper bound of one produced file in on-disk bytes; 0 means no split.
+    // Upper bound of one produced file in on-disk bytes; 0 means no split. CSV: a soft bound, a
+    // file rolls after the row that reaches it. NATIVE: a hard cap on every .bnc volume, footer
+    // and trailer included; a non-zero value below 64 KiB is refused with INVALID_ARGUMENT.
     uint64 max_file_size = 5;
     RateLimit rate_limit = 6;
     // CSV only: write a #datatype line before the header of every file.
@@ -391,12 +399,10 @@ message Ready {}
 
 // UnitStarted opens one unit and carries its progress denominators.
 message UnitStarted {
+  reserved 2, 3;
+  reserved "total_files", "estimated_total_bytes";
   // Number of shards in the unit; 0 for units that only have segment-level data.
   uint32 total_shards = 1;
-  // Native only: files the unit will produce. CSV cannot know it in advance and sends 0.
-  uint32 total_files = 2;
-  // Native only: bytes the unit will produce. CSV sends 0.
-  uint64 estimated_total_bytes = 3;
   // Live parts of the unit's shards in the snapshot; 0 for units without parts (property,
   // segment-level data only).
   uint32 total_parts = 4;
@@ -408,11 +414,13 @@ message FileStarted {
   string relative_path = 1 [(validate.rules).string.min_len = 1];
   // Shard the file belongs to; meaningless when segment_level is set.
   uint32 shard_id = 2;
-  // The file belongs to the segment rather than to one shard (index-mode measure rows).
+  // The file belongs to the segment rather than to one shard: CSV index-mode measure rows;
+  // native the segment metadata file and the sidx-NNNNN.bnc volumes.
   bool segment_level = 3;
   // Index of shard_id in the unit's shard list; segment-level files use total_shards.
   uint32 shard_index = 4;
-  // Split sequence within the shard, starting at 1.
+  // Sequence of the file within its series, starting at 1: CSV the split number within the
+  // shard; native the volume number within its container.
   uint32 seq = 5;
 }
 
@@ -429,9 +437,11 @@ message FileFinished {
   // Size and crc32 (IEEE) of the file as written to disk.
   uint64 bytes = 1;
   uint32 crc32 = 2;
-  // Native only: entries in the container footer. CSV sends 0.
+  // Native only: entries in the container footer, required (above 0) for a container volume
+  // and 0 for a plain file. CSV sends 0.
   uint32 entry_count = 3;
-  // Rows per resource name in this file.
+  // CSV only: rows per resource name in this file. Native sends none; its counts come from the
+  // Plan statistics.
   map<string, uint64> row_counts = 4;
   // CSV only: schema mod revision of every resource the node built the group's column
   // layout from, whether or not it wrote rows. The client checks that the set and the
@@ -439,7 +449,8 @@ message FileFinished {
   map<string, int64> schema_mod_revisions = 5;
 }
 
-// UnitFinished closes one unit; the client sends the next unit after it.
+// UnitFinished closes one unit. The node produces units one at a time in request order; the
+// client may send the next unit before this frame arrives.
 message UnitFinished {
   // Non-fatal findings, such as dropped rows or columns that are empty for a resource.
   repeated string warnings = 1;
