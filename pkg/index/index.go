@@ -113,6 +113,29 @@ type Field struct {
 	Numeric bool
 }
 
+// MarkNumericTag makes f eligible for the sort ladder when it is a sort-marked scalar numeric tag, whatever catalog writes
+// it: an int tag, or a timestamp tag (its key is the instant in nanoseconds). It is the one place that decides, so a writer
+// only passes the tag it is indexing (the encoders write the ladder only for an indexed, sorted field). A field marked
+// no-sort, an array, or of another type is left alone: a multi-valued field sorts by its smallest value, which a ladder
+// over every value cannot rank.
+func (f *Field) MarkNumericTag(tagType databasev1.TagType, tagValue *modelv1.TagValue) {
+	if f.NoSort {
+		return
+	}
+	switch tagType {
+	case databasev1.TagType_TAG_TYPE_INT:
+		if v := tagValue.GetInt(); v != nil {
+			f.Numeric, f.NumericKey = true, v.GetValue()
+		}
+	case databasev1.TagType_TAG_TYPE_TIMESTAMP:
+		if v := tagValue.GetTimestamp(); v != nil {
+			f.Numeric, f.NumericKey = true, v.AsTime().UnixNano()
+		}
+	case databasev1.TagType_TAG_TYPE_UNSPECIFIED, databasev1.TagType_TAG_TYPE_STRING, databasev1.TagType_TAG_TYPE_STRING_ARRAY,
+		databasev1.TagType_TAG_TYPE_INT_ARRAY, databasev1.TagType_TAG_TYPE_DATA_BINARY:
+	}
+}
+
 // GetTerm returns the term value of the field.
 func (f *Field) GetTerm() IsTermValue {
 	return f.term
