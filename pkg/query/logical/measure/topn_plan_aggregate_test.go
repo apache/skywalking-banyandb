@@ -380,3 +380,35 @@ func TestTopNAggregateOpQueryError(t *testing.T) {
 	_, err = plan.(executor.MeasureExecutable).Execute(context.Background())
 	require.Error(t, err)
 }
+
+func TestTopNAggregationStateBudget(t *testing.T) {
+	saved := topNAggregateStateBudget
+	t.Cleanup(func() { topNAggregateStateBudget = saved })
+	window := []entityValue{{"e1", 1}, {"e2", 1}, {"e3", 1}, {"e4", 1}, {"e5", 1}, {"e6", 1}, {"e7", 1}, {"e8", 1}}
+	execute := func(ec *fakeTopNContext) error {
+		source, rule := topNTestSchemas()
+		request := &measurev1.TopNRequest{
+			Name: "rule", TopN: 1, FieldValueSort: modelv1.Sort_SORT_DESC,
+			Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM,
+		}
+		plan, err := TopNAnalyze(request, 0, []*databasev1.Measure{source}, []*databasev1.TopNAggregation{rule}, []executor.MeasureExecutionContext{ec})
+		require.NoError(t, err)
+		it, err := plan.(executor.MeasureExecutable).Execute(context.Background())
+		if err == nil {
+			require.NoError(t, it.Close())
+		}
+		return err
+	}
+
+	topNAggregateStateBudget = 1 << 20
+	within := &fakeTopNContext{t: t, windows: [][]entityValue{window}}
+	require.NoError(t, execute(within))
+	assert.Equal(t, 1, within.released)
+
+	topNAggregateStateBudget = 512
+	over := &fakeTopNContext{t: t, windows: [][]entityValue{window}}
+	err := execute(over)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "per-item state")
+	assert.Equal(t, 1, over.released, "the scan result must be released when the budget is exceeded")
+}

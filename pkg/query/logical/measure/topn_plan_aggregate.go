@@ -38,9 +38,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
 )
 
-// TopNAggregateStateBudget bounds, in estimated bytes, the per-item state one TopN aggregation retains.
+// topNAggregateStateBudget bounds, in estimated bytes, the per-item state one TopN aggregation retains.
 // It is a variable only so that tests can lower it.
-var TopNAggregateStateBudget int64 = 512 << 20
+var topNAggregateStateBudget int64 = 512 << 20
 
 // aggregatedItemOverhead estimates the bytes an item retains beyond its key: the map entry, the
 // aggregation function and the retained tag values.
@@ -252,9 +252,9 @@ func (t *topNAggregateOp[K]) Execute(ctx context.Context) (mit executor.MIterato
 			item, ok := items[key]
 			if !ok {
 				retained += int64(2*len(key.entity)+aggregatedItemOverhead) + tagFamiliesSize(dp.GetTagFamilies()) + int64(len(dp.GetFields()[t.fieldIdx].GetName()))
-				if retained > TopNAggregateStateBudget {
+				if retained > topNAggregateStateBudget {
 					return nil, errors.Errorf("topN aggregation retains more than %d bytes of per-item state after %d items; narrow the time range or the conditions",
-						TopNAggregateStateBudget, len(items))
+						topNAggregateStateBudget, len(items))
 				}
 				mapFunc, mapErr := aggregation.NewMap[K](t.aggFunc)
 				if mapErr != nil {
