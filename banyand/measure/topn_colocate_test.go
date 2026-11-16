@@ -19,6 +19,7 @@ package measure
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -41,11 +42,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 )
 
+// capturePublisher captures the rows a processor publishes, also from the processor's own goroutine.
 type capturePublisher struct {
 	rows []*measurev1.InternalWriteRequest
+	mu   sync.Mutex
 }
 
 func (c *capturePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	for _, m := range messages {
 		c.rows = append(c.rows, m.Data().(*measurev1.InternalWriteRequest))
 	}

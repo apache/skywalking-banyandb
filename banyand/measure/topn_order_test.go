@@ -20,19 +20,15 @@ package measure
 import (
 	"context"
 	"sort"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
-	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
-	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/flow"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
@@ -41,25 +37,8 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 )
 
-// syncCapturePublisher captures the rows a running processor publishes from its own goroutine.
-type syncCapturePublisher struct {
-	rows []*measurev1.InternalWriteRequest
-	mu   sync.Mutex
-}
-
-func (c *syncCapturePublisher) Publish(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, m := range messages {
-		c.rows = append(c.rows, m.Data().(*measurev1.InternalWriteRequest))
-	}
-	return nil, nil
-}
-
-func (c *syncCapturePublisher) Close() (map[string]*common.Error, error) { return nil, nil }
-
 // windowValues returns the values of the first published row of the window starting at windowStart.
-func (c *syncCapturePublisher) windowValues(t *testing.T, windowStart time.Time) ([]int64, bool) {
+func (c *capturePublisher) windowValues(t *testing.T, windowStart time.Time) ([]int64, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, row := range c.rows {
@@ -91,7 +70,7 @@ func TestTopNProcessorRanksByItsOwnDirection(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.sort.String(), func(t *testing.T) {
-			publisher := &syncCapturePublisher{}
+			publisher := &capturePublisher{}
 			srcCh := make(chan any)
 			src, err := sources.NewChannel(srcCh)
 			require.NoError(t, err)
