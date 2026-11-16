@@ -258,47 +258,17 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 	}
 	frontier := &sortedFrontier{items: make([]sortableHit, 0, c.pageSize)}
 	for _, current := range c.segments {
-		var documentNumber uint64
-		var hasDocument func() bool
-		var nextDocument func() uint64
-		if current.all {
-			var ordinal uint64
-			hasDocument = func() bool { return ordinal < current.segment.handle.count }
-			nextDocument = func() uint64 {
-				value := ordinal
-				ordinal++
-				return value
-			}
-		} else {
-			iterator := current.candidates.Iterator()
-			hasDocument = iterator.HasNext
-			nextDocument = func() uint64 { return uint64(iterator.Next()) }
-		}
-		for hasDocument() {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			if err := c.ctx.Err(); err != nil {
-				return nil, err
-			}
-			documentNumber = nextDocument()
-			hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber, current.timeExact)
+		if c.after == nil {
+			handled, err := c.scanLadderFirstPage(ctx, current, frontier)
 			if err != nil {
-				if errors.Is(err, errSkipSortCandidate) {
-					continue
-				}
 				return nil, err
 			}
-			item := sortableHit{hit: hit, value: value, missing: missing, desc: c.desc}
-			if c.after != nil && !sortKeyAfter(c.after, item) {
+			if handled {
 				continue
 			}
-			if len(frontier.items) < c.pageSize {
-				heap.Push(frontier, item)
-			} else if item.less(frontier.items[0]) {
-				heap.Pop(frontier)
-				heap.Push(frontier, item)
-			}
+		}
+		if _, err := c.scanSegment(ctx, current, current.candidates, frontier); err != nil {
+			return nil, err
 		}
 	}
 	ordered := frontier.items
@@ -323,6 +293,92 @@ func (c *SortCursor) NextPage(ctx context.Context) ([]SortedHit, error) {
 		}
 	}
 	return result, nil
+}
+
+// scanLadderFirstPage serves the first page of one segment from the sort field's ladder: the descent selects a superset of
+// the segment's first pageSize documents, so only those are decoded instead of every candidate. It reports false, leaving
+// the frontier untouched, when the ladder cannot prove the result, and the caller scans every candidate. The retained
+// candidate bitmap is never replaced, so later pages stay exact.
+func (c *SortCursor) scanLadderFirstPage(ctx context.Context, current sortCursorSegment, frontier *sortedFrontier) (bool, error) {
+	live := current.candidates
+	if current.all {
+		live = roaringpkg.New()
+		live.AddRange(0, current.segment.handle.count)
+	}
+	selected, ok, err := ladderSelection(ctx, current.segment, c.sortField, live, c.desc, uint64(c.pageSize))
+	if err != nil || !ok {
+		return false, err
+	}
+	local := &sortedFrontier{items: make([]sortableHit, 0, c.pageSize)}
+	skipped, err := c.scanSegment(ctx, current, selected, local)
+	if err != nil {
+		return false, err
+	}
+	// A selected document that the projection skipped (it has no timestamp, or lies outside an unnarrowed time range) may
+	// have displaced one that belongs to the page, so only a scan without skips is trusted.
+	if skipped > 0 {
+		return false, nil
+	}
+	for _, item := range local.items {
+		offerFrontier(frontier, item, c.pageSize)
+	}
+	return true, nil
+}
+
+// scanSegment projects the given candidates of one segment into the frontier and returns how many it skipped. A nil
+// candidates set with current.all walks every ordinal of the segment.
+func (c *SortCursor) scanSegment(
+	ctx context.Context, current sortCursorSegment, candidates *roaringpkg.Bitmap, frontier *sortedFrontier,
+) (int, error) {
+	var hasDocument func() bool
+	var nextDocument func() uint64
+	if candidates == nil {
+		var ordinal uint64
+		hasDocument = func() bool { return ordinal < current.segment.handle.count }
+		nextDocument = func() uint64 {
+			value := ordinal
+			ordinal++
+			return value
+		}
+	} else {
+		iterator := candidates.Iterator()
+		hasDocument = iterator.HasNext
+		nextDocument = func() uint64 { return uint64(iterator.Next()) }
+	}
+	skipped := 0
+	for hasDocument() {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if err := c.ctx.Err(); err != nil {
+			return 0, err
+		}
+		documentNumber := nextDocument()
+		hit, value, missing, err := c.project(current.segmentID, current.segment, documentNumber, current.timeExact)
+		if err != nil {
+			if errors.Is(err, errSkipSortCandidate) {
+				skipped++
+				continue
+			}
+			return 0, err
+		}
+		item := sortableHit{hit: hit, value: value, missing: missing, desc: c.desc}
+		if c.after != nil && !sortKeyAfter(c.after, item) {
+			continue
+		}
+		offerFrontier(frontier, item, c.pageSize)
+	}
+	return skipped, nil
+}
+
+// offerFrontier keeps item when it ranks inside the first size items seen so far.
+func offerFrontier(frontier *sortedFrontier, item sortableHit, size int) {
+	if len(frontier.items) < size {
+		heap.Push(frontier, item)
+	} else if item.less(frontier.items[0]) {
+		heap.Pop(frontier)
+		heap.Push(frontier, item)
+	}
 }
 
 // Close releases cursor scratch and is idempotent. The caller still owns the

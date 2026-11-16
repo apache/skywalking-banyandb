@@ -214,20 +214,22 @@ func topTimeSelection(
 	if lower > upper {
 		return roaringpkg.New(), nil
 	}
-	return trieDescent(ctx, segment, live, lower, upper, request.Desc, uint64(request.Limit))
+	return trieDescent(ctx, segment, timestampField, live, lower, upper, request.Desc, uint64(request.Limit))
 }
 
-// trieDescent returns a set of documents of live, whose timestamps are in [lower, upper] (sortable units), that contains
-// the first limit documents in timestamp order and at most about topTimeKeepFactor*limit more. It reads the posting of one
-// _timestamp bucket at a time, from the best bucket on, so its cost depends on limit and the number of levels, not on the
+// trieDescent returns a set of documents of live, whose keys on the ladder of field are in [lower, upper] (sortable units),
+// that contains the first limit documents in key order and at most about topTimeKeepFactor*limit more. The field is
+// _timestamp for TopTimeHits and a companion ladder field for TopFieldHits. It reads the posting of one
+// bucket at a time, from the best bucket on, so its cost depends on limit and the number of levels, not on the
 // number of documents.
 //
-// Every document of live has _timestamp terms at every level (the writer emits all sixteen), so a bucket's posting
-// restricted to live is exactly the live documents of that bucket. A bucket taken whole ranks before every bucket after it;
+// Every document of live that has the field is on its ladder at every level (the writer emits all sixteen), so a bucket's
+// posting restricted to live is exactly the live documents of that bucket. A document without the ladder is never selected;
+// the caller decides whether a short result needs a fallback. A bucket taken whole ranks before every bucket after it;
 // the bucket that holds the limit-th document is refined one level down, or taken whole when it is small or at level 0, so
 // documents tied with the limit-th are never cut.
 func trieDescent(
-	ctx context.Context, segment *memorySegment, live *roaringpkg.Bitmap, lower, upper uint64, desc bool, limit uint64,
+	ctx context.Context, segment *memorySegment, field string, live *roaringpkg.Bitmap, lower, upper uint64, desc bool, limit uint64,
 ) (*roaringpkg.Bitmap, error) {
 	shift := uint(0)
 	for shift < trieTopShift && (upper>>shift)-(lower>>shift) >= trieLevelFanout {
@@ -240,7 +242,7 @@ func trieDescent(
 			return nil, err
 		}
 		first, last := lower>>shift, upper>>shift
-		crossing, crossingID, err := trieWalkLevel(ctx, segment, live, selected, &need, first, last, shift, desc)
+		crossing, crossingID, err := trieWalkLevel(ctx, segment, field, live, selected, &need, first, last, shift, desc)
 		if err != nil {
 			return nil, err
 		}
@@ -264,7 +266,7 @@ func trieDescent(
 // than still needed is added to selected whole; the first bucket that holds at least that many is returned (restricted to
 // live) as the crossing bucket. A nil crossing means the level ran out before the limit was reached.
 func trieWalkLevel(
-	ctx context.Context, segment *memorySegment, live, selected *roaringpkg.Bitmap, need *uint64, first, last uint64, shift uint, desc bool,
+	ctx context.Context, segment *memorySegment, field string, live, selected *roaringpkg.Bitmap, need *uint64, first, last uint64, shift uint, desc bool,
 ) (crossing *roaringpkg.Bitmap, crossingID uint64, err error) {
 	for step := uint64(0); step <= last-first; step++ {
 		id := first + step
@@ -274,7 +276,7 @@ func trieWalkLevel(
 		if err = ctx.Err(); err != nil {
 			return nil, 0, err
 		}
-		posting, found, postingErr := segment.handle.reader.TermPostingBitmapContext(ctx, timestampField, bucketTerm(id, shift))
+		posting, found, postingErr := segment.handle.reader.TermPostingBitmapContext(ctx, field, bucketTerm(id, shift))
 		if postingErr != nil {
 			return nil, 0, fmt.Errorf("read _timestamp bucket posting: %w", postingErr)
 		}
@@ -298,7 +300,7 @@ func trieWalkLevel(
 	return nil, 0, nil
 }
 
-// bucketTerm is the _timestamp term of bucket id (the sortable value shifted right by shift) at the shift level.
+// bucketTerm is the ladder term of bucket id (the sortable value shifted right by shift) at the shift level.
 func bucketTerm(id uint64, shift uint) []byte {
 	return nativeice.EncodePrefixCodedInt64Shift(int64((id<<shift)^0x8000000000000000), shift)
 }
