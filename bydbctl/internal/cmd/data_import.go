@@ -31,19 +31,21 @@ import (
 )
 
 // dryRunIgnoredImportFlags are the import settings a dry run does not use: they only shape
-// the writes, the push and the verification. --write-batch-bytes is not one of them: the dry
-// run plan warns about rows larger than it, so it is range-checked under --dry-run too.
+// the writes, the push and the verification. --write-batch-bytes is the exception, because the
+// dry run plan warns about rows larger than it. The settings are still range-checked under
+// --dry-run, except --write-batch-size and --write-inflight-batches.
 var dryRunIgnoredImportFlags = []string{
 	"abort-on-plan-change", "verify", "verify-timeout", "write-batch-size", "write-inflight-batches",
 	"write-rate-limit",
 	"send-retry-timeout", "liaison-rate-limit", "node-rate-limit", "node-row-rate-limit", "parallelism",
+	"part-rate-limit", "part-chunk-size",
 }
 
 func newDataImportCmd() *cobra.Command {
 	conn, opts := &config.Connection{}, &config.Import{}
 	c := &cobra.Command{
 		Use:           "import",
-		Short:         "Import a CSV artifact written by data export into a cluster, or print the import plan with --dry-run",
+		Short:         "Import a CSV or native artifact written by data export into a cluster, or print the import plan with --dry-run",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

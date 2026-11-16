@@ -251,8 +251,8 @@ func TestDecide(t *testing.T) {
 	rej := p.Rejected[0]
 	assert.Equal(t, GateTTL, rej.Gate)
 	assert.Equal(t, "measure/sw_metric/hot/20261012/shard-0", rej.Item.Key())
-	assert.Equal(t, []string{"measure/sw_metric/hot seg=20261012 shard=0: every row is older than the target retention " +
-		"(newest 2026-10-12T10:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it"},
+	assert.Equal(t, []string{"measure/sw_metric/hot seg=20261012 shard=0: every row is in a target segment past the retention " +
+		"(newest 2026-10-12T10:00:00Z, its segment ends 2026-10-13T00:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it"},
 		p.GateDetails)
 
 	byKey := entriesByKey(p)
@@ -394,7 +394,8 @@ func TestComparePlans(t *testing.T) {
 	assert.True(t, slices.ContainsFunc(diff, func(l string) bool { return strings.Contains(l, "nodes=[dst-hot2]") }))
 
 	c := Decide(decideInputs(t, Flags{ForceTTL: true}))
-	assert.Contains(t, ComparePlans(a, c), "- rejected measure/sw_metric/hot/20261012/shard-0 gate=TTL: every row is older than the target stage's retention")
+	assert.Contains(t, ComparePlans(a, c),
+		"- rejected measure/sw_metric/hot/20261012/shard-0 gate=TTL: the target segments of every row are past the target stage's retention")
 }
 
 func TestNonEmptyFromPlan(t *testing.T) {
@@ -458,8 +459,8 @@ func TestDecideStandaloneTargetPutsEveryStageInHot(t *testing.T) {
 	assert.Equal(t, "hot", warm.TargetStage)
 	assert.Equal(t, []string{standaloneNode}, warm.TargetNodes)
 	assert.Contains(t, p.GateDetails,
-		"measure/sw_metric/hot seg=20261010 shard=0: every row is older than the target retention "+
-			"(newest 2026-10-12T00:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it")
+		"measure/sw_metric/hot seg=20261010 shard=0: every row is in a target segment past the retention "+
+			"(newest 2026-10-12T00:00:00Z, its segment ends 2026-10-13T00:00:00Z, retention 3d = group 3d); skipped; --force-ttl imports it")
 	assert.Contains(t, p.Warnings, `group sw_metric: the standalone target routes stage "warm" to hot`)
 	assert.Contains(t, p.Warnings, `group sw_stream: the standalone target routes stage "cold" to hot`)
 	assert.False(t, slices.ContainsFunc(p.Warnings, func(w string) bool { return strings.Contains(w, "routes stage hot to hot") }))

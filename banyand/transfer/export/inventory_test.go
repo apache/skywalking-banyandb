@@ -30,6 +30,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 func writeFile(t *testing.T, p string, body []byte) {
@@ -336,7 +337,7 @@ func TestStatTSDBGroup_IndexModeCountsCommittedDocuments(t *testing.T) {
 	group := filepath.Join(t.TempDir(), "sw_metadata")
 	seg := filepath.Join(group, "seg-20260928")
 	writeFile(t, filepath.Join(seg, "metadata"), []byte(`{"version":"1.5.0"}`))
-	buildIndex(t, filepath.Join(seg, sidxDirName), 3)
+	buildIndex(t, filepath.Join(seg, nativefmt.SeriesIndexDir), 3)
 
 	units, err := statTSDBGroup(group, commonv1.Catalog_CATALOG_MEASURE, "sw_metadata", true, testPartReader(commonv1.Catalog_CATALOG_MEASURE))
 	if err != nil {
@@ -346,13 +347,16 @@ func TestStatTSDBGroup_IndexModeCountsCommittedDocuments(t *testing.T) {
 	if segLevel.GetDocCount() != 3 || segLevel.GetEstimatedBytes() == 0 {
 		t.Fatalf("an index-mode segment must report the committed document count and the index bytes: %+v", segLevel)
 	}
+	if segLevel.GetMinTimestamp() != 1 || segLevel.GetMaxTimestamp() != 3 {
+		t.Fatalf("an index-mode segment must report the time range of its documents: %+v", segLevel)
+	}
 	// A plain measure group never opens the index.
 	units, err = statTSDBGroup(group, commonv1.Catalog_CATALOG_MEASURE, "sw_metadata", false, testPartReader(commonv1.Catalog_CATALOG_MEASURE))
-	if err != nil || units[0].GetSegment().GetSegmentLevel().GetDocCount() != 0 {
-		t.Fatalf("a plain measure group must report doc_count 0, got %+v, %v", units, err)
+	if err != nil || units[0].GetSegment().GetSegmentLevel().GetDocCount() != 0 || units[0].GetSegment().GetSegmentLevel().GetMinTimestamp() != 0 {
+		t.Fatalf("a plain measure group must report doc_count 0 and no time range, got %+v, %v", units, err)
 	}
 	// A corrupt index fails the plan instead of reporting zero rows.
-	corruptIndex(t, filepath.Join(seg, sidxDirName))
+	corruptIndex(t, filepath.Join(seg, nativefmt.SeriesIndexDir))
 	if _, err = statTSDBGroup(group, commonv1.Catalog_CATALOG_MEASURE, "sw_metadata", true, testPartReader(commonv1.Catalog_CATALOG_MEASURE)); err == nil ||
 		!errors.Is(err, native.ErrCorrupt) {
 		t.Fatalf("a corrupt index must fail the plan, got %v", err)

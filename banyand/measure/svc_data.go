@@ -186,7 +186,7 @@ func (s *dataSVC) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
 	flagS.StringVar(&s.exportSnapshotDir, "measure-export-snapshot-path", "", storage.ExportSnapshotPathUsage("measure"))
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
-	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", queue.DefaultReceiveMemWaitTimeout,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.VarP(&s.option.mergePolicy.maxFanOutSize, "measure-max-fan-out-size", "", "the upper bound of a single file size after merge of measure")

@@ -59,6 +59,19 @@ func MergeRange(minDst, maxDst *int64, minSrc, maxSrc int64) {
 	}
 }
 
+// RetryBase and RetryMax bound the doubling back-off every transfer retry waits with: opening an
+// export or import stream, retried within --send-retry-timeout, and re-pushing a native payload to
+// the nodes that failed it, retried a fixed number of times. Tests shorten them.
+var (
+	RetryBase = time.Second
+	RetryMax  = 30 * time.Second
+)
+
+// NextBackoff doubles a back-off, capped at RetryMax.
+func NextBackoff(d time.Duration) time.Duration {
+	return min(d*2, RetryMax)
+}
+
 // SleepCtx waits for d, returning nil when it elapses or context.Cause(ctx) when ctx ends first.
 func SleepCtx(ctx context.Context, d time.Duration) error {
 	timer := time.NewTimer(d)

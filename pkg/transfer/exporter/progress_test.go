@@ -53,7 +53,7 @@ func testProgress(size func() (int, int)) (*output.Progress, *bytes.Buffer, *fak
 
 // nodeOf shows the live line of a node exporting units units.
 func nodeOf(p *output.Progress, id string, units int) *nodeProgress {
-	return newNodeProgress(p, id, units, testWidth)
+	return newNodeProgress(p, id, units, testWidth, true)
 }
 
 // terminalOf is a terminal of the given size.
@@ -97,6 +97,27 @@ func TestProgress_FixedLinesWithoutATerminal(t *testing.T) {
 		"✓ data-hot1:17912  [2/2] property/sw_property  1 file(s)  136 rows  80.6 KiB  1m30s\n" +
 		"✓ data-hot1:17912  done: 2 unit(s), 2 file(s), 316 rows, 84.9 KiB in 1m30s\n" +
 		"  data-a:1         [1/1] measure/sw_metadata seg-20261004 started: no shards\n"
+	if out.String() != want {
+		t.Fatalf("got\n%s\nwant\n%s", out.String(), want)
+	}
+}
+
+// A native export carries no row counts, so its lines leave the rows out.
+func TestProgress_NativeLinesHaveNoRows(t *testing.T) {
+	p, out, clock := testProgress(nil)
+	n := newNodeProgress(p, "data-hot1:17912", 1, testWidth, false)
+	n.unitStarted(segmentUnitOf(commonv1.Catalog_CATALOG_MEASURE, "sw_metricsDay", "20261004"), 1, 2)
+	n.fileStarted("measure/sw_metricsDay/seg-20261004/shard-0-00001.bnc", 0, 0, false)
+	clock.advance(300 * time.Millisecond)
+	n.fileFinished(nil, 4403)
+	n.unitFinished(400 * time.Millisecond)
+	n.finish(true)
+	p.Close()
+
+	want := "  data-hot1:17912  [1/1] measure/sw_metricsDay seg-20261004 started: 1 shard(s), 2 part(s)\n" +
+		"  data-hot1:17912  measure/sw_metricsDay/seg-20261004/shard-0-00001.bnc  4.3 KiB  0.3s\n" +
+		"✓ data-hot1:17912  [1/1] measure/sw_metricsDay seg-20261004  1 file(s)  4.3 KiB  0.4s\n" +
+		"✓ data-hot1:17912  done: 1 unit(s), 1 file(s), 4.3 KiB in 0.3s\n"
 	if out.String() != want {
 		t.Fatalf("got\n%s\nwant\n%s", out.String(), want)
 	}
@@ -146,7 +167,7 @@ func TestProgress_LiveLinesOnATerminal(t *testing.T) {
 	n.fileStarted("measure/sw_metadata/seg-20261004/segment-00001.csv.gz", 0, 0, true)
 	out.Reset()
 	p.Redraw()
-	if !strings.Contains(out.String(), "[3/3] measure/sw_metadata seg-20261004  segment index  0 rows  0 B") {
+	if !strings.Contains(out.String(), "[3/3] measure/sw_metadata seg-20261004  segment-level  0 rows  0 B") {
 		t.Fatalf("got %q", out.String())
 	}
 
@@ -168,7 +189,7 @@ func TestProgress_LiveLineFitsTheTerminal(t *testing.T) {
 	}
 
 	unknown, out, _ := testProgress(terminalOf(0, 0))
-	newNodeProgress(unknown, strings.Repeat("n", 100), 1, 100)
+	newNodeProgress(unknown, strings.Repeat("n", 100), 1, 100, true)
 	if got := strings.TrimSuffix(strings.TrimPrefix(out.String(), "\r"), "\n"); len([]rune(got)) != 80-1 {
 		t.Fatalf("got %d runes: %q", len([]rune(got)), got)
 	}

@@ -30,7 +30,9 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	dumptrace "github.com/apache/skywalking-banyandb/banyand/internal/dump/trace"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 type traceResource struct {
@@ -176,12 +178,12 @@ func produceTraceCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string) 
 	fixed := fixedColumns(layout)
 	for i, shard := range unit.GetShardIds() {
 		fw := run.newWriter(layout, shardPrefix(unit, shard), shard, uint32(i), false, revisions)
-		shardDir := filepath.Join(segDir, fmt.Sprintf("%s%d", shardDirPrefix, shard))
+		shardDir := filepath.Join(segDir, nativefmt.ShardDir(shard))
 		if err = writeTraceShard(run, fw, shardDir, layout, fixed, resolver); err != nil {
 			return err
 		}
 		if err = fw.close(); err != nil {
-			return readError("finish "+shardDir, err)
+			return snapshot.ReadError("finish "+shardDir, err)
 		}
 	}
 	return nil
@@ -190,9 +192,9 @@ func produceTraceCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string) 
 func writeTraceShard(run *unitRun, fw *fileWriter, shardDir string, layout *csvfmt.Layout, fixed map[csvfmt.ColumnKind]int,
 	resolver *traceResolver,
 ) error {
-	partIDs, err := SessionPartIDs(shardDir)
+	partIDs, err := snapshot.SessionPartIDs(shardDir)
 	if err != nil {
-		return readError("list parts of "+shardDir, err)
+		return snapshot.ReadError("list parts of "+shardDir, err)
 	}
 	cells := layout.NewRow()
 	for _, id := range partIDs {
@@ -203,7 +205,7 @@ func writeTraceShard(run *unitRun, fw *fileWriter, shardDir string, layout *csvf
 			openErr = rofs.err
 		}
 		if openErr != nil {
-			return readError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
 		}
 		it := part.Iterator()
 		for it.Next() {
@@ -221,14 +223,14 @@ func writeTraceShard(run *unitRun, fw *fileWriter, shardDir string, layout *csvf
 			if err = fw.writeRow(res.name, cells); err != nil {
 				_ = it.Close()
 				_ = part.Close()
-				return readError("write "+res.name+" row", err)
+				return snapshot.ReadError("write "+res.name+" row", err)
 			}
 		}
 		err = it.Err()
 		_ = it.Close()
 		_ = part.Close()
 		if err != nil {
-			return readError(fmt.Sprintf("read part %016x of %s", id, shardDir), err)
+			return snapshot.ReadError(fmt.Sprintf("read part %016x of %s", id, shardDir), err)
 		}
 	}
 	return nil
