@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
@@ -430,4 +431,38 @@ func topNRuleRepo(t *testing.T, groupByTagNames []string, countersNumber int32) 
 	repo := metadata.NewMockRepo(ctrl)
 	repo.EXPECT().TopNAggregationRegistry().Return(registry).AnyTimes()
 	return repo
+}
+
+// recordingBroadcaster records every broadcast and answers each with one future.
+type recordingBroadcaster struct {
+	topics   []bus.Topic
+	messages []bus.Message
+}
+
+func (b *recordingBroadcaster) Broadcast(_ time.Duration, topic bus.Topic, message bus.Message) ([]bus.Future, error) {
+	b.topics = append(b.topics, topic)
+	b.messages = append(b.messages, message)
+	return []bus.Future{node()}, nil
+}
+
+func TestTopNBroadcastTargets(t *testing.T) {
+	broadcaster := &recordingBroadcaster{}
+	p := &topNQueryProcessor{broadcaster: broadcaster}
+	request := &measurev1.TopNRequest{Groups: []string{"g", "h"}, Name: "n", TopN: 3}
+	targets := topNTargets(request.GetGroups(), map[string][]string{"g": {"type=hot", "type=warm"}})
+	answers, err := p.broadcastTargets(1, request, targets, 1000)
+	require.NoError(t, err)
+	assert.Len(t, answers, 3, "one answer per target")
+	wantGroups := []string{"g", "g", "h"}
+	wantSelectors := []map[string][]string{{"g": {"type=hot"}}, {"g": {"type=warm"}}, nil}
+	require.Len(t, broadcaster.messages, 3)
+	for i, m := range broadcaster.messages {
+		assert.Equal(t, data.TopicInternalTopNQuery, broadcaster.topics[i])
+		assert.Equal(t, wantSelectors[i], m.NodeSelectors(), "target %d reaches only the nodes of its stage", i)
+		internal, ok := m.Data().(*measurev1.InternalTopNRequest)
+		require.True(t, ok)
+		assert.Equal(t, []string{wantGroups[i]}, internal.GetRequest().GetGroups())
+		assert.EqualValues(t, 1000, internal.GetPartialLimit())
+	}
+	assert.Equal(t, []string{"g", "h"}, request.GetGroups(), "the client's request is not changed")
 }

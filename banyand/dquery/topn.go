@@ -153,16 +153,10 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		span.Tagf("targets", "%d", len(targets))
 		span.Tagf("partial_limit", "%d", partialLimit)
 	}
-	answers := make([][]bus.Future, 0, len(targets))
-	for _, target := range targets {
-		internal := &measurev1.InternalTopNRequest{Request: target.request(request), PartialLimit: partialLimit}
-		ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicInternalTopNQuery,
-			bus.NewMessageWithNodeSelectors(now, target.nodeSelectors(), request.TimeRange, internal))
-		if err != nil {
-			resp = bus.NewMessage(now, protector.QueryFailure(err, "execute the query %s: %v", request.GetName(), err))
-			return
-		}
-		answers = append(answers, ff)
+	answers, broadcastErr := t.broadcastTargets(now, request, targets, partialLimit)
+	if broadcastErr != nil {
+		resp = bus.NewMessage(now, protector.QueryFailure(broadcastErr, "execute the query %s: %v", request.GetName(), broadcastErr))
+		return
 	}
 	var allErr error
 	var lists []*measurev1.TopNList
@@ -197,6 +191,24 @@ func (t *topNQueryProcessor) Rev(ctx context.Context, message bus.Message) (resp
 		}
 	}
 	return
+}
+
+// broadcastTargets sends every target its internal TopN request: the query narrowed to the target's group, with
+// the partial limit, to the nodes of the target's stage only. It returns the answers of every target in order.
+func (t *topNQueryProcessor) broadcastTargets(now bus.MessageID, request *measurev1.TopNRequest, targets []topNTarget,
+	partialLimit int32,
+) ([][]bus.Future, error) {
+	answers := make([][]bus.Future, 0, len(targets))
+	for _, target := range targets {
+		internal := &measurev1.InternalTopNRequest{Request: target.request(request), PartialLimit: partialLimit}
+		ff, err := t.broadcaster.Broadcast(defaultTopNQueryTimeout, data.TopicInternalTopNQuery,
+			bus.NewMessageWithNodeSelectors(now, target.nodeSelectors(), request.TimeRange, internal))
+		if err != nil {
+			return nil, err
+		}
+		answers = append(answers, ff)
+	}
+	return answers, nil
 }
 
 // topNTarget is the part of a TopN query one broadcast answers: one group, and the nodes of one lifecycle stage
