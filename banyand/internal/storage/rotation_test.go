@@ -42,7 +42,7 @@ func TestForwardRotation(t *testing.T) {
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
 		tsdb.Tick(ts.UnixNano())
 		assert.Eventually(t, func() bool {
-			segments, _ := segCtrl.segments(context.Background(), false)
+			segments := segCtrl.copySegments()
 			return len(segments) == 2
 		}, flags.EventuallyTimeout, time.Millisecond, "wait for the second segment to be created")
 	})
@@ -54,7 +54,7 @@ func TestForwardRotation(t *testing.T) {
 		t.Logf("current time: %s", ts.Format(time.RFC3339))
 		tsdb.Tick(ts.UnixNano())
 		assert.Never(t, func() bool {
-			segments, _ := segCtrl.segments(context.Background(), false)
+			segments := segCtrl.copySegments()
 			return len(segments) == 2
 		}, flags.NeverTimeout, time.Millisecond, "wait for the second segment never to be created")
 	})
@@ -73,7 +73,7 @@ func TestRetention(t *testing.T) {
 			tsdb.Tick(ts.UnixNano())
 			expected := i + 2
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				segments, _ := segCtrl.segments(context.Background(), false)
+				segments := segCtrl.copySegments()
 				if len(segments) != expected {
 					ct.Errorf("expect %d segments, got %d", expected, len(segments))
 					tsdb.Tick(ts.UnixNano())
@@ -85,7 +85,7 @@ func TestRetention(t *testing.T) {
 
 		// Verify all 5 segments exist before testing TTL deletion (initial + 4 created)
 		require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-			segments, _ := segCtrl.segments(context.Background(), false)
+			segments := segCtrl.copySegments()
 			if len(segments) != 5 {
 				ct.Errorf("expect 5 segments before TTL test, got %d", len(segments))
 			}
@@ -99,7 +99,7 @@ func TestRetention(t *testing.T) {
 		tsdb.Tick(ts.UnixNano())
 
 		assert.Eventually(t, func() bool {
-			segments, _ := segCtrl.segments(context.Background(), false)
+			segments := segCtrl.copySegments()
 			// Should have fewer than 5 segments as old ones get deleted
 			return len(segments) < 5
 		}, flags.EventuallyTimeout, time.Millisecond, "wait for old segments to be deleted by TTL")
@@ -115,12 +115,7 @@ func TestRetention(t *testing.T) {
 			tsdb.Tick(ts.UnixNano())
 			ts = ts.Add(time.Hour)
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				ss, _ := segCtrl.segments(context.Background(), false)
-				defer func() {
-					for i := range ss {
-						ss[i].DecRef()
-					}
-				}()
+				ss := segCtrl.copySegments()
 				latest := ss[len(ss)-1]
 				if !latest.Contains(ts.UnixNano()) {
 					ct.Errorf("expect the last segment %s to contain the time %s", latest, ts.Format(time.RFC3339))
@@ -134,12 +129,7 @@ func TestRetention(t *testing.T) {
 			c.Set(ts)
 			tsdb.Tick(ts.UnixNano())
 			require.EventuallyWithTf(t, func(ct *assert.CollectT) {
-				ss, _ := segCtrl.segments(context.Background(), false)
-				defer func() {
-					for i := range ss {
-						ss[i].DecRef()
-					}
-				}()
+				ss := segCtrl.copySegments()
 				if len(ss) > 4 {
 					ct.Errorf("expect the segment number never to exceed 4, got %d", len(ss))
 					return
@@ -183,7 +173,7 @@ func setUpDB(t *testing.T, ttlDays ...int) (*database[*MockTSTable, any], timest
 	defer seg.DecRef()
 
 	db := tsdb.(*database[*MockTSTable, any])
-	segments, _ := db.segmentController.segments(context.Background(), false)
+	segments := db.segmentController.copySegments()
 	require.Equal(t, len(segments), 1)
 	return db, mc, db.segmentController, func() {
 		tsdb.Close()
@@ -291,12 +281,7 @@ func TestRotationDisabled(t *testing.T) {
 		}
 
 		// Verify: only 2 segments created, both on the 3-day epoch-aligned grid.
-		segments, _ := segCtrl.segments(context.Background(), false)
-		defer func() {
-			for i := range segments {
-				segments[i].DecRef()
-			}
-		}()
+		segments := segCtrl.copySegments()
 		require.Equal(t, 2, len(segments), "expected 2 segments for 6 days with 3-day interval")
 
 		// First segment: [05-02, 05-05)

@@ -154,7 +154,7 @@ func TestOpenTSDB(t *testing.T) {
 		defer seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		ss, _ := db.segmentController.segments(context.Background(), false)
+		ss := db.segmentController.copySegments()
 		require.Equal(t, len(ss), 1)
 		tsdb.Close()
 	})
@@ -190,11 +190,8 @@ func TestOpenTSDB(t *testing.T) {
 		seg.DecRef()
 
 		db := tsdb.(*database[*MockTSTable, any])
-		segs, _ := db.segmentController.segments(context.Background(), false)
+		segs := db.segmentController.copySegments()
 		require.Equal(t, len(segs), 1)
-		for i := range segs {
-			segs[i].DecRef()
-		}
 		tsdb.Close()
 
 		// Reopen existing TSDB
@@ -203,11 +200,8 @@ func TestOpenTSDB(t *testing.T) {
 		require.NotNil(t, tsdb)
 
 		db = tsdb.(*database[*MockTSTable, any])
-		segs, _ = db.segmentController.segments(context.Background(), false)
+		segs = db.segmentController.copySegments()
 		require.Equal(t, len(segs), 1)
-		for i := range segs {
-			segs[i].DecRef()
-		}
 		tsdb.Close()
 	})
 
@@ -567,11 +561,8 @@ func TestHalfBornSegmentCleanupOnOpen(t *testing.T) {
 	require.NoDirExists(t, halfBornDir, "half-born segment should be removed on open")
 
 	db := tsdb2.(*database[*MockTSTable, any])
-	segs, _ := db.segmentController.segments(context.Background(), false)
+	segs := db.segmentController.copySegments()
 	require.Equal(t, 1, len(segs), "only the valid segment should remain after cleanup")
-	for i := range segs {
-		segs[i].DecRef()
-	}
 }
 
 func TestTSDBCollect(t *testing.T) {
@@ -744,12 +735,11 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	// (refCount=1) so closeIdleSegments can CAS-bump (refAtBump==1) and
 	// close them.
 	sc := db.segmentController
-	ss, _ := sc.segments(context.Background(), false)
+	ss := sc.copySegments()
 	for _, s := range ss {
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
 			s.lastAccessed.Store(time.Now().Add(-2 * time.Hour).UnixNano())
 		}
-		s.DecRef() // Release our reference from segments()
 	}
 
 	// closeIdleSegments should close the 2 idle segments (refAtBump==1 and
@@ -758,14 +748,13 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	require.Equal(t, 2, closedCount, "Should have closed 2 segments")
 
 	// Verify segments 0 and 2 are closed, 1 and 3 are open
-	ss, _ = sc.segments(context.Background(), false)
+	ss = sc.copySegments()
 	for _, s := range ss {
 		if s.Start.Equal(segmentDates[0]) || s.Start.Equal(segmentDates[2]) {
 			require.Nil(t, s.index, "Segment should be closed")
 		} else {
 			require.NotNil(t, s.index, "Segment should be open")
 		}
-		s.DecRef() // no-op for dormant/closed segments
 	}
 
 	// Call the collect method with mixed open/closed segments

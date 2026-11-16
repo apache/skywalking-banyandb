@@ -140,22 +140,15 @@ func TestCloseIdleSegments_KeepsActivelyHeldReopenedSegment(t *testing.T) {
 	require.Equal(t, 1, sc.closeIdleSegments())
 	require.Nil(t, seg.index, "precondition: the cold segment must start idle-closed")
 
-	// 2) The snapshot path reopens every segment via segments(ctx,true) and
-	// holds the references until the snapshot finishes (see
-	// (*database).TakeFileSnapshot).
-	held, err := sc.segments(ctx, true)
-	require.NoError(t, err)
-	require.Len(t, held, 1)
-	defer func() {
-		for _, s := range held {
-			s.DecRef()
-		}
-	}()
-	require.NotNil(t, seg.index, "the snapshot path must reopen the cold segment")
+	// 2) An active reader reopens the cold segment through incRef and holds
+	// the reference until it finishes.
+	require.NoError(t, seg.incRef(ctx))
+	defer seg.DecRef()
+	require.NotNil(t, seg.index, "the reader must reopen the cold segment")
 
-	// 3) The 10-minute idle reclaimer tick fires while the snapshot is still
-	// holding the segment. (lastAccessed is still stale because
-	// segments(ctx,true)/incRef intentionally does not refresh it.)
+	// 3) The 10-minute idle reclaimer tick fires while the reader is still
+	// holding the segment. (lastAccessed is still stale because incRef
+	// intentionally does not refresh it.)
 	sc.closeIdleSegments()
 
 	// 4) The held segment MUST still be open. On the unfixed tree it has been
@@ -500,10 +493,10 @@ func TestDecRef_OnClosedSegment_IsNoOp(t *testing.T) {
 	require.Nil(t, seg.index, "DecRef must not resurrect a closed segment")
 }
 
-// peekOldestSegmentEndTime reports the oldest segment's end time only while
-// that segment is open (index loaded), preserving the pre-dormant-model behavior
-// that gated on refCount>0. An idle-closed oldest segment is reported as absent.
-func TestPeekOldestSegmentEndTime_OnlyWhileOpen(t *testing.T) {
+// peekOldestSegmentEndTime reports the oldest segment's end time whether that
+// segment is open or idle-closed: a closed segment still occupies disk, and the
+// disk monitor's forced cleanup must be able to evict it.
+func TestPeekOldestSegmentEndTime_ReportsOpenAndClosedOldest(t *testing.T) {
 	tempDir, cleanup := setupTestEnvironment(t)
 	defer cleanup()
 	sc, ctx := newReclaimTestController(t, tempDir, time.Hour)
@@ -524,12 +517,15 @@ func TestPeekOldestSegmentEndTime_OnlyWhileOpen(t *testing.T) {
 	require.True(t, ok, "an open oldest segment must be reported")
 	require.Equal(t, oldest.End, end)
 
-	// Idle-close the oldest: it must now be reported as absent.
+	// Idle-close the oldest: it still occupies disk, so the disk monitor must
+	// still see it, and peeking must not reopen it.
 	oldest.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
 	require.True(t, oldest.closeIfIdle(time.Now().UnixNano()))
 	require.Nil(t, oldest.index)
-	_, ok = sc.peekOldestSegmentEndTime()
-	require.False(t, ok, "a closed oldest segment must not be reported")
+	end, ok = sc.peekOldestSegmentEndTime()
+	require.True(t, ok, "an idle-closed oldest segment must still be reported")
+	require.Equal(t, oldest.End, end)
+	require.Nil(t, oldest.index, "peeking must not reopen the closed segment")
 
 	// Reopen on access: it is reported again.
 	require.NoError(t, oldest.incRef(ctx))
