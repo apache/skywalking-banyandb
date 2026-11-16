@@ -63,15 +63,19 @@ func TestToTopNResponseAggregateStampsTheList(t *testing.T) {
 	assert.EqualValues(t, 3, resp.GetLists()[0].GetItems()[0].GetValue().GetInt().GetValue())
 }
 
-func TestTopNProcessorRejectsAnInternalRequestOverSeveralGroups(t *testing.T) {
+// TestTopNProcessorRejectsAnInvalidInternalRequest checks that an internal request reads one group, because shard IDs
+// of different groups cannot be told apart, and carries an aggregation function, because a partial needs one.
+func TestTopNProcessorRejectsAnInvalidInternalRequest(t *testing.T) {
 	p := &topNQueryProcessor{queryService: &queryService{log: logger.GetLogger("topn-test")}}
-	for _, request := range []*measurev1.TopNRequest{
-		{Groups: []string{"g", "h"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC, Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
-		{Groups: []string{"g"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC},
+	for name, request := range map[string]*measurev1.TopNRequest{
+		"several groups":          {Groups: []string{"g", "h"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC, Agg: modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM},
+		"no aggregation function": {Groups: []string{"g"}, Name: "n", TopN: 3, FieldValueSort: modelv1.Sort_SORT_DESC},
 	} {
-		resp := p.Rev(context.Background(), bus.NewMessage(1, &measurev1.InternalTopNRequest{Request: request, PartialLimit: 3}))
-		_, isErr := resp.Data().(*common.Error)
-		assert.True(t, isErr, "shard IDs of different groups cannot be told apart, and a partial needs a function: %v", resp.Data())
+		t.Run(name, func(t *testing.T) {
+			resp := p.Rev(context.Background(), bus.NewMessage(1, &measurev1.InternalTopNRequest{Request: request, PartialLimit: 3}))
+			_, isErr := resp.Data().(*common.Error)
+			assert.True(t, isErr, "%v", resp.Data())
+		})
 	}
 }
 
