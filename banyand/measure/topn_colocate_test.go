@@ -60,14 +60,14 @@ type captureClient struct {
 
 func (c *captureClient) NewBatchPublisher(time.Duration) queue.BatchPublisher { return c.publisher }
 
-func topNTuple(entity string, value int64, sourceShard uint32) *streaming.Tuple2[int64] {
+func topNTuple(entity string, value int64) *streaming.Tuple2[int64] {
 	evs := []*modelv1.TagValue{pbv1.EntityStrValue(entity)}
-	data := flow.Data{evs, "g", value, sourceShard, uint64(0)}
+	data := flow.Data{evs, "g", value, uint64(0)}
 	return &streaming.Tuple2[int64]{V1: value, V2: flow.NewStreamRecord(data, 0)}
 }
 
 // TestTopNResultRowsAreCoLocatedOnOneShard proves that the windows of one group are published to the shard that
-// locates the group's series, whatever source shards their tuples came from, and hold every tuple of the window.
+// locates the group's series, whatever source shards their data points came from, and hold every tuple of the window.
 func TestTopNResultRowsAreCoLocatedOnOneShard(t *testing.T) {
 	const shardNum = 7
 	publisher := &capturePublisher{}
@@ -83,9 +83,9 @@ func TestTopNResultRowsAreCoLocatedOnOneShard(t *testing.T) {
 	).withShardNum(func(string) uint32 { return shardNum })
 
 	windows := []map[string][]*streaming.Tuple2[int64]{
-		{"g": {topNTuple("e0", 10, 1), topNTuple("e1", 60, 3)}},
-		{"g": {topNTuple("e0", 90, 6), topNTuple("e1", 60, 2), topNTuple("e2", 5, 0)}},
-		{"g": {topNTuple("e2", 15, 5)}},
+		{"g": {topNTuple("e0", 10), topNTuple("e1", 60)}},
+		{"g": {topNTuple("e0", 90), topNTuple("e1", 60), topNTuple("e2", 5)}},
+		{"g": {topNTuple("e2", 15)}},
 	}
 	for i, window := range windows {
 		require.NoError(t, proc.writeStreamRecord(flow.NewStreamRecord(window, time.Unix(int64(i)*60, 0).UnixMilli()), nil))
@@ -104,7 +104,7 @@ func TestTopNResultRowsAreCoLocatedOnOneShard(t *testing.T) {
 	decoder := &encoding.BytesBlockDecoder{}
 	sums := map[string]int64{}
 	for i, row := range publisher.rows {
-		assert.Equal(t, want, row.ShardId, "window %d is stored on the shard of the group's series, not on a source shard", i)
+		assert.Equal(t, want, row.ShardId, "window %d is stored on the shard of the group's series", i)
 		value := GenerateTopNValueInt()
 		require.NoError(t, value.Unmarshal(row.Request.DataPoint.Fields[0].GetBinaryData(), decoder))
 		_, _, values, entities := value.Values()

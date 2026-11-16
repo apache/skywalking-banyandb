@@ -79,13 +79,12 @@ func (sr *schemaRepo) inFlow(
 	ctx context.Context,
 	stm *databasev1.Measure,
 	seriesID uint64,
-	shardID uint32,
 	entityValues []*modelv1.TagValue,
 	dp *measurev1.DataPointValue,
 	spec *measurev1.DataPointSpec,
 ) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
-		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, shardID, &measurev1.InternalWriteRequest{
+		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:      stm.GetMetadata(),
 				DataPoint:     dp,
@@ -213,14 +212,12 @@ type dataPointWithEntityValues struct {
 	fieldIndex   map[string]int
 	entityValues []*modelv1.TagValue
 	seriesID     uint64
-	shardID      uint32
 }
 
 func newDataPointWithEntityValues(
 	dp *measurev1.DataPointValue,
 	entityValues []*modelv1.TagValue,
 	seriesID uint64,
-	shardID uint32,
 	spec *measurev1.DataPointSpec,
 	m *databasev1.Measure,
 ) *dataPointWithEntityValues {
@@ -230,7 +227,6 @@ func newDataPointWithEntityValues(
 		DataPointValue: dp,
 		entityValues:   entityValues,
 		seriesID:       seriesID,
-		shardID:        shardID,
 		tagSpec:        tagSpec,
 		fieldIndex:     fieldIndex,
 	}
@@ -642,7 +638,7 @@ func (t *topNStreamingProcessor[K]) start(ctx context.Context) *topNStreamingPro
 			return record.Data().(flow.Data)[2].(K)
 		},
 		streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
-			return record.Data().(flow.Data)[4].(uint64)
+			return record.Data().(flow.Data)[3].(uint64)
 		}),
 		// A TopN aggregation without a field value sort runs one processor per direction, so each ranks by its own.
 		orderBy(t.sortDirection),
@@ -676,7 +672,6 @@ type topNWrite struct {
 	request  *measurev1.InternalWriteRequest
 	measure  *databasev1.Measure
 	seriesID uint64
-	shardID  uint32
 }
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
@@ -756,7 +751,6 @@ func (manager *topNProcessorManager) Close() error {
 func (manager *topNProcessorManager) onMeasureWrite(
 	ctx context.Context,
 	seriesID uint64,
-	shardID uint32,
 	request *measurev1.InternalWriteRequest,
 	measure *databasev1.Measure,
 ) {
@@ -781,7 +775,6 @@ func (manager *topNProcessorManager) onMeasureWrite(
 	manager.RUnlock()
 	input := topNWrite{
 		seriesID: seriesID,
-		shardID:  shardID,
 		request:  request,
 		measure:  measure,
 	}
@@ -822,7 +815,6 @@ func (manager *topNProcessorManager) dispatchTopNWrite(input topNWrite) {
 			dp,
 			input.request.GetEntityValues(),
 			input.seriesID,
-			input.shardID,
 			spec,
 			input.measure,
 		)
@@ -1005,7 +997,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				dpWithEvs.entityValues,
 				"",
 				dpWithEvs.fieldValue(fieldName, fieldType, manager.l),
-				dpWithEvs.shardID,
 				dpWithEvs.seriesID,
 			}
 		}, fieldType, nil
@@ -1038,7 +1029,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			dpWithEvs.entityValues,
 			GroupName(groupValues),
 			dpWithEvs.fieldValue(fieldName, fieldType, manager.l),
-			dpWithEvs.shardID,
 			dpWithEvs.seriesID,
 		}
 	}, fieldType, nil

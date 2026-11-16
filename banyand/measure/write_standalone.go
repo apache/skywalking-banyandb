@@ -208,7 +208,7 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 		return nil, err
 	}
 	if !skipTopN {
-		w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+		w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
 	}
 	return dst, nil
 }

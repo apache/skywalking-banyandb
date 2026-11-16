@@ -111,10 +111,10 @@ func TestTopNProcessorRanksByItsOwnDirection(t *testing.T) {
 
 			for i, v := range []int64{30, 10, 40, 20} {
 				evs := []*modelv1.TagValue{pbv1.EntityStrValue(string(rune('a' + i)))}
-				proc.Write(flow.NewStreamRecord(flow.Data{evs, "", v, uint32(0), uint64(i + 1)}, windowStart.UnixMilli()))
+				proc.Write(flow.NewStreamRecord(flow.Data{evs, "", v, uint64(i + 1)}, windowStart.UnixMilli()))
 			}
 			// A point three windows later moves the watermark past the window, which flushes it.
-			proc.Write(flow.NewStreamRecord(flow.Data{[]*modelv1.TagValue{pbv1.EntityStrValue("late")}, "", int64(1), uint32(0), uint64(99)},
+			proc.Write(flow.NewStreamRecord(flow.Data{[]*modelv1.TagValue{pbv1.EntityStrValue("late")}, "", int64(1), uint64(99)},
 				windowStart.Add(3*time.Minute).UnixMilli()))
 
 			var got []int64
