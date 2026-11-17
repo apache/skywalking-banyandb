@@ -198,3 +198,33 @@ func TestAdapterBatchForwardsPersistentCallback(t *testing.T) {
 		t.Fatal("callback not called")
 	}
 }
+
+// Only a numeric-marked, sort-marked FloatTermValue field asks the engine for a sort ladder, keyed by the same order
+// preserving int64 the field's own numeric terms use.
+func TestEncodeFieldSetsLadderOnlyForNumericSortedFields(t *testing.T) {
+	key := index.FieldKey{IndexRuleID: 9}
+	scalar := index.NewIntField(key, -42)
+	scalar.Numeric, scalar.NumericKey = true, encoding.Float64ToSortableInt64(scalar.GetFloat())
+	got, err := encodeField(scalar)
+	require.NoError(t, err)
+	require.True(t, got.Ladder)
+	require.Equal(t, encoding.Float64ToSortableInt64(scalar.GetFloat()), got.LadderKey)
+	require.True(t, got.Sort)
+
+	unmarked := index.NewIntField(key, -42) // an array element is not marked
+	got, err = encodeField(unmarked)
+	require.NoError(t, err)
+	require.False(t, got.Ladder)
+
+	noSort := index.NewIntField(key, -42)
+	noSort.Numeric, noSort.NumericKey, noSort.NoSort = true, 1, true
+	got, err = encodeField(noSort)
+	require.NoError(t, err)
+	require.False(t, got.Ladder)
+
+	text := index.NewStringField(key, "x")
+	text.Numeric = true
+	got, err = encodeField(text)
+	require.NoError(t, err)
+	require.False(t, got.Ladder)
+}

@@ -567,6 +567,13 @@ func (v *ReadView) SortHits(ctx context.Context, hits []QueryHit, request SortRe
 	return result, nil
 }
 
+// TimestampSortValue returns the sort value a document with the given timestamp carries in its sorted "_timestamp"
+// doc value, so a caller that already holds QueryHit.Timestamp can order or merge hits by time without reading the doc
+// value again. The returned bytes are owned by the caller.
+func TimestampSortValue(timestamp int64) []byte {
+	return nativeice.EncodePrefixCodedInt64(timestamp)
+}
+
 // ProjectedHit contains one candidate's owned stored fields and coordinates.
 // Segment and DocumentNumber remain available for stable physical identity.
 //
