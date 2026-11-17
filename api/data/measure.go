@@ -59,6 +59,16 @@ var TopNQueryKindVersion = common.KindVersion{
 // TopicTopNQuery is the top-n query topic.
 var TopicTopNQuery = bus.BiTopic(TopNQueryKindVersion.String())
 
+// InternalTopNQueryKindVersion is the version tag of internal top-n query kind.
+var InternalTopNQueryKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "internal-topN-query",
+}
+
+// TopicInternalTopNQuery is the topic on which a liaison asks the data nodes for the per-shard partial
+// aggregates of a TopN query with an aggregation function.
+var TopicInternalTopNQuery = bus.BiTopic(InternalTopNQueryKindVersion.String())
+
 // MeasureDeleteExpiredSegmentsKindVersion is the version tag of measure delete kind.
 var MeasureDeleteExpiredSegmentsKindVersion = common.KindVersion{
 	Version: "v1",

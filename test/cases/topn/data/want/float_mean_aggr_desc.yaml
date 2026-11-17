@@ -21,30 +21,6 @@ lists:
     - key: service_id
       value:
         str:
-          value: svc_3
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-    value:
-      float:
-        value: 450.875
-  - entity:
-    - key: service_id
-      value:
-        str:
-          value: svc_1
-    - key: entity_id
-      value:
-        str:
-          value: entity_1
-    value:
-      float:
-        value: 325.125
-  - entity:
-    - key: service_id
-      value:
-        str:
           value: svc_2
     - key: entity_id
       value:
@@ -53,3 +29,27 @@ lists:
     value:
       float:
         value: 300
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_3
+    - key: entity_id
+      value:
+        str:
+          value: entity_5
+    value:
+      float:
+        value: 284.01366666666667
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_2
+    - key: entity_id
+      value:
+        str:
+          value: entity_2
+    value:
+      float:
+        value: 190.5

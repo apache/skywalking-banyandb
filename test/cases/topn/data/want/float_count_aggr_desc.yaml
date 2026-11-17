@@ -21,18 +21,6 @@ lists:
     - key: service_id
       value:
         str:
-          value: svc_3
-    - key: entity_id
-      value:
-        str:
-          value: entity_5
-    value:
-      float:
-        value: 1
-  - entity:
-    - key: service_id
-      value:
-        str:
           value: svc_1
     - key: entity_id
       value:
@@ -40,7 +28,19 @@ lists:
           value: entity_1
     value:
       float:
-        value: 1
+        value: 4
+  - entity:
+    - key: service_id
+      value:
+        str:
+          value: svc_3
+    - key: entity_id
+      value:
+        str:
+          value: entity_5
+    value:
+      float:
+        value: 3
   - entity:
     - key: service_id
       value:
@@ -49,7 +49,7 @@ lists:
     - key: entity_id
       value:
         str:
-          value: entity_4
+          value: entity_2
     value:
       float:
-        value: 1
+        value: 2

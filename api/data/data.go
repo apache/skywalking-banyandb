@@ -39,6 +39,7 @@ var (
 		TopicMeasureQuery.String():              TopicMeasureQuery,
 		TopicInternalMeasureQuery.String():      TopicInternalMeasureQuery,
 		TopicTopNQuery.String():                 TopicTopNQuery,
+		TopicInternalTopNQuery.String():         TopicInternalTopNQuery,
 		TopicPropertyDelete.String():            TopicPropertyDelete,
 		TopicPropertyQuery.String():             TopicPropertyQuery,
 		TopicPropertyUpdate.String():            TopicPropertyUpdate,
@@ -93,6 +94,9 @@ var (
 		},
 		TopicTopNQuery: func() proto.Message {
 			return &measurev1.TopNRequest{}
+		},
+		TopicInternalTopNQuery: func() proto.Message {
+			return &measurev1.InternalTopNRequest{}
 		},
 		TopicPropertyUpdate: func() proto.Message {
 			return &propertyv1.InternalUpdateRequest{}
@@ -212,6 +216,9 @@ var (
 		TopicTopNQuery: NewProtoCodec(func() proto.Message {
 			return &measurev1.TopNResponse{}
 		}),
+		TopicInternalTopNQuery: NewProtoCodec(func() proto.Message {
+			return &measurev1.InternalTopNResponse{}
+		}),
 		TopicPropertyQuery: NewProtoCodec(func() proto.Message {
 			return &propertyv1.InternalQueryResponse{}
 		}),
@@ -299,6 +306,7 @@ var operationMap = map[bus.Topic]string{
 	TopicMeasureQuery:              OperationQueryValue,
 	TopicInternalMeasureQuery:      OperationQueryValue,
 	TopicTopNQuery:                 OperationQueryValue,
+	TopicInternalTopNQuery:         OperationQueryValue,
 	TopicTraceQuery:                OperationQueryValue,
 	TopicPropertyUpdate:            OperationControlValue,
 	TopicPropertyDelete:            OperationControlValue,

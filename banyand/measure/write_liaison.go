@@ -245,6 +245,6 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil
 }
