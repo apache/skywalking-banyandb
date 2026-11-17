@@ -20,11 +20,15 @@ package measure
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
@@ -118,6 +122,85 @@ func TestBoundDecodeBackingDropsOversizedPooledBuffers(t *testing.T) {
 	tag := temp.tagFamilies[:cap(temp.tagFamilies)][0].columns[:1][0]
 	if cap(field.values) > 2048 || cap(field.int64s) > 2048 || cap(tag.float64s) > 2048 {
 		t.Fatal("oversized column backing survived")
+	}
+}
+
+// A cursor keeps only its in-range rows, so its pooled timestamps and versions are bounded
+// by twice those rows (at least 16), while the temporary block, which decodes the whole
+// block, is bounded by twice the block's rows.
+func TestBoundDecodeBackingBoundsCursorByInRangeRows(t *testing.T) {
+	const minute = int64(60e9)
+	bc := &blockCursor{
+		bm:              blockMetadata{count: 360, uncompressedSizeBytes: 128},
+		fieldProjection: []string{"value"}, tagProjection: []model.TagProjection{{Family: "default", Names: []string{"id"}}},
+	}
+	bc.bm.timestamps.min, bc.bm.timestamps.max = 0, 360*minute
+	bc.minTimestamp, bc.maxTimestamp = 0, 15*minute-1
+	require.EqualValues(t, 15, inRangeRows(bc))
+	const keptRows, blockRows = 2 * 16, 2 * 360
+	for _, tt := range []struct {
+		timestamps, versions int
+	}{
+		{timestamps: keptRows + 1, versions: keptRows},
+		{timestamps: keptRows, versions: keptRows + 1},
+	} {
+		bc.timestamps, bc.versions = make([]int64, 0, tt.timestamps), make([]int64, 0, tt.versions)
+		temp := &block{timestamps: make([]int64, 0, blockRows), versions: make([]int64, 0, blockRows+1)}
+		bc.boundDecodeBacking(temp)
+		for _, got := range []struct {
+			name      string
+			cap, want int
+		}{
+			{"cursor timestamps", cap(bc.timestamps), tt.timestamps},
+			{"cursor versions", cap(bc.versions), tt.versions},
+		} {
+			if got.want > keptRows {
+				require.Zerof(t, got.cap, "%s of cap %d over the in-range bound %d survived", got.name, got.want, keptRows)
+			} else {
+				require.Equalf(t, got.want, got.cap, "%s within the in-range bound %d was dropped", got.name, keptRows)
+			}
+		}
+		require.Equal(t, blockRows, cap(temp.timestamps), "the temporary block is bounded by the block's rows")
+		require.Zero(t, cap(temp.versions), "temporary block versions over the block bound survived")
+	}
+}
+
+// The legacy (TopN) loaders compact a cursor that keeps under half its block, as the
+// window scan does. The decoder backing that compaction detached must not stay on the
+// cursor next to the compacted copy of its values.
+func TestLegacyLoadDoesNotKeepDetachedBacking(t *testing.T) {
+	defer setLegacyBatchScan(setLegacyBatchScan(true))
+	var part fxPart
+	for sid := common.SeriesID(1); sid <= 4; sid++ {
+		part = append(part, fxRange{sid: sid, from: 1, to: 600, version: 1})
+	}
+	// One block of 600 rows per series: over 256 distinct urls, so the url column is not
+	// dictionary encoded and decodes into the cursor's decoder backing.
+	fx := newFixture(t, part)
+	for _, tt := range []struct {
+		maxTS     int64
+		compacted bool
+	}{
+		{maxTS: 299, compacted: true},  // under half the block
+		{maxTS: 300, compacted: false}, // exactly half: not compacted
+	} {
+		q := prefetchQuery(1, tt.maxTS, true, true)
+		qr := fx.newResult(t, q, q.schema(t))
+		t.Cleanup(qr.Release)
+		require.NoError(t, qr.loadCursorsForBatch())
+		require.Len(t, qr.data, 4)
+		for _, bc := range qr.data {
+			require.Len(t, bc.timestamps, int(tt.maxTS))
+			require.Equal(t, tt.compacted, bc.compacted, "rows 1..%d", tt.maxTS)
+			require.Zero(t, cap(bc.spareBacking), "rows 1..%d: the cursor kept the detached backing", tt.maxTS)
+			if tt.compacted {
+				require.Zero(t, bc.columnValuesDecoder.BackingCap())
+			} else {
+				require.Positive(t, bc.columnValuesDecoder.BackingCap())
+			}
+			url := bc.tagFamilies[0].columns[0].values
+			require.Equal(t, fmt.Sprintf("/u/%d/%d/1", bc.bm.seriesID, tt.maxTS), string(url[len(url)-1]))
+		}
 	}
 }
 
@@ -216,10 +299,11 @@ func TestSharedBlockBytesChargesOnlyInRangeRows(t *testing.T) {
 	whole := budget.sharedBlockBytes(newCursor(0, 6*hour))
 	narrow := budget.sharedBlockBytes(newCursor(hour, hour+hour/4))
 	disjoint := budget.sharedBlockBytes(newCursor(7*hour, 8*hour))
-	encoded := uint64(23 << 10)
-	// 15 of 360 rows are in range and the floor is 16: the cursor is compacted. A window with
-	// no row in range is charged the same floor.
-	want := sharedRetainedBytes(6*cursorRowColumnBytes, 16, 360, encoded) + int64(decodeTransientFactor*encoded)
+	// 15 of 360 rows are in range and the floor is 16: the cursor is compacted. It keeps a 4 KiB
+	// floor, those rows' share of the 23 KiB encoded block and 16 rows of 6 columns at 48 bytes;
+	// before its decode it also holds six times the encoded block. A window with no row in range
+	// is charged the same.
+	const want = 4<<10 + (23<<10)*16/360 + 16*6*48 + 6*(23<<10)
 	if narrow != want || disjoint != want {
 		t.Fatalf("narrow window charged %d, disjoint %d, want %d (whole block %d)", narrow, disjoint, want, whole)
 	}
@@ -246,15 +330,17 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := reservation.sharedBytes
-	reservation.trueUp(15, 600)
-	want := sharedRetainedBytes(6*cursorRowColumnBytes, 15, 600, 40<<10)
+	reservation.trueUp(15, 600, 0)
+	// 15 of 600 rows, floored to 16, compact: a 4 KiB floor, their share of the 40 KiB encoded
+	// block and 16 rows of 6 columns at 48 bytes.
+	const want = 4<<10 + (40<<10)*16/600 + 16*6*48
 	if reservation.sharedBytes != want || shared.Used() != workspace+want {
 		t.Fatalf("after true-up: reservation %d, tracker %d, want %d over workspace %d", reservation.sharedBytes, shared.Used(), want, workspace)
 	}
 	if want >= before/4 {
 		t.Fatalf("true-up kept %d of %d", want, before)
 	}
-	reservation.trueUp(600, 600) // never raises the reservation
+	reservation.trueUp(600, 600, 0) // never raises the reservation
 	if reservation.sharedBytes != want {
 		t.Fatalf("true-up raised the reservation to %d", reservation.sharedBytes)
 	}
@@ -266,24 +352,116 @@ func TestSharedReservationTrueUpReturnsTransientExpansion(t *testing.T) {
 	budget.releaseWorkspace()
 }
 
+// A compacted cursor is charged the cell bytes it measured, not the rows' share of the
+// block's encoded bytes, also when its rows are not spread evenly over the block's time range.
+func TestCompactedCursorIsChargedItsMeasuredSize(t *testing.T) {
+	// 300 rows at the start of the block and one far later: the in-range estimate before
+	// the decode sees almost nothing of a window that holds 140 rows.
+	fx := newFixture(t, fxPart{
+		{sid: 1, from: 1, to: 300, version: 1},
+		{sid: 1, from: 10000, to: 10000, version: 1},
+	})
+	q := prefetchQuery(1, 140, true, true)
+	qr, closeResult := liveResult(t, fx, q, 64<<20)
+	defer closeResult()
+	qr.budget.rowBytes = projectedRowBytes(qr.batchSchema)
+	require.Len(t, qr.data, 1)
+	bc := qr.data[0]
+	require.EqualValues(t, 301, bc.bm.count)
+	require.Less(t, inRangeRows(bc), uint64(16), "the uniform estimate misses the skew")
+	r := &scanReservation{budget: qr.budget, sharedBytes: qr.budget.sharedBlockBytes(bc)}
+	require.NoError(t, qr.budget.reserveCurrent(qr.ctx, bc.bm.uncompressedSizeBytes, r))
+	bc.res = r
+	ok, err := decodeCursor(qr.ctx, bc, false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, bc.compacted)
+	require.Len(t, bc.timestamps, 140)
+
+	var measured uint64
+	for _, cf := range append([]columnFamily{bc.fields}, bc.tagFamilies...) {
+		for _, c := range cf.columns {
+			for _, v := range c.values {
+				measured += uint64(len(v))
+			}
+		}
+	}
+	require.Positive(t, measured)
+	perRow := qr.budget.perRowBytes()
+	require.Equal(t, compactedRetainedBytes(perRow, 140, measured), r.sharedBytes, "charged the measured cell bytes")
+	require.NotEqual(t, sharedRetainedBytes(perRow, 140, 301, bc.bm.uncompressedSizeBytes), r.sharedBytes,
+		"not the rows' share of the block")
+
+	// A measured size above the reservation does not raise it.
+	charged := r.sharedBytes
+	r.trueUpCompacted(140, 1<<30)
+	require.Equal(t, charged, r.sharedBytes)
+}
+
+// A cursor that keeps most of its block views the decoder's backing array, which a pooled
+// cursor brings from an earlier decode and boundDecodeBacking lets be up to twice the block's
+// encoded size. Its true-up charges that array, not the block's encoded size.
+func TestTrueUpChargesTheDecoderBackingTheCursorKeeps(t *testing.T) {
+	mp := generateMemPart()
+	mp.mustInitFromDataPoints(calibrationPoints(1, 360, 400))
+	defer releaseMemPart(mp)
+	ref := partRef{p: openMemPart(mp), cache: storage.NewShardCache("trueup-backing", 0, 0)}
+	qo := queryOptions{schemaTagTypes: map[string]pbv1.ValueType{"entity_id": pbv1.ValueTypeStr}}
+	qo.MeasureQueryOptions.TagProjection = tagProjectionOf("storage-only", "entity_id")
+	qo.MeasureQueryOptions.FieldProjection = []string{"int_value"}
+	qo.minTimestamp, qo.maxTimestamp = 0, 360*calibrationMinute
+	ti := generateTstIter()
+	ti.init([]partRef{ref}, []common.SeriesID{1}, qo.minTimestamp, qo.maxTimestamp)
+	require.True(t, ti.nextBlock())
+	bc := generateBlockCursor()
+	defer releaseBlockCursor(bc)
+	bc.init(ti.piHeap[0].p, ti.piHeap[0].curBlock, qo)
+	require.NoError(t, ti.Error())
+	releaseTstIter(ti)
+
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 1<<30)
+	budget := newScanBudget(1<<30, nil)
+	require.NoError(t, budget.attachShared(ctx, 6, 1024, 1))
+	defer budget.releaseWorkspace()
+	budget.rowBytes = 16 + 24 + 8 // timestamp and version, one string tag, one int field
+	encoded := bc.bm.uncompressedSizeBytes
+	bc.columnValuesDecoder.AdoptBacking(make([]byte, 0, 2*encoded))
+	r := &scanReservation{cursor: bc, sharedBytes: budget.sharedBlockBytes(bc)}
+	require.NoError(t, budget.reserveCurrent(ctx, encoded, r))
+	defer r.release()
+	bc.res = r
+	ok, err := decodeCursor(ctx, bc, false)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, bc.compacted, "every row is in range")
+	backing := int64(bc.columnValuesDecoder.BackingCap())
+	require.EqualValues(t, 2*encoded, backing, "the decoder kept the backing it was given")
+	require.GreaterOrEqual(t, r.sharedBytes, backing, "the trued-up reservation covers the backing the cursor views")
+}
+
 // A merge over many series holds every cursor live; with the envelope of each trued up
 // after decode, the set fits a quota that the pre-decode envelope of all of them exceeds.
 func TestSharedReservationTrueUpLetsManyCursorsBeLive(t *testing.T) {
-	const cursors = 100
-	ctx := vectorized.WithQueryMemoryTracker(context.Background(), 96<<20)
+	const cursors, limit = 100, 96 << 20
+	ctx := vectorized.WithQueryMemoryTracker(context.Background(), limit)
 	budget := newScanBudget(1<<30, nil)
 	if err := budget.attachShared(ctx, 6, 1024, cursors); err != nil {
 		t.Fatal(err)
 	}
 	defer budget.releaseWorkspace()
+	newCursor := func() *blockCursor {
+		return &blockCursor{bm: blockMetadata{count: 611, uncompressedSizeBytes: 400 << 10}}
+	}
+	require.Greater(t, cursors*budget.sharedBlockBytes(newCursor()), int64(limit),
+		"the pre-decode envelopes of the cursors together exceed the limit")
 	var held []*scanReservation
 	for i := 0; i < cursors; i++ {
-		bc := &blockCursor{bm: blockMetadata{count: 611, uncompressedSizeBytes: 40 << 10}}
+		bc := newCursor()
 		r := &scanReservation{sharedBytes: budget.sharedBlockBytes(bc)}
 		if err := budget.reserveCurrent(ctx, bc.bm.uncompressedSizeBytes, r); err != nil {
 			t.Fatalf("cursor %d: %v", i, err)
 		}
-		r.trueUp(15, 611)
+		r.trueUp(15, 611, 0)
 		held = append(held, r)
 	}
 	for _, r := range held {

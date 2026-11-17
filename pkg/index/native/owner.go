@@ -73,13 +73,20 @@ type Term struct {
 
 // Field is an opaque native field. Product schema and analyzer types stay
 // outside this package; callers provide encoded names, values, and terms.
+//
+// A Field with Ladder, Index and Sort set also writes a companion ladder field named Name+LadderFieldSuffix that holds the
+// prefix-coded terms of LadderKey at every precision level, which lets ReadView.TopFieldHits and SortCursor find the first
+// documents in sort order without reading every candidate. LadderKey must be order-preserving: a smaller key must belong to
+// a value that sorts before the value of a larger key. Only scalar values may set Ladder.
 type Field struct {
-	Name  string
-	Value []byte
-	Terms []Term
-	Store bool
-	Index bool
-	Sort  bool
+	Name      string
+	Value     []byte
+	Terms     []Term
+	LadderKey int64
+	Store     bool
+	Index     bool
+	Sort      bool
+	Ladder    bool
 }
 
 // Document is one physical document admitted to a native segment.
@@ -2164,6 +2171,10 @@ func newMemorySegment(documents []Document, segmentID uint64, identifierDocValue
 				Name: field.Name, Value: bytes.Clone(field.Value), Terms: terms,
 				Store: field.Store, Index: field.Index, Sort: field.Sort,
 			})
+			if field.Ladder && field.Index && field.Sort {
+				indexedFieldSet[field.Name+LadderFieldSuffix] = struct{}{}
+				nativeDocument.Fields = append(nativeDocument.Fields, ladderEncodeField(field))
+			}
 		}
 		if document.Timestamp != 0 {
 			encodedTimestamp := uint64(document.Timestamp)
@@ -2855,7 +2866,10 @@ func cloneDocument(document Document) Document {
 	clone := Document{Identifier: bytes.Clone(document.Identifier), Timestamp: document.Timestamp}
 	clone.Fields = make([]Field, len(document.Fields))
 	for fieldIndex, field := range document.Fields {
-		clone.Fields[fieldIndex] = Field{Name: field.Name, Value: bytes.Clone(field.Value), Store: field.Store, Index: field.Index, Sort: field.Sort}
+		clone.Fields[fieldIndex] = Field{
+			Name: field.Name, Value: bytes.Clone(field.Value), Store: field.Store, Index: field.Index, Sort: field.Sort,
+			Ladder: field.Ladder, LadderKey: field.LadderKey,
+		}
 		if field.Terms != nil {
 			clone.Fields[fieldIndex].Terms = make([]Term, len(field.Terms))
 			for termIndex, term := range field.Terms {
