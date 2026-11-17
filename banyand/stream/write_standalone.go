@@ -471,6 +471,7 @@ func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1
 		}
 		f := index.NewIntField(fieldKey, v.Value)
 		f.NoSort = noSort
+		f.MarkNumericTag(tagType, tagVal)
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_STRING:
 		v := tagVal.GetStr()

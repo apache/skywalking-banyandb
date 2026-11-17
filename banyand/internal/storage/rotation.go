@@ -92,7 +92,11 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 						rt.run(taskCtx, t, d.logger)
 					}
 					func() {
-						ss, err := d.segmentController.segments(taskCtx, true) // Ensure segments are open
+						// Do not reopen idle-closed segments: this scan only resets the cache of open
+						// ones and reads the latest segment's end. Reopening here undid the idle
+						// reclaimer every tick (lastAccessed stays stale) and held the controller lock
+						// across the reopen I/O, stalling writers.
+						ss, err := d.segmentController.segments(taskCtx, false)
 						if err != nil {
 							d.logger.Error().Err(err).Msg("failed to get segments")
 							return
