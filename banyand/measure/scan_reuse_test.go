@@ -35,6 +35,7 @@ import (
 
 type scanReuseLease struct {
 	used  atomic.Uint64
+	peak  atomic.Uint64
 	limit uint64
 }
 
@@ -241,7 +242,12 @@ func (l *scanReuseLease) Charge(bytes uint64) error {
 			return fmt.Errorf("monotonic scan lease exceeded")
 		}
 		if l.used.CompareAndSwap(current, current+bytes) {
-			return nil
+			for {
+				peak := l.peak.Load()
+				if current+bytes <= peak || l.peak.CompareAndSwap(peak, current+bytes) {
+					return nil
+				}
+			}
 		}
 	}
 }
@@ -251,6 +257,7 @@ func (*scanReuseLease) Refund(uint64) {}
 
 func (l *scanReuseLease) Limit() uint64 { return l.limit }
 func (l *scanReuseLease) Used() uint64  { return l.used.Load() }
+func (l *scanReuseLease) Peak() uint64  { return l.peak.Load() }
 func (l *scanReuseLease) Owner() any    { return l }
 
 func TestSeriesScanReusesDecodedStorageWithinMonotonicLease(t *testing.T) {

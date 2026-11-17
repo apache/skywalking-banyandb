@@ -27,11 +27,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
+	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
 )
 
 const calibrationMinute = 60_000_000_000
@@ -67,22 +69,29 @@ func settledHeap() int64 {
 }
 
 type calibrationShape struct {
-	name       string
 	points     func(series, rows int) *dataPoints
 	tagTypes   map[string]pbv1.ValueType
+	measure    *databasev1.Measure
+	name       string
 	projection []model.TagProjection
 	fields     []string
 	columns    uint64 // as searchBlocks counts them: 4 + fields + tags
-	rowBytes   uint64 // projectedRowBytes: 16 for timestamp and version, 8 per fixed-width column, 24 per string, binary or array
+}
+
+// rowBytes is the per-row cost searchBlocks derives for the shape: projectedRowBytes of the
+// batch schema of its projection.
+func (s calibrationShape) rowBytes(t *testing.T) uint64 {
+	schema, err := vmeasure.BuildBatchSchema(s.measure, model.MeasureQueryOptions{TagProjection: s.projection, FieldProjection: s.fields})
+	require.NoError(t, err, s.name)
+	return projectedRowBytes(schema)
 }
 
 func calibrationShapes() []calibrationShape {
 	wide := calibrationShape{
-		name: "wide", tagTypes: fxTagTypes,
+		name: "wide", tagTypes: fxTagTypes, measure: fxMeasure(),
 		projection: tagProjectionOf(fxFamily, fxTagSvc, fxTagURL, fxTagN, fxTagN2, fxTagArr, fxTagIAr, fxTagBin),
 		fields:     []string{fxFldInt, fxFldFlt, fxFldNul, fxFldStr, fxFldBin},
 		columns:    4 + 5 + 7,
-		rowBytes:   16 + (24 + 24 + 8 + 8 + 24 + 24 + 24) + (8 + 8 + 8 + 24 + 24),
 		points: func(series, rows int) *dataPoints {
 			var part fxPart
 			for sid := 1; sid <= series; sid++ {
@@ -95,10 +104,17 @@ func calibrationShapes() []calibrationShape {
 			return dps
 		},
 	}
+	clusterMeasure := &databasev1.Measure{
+		Entity: &databasev1.Entity{TagNames: []string{"entity_id"}},
+		TagFamilies: []*databasev1.TagFamilySpec{{Name: "storage-only", Tags: []*databasev1.TagSpec{
+			{Name: "entity_id", Type: databasev1.TagType_TAG_TYPE_STRING},
+		}}},
+		Fields: []*databasev1.FieldSpec{{Name: "int_value", FieldType: databasev1.FieldType_FIELD_TYPE_INT}},
+	}
 	cluster := func(name string, idLen int) calibrationShape {
 		return calibrationShape{
-			name: name, tagTypes: map[string]pbv1.ValueType{"entity_id": pbv1.ValueTypeStr},
-			projection: tagProjectionOf("storage-only", "entity_id"), fields: []string{"int_value"}, columns: 4 + 1 + 1, rowBytes: 16 + 24 + 8,
+			name: name, tagTypes: map[string]pbv1.ValueType{"entity_id": pbv1.ValueTypeStr}, measure: clusterMeasure,
+			projection: tagProjectionOf("storage-only", "entity_id"), fields: []string{"int_value"}, columns: 4 + 1 + 1,
 			points: func(series, rows int) *dataPoints { return calibrationPoints(series, rows, idLen) },
 		}
 	}
@@ -116,12 +132,14 @@ func calibrationShapes() []calibrationShape {
 // TestCalibrateSharedEnvelope measures the heap one decode of a block allocates
 // (what the cursor retains plus the part of the expansion that is not pooled) against
 // the shared envelope, for several block shapes and query windows, and requires the
-// envelope to keep a margin over what a decoded cursor retains. With BYDB_CALIBRATE=1 it
-// also checks the pre-decode envelope against the allocation and prints the table.
+// envelope to keep a margin over what a decoded cursor retains. BYDB_CALIBRATE set to
+// any value logs the table; any value but "2" also checks the pre-decode envelope
+// against the allocation. BYDB_CALIBRATE=2 logs the table without checking any margin,
+// for re-deriving the constants.
 func TestCalibrateSharedEnvelope(t *testing.T) {
-	// The retained-size margin is deterministic and always checked. The allocation
-	// margin reads process-wide counters, and the table is for people, so both are
-	// BYDB_CALIBRATE=1 only.
+	// The retained-size margin is deterministic and checked unless BYDB_CALIBRATE=2. The
+	// allocation margin reads process-wide counters, and the table is for people, so both
+	// need BYDB_CALIBRATE.
 	calibrate := os.Getenv("BYDB_CALIBRATE") != ""
 	assertMargins := os.Getenv("BYDB_CALIBRATE") != "2"
 	const series = 200
@@ -129,6 +147,7 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 	fmt.Fprintf(&out, "\n%-14s %5s %7s %9s | %9s %9s %9s %9s | %7s %7s | %6s %6s\n", "shape", "rows", "inRange", "encoded",
 		"preEst", "keptEst", "alloc", "kept", "pre/A", "kept/R", "A/enc", "A/rc")
 	for _, shape := range calibrationShapes() {
+		rowBytes := shape.rowBytes(t)
 		for _, rows := range []int{100, 360, 611, 2000} {
 			mp := generateMemPart()
 			mp.mustInitFromDataPoints(shape.points(series, rows))
@@ -162,7 +181,7 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 				for _, bc := range cursors {
 					// A budgeted decode drops oversized pooled buffers first (boundDecodeBacking); give the
 					// cursor a reservation so the decode runs the way it does in a scan.
-					bc.res = &scanReservation{budget: &scanBudget{columns: shape.columns, rowBytes: shape.rowBytes, shared: vectorized.NewMemoryTracker(1 << 60)}}
+					bc.res = &scanReservation{budget: &scanBudget{columns: shape.columns, rowBytes: rowBytes, shared: vectorized.NewMemoryTracker(1 << 60)}}
 					ok, err := decodeCursor(t.Context(), bc, false)
 					require.NoError(t, err)
 					require.True(t, ok)
@@ -176,8 +195,8 @@ func TestCalibrateSharedEnvelope(t *testing.T) {
 				bc := &blockCursor{bm: blockMetadata{count: uint64(rows), uncompressedSizeBytes: encAvg}}
 				bc.bm.timestamps.max = int64(rows-1) * calibrationMinute
 				bc.minTimestamp, bc.maxTimestamp = qo.minTimestamp, qo.maxTimestamp
-				pre := (&scanBudget{columns: shape.columns, rowBytes: shape.rowBytes, shared: vectorized.NewMemoryTracker(1 << 60)}).sharedBlockBytes(bc)
-				kept := sharedRetainedBytes(shape.rowBytes*cursorRowFactor, inRangeAvg, uint64(rows), encAvg)
+				pre := (&scanBudget{columns: shape.columns, rowBytes: rowBytes, shared: vectorized.NewMemoryTracker(1 << 60)}).sharedBlockBytes(bc)
+				kept := sharedRetainedBytes(rowBytes*cursorRowFactor, inRangeAvg, uint64(rows), encAvg)
 				retainedReal := int64(retained / series)
 				if assertMargins {
 					require.GreaterOrEqualf(t, float64(kept), 1.1*float64(retainedReal),
