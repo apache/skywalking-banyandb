@@ -554,6 +554,20 @@ func (r fakeIndexRuleRegistry) List(_ context.Context, req *databasev1.IndexRule
 	return &databasev1.IndexRuleRegistryServiceListResponse{IndexRule: inGroup(r.f.schema.IndexRules, req.GetGroup())}, nil
 }
 
+func (r fakeIndexRuleRegistry) Create(_ context.Context, req *databasev1.IndexRuleRegistryServiceCreateRequest) (
+	*databasev1.IndexRuleRegistryServiceCreateResponse, error,
+) {
+	rev, err := r.f.put(schemasync.KindIndexRule, req.GetIndexRule(), true)
+	return &databasev1.IndexRuleRegistryServiceCreateResponse{ModRevision: rev}, err
+}
+
+func (r fakeIndexRuleRegistry) Update(_ context.Context, req *databasev1.IndexRuleRegistryServiceUpdateRequest) (
+	*databasev1.IndexRuleRegistryServiceUpdateResponse, error,
+) {
+	rev, err := r.f.put(schemasync.KindIndexRule, req.GetIndexRule(), false)
+	return &databasev1.IndexRuleRegistryServiceUpdateResponse{ModRevision: rev}, err
+}
+
 type fakeBindingRegistry struct {
 	databasev1.UnimplementedIndexRuleBindingRegistryServiceServer
 	f *fakeLiaison

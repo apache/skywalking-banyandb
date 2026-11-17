@@ -261,8 +261,11 @@ func TestDataExport_FlagValidation(t *testing.T) {
 		{"--output cannot be combined with --dry-run", []string{"--dry-run", "--output", out}},
 		{"--preempt cannot be combined with --dry-run", []string{"--dry-run", "--preempt"}},
 		{"--schema-only cannot be combined with --dry-run", []string{"--dry-run", "--schema-only"}},
-		{"native export format is not implemented yet", []string{"--output", out, "--format", "native"}},
-		{"native export format is not implemented yet", []string{"--dry-run", "--format", "native"}},
+		{"--compress: a native export is not compressed", []string{"--output", out, "--format", "native", "--compress", "gzip"}},
+		{"--compress: a native export is not compressed", []string{"--dry-run", "--format", "native", "--compress", "gzip"}},
+		{"a native export needs --max-file-size 0 or at least", []string{"--output", out, "--format", "native", "--max-file-size", "1KiB"}},
+		{"--node-row-rate-limit: a native export moves part bytes", []string{"--output", out, "--format", "native", "--node-row-rate-limit", "50000/s"}},
+		{"--csv-annotations: a native export has no CSV headers", []string{"--output", out, "--format", "native", "--csv-annotations"}},
 		{"unsupported compress", []string{"--dry-run", "--compress", "zstd"}},
 		{"--liaison-rate-limit", []string{"--dry-run", "--liaison-rate-limit", "fast"}},
 		{"unsupported format", []string{"--output", out, "--format", "parquet"}},
@@ -292,6 +295,23 @@ func TestDataExport_OutputMustBeNewOrEmpty(t *testing.T) {
 	err = preRunExport(t, "--output", filepath.Join(t.TempDir(), "new"), "--format", "CSV", "--compress", "none",
 		"--node-rate-limit", "3GiB/min", "--node-row-rate-limit", "3000000/min", "--liaison-rate-limit", "52428800", "--max-file-size", "0")
 	require.NoError(t, err)
+	err = preRunExport(t, "--output", filepath.Join(t.TempDir(), "native"), "--format", "native", "--node-row-rate-limit", "0")
+	require.NoError(t, err, "a zero row rate is accepted with --format native")
+	err = preRunExport(t, "--output", filepath.Join(t.TempDir(), "native"), "--format", "native", "--csv-annotations=false")
+	require.NoError(t, err, "--csv-annotations=false is accepted with --format native")
+}
+
+// A CSV-only setting from the environment is unused by a native export, not refused.
+func TestDataExport_NativeIgnoresCSVEnvironment(t *testing.T) {
+	t.Setenv("BYDBCTL_COMPRESS", "gzip")
+	t.Setenv("BYDBCTL_CSV_ANNOTATIONS", "true")
+	c := mustParsed(t, "--nodes", "127.0.0.1:1", "--output", filepath.Join(t.TempDir(), "native"), "--format", "native")
+	opts := &config.Export{}
+	sources, err := resolveSettings(c, &config.Connection{}, opts)
+	require.NoError(t, err)
+	require.NoError(t, validateExport(sources, opts))
+	assert.Equal(t, transferv1.Compress_COMPRESS_NONE, opts.Compress)
+	assert.False(t, opts.CSVAnnotations)
 }
 
 // plan.yaml settles every export setting the flags leave alone, and BYDBCTL_* comes last.

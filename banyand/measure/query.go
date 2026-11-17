@@ -158,31 +158,53 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		}
 	}
 
-	sids, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, err := m.searchSeriesList(ctx, series, mqo, segments)
+	if limitsSeries(mqo) {
+		return m.queryLimitedSeries(ctx, mqo, series, segments, &segmentsNeedRelease)
+	}
+	result, _, err := m.queryRound(ctx, mqo, series, segments, 0)
 	if err != nil {
 		return nil, err
 	}
-	if len(sids) < 1 {
+	if result == nil {
 		return nilResult, nil
+	}
+	result.segments = segments
+	segmentsNeedRelease = false
+	m.finishResult(result, mqo)
+	return result, nil
+}
+
+// queryRound runs the series search and the block scan of a normal-mode query once, with the series search limited to
+// seriesLimit series (0 asks for every series). It returns a nil result when no series matches. The result holds no
+// reference to the segments: the caller keeps them, and hands them to the result it accepts. moreSeries reports that the
+// series list is a proper prefix of the series the query matches.
+func (m *measure) queryRound(ctx context.Context, mqo model.MeasureQueryOptions, series []*pbv1.Series,
+	segments []storage.Segment[*tsTable, option], seriesLimit int,
+) (_ *queryResult, moreSeries bool, err error) {
+	sids, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, moreSeries, err := m.searchSeriesListLimited(
+		ctx, series, mqo, segments, seriesLimit)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(sids) < 1 {
+		return nil, false, nil
 	}
 	ctx = panicdiag.WithBreadcrumb(ctx, "resolved measure series", "measure", map[string]string{
 		"group":  m.group,
 		"series": fmt.Sprintf("%d", len(sids)),
 	})
-	result := queryResult{
+	result := &queryResult{
 		ctx:              ctx,
 		qm:               m.queryMetrics,
-		segments:         segments,
 		tagProjection:    mqo.TagProjection,
 		storedIndexValue: storedIndexValue,
 		dp:               m.decodePool,
 	}
-	queryResultTracker.Acquire(&result)
+	queryResultTracker.Acquire(result)
 	queriesStarted.Add(1)
 	if m.queryMetrics != nil {
 		m.queryMetrics.totalQueryResultStarted.Inc(1)
 	}
-	segmentsNeedRelease = false
 	defer func() {
 		if err != nil {
 			result.Release()
@@ -226,13 +248,17 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		"group": m.group,
 		"parts": fmt.Sprintf("%d", len(parts)),
 	})
-	if err = m.searchBlocks(ctx, &result, sids, parts, qo); err != nil {
-		return nil, err
+	if err = m.searchBlocks(ctx, result, sids, parts, qo); err != nil {
+		return nil, false, err
 	}
 
-	applyMeasureQueryOrdering(mqo, &result)
-	applyTopNOptions(mqo, &result)
+	applyMeasureQueryOrdering(mqo, result)
+	applyTopNOptions(mqo, result)
+	return result, moreSeries, nil
+}
 
+// finishResult records the metrics of the result a normal-mode query returns and builds its batch schema.
+func (m *measure) finishResult(result *queryResult, mqo model.MeasureQueryOptions) {
 	if m.queryMetrics != nil {
 		m.queryMetrics.resultPoints.Observe(float64(len(result.data)))
 	}
@@ -240,7 +266,7 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 	// Build the columnar BatchSchema once for PullBatch consumers (G5b).
 	// IMPORTANT: use result.tagProjection (the *original* projection
 	// captured before the entity/index tag strip) rather than mqo —
-	// mqo.TagProjection was rewritten to newTagProjection above and no
+	// mqo.TagProjection was rewritten to newTagProjection by queryRound and no
 	// longer carries entity-tag slots that the row path's copyAllTo
 	// fills via storedIndexValue. The batch path's column layout must
 	// match the vec adapter's expectation, which is the original
@@ -258,8 +284,6 @@ func (m *measure) Query(ctx context.Context, mqo model.MeasureQueryOptions) (mqr
 		GroupBy:         mqo.GroupBy,
 		Agg:             mqo.Agg,
 	})
-
-	return &result, nil
 }
 
 func validateMeasureQueryOptions(mqo model.MeasureQueryOptions) error {
@@ -323,6 +347,20 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 ) (sl []common.SeriesID, tables []*tsTable, tableShardIDs []common.ShardID, caches []storage.Cache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
 	newTagProjection []model.TagProjection, err error,
 ) {
+	sl, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, _, err = m.searchSeriesListLimited(ctx, series, mqo, segments, 0)
+	return sl, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, err
+}
+
+// searchSeriesListLimited is searchSeriesList with the series search of every segment limited to seriesLimit series (0 asks
+// for every series; the limit applies only to an index-rule order). The merged list is then a prefix of the list the
+// unlimited search returns: each segment's list is a prefix of its full list, so the merge is right only up to the point
+// where a truncated list runs out, because the series that list left out could rank anywhere after its last one. The merge
+// stops there and reports moreSeries.
+func (m *measure) searchSeriesListLimited(ctx context.Context, series []*pbv1.Series, mqo model.MeasureQueryOptions,
+	segments []storage.Segment[*tsTable, option], seriesLimit int,
+) (sl []common.SeriesID, tables []*tsTable, tableShardIDs []common.ShardID, caches []storage.Cache, storedIndexValue map[common.SeriesID]map[string]*modelv1.TagValue,
+	newTagProjection []model.TagProjection, moreSeries bool, err error,
+) {
 	var indexProjection []index.FieldKey
 	var multiValueProjection map[string]struct{}
 	fieldToValueType := make(map[string]tagNameWithType)
@@ -374,12 +412,13 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			PatternRequests:      mqo.PatternRequests,
 			Fields:               mqo.Fields,
 			Order:                mqo.Order,
+			Limit:                seriesLimit,
 			PreloadSize:          preloadSize,
 			Projection:           indexProjection,
 			MultiValueProjection: multiValueProjection,
 		})
 		if err != nil {
-			return nil, nil, nil, nil, nil, nil, err
+			return nil, nil, nil, nil, nil, nil, false, err
 		}
 		if len(sd.SeriesList) > 0 {
 			tt, shardIDs, cc := segments[i].TablesWithShardIDs()
@@ -421,6 +460,9 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 				top.i++
 				if top.i < len(top.SeriesList) {
 					heap.Push(segHeap, top)
+				} else if top.MoreSeries {
+					moreSeries = true
+					break
 				}
 				continue
 			}
@@ -447,6 +489,9 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 			top.i++
 			if top.i < len(top.SeriesList) {
 				heap.Push(segHeap, top)
+			} else if top.MoreSeries {
+				moreSeries = true
+				break
 			}
 		}
 	} else {
@@ -476,7 +521,7 @@ func (m *measure) searchSeriesList(ctx context.Context, series []*pbv1.Series, m
 		}
 	}
 
-	return sl, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, nil
+	return sl, tables, tableShardIDs, caches, storedIndexValue, newTagProjection, moreSeries, nil
 }
 
 func (m *measure) buildStoredIndexValue(
@@ -574,23 +619,42 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		MultiValueProjection: multiValueProjection,
 		TimeRange:            mqo.TimeRange,
 	}
-	seriesFilter := roaring.NewPostingList()
+	seriesFilter := make(map[common.SeriesID]struct{})
+	limited := mqo.Limit > 0 && mqo.Order != nil
+	// Only a time order ranks by the rows' timestamps, which is what lets a segment's time range prune it; an index
+	// order ranks by a tag value that a segment's time range says nothing about.
+	timeLimited := limited && mqo.Order.Type == index.OrderByTypeTime
+	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
+	var kept []int64 // timestamps of the rows the limited searches kept, to prune older segments
 	for i := range segments {
+		if timeLimited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
+			continue
+		}
+		segOpts := opts
+		if limited {
+			// The search returns only the first Limit rows that no newer segment shadows, in the query's order, so a
+			// series a newer segment holds cannot take a place in the limit.
+			segOpts.Limit = mqo.Limit
+			segOpts.IsShadowed = shadowedByNewer(segments[:i], existing)
+		}
 		sr := &segResult{}
-		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, opts)
+		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, segOpts)
 		if err != nil {
 			return nil, err
 		}
-		for j := 0; j < len(sr.SeriesList); j++ {
-			if seriesFilter.Contains(uint64(sr.SeriesList[j].ID)) {
+		for j := 0; j < len(sr.SeriesList) && !sr.LimitApplied; j++ {
+			if _, seen := seriesFilter[sr.SeriesList[j].ID]; seen {
 				sr.remove(j)
 				j--
 				continue
 			}
-			seriesFilter.Insert(uint64(sr.SeriesList[j].ID))
+			seriesFilter[sr.SeriesList[j].ID] = struct{}{}
 		}
 		if len(sr.SeriesList) < 1 {
 			continue
+		}
+		if sr.LimitApplied && timeLimited {
+			kept = append(kept, sr.Timestamps...)
 		}
 		r.segResults.results = append(r.segResults.results, sr)
 	}
@@ -610,6 +674,59 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 
 	heap.Init(&r.segResults)
 	return r, nil
+}
+
+// shadowedByNewer returns the check an index-mode search runs on its candidates: which identifiers a newer segment
+// already holds for the same query, so that the segment's row is the one that stands and the older one is dropped.
+func shadowedByNewer(newer []storage.Segment[*tsTable, option], opts storage.IndexSearchOpts) func(context.Context, [][]byte) (map[string]struct{}, error) {
+	return func(ctx context.Context, identifiers [][]byte) (map[string]struct{}, error) {
+		shadowed := make(map[string]struct{})
+		remaining := identifiers
+		for i := range newer {
+			if len(remaining) == 0 {
+				break
+			}
+			found, err := newer[i].IndexDB().ExistingIdentifiers(ctx, remaining, opts)
+			if err != nil {
+				return nil, err
+			}
+			if len(found) == 0 {
+				continue
+			}
+			next := remaining[:0:0]
+			for _, id := range remaining {
+				if _, ok := found[string(id)]; ok {
+					shadowed[string(id)] = struct{}{}
+				} else {
+					next = append(next, id)
+				}
+			}
+			remaining = next
+		}
+		return shadowed, nil
+	}
+}
+
+// segmentCannotBeatKept reports that no row of a segment spanning rng can rank inside the first limit of the kept
+// timestamps: they are final (newer segments already dropped what they shadow), and a segment lies entirely beyond the
+// limit-th one. A tie at the limit-th timestamp may still displace it, so only a strictly worse range is pruned.
+func segmentCannotBeatKept(rng timestamp.TimeRange, kept []int64, limit int, desc bool) bool {
+	if len(kept) < limit {
+		return false
+	}
+	sorted := make([]int64, len(kept))
+	copy(sorted, kept)
+	sort.Slice(sorted, func(i, j int) bool {
+		if desc {
+			return sorted[i] > sorted[j]
+		}
+		return sorted[i] < sorted[j]
+	})
+	threshold := sorted[limit-1]
+	if desc {
+		return rng.End.UnixNano() <= threshold
+	}
+	return rng.Start.UnixNano() > threshold
 }
 
 func (m *measure) searchBlocks(ctx context.Context, result *queryResult, sids []common.SeriesID, parts []partRef, qo queryOptions) error {
@@ -954,8 +1071,10 @@ func (qr *queryResult) Pull() *model.MeasureResult {
 				default:
 				}
 				tmpBlock := generateBlock()
-				defer releaseBlock(tmpBlock)
-				if !qr.data[idx].loadData(tmpBlock, false) {
+				loaded := qr.data[idx].loadData(tmpBlock, false)
+				// Before the cursor is handed back: releasing recycles its spare backing.
+				qr.data[idx].releaseLoadBlock(tmpBlock)
+				if !loaded {
 					cursorChan <- idx
 					return
 				}
@@ -1227,9 +1346,9 @@ type tagFamilyLocation struct {
 }
 
 type segResult struct {
-	storage.SeriesData
 	sortedValues [][]byte
-	i            int
+	storage.SeriesData
+	i int
 }
 
 func (sr *segResult) multiValueRow(row int) map[string][][]byte {

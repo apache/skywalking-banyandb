@@ -54,13 +54,21 @@ func (r *importRoute) targets(shard uint32) []string {
 	return r.shards[shard]
 }
 
-// nodes returns the sorted union of every shard's targets.
-func (r *importRoute) nodes() []string {
+// nodes returns the sorted union of the targets of shards, or of every shard when none is given.
+func (r *importRoute) nodes(shards ...uint32) []string {
 	set := make(map[string]struct{})
-	for _, ns := range r.shards {
+	add := func(ns []string) {
 		for _, n := range ns {
 			set[n] = struct{}{}
 		}
+	}
+	if len(shards) == 0 {
+		for _, ns := range r.shards {
+			add(ns)
+		}
+	}
+	for _, sh := range shards {
+		add(r.targets(sh))
 	}
 	out := make([]string, 0, len(set))
 	for n := range set {

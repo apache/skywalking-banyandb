@@ -19,6 +19,7 @@ package storage
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -352,4 +353,60 @@ func TestTickRejectsZeroTimestamp(t *testing.T) {
 	// Tick with negative should also be rejected
 	tsdb.Tick(-1)
 	require.Equal(t, validTS, db.latestTickTime.Load(), "Tick(-1) should not update latestTickTime")
+}
+
+// The rotation scan must not reopen an idle-closed segment: it only needs the open ones, and reopening undid the idle
+// reclaimer on every tick (lastAccessed stays stale) while holding the controller lock across the reopen I/O.
+func TestRotationScanLeavesIdleClosedSegmentClosed(t *testing.T) {
+	tsdb, c, segCtrl, dfFn := setUpDB(t)
+	defer dfFn()
+	segments, err := segCtrl.segments(context.Background(), false)
+	require.NoError(t, err)
+	require.Len(t, segments, 1)
+	idle := segments[0]
+	// setUpDB and the lookup above pin the segment; release every pin so it is dormant and reclaimable.
+	for atomic.LoadInt32(&idle.refCount) > 0 {
+		idle.DecRef()
+	}
+	idle.lastAccessed.Store(time.Now().Add(-time.Hour).UnixNano())
+	require.Equal(t, 1, segCtrl.closeIdleSegments())
+	idle.mu.RLock()
+	require.Nil(t, idle.index, "precondition: the segment is idle-closed")
+	idle.mu.RUnlock()
+
+	// The tick creates the next segment, which proves the rotation scan ran.
+	tsdb.Tick(c.Now().Add(23*time.Hour + time.Second).UnixNano())
+	require.Eventually(t, func() bool {
+		ss, _ := segCtrl.segments(context.Background(), false)
+		return len(ss) == 2
+	}, flags.EventuallyTimeout, time.Millisecond, "wait for the rotation scan to create the second segment")
+
+	idle.mu.RLock()
+	defer idle.mu.RUnlock()
+	require.Nil(t, idle.index, "the rotation scan must not reopen a segment nobody uses")
+}
+
+// A write into an existing segment must not queue behind the controller's writer lock path: while a reader holds the
+// shared lock (for example a query reopening an idle segment), CreateSegmentIfNotExist for a covered timestamp returns.
+func TestCreateSegmentForExistingSegmentDoesNotBlockOnReaders(t *testing.T) {
+	tsdb, c, segCtrl, dfFn := setUpDB(t)
+	defer dfFn()
+
+	segCtrl.RLock()
+	done := make(chan error, 1)
+	go func() {
+		seg, err := tsdb.CreateSegmentIfNotExist(c.Now())
+		if err == nil {
+			seg.DecRef()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		segCtrl.RUnlock()
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		segCtrl.RUnlock()
+		t.Fatal("CreateSegmentIfNotExist for an existing segment blocked behind a reader holding the controller lock")
+	}
 }

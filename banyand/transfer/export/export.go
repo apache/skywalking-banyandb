@@ -20,7 +20,6 @@ package export
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -32,6 +31,9 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/csv"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/native"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // Export implements transferv1.ExportServiceServer on a data node: it reads the units the
@@ -54,9 +56,9 @@ func (s *Service) Export(stream transferv1.ExportService_ExportServer) error {
 	if init == nil {
 		return status.Error(codes.InvalidArgument, "the first export frame must be init")
 	}
-	producer := s.producerFor(ctx, init, stream.Send)
-	if producer == nil {
-		return status.Errorf(codes.Unimplemented, "%s export is not implemented yet", formatName(init.GetFormat()))
+	producer, err := s.producerFor(ctx, init, stream.Send)
+	if err != nil {
+		return err
 	}
 	id := init.GetSessionId()
 	if _, err = s.liveSession(id); err != nil {
@@ -97,8 +99,7 @@ func (s *Service) Export(stream transferv1.ExportService_ExportServer) error {
 }
 
 // unitProducer turns one unit of a session snapshot into files and returns the unit's
-// warnings and row count. Each artifact format has one implementation; only CSV exists so
-// far (native answers Unimplemented before any unit).
+// warnings and row count. Each artifact format has one implementation: CSV and native.
 type unitProducer interface {
 	// Segment produces a stream, measure or trace unit; segDir is <root>/<group>/seg-<suffix>
 	// and every requested shard directory under it exists.
@@ -123,12 +124,12 @@ func (s *Service) exportUnit(id string, req *transferv1.ExportRequest, producer 
 	switch frame := req.GetFrame().(type) {
 	case *transferv1.ExportRequest_Segment:
 		unit := frame.Segment
-		segDir, locateErr := s.locateInSession(id, roots, unit.GetCatalog(), unit.GetGroup(), segDirPrefix+unit.GetSegmentSuffix(), unit.GetShardIds())
+		segDir, locateErr := s.locateInSession(id, roots, unit.GetCatalog(), unit.GetGroup(), nativefmt.SegDirPrefix+unit.GetSegmentSuffix(), unit.GetShardIds())
 		if locateErr != nil {
 			return 0, locateErr
 		}
 		shards = unit.GetShardIds()
-		if parts, err = csv.CountLiveParts(segDir, shards); err != nil {
+		if parts, err = snapshot.CountLiveParts(segDir, shards); err != nil {
 			return 0, err
 		}
 		produce = func() ([]string, uint64, error) { return producer.Segment(unit, segDir) }
@@ -143,14 +144,13 @@ func (s *Service) exportUnit(id string, req *transferv1.ExportRequest, producer 
 	default:
 		return 0, status.Error(codes.InvalidArgument, "only the first export frame may be init; later frames must be units")
 	}
-	if err = send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{
-		UnitStarted: &transferv1.UnitStarted{TotalShards: uint32(len(shards)), TotalParts: parts},
-	}}); err != nil {
+	started := &transferv1.UnitStarted{TotalShards: uint32(len(shards)), TotalParts: parts}
+	if err = send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: started}}); err != nil {
 		return 0, err
 	}
 	warnings, rows, err := produce()
 	if err != nil {
-		return 0, err
+		return 0, s.sessionGoneOr(id, err)
 	}
 	// The readers take a file missing from the snapshot for an absent optional one, so a
 	// release or takeover that removed the snapshot while the unit was read must be caught
@@ -180,13 +180,20 @@ func (s *Service) locateInSession(id string, roots map[commonv1.Catalog]string, 
 	shards []uint32,
 ) (string, error) {
 	dir, err := locateUnit(roots, catalog, group, segment, shards)
-	if status.Code(err) != codes.Internal {
-		return dir, err
+	if err != nil {
+		return "", s.sessionGoneOr(id, err)
 	}
-	if s.planner.sessions.verify(id) != nil {
-		return "", status.Errorf(codes.FailedPrecondition, "export session %s is gone (released or preempted)", id)
+	return dir, nil
+}
+
+// sessionGoneOr reports an Internal error as FailedPrecondition when the session was
+// released or preempted meanwhile: the release removes the snapshot the unit was read
+// from, so the fault is the session's, not the node's.
+func (s *Service) sessionGoneOr(id string, err error) error {
+	if status.Code(err) == codes.Internal && s.planner.sessions.verify(id) != nil {
+		return status.Errorf(codes.FailedPrecondition, "export session %s is gone (released or preempted)", id)
 	}
-	return "", err
+	return err
 }
 
 // locateUnit resolves <root>/<group>[/<segment>] and checks that it and every requested
@@ -210,7 +217,7 @@ func locateUnit(roots map[commonv1.Catalog]string, catalog commonv1.Catalog, gro
 		return "", err
 	}
 	for _, shard := range shards {
-		if err := requireDir(filepath.Join(dir, fmt.Sprintf("%s%d", shardDirPrefix, shard))); err != nil {
+		if err := requireDir(filepath.Join(dir, nativefmt.ShardDir(shard))); err != nil {
 			return "", err
 		}
 	}
@@ -234,25 +241,18 @@ func validPathComponent(name string) bool {
 	return name != "" && name != "." && name != ".." && filepath.Base(name) == name && !filepath.IsAbs(name)
 }
 
-// producerFor returns the unit producer of a format for one stream, or nil when the
-// format is not implemented (native).
+// producerFor returns the unit producer of a format for one stream; a format with no
+// producer is Unimplemented, and stream settings the format cannot honor InvalidArgument.
 func (s *Service) producerFor(ctx context.Context, init *transferv1.ExportRequest_Init,
 	send func(*transferv1.ExportResponse) error,
-) unitProducer {
-	if init.GetFormat() == transferv1.Format_FORMAT_CSV {
-		indexMode, _ := s.backends[commonv1.Catalog_CATALOG_MEASURE].(csv.IndexModeReader)
-		return csv.NewProducer(ctx, s.meta, indexMode, init, send)
-	}
-	return nil
-}
-
-func formatName(f transferv1.Format) string {
-	switch f {
-	case transferv1.Format_FORMAT_NATIVE:
-		return "native"
+) (unitProducer, error) {
+	switch init.GetFormat() {
 	case transferv1.Format_FORMAT_CSV:
-		return "csv"
+		indexMode, _ := s.backends[commonv1.Catalog_CATALOG_MEASURE].(csv.IndexModeReader)
+		return csv.NewProducer(ctx, s.meta, indexMode, init, send), nil
+	case transferv1.Format_FORMAT_NATIVE:
+		return native.NewProducer(ctx, init, send)
 	default:
-		return f.String()
+		return nil, status.Errorf(codes.Unimplemented, "%s export is not implemented", init.GetFormat())
 	}
 }

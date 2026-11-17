@@ -109,8 +109,23 @@ var _ = ginkgo.BeforeSuite(func() {
 		// The property index commits on its own schedule: wait for the live properties and the tombstone.
 		g.Expect(transfertest.PropertyDocs(frames, transfertest.PropertyGroup)).To(gomega.BeNumerically(">=", 2))
 	}, flags.EventuallyTimeout, time.Second).Should(gomega.Succeed())
+	// The checks above are lower bounds: a late Top-N flush or property commit may still land.
+	// Wait for four equal readings 2s apart, spanning past the 5s property flush timeout, before exporting.
+	ginkgo.By("Waiting for the source totals to settle")
+	last, same := uint64(0), 0
+	gomega.Eventually(func() bool {
+		n := totalData(conn)
+		if n == last {
+			same++
+		} else {
+			last, same = n, 0
+		}
+		return same >= 3
+	}, flags.EventuallyTimeout, 2*time.Second).Should(gomega.BeTrue(), "source plan totals settle")
 
 	artifactA = transfertest.ExportFrom(source.addr, workDir)
+	// The source has settled, so the native export that follows holds the data artifactA holds.
+	nativeArtifactA = exportNative(source.addr)
 	a := transfertest.ReadArtifact(artifactA, false)
 	a.VerifyManifest()
 	topNRows := topncheck.ExpectTopNExported(a)
@@ -189,10 +204,10 @@ func latestTombstone(a *transfertest.Artifact) map[string]string {
 	return a.LatestProperties()[transfertest.TombstoneProperty().GetId()]
 }
 
-// resourceRows counts the rows of one resource of a catalog and group, across nodes.
-func resourceRows(a *transfertest.Artifact, catalog, group, name string) int {
+// topNResultRows counts the rows of the TopN result measure of the measure group, across nodes.
+func topNResultRows(a *transfertest.Artifact) int {
 	var n int
-	for _, rows := range a.RowsOf(catalog, group, name) {
+	for _, rows := range a.RowsOf("measure", transfertest.MeasureGroup, topNResult) {
 		n += len(rows)
 	}
 	return n

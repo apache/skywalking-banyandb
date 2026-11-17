@@ -49,13 +49,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
-var (
-	// importRetryBase and importRetryMax bound the back-off of a refused first batch of an
-	// import stream (--send-retry-timeout); tests shorten them.
-	importRetryBase = time.Second
-	importRetryMax  = 30 * time.Second
-)
-
 // PushOptions configure Push.
 type PushOptions struct {
 	// Log receives warnings and retry notes.
@@ -189,9 +182,7 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 	if opts.Progress != nil {
 		p.progress = newImportProgress(opts.Progress, entries)
 	}
-	if opts.WriteRateLimit > 0 {
-		p.limiter = rate.NewLimiter(rate.Limit(opts.WriteRateLimit), max(int(math.Ceil(opts.WriteRateLimit)), opts.WriteBatchSize))
-	}
+	p.limiter = ratelimit.NewClient(opts.WriteRateLimit, opts.WriteBatchSize)
 	workers, _ := WorkerCount(opts.Parallelism, entries)
 	result := &PushResult{Rows: p.rows}
 	if workers == 0 {
@@ -205,15 +196,24 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 	// The first worker failure cancels the others and is the cause Push reports.
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	tasks := make([]*run.Task, workers)
-	finished := make([]bool, workers)
-	l := logger.GetLogger("importer")
-	for i := range workers {
+	runWorkers(runCtx, cancel, workers, "import-push-worker", func(ctx context.Context, i int) {
 		w := &worker{p: p, next: i, streams: map[streamKey]*importStream{}, items: map[string]*itemProgress{}, window: max(1, opts.WriteInflightBatches)}
-		tasks[i] = run.Go(runCtx, "import-push-worker", l, func(ctx context.Context) {
-			if workerErr := w.run(ctx, entries, work); workerErr != nil {
-				cancel(workerErr)
-			}
+		if workerErr := w.run(ctx, entries, work); workerErr != nil {
+			cancel(workerErr)
+		}
+	})
+	return finishPush(runCtx, opts.Log, entries, p.done, result, "stream and trace rows")
+}
+
+// runWorkers runs fn(ctx, i) for i in [0, n) concurrently and waits for all of them; a worker
+// that ends without returning, a panic, cancels ctx.
+func runWorkers(ctx context.Context, cancel context.CancelCauseFunc, n int, name string, fn func(ctx context.Context, i int)) {
+	l := logger.GetLogger("importer")
+	tasks := make([]*run.Task, n)
+	finished := make([]bool, n)
+	for i := range n {
+		tasks[i] = run.Go(ctx, name, l, func(ctx context.Context) {
+			fn(ctx, i)
 			finished[i] = true
 		})
 	}
@@ -223,9 +223,14 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 			cancel(errors.New("an import worker failed unexpectedly"))
 		}
 	}
+}
+
+// finishPush fills result.Done from done. When runCtx was canceled it lists the work items
+// done and not done to log and returns the exit-3 error, naming what a rerun stores twice.
+func finishPush(runCtx context.Context, log io.Writer, entries []Entry, done map[string]bool, result *PushResult, duplicated string) (*PushResult, error) {
 	var undone []string
 	for i := range entries {
-		if k := entries[i].Item.Key(); p.done[k] {
+		if k := entries[i].Item.Key(); done[k] {
 			result.Done = append(result.Done, k)
 		} else {
 			undone = append(undone, k)
@@ -234,17 +239,16 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 	if runCtx.Err() == nil {
 		return result, nil
 	}
-	cause := context.Cause(runCtx)
-	fmt.Fprintf(opts.Log, "work items done (%d):\n", len(result.Done))
+	fmt.Fprintf(log, "work items done (%d):\n", len(result.Done))
 	for _, k := range result.Done {
-		fmt.Fprintf(opts.Log, "  %s\n", k)
+		fmt.Fprintf(log, "  %s\n", k)
 	}
-	fmt.Fprintf(opts.Log, "work items not done (%d):\n", len(undone))
+	fmt.Fprintf(log, "work items not done (%d):\n", len(undone))
 	for _, k := range undone {
-		fmt.Fprintf(opts.Log, "  %s\n", k)
+		fmt.Fprintf(log, "  %s\n", k)
 	}
-	return result, exitcode.Exit(exitcode.ExitRuntime, "import failed: %w; %d of %d work item(s) done (listed above), stream and trace rows of a rerun are stored twice",
-		cause, len(result.Done), len(entries))
+	return result, exitcode.Exit(exitcode.ExitRuntime, "import failed: %w; %d of %d work item(s) done (listed above), %s of a rerun are stored twice",
+		context.Cause(runCtx), len(result.Done), len(entries), duplicated)
 }
 
 // importStream is one ImportRows stream of a worker, the batch being filled for it and the
@@ -541,13 +545,13 @@ func msgsOf[T any](rows []row) []T {
 // open opens the stream and performs its first exchange (init plus the first batch). A
 // refusal before anything was acknowledged is retried: UNAVAILABLE and a RESOURCE_EXHAUSTED
 // load refusal on the next liaison, SCHEMA_NOT_FOUND (the schema is not live on the liaison
-// yet) on the same one, with a back-off doubling from importRetryBase to importRetryMax until
+// yet) on the same one, with a back-off doubling from transfer.RetryBase to transfer.RetryMax until
 // --send-retry-timeout is used up. NODE_FAILED (the batch may be partly written) and
 // MESSAGE_TOO_LARGE are never retried, nor is a stream or trace batch's UNAVAILABLE without
 // a detail once the batch was sent (see retryableFirst).
 func (w *worker) open(ctx context.Context, st *importStream, first *transferv1.ImportRowsRequest) error {
 	deadline := time.Now().Add(w.p.opts.SendRetryTimeout)
-	backoff := importRetryBase
+	backoff := transfer.RetryBase
 	init := &transferv1.ImportRowsRequest_Init{
 		Catalog: st.key.catalog, Group: st.key.group, Stage: st.key.stage,
 		LiaisonBytesPerSecond: ratelimit.PerSecond(w.p.opts.LiaisonRateLimit),
@@ -587,7 +591,7 @@ func (w *worker) open(ctx context.Context, st *importStream, first *transferv1.I
 		if err = transfer.SleepCtx(ctx, backoff); err != nil {
 			return err
 		}
-		backoff = min(backoff*2, importRetryMax)
+		backoff = transfer.NextBackoff(backoff)
 	}
 }
 

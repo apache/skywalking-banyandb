@@ -395,3 +395,15 @@ func TestNode_ReleaseKeepsALaterPayment(t *testing.T) {
 		t.Fatalf("pace = %v after an earlier payment was given back, want %v kept for the later one", l.rows, later)
 	}
 }
+
+func TestNewClient_BurstHoldsOneUnit(t *testing.T) {
+	if l := NewClient(0, 1024); l != nil {
+		t.Fatalf("a zero rate is unlimited, got %v", l)
+	}
+	if got := NewClient(0.5, 100).Burst(); got != 100 {
+		t.Fatalf("a slow rate keeps a burst of one unit: got %d, want 100", got)
+	}
+	if got := NewClient(2.5, 1).Burst(); got != 3 {
+		t.Fatalf("a fast rate keeps one second's worth, rounded up: got %d, want 3", got)
+	}
+}

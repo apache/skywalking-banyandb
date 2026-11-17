@@ -29,12 +29,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/test"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 type writeOrderFileSystem struct {
@@ -581,4 +585,89 @@ func TestFilePart_FlusherSkipsFileParts(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, partDirs, "flusher must not create a second part directory for a file-backed part")
+}
+
+// TestSyncPartContext_RejectsInvalidPartType verifies that a secondary part type that is empty or
+// escapes sidx/<name> is refused before any directory is created, and that existing secondary
+// index directories are left untouched.
+func TestSyncPartContext_RejectsInvalidPartType(t *testing.T) {
+	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel}))
+
+	fileSystem := fs.NewLocalFileSystem()
+	tmpPath, deferFn := test.Space(require.New(t))
+	defer deferFn()
+
+	tabDir := filepath.Join(tmpPath, "tab")
+	fileSystem.MkdirPanicIfExist(tabDir, 0o755)
+	existingIndex := filepath.Join(tabDir, sidxDirName, "existing-index")
+	require.NoError(t, os.MkdirAll(existingIndex, 0o755))
+
+	opt := option{
+		flushTimeout: 0,
+		mergePolicy:  newDefaultMergePolicyForTesting(),
+		protector:    traceSnapshotOption().protector,
+	}
+	tst, err := newTSTable(fileSystem, tabDir, common.Position{}, logger.GetLogger("test"), timestamp.TimeRange{}, opt, nil)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, tst.Close())
+	}()
+
+	for _, partType := range []string{"", ".", "..", "../x", "a/b"} {
+		t.Run(partType, func(t *testing.T) {
+			spc := &syncPartContext{tsTable: tst}
+			require.Error(t, spc.NewPartType(&queue.ChunkedSyncPartContext{PartType: partType}))
+			assert.Empty(t, spc.sidxPartContexts)
+			_, statErr := os.Stat(filepath.Join(tmpPath, "x"))
+			assert.True(t, os.IsNotExist(statErr), "no directory may be created outside sidx/<name>")
+			_, statErr = os.Stat(filepath.Join(tabDir, "x"))
+			assert.True(t, os.IsNotExist(statErr), "no directory may be created outside sidx/<name>")
+			info, statErr := os.Stat(existingIndex)
+			require.NoError(t, statErr)
+			assert.True(t, info.IsDir())
+		})
+	}
+	assert.Empty(t, tst.sidxMap, "no sidx instance may be created for an invalid part type")
+}
+
+// TestNativeSyncFileNameMatchesStreamingMapping pins the native import's disk-to-wire table to the
+// names this engine's streaming sync sends for the listed part files, so a renamed file fails here, not mid-import.
+func TestNativeSyncFileNameMatchesStreamingMapping(t *testing.T) {
+	const sidxName = "sidx_x"
+	cases := []struct {
+		partType string
+		disk     string
+	}{
+		{PartTypeCore, primaryFilename},
+		{PartTypeCore, spansFilename},
+		{PartTypeCore, metaFilename},
+		{PartTypeCore, traceIDFilterFilename},
+		{PartTypeCore, tagTypeFilename},
+		{PartTypeCore, metadataFilename},
+		{PartTypeCore, "svc" + tagsFilenameExt},
+		{PartTypeCore, "svc" + tagsMetadataFilenameExt},
+		{sidxName, sidx.SidxPrimaryName + ".bin"},
+		{sidxName, sidx.SidxDataName + ".bin"},
+		{sidxName, sidx.SidxKeysName + ".bin"},
+		{sidxName, sidx.SidxMetaName + ".bin"},
+		{sidxName, "svc.td"},
+		{sidxName, "svc.tm"},
+		{sidxName, "svc.tf"},
+		{sidxName, nativefmt.SecondaryMetaFile},
+	}
+	for _, tc := range cases {
+		t.Run(tc.partType+"/"+tc.disk, func(t *testing.T) {
+			nativePartType := tc.partType
+			if nativePartType == PartTypeCore {
+				nativePartType = ""
+			}
+			name, skip, err := nativefmt.SyncFileName(commonv1.Catalog_CATALOG_TRACE, nativefmt.KindPart, nativePartType, tc.disk)
+			require.NoError(t, err)
+			want, ok := mapStreamingFileName(tc.partType, tc.disk)
+			require.Equal(t, !ok, skip)
+			if ok {
+				require.Equal(t, want, name)
+			}
+		})
+	}
 }
