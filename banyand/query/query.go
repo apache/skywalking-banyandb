@@ -118,6 +118,7 @@ func (q *queryService) PreRun(ctx context.Context) error {
 		q.pipeline.SubscribeStream(data.TopicInternalMeasureQuery, q.imqp),
 		q.pipeline.SubscribeStream(data.TopicInternalMeasurePatternQuery, q.imqp),
 		q.pipeline.Subscribe(data.TopicTopNQuery, q.nqp),
+		q.pipeline.Subscribe(data.TopicInternalTopNQuery, q.nqp),
 		q.pipeline.Subscribe(data.TopicTraceQuery, q.tqp),
 		q.pipeline.SubscribeStream(data.TopicTraceQuery, q.tqp),
 	)

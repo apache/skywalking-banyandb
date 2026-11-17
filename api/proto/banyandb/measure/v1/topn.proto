@@ -89,3 +89,38 @@ message TopNRequest {
   // stages is used to specify the stage of the data points in the lifecycle
   repeated string stages = 9;
 }
+
+// InternalTopNRequest is the request a liaison sends to the data nodes for a distributed TopN query
+// with an aggregation function. It is internal to a cluster.
+message InternalTopNRequest {
+  // request is the client's request. Its agg is the function the partial aggregates are computed for.
+  TopNRequest request = 1;
+  // partial_limit is how many items a data node returns for each shard, ranked by the aggregate of
+  // the windows that shard holds.
+  int32 partial_limit = 2;
+}
+
+// InternalTopNPartial is the partial aggregate of one item over the windows a shard holds in the time range.
+message InternalTopNPartial {
+  // entity identifies the item.
+  repeated model.v1.Tag entity = 1;
+  // partial is the partial aggregate: the sum and then the count for MEAN, the sum for SUM, the count for COUNT,
+  // the maximum for MAX and the minimum for MIN.
+  repeated model.v1.FieldValue partial = 2;
+}
+
+// InternalTopNShard is the answer of one shard of a data node.
+message InternalTopNShard {
+  // shard_id is the shard the partial aggregates were computed from.
+  uint32 shard_id = 1;
+  // partials are the shard's best items, ranked by their aggregate over the shard's windows.
+  repeated InternalTopNPartial partials = 2;
+}
+
+// InternalTopNResponse is a data node's answer to an InternalTopNRequest.
+message InternalTopNResponse {
+  // shards contains one answer per shard the data node holds.
+  repeated InternalTopNShard shards = 1;
+  // trace contains the trace information of the query when trace is enabled
+  common.v1.Trace trace = 2;
+}
