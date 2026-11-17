@@ -206,3 +206,35 @@ func TestEncodeBytesBlockNilEmptyStringDistinction(t *testing.T) {
 		assert.Equal(t, []byte{}, emptyDecoded[0])
 	})
 }
+
+func TestBytesBlockDecoderBacking(t *testing.T) {
+	values := [][]byte{[]byte("Hello, "), []byte("world!")}
+	encoded := encoding.EncodeBytesBlock(nil, values)
+
+	var decoder encoding.BytesBlockDecoder
+	require.Zero(t, decoder.BackingCap(), "a new decoder has no backing")
+
+	adopted := make([]byte, 5, 64)
+	decoder.AdoptBacking(adopted)
+	require.Equal(t, 64, decoder.BackingCap(), "an empty decoder adopts the array")
+	decoded, err := decoder.Decode(nil, encoded, uint64(len(values)))
+	require.NoError(t, err)
+	require.Equal(t, values, decoded)
+	require.Equal(t, "Hello, world!", string(adopted[:len("Hello, world!")]),
+		"the decoder decodes into the adopted array from its start")
+
+	decoder.AdoptBacking(make([]byte, 0, 128))
+	require.Equal(t, 64, decoder.BackingCap(), "a decoder with a backing ignores another")
+
+	detached := decoder.DetachBacking()
+	require.Empty(t, detached)
+	require.Equal(t, 64, cap(detached), "the detached array is the whole backing")
+	require.Zero(t, decoder.BackingCap(), "the decoder is left without a backing")
+	require.Equal(t, values, decoded, "values decoded earlier stay valid")
+	require.Zero(t, cap(decoder.DetachBacking()), "a second detach returns nothing")
+
+	again, err := decoder.Decode(nil, encoded, uint64(len(values)))
+	require.NoError(t, err)
+	require.Equal(t, values, again)
+	require.Equal(t, values, decoded, "a decode after the detach does not write into the detached array")
+}

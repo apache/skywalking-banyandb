@@ -738,6 +738,25 @@ func (h *holdingMemory) AcquireResource(ctx context.Context, _ uint64) error {
 	return ctx.Err()
 }
 
+func TestRefusedAdmissionIsReportedAsAnAcquireRejection(t *testing.T) {
+	verifyNoScanLeaks(t)
+	pool := newDecodePool(1, &holdingMemory{})
+	defer pool.close()
+	b := newScanBudget(-1, pool)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var r scanReservation
+	err := b.reserveCurrent(ctx, 100, &r)
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the protector's error is returned unchanged")
+
+	tel := b.telemetry()
+	tel.mu.Lock()
+	defer tel.mu.Unlock()
+	require.Equal(t, int64(1), tel.rejects[rejectAcquire], "a refused admission is recorded with the acquire reason")
+	require.Equal(t, err.Error(), tel.lastReject)
+}
+
 func TestReserveCurrentWaitsOnTheProtectorOnlyWhileTheQueryHoldsNothing(t *testing.T) {
 	verifyNoScanLeaks(t)
 	mem := &holdingMemory{}

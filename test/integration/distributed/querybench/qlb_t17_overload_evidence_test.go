@@ -26,13 +26,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 )
 
 const (
 	qlbT17OverloadRevision   = "2026-10-18-v1"
 	qlbT17BroadcastRejection = "fail to execute the query plan for measure qlb_t17: vec distributed plan: broadcast: query memory pool exhausted"
+	qlbT17ProbeRejection     = "query memory pool exhausted"
 )
+
+// qlbT17IsRejection reports whether msg is the rejection want, alone or followed by the
+// detail an exhaustion error gives (": <reason> (limit ..., used ..., requested ...)").
+func qlbT17IsRejection(msg, want string) bool {
+	return msg == want || strings.HasPrefix(msg, want+": ")
+}
 
 type qlbT17OverloadCall struct {
 	Status  string `json:"status"`
@@ -156,7 +164,7 @@ func validateQLBT17OverloadCohorts(e qlbT17OverloadEvidence) error {
 
 func validateQLBT17CapacityProbe(p qlbT17CapacityProbe) error {
 	if p.ProtectorLimit != 6<<30 || p.PoolLimit != 1536<<20 || p.QueryLimit != 192<<20 || p.Admitted <= 0 || p.Admitted >= 64 ||
-		p.Rejected != "query memory pool exhausted" || p.Rollback != "pass" || p.HeldBytes == 0 || p.HeldBytes > p.PoolLimit ||
+		!qlbT17IsRejection(p.Rejected, qlbT17ProbeRejection) || p.Rollback != "pass" || p.HeldBytes == 0 || p.HeldBytes > p.PoolLimit ||
 		p.AfterLocalClose != p.HeldBytes || p.AfterTransportClose == nil || *p.AfterTransportClose != 0 || p.Recovery != "pass" ||
 		p.FinalBytes == nil || *p.FinalBytes != 0 {
 		return fmt.Errorf("T17 missing held-capacity rejection, ownership cleanup or recovery proof")
@@ -175,7 +183,7 @@ func validateQLBT17OverloadCall(call qlbT17OverloadCall, index int, oracles []*q
 			return fmt.Errorf("T17 successful call lacks exact result proof")
 		}
 	case "ResourceExhausted":
-		if !allowRejection || call.Error != qlbT17BroadcastRejection || call.Exact || call.Rows != 0 || call.Hash != 0 {
+		if !allowRejection || !qlbT17IsRejection(call.Error, qlbT17BroadcastRejection) || call.Exact || call.Rows != 0 || call.Hash != 0 {
 			return fmt.Errorf("T17 unexpected rejection or partial result")
 		}
 	default:
