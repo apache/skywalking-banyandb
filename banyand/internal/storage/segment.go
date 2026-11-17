@@ -995,11 +995,28 @@ func (sc *segmentController[T, O]) open(ctx context.Context) error {
 	return err
 }
 
+// findContaining returns the segment that contains start, or nil, under the shared lock.
+func (sc *segmentController[T, O]) findContaining(start time.Time) *segment[T, O] {
+	sc.RLock()
+	defer sc.RUnlock()
+	for i := len(sc.lst) - 1; i >= 0; i-- {
+		if sc.lst[i].Contains(start.UnixNano()) {
+			return sc.lst[i]
+		}
+	}
+	return nil
+}
+
 func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) (*segment[T, O], error) {
 	// Reject epoch/near-epoch timestamps caused by zero MinTimestamp flowing through sync paths.
 	// BanyanDB is an APM database -- no legitimate data predates the year 2000.
 	if start.UnixNano() <= 0 {
 		return nil, ErrInvalidSegmentTimestamp
+	}
+	// Fast path: an existing segment is the common case on every write, so look under the
+	// shared lock and never queue behind a writer lock (or a reader doing slow I/O).
+	if s := sc.findContaining(start); s != nil {
+		return s, nil
 	}
 	sc.Lock()
 	defer sc.Unlock()
