@@ -108,7 +108,17 @@ type IndexSearchOpts struct {
 	// value sequence is also returned in SeriesData.MultiValueFields.
 	// Other projections retain their last-value-wins behavior.
 	MultiValueProjection map[string]struct{}
-	PreloadSize          int
+	// IsShadowed reports which of the identifiers a newer segment already returns for this query (same subject, time
+	// range, criteria and patterns). With Limit it lets an index-mode search drop shadowed rows before it truncates.
+	IsShadowed  func(ctx context.Context, identifiers [][]byte) (map[string]struct{}, error)
+	PreloadSize int
+	// Limit, when positive, is how many rows the caller can use from this search (its offset plus limit). An
+	// index-mode search with a time order and IsShadowed then returns only the first Limit rows that IsShadowed does not
+	// hold, in time order, reading the stored fields of only those rows, and reports it in SeriesData.LimitApplied. A
+	// series search (Search with series matchers) ordered by an index rule, without IsShadowed, reads Limit as a count of
+	// SERIES: it returns the first Limit series in the rule's order, reports whether more exist in SeriesData.MoreSeries,
+	// and sets LimitApplied. Any other search ignores it and returns every row.
+	Limit int
 }
 
 // FieldResult is the result of a field.
@@ -135,6 +145,12 @@ type SeriesData struct {
 	Versions         []int64
 	TimestampSet     []bool
 	VersionSet       []bool
+	// LimitApplied reports that the search truncated to IndexSearchOpts.Limit and already applied
+	// IndexSearchOpts.IsShadowed, so the caller must not de-duplicate the rows again.
+	LimitApplied bool
+	// MoreSeries reports, for a series search truncated to IndexSearchOpts.Limit series, that more series than the
+	// returned ones matched, in the order after them.
+	MoreSeries bool
 }
 
 // IndexDB is the interface of index database.
@@ -143,6 +159,9 @@ type IndexDB interface {
 	Update(docs index.Documents) error
 	Search(ctx context.Context, series []*pbv1.Series, opts IndexSearchOpts) (SeriesData, [][]byte, error)
 	SearchWithoutSeries(ctx context.Context, opts IndexSearchOpts) (sd SeriesData, sortedValues [][]byte, err error)
+	// ExistingIdentifiers returns which of the identifiers this index holds a document for among the candidates the
+	// subject, time range, criteria and patterns of opts select.
+	ExistingIdentifiers(ctx context.Context, identifiers [][]byte, opts IndexSearchOpts) (map[string]struct{}, error)
 	EnableExternalSegments() (index.ExternalSegmentStreamer, error)
 	Stats() (dataCount int64, dataSizeBytes int64)
 }

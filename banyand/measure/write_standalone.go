@@ -328,6 +328,7 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 					f.Store = true
 					f.Index = true
 					f.NoSort = r.GetNoSort()
+					f.MarkNumericTag(t.Type, tagValue)
 					fields = append(fields, f)
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -401,6 +402,9 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
 				f.Store = true
 				f.Index = toIndex
 				f.NoSort = r.GetNoSort()
+				if toIndex {
+					f.MarkNumericTag(t.Type, tagValue)
+				}
 				fields = append(fields, f)
 			} else {
 				for _, val := range encodeTagValue.valueArr {
