@@ -59,6 +59,7 @@ func BenchmarkBudgetedTimeOrderedScan(b *testing.B) {
 				if err := result.budget.attachShared(ctx, len(result.batchSchema.Columns), 1024, len(result.data)); err != nil {
 					b.Fatal(err)
 				}
+				result.budget.rowBytes = projectedRowBytes(schema) // as searchBlocks does
 				for {
 					mb, err := result.PullBatch(ctx)
 					if err != nil {
