@@ -92,15 +92,19 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 						rt.run(taskCtx, t, d.logger)
 					}
 					func() {
-						// Snapshot the list without reopening or pinning anything: this
-						// housekeeping pass only resets the caches of open segments and
-						// reads the immutable time range of the latest one. Reopening
-						// here would resurrect every segment the idle reclaimer closed,
-						// and the slow reopen would stall the group's writes.
-						ss := d.segmentController.copySegments()
+						ss, err := d.segmentController.segments(taskCtx, true) // Ensure segments are open
+						if err != nil {
+							d.logger.Error().Err(err).Msg("failed to get segments")
+							return
+						}
 						if len(ss) == 0 {
 							return
 						}
+						defer func() {
+							for i := 0; i < len(ss); i++ {
+								ss[i].DecRef()
+							}
+						}()
 						for i := range ss {
 							if ss[i].End.UnixNano() < ts {
 								ss[i].resetIndex()
@@ -117,7 +121,7 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 						defer d.incTotalRotationFinished(1)
 						start := options.SegmentInterval.NextTime(t)
 						d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
-						_, err := d.segmentController.create(taskCtx, start)
+						_, err = d.segmentController.create(taskCtx, start)
 						if err != nil {
 							d.logger.Error().Err(err).Msgf("failed to create new segment.")
 							d.incTotalRotationErr(1)

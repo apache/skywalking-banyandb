@@ -386,3 +386,26 @@ func TestSelectSegments_ReopenFailurePropagatesAndReleasesPins(t *testing.T) {
 		require.Zero(t, refCountOf(s), "references must be released for %s", s)
 	}
 }
+
+// The rotation pass reopens every segment through segments(ctx, true). When a
+// later segment fails to reopen, the references already taken on earlier
+// segments must be released, or those segments stay held forever and are never
+// idle-closed or deleted.
+func TestSegments_ReopenFailureReleasesPins(t *testing.T) {
+	g := newGatedController(t, 2)
+	reopenErr := errors.New("injected reopen failure")
+	g.sc.opts.TSTableCreator = func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+		tr timestamp.TimeRange, _ mockTSTableOpener, _ any,
+	) (mockTSTable, error) {
+		if tr.Start.Equal(g.segs[1].Start) {
+			return mockTSTable{}, reopenErr
+		}
+		return mockTSTable{ID: common.ShardID(0)}, nil
+	}
+	segs, err := g.sc.segments(g.ctx, true) // the oldest reopens first, then the newest fails
+	require.ErrorContains(t, err, reopenErr.Error())
+	require.Nil(t, segs)
+	for _, s := range g.segs {
+		require.Zero(t, refCountOf(s), "references must be released for %s", s)
+	}
+}

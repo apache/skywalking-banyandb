@@ -140,15 +140,22 @@ func TestCloseIdleSegments_KeepsActivelyHeldReopenedSegment(t *testing.T) {
 	require.Equal(t, 1, sc.closeIdleSegments())
 	require.Nil(t, seg.index, "precondition: the cold segment must start idle-closed")
 
-	// 2) An active reader reopens the cold segment through incRef and holds
-	// the reference until it finishes.
-	require.NoError(t, seg.incRef(ctx))
-	defer seg.DecRef()
-	require.NotNil(t, seg.index, "the reader must reopen the cold segment")
+	// 2) The snapshot path reopens every segment via segments(ctx,true) and
+	// holds the references until the snapshot finishes (see
+	// (*database).TakeFileSnapshot).
+	held, err := sc.segments(ctx, true)
+	require.NoError(t, err)
+	require.Len(t, held, 1)
+	defer func() {
+		for _, s := range held {
+			s.DecRef()
+		}
+	}()
+	require.NotNil(t, seg.index, "the snapshot path must reopen the cold segment")
 
-	// 3) The 10-minute idle reclaimer tick fires while the reader is still
-	// holding the segment. (lastAccessed is still stale because incRef
-	// intentionally does not refresh it.)
+	// 3) The 10-minute idle reclaimer tick fires while the snapshot is still
+	// holding the segment. (lastAccessed is still stale because
+	// segments(ctx,true)/incRef intentionally does not refresh it.)
 	sc.closeIdleSegments()
 
 	// 4) The held segment MUST still be open. On the unfixed tree it has been

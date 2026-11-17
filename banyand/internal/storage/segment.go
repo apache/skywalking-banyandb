@@ -203,19 +203,13 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 // at refCount==0 under s.mu). When refCount<=0 it falls to the s.mu slow path
 // (acquire), which serializes the reopen and the 0->1 transition against them.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
-	for {
-		current := atomic.LoadInt32(&s.refCount)
-		if current <= 0 {
-			// Dormant (index!=nil) or closed (index==nil); reopen/acquire under
-			// the mutex.
-			return s.acquire(ctx)
-		}
-		// CAS bumps only while refCount>0, so it can never resurrect a segment
-		// the idle reclaimer is closing (closeIfIdle acts only at refCount==0).
-		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
-			return nil
-		}
+	// tryPin bumps only while refCount>0, so it can never resurrect a segment
+	// the idle reclaimer is closing (closeIfIdle acts only at refCount==0).
+	if s.tryPin() {
+		return nil
 	}
+	// Dormant (index!=nil) or closed (index==nil); reopen/acquire under the mutex.
+	return s.acquire(ctx)
 }
 
 // initialize opens the segment's series index and shards if not already
@@ -888,6 +882,31 @@ func (sc *segmentController[T, O]) createSegment(ts time.Time) (*segment[T, O], 
 	}
 	s.lastAccessed.Store(time.Now().UnixNano())
 	return s, nil
+}
+
+func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bool) (ss []*segment[T, O], err error) {
+	sc.RLock()
+	defer sc.RUnlock()
+	r := make([]*segment[T, O], len(sc.lst))
+	ctx = context.WithValue(ctx, logger.ContextKey, sc.l)
+	for i := range sc.lst {
+		if reopenClosed {
+			if err = sc.lst[i].incRef(ctx); err != nil {
+				// Release the segments pinned so far, or a segment deleted mid-pass
+				// would leave every earlier one held forever.
+				for _, pinned := range r[:i] {
+					pinned.DecRef()
+				}
+				return nil, err
+			}
+		} else {
+			// Pin only if already open; a dormant/closed segment is returned
+			// unbumped so the idle reclaimer is never raced into resurrecting it.
+			sc.lst[i].tryPin()
+		}
+		r[i] = sc.lst[i]
+	}
+	return r, nil
 }
 
 // copySegments returns a snapshot of the current segment list WITHOUT touching

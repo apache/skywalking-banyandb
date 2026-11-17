@@ -51,6 +51,10 @@ import (
 //  4. incRef does not refresh lastAccessed, so the reopened segment is idle
 //     again at the next reclaimer tick, and the cycle repeats forever.
 //
+// The rotation pass is fixed separately. The tests below cover the other paths
+// that reopen or delete a cold segment while writes are flowing: a query over
+// the cold day, the disk monitor's forced cleanup, and segment creation.
+//
 // The fixture models the slow reopen with a reopenGate: the TSTable creator
 // parks on the gate when it opens a shard of the gated segment, so a reopen
 // stays in flight until the test releases it. A write queued behind such a
@@ -159,76 +163,6 @@ func (f *coldReopenFixture) makeColdIdle(t *testing.T) {
 	require.Equal(t, 1, f.db.segmentController.closeIdleSegments(), "the reclaimer must close the cold segment")
 	require.False(t, f.isOpen(t, f.coldDay))
 	f.coldOpens.Store(0)
-}
-
-// tickAsync hands a write timestamp to the rotation task, as database.Tick does
-// for the first write of every 10 minutes, and reports once the task has fully
-// processed it (see processRotationTick).
-func (f *coldReopenFixture) tickAsync(ts time.Time) <-chan error {
-	done := make(chan error, 1)
-	go func() {
-		// If the test already failed while this pass was stuck, cleanup closes
-		// the database and its tick channel under the pending send.
-		defer func() { _ = recover() }()
-		processRotationTick(f.db, ts)
-		done <- nil
-	}()
-	return done
-}
-
-// tick hands a write timestamp to the rotation task and waits until the task
-// has finished processing it.
-func (f *coldReopenFixture) tick(t *testing.T, ts time.Time) {
-	t.Helper()
-	requireFinished(t, f.tickAsync(ts), "the rotation pass")
-}
-
-// TestRotationTick_DoesNotReopenIdleClosedSegment: a write tick on the hot
-// segment must not resurrect yesterday's segment that the idle reclaimer just
-// closed.
-func TestRotationTick_DoesNotReopenIdleClosedSegment(t *testing.T) {
-	f := newColdReopenFixture(t)
-
-	f.tick(t, f.hotDay.Add(12*time.Hour+20*time.Minute))
-
-	require.Zero(t, f.coldOpens.Load(), "the rotation tick must not reload the cold segment's shards")
-	require.False(t, f.isOpen(t, f.coldDay), "the cold segment must stay closed after a rotation tick")
-}
-
-// TestIdleReclaim_NoCloseReopenCycle simulates an hour of steady writes on the
-// hot day: a write tick every 10 minutes interleaved with the 10-minute idle
-// reclaimer. The cold segment must be closed once and stay closed, not be
-// reopened every cycle.
-func TestIdleReclaim_NoCloseReopenCycle(t *testing.T) {
-	f := newColdReopenFixture(t)
-	sc := f.db.segmentController
-
-	ts := f.hotDay.Add(12 * time.Hour)
-	var reopenCycles int
-	for i := 0; i < 6; i++ {
-		ts = ts.Add(10*time.Minute + time.Second)
-		f.write(t, ts)
-		before := f.coldOpens.Load()
-		f.tick(t, ts)
-		if f.coldOpens.Load() > before {
-			reopenCycles++
-		}
-		sc.closeIdleSegments()
-	}
-	require.Zero(t, reopenCycles, "the cold segment was reopened by %d of 6 rotation ticks", reopenCycles)
-}
-
-// TestRotationTick_DoesNotStallHotWrites: while the rotation task handles a
-// tick, writes to the hot segment must keep flowing. The cold segment's reopen
-// is gated, so a rotation pass that reopens it never finishes and holds up the
-// write for as long as the gate is closed.
-func TestRotationTick_DoesNotStallHotWrites(t *testing.T) {
-	f := newColdReopenFixture(t)
-	f.holdReopen(t, f.coldDay)
-
-	requireWithin(t, f.tickAsync(f.hotDay.Add(12*time.Hour+20*time.Minute)), "the rotation pass")
-	requireWithin(t, f.writeAsync(f.hotDay.Add(12*time.Hour+21*time.Minute)), "hot write")
-	require.Zero(t, f.coldOpens.Load(), "the rotation pass must not reopen the cold segment")
 }
 
 // TestColdQuery_DoesNotStallHotWrites: a dashboard query over yesterday

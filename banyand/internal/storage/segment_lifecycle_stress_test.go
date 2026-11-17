@@ -46,6 +46,13 @@ import (
 // SEGMENT_STRESS_SECONDS overrides the default ~1s run. SEGMENT_STRESS_FULL=1
 // additionally runs scheduled retention inside rotation ticks and an explicit
 // retention remove() with a moving deadline in place of forced cleanup.
+//
+// CI runs only the ~1s basic mode. Before changing segment lifecycle code
+// (refCount, incRef/DecRef, reopen, idle reclaim, rotation, retention, forced
+// cleanup or shutdown), run the longer and full modes locally, for example:
+//
+//	SEGMENT_STRESS_SECONDS=60 go test -race -run TestSegmentLifecycle_Stress ./banyand/internal/storage/
+//	SEGMENT_STRESS_SECONDS=60 SEGMENT_STRESS_FULL=1 go test -race -run TestSegmentLifecycle_Stress ./banyand/internal/storage/
 
 type stressSeg = segment[*MockTSTable, any]
 
