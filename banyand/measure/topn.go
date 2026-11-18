@@ -47,6 +47,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming"
 	"github.com/apache/skywalking-banyandb/pkg/flow/streaming/sources"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/logical"
@@ -58,9 +59,13 @@ const (
 	timeBucketFormat         = "200601021504"
 	resultPersistencyTimeout = 10 * time.Second
 	maxFlushInterval         = time.Minute
-	maxTopNValuesCount       = 1 << 17 // sanity upper bound: 131072 elements = ~1MB per unmarshal, far above TopN CountersNumber
+	maxTopNValuesCount       = MaxTopNValuesCount
 	topNWriteQueueCapacity   = 1024
 )
+
+// MaxTopNValuesCount is the sanity upper bound of the entries of one TopN value: 131072 elements is about 1MB
+// per unmarshal, far above the TopN counters number. A merged TopN value must stay within it to be decodable.
+const MaxTopNValuesCount = 1 << 17
 
 var (
 	_ io.Closer = (*topNProcessorManager)(nil)
@@ -74,13 +79,12 @@ func (sr *schemaRepo) inFlow(
 	ctx context.Context,
 	stm *databasev1.Measure,
 	seriesID uint64,
-	shardID uint32,
 	entityValues []*modelv1.TagValue,
 	dp *measurev1.DataPointValue,
 	spec *measurev1.DataPointSpec,
 ) {
 	if p, _ := sr.topNProcessorMap.Load(getKey(stm.GetMetadata())); p != nil {
-		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, shardID, &measurev1.InternalWriteRequest{
+		p.(*topNProcessorManager).onMeasureWrite(ctx, seriesID, &measurev1.InternalWriteRequest{
 			Request: &measurev1.WriteRequest{
 				Metadata:      stm.GetMetadata(),
 				DataPoint:     dp,
@@ -104,6 +108,7 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 			l:        sr.l,
 			pipeline: pipeline,
 			nodeID:   sr.nodeID,
+			shardNum: sr.groupShardNum,
 		})
 		manager = m.(*topNProcessorManager)
 		return manager
@@ -124,6 +129,7 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 				l:        sr.l,
 				pipeline: pipeline,
 				nodeID:   sr.nodeID,
+				shardNum: sr.groupShardNum,
 			}
 			manager.registeredTasks = append(manager.registeredTasks, pre.registeredTasks...)
 		} else {
@@ -135,11 +141,39 @@ func (sr *schemaRepo) getSteamingManager(ctx context.Context, source *commonv1.M
 			l:        sr.l,
 			pipeline: pipeline,
 			nodeID:   sr.nodeID,
+			shardNum: sr.groupShardNum,
 		}
 	}
 	manager.init(ctx, sourceMeasure.GetSchema())
 	sr.topNProcessorMap.Store(key, manager)
 	return manager
+}
+
+// groupShardNum returns the shard number of a group, or 0 when the group is not loaded.
+func (sr *schemaRepo) groupShardNum(group string) uint32 {
+	g, ok := sr.LoadGroup(group)
+	if !ok {
+		return 0
+	}
+	return g.GetSchema().GetResourceOpts().GetShardNum()
+}
+
+// topNResultShard returns the shard that stores the TopN result series identified by entityValues. It is derived
+// from the series identity exactly as partition.Locator.Locate derives it for any measure write, so that every
+// window of one TopN series lands on the same shard, and therefore on the same data node.
+func topNResultShard(entityValues []*modelv1.TagValue, shardNum uint32) (uint32, error) {
+	if shardNum == 0 {
+		return 0, errors.New("the shard number of the top-n result group is unknown")
+	}
+	evs := make(pbv1.EntityValues, 0, len(entityValues)+1)
+	evs = append(evs, pbv1.EntityStrValue(TopNSchemaName))
+	evs = append(evs, entityValues...)
+	entity, err := evs.ToEntity()
+	if err != nil {
+		return 0, err
+	}
+	id, err := partition.ShardID(entity.Marshal(), shardNum)
+	return uint32(id), err
 }
 
 func (sr *schemaRepo) stopSteamingManager(sourceMeasure *commonv1.Metadata) {
@@ -178,14 +212,12 @@ type dataPointWithEntityValues struct {
 	fieldIndex   map[string]int
 	entityValues []*modelv1.TagValue
 	seriesID     uint64
-	shardID      uint32
 }
 
 func newDataPointWithEntityValues(
 	dp *measurev1.DataPointValue,
 	entityValues []*modelv1.TagValue,
 	seriesID uint64,
-	shardID uint32,
 	spec *measurev1.DataPointSpec,
 	m *databasev1.Measure,
 ) *dataPointWithEntityValues {
@@ -195,7 +227,6 @@ func newDataPointWithEntityValues(
 		DataPointValue: dp,
 		entityValues:   entityValues,
 		seriesID:       seriesID,
-		shardID:        shardID,
 		tagSpec:        tagSpec,
 		fieldIndex:     fieldIndex,
 	}
@@ -349,6 +380,7 @@ type topNStreamingProcessor[K streaming.TopSortKey] struct {
 	l             *logger.Logger
 	stopCh        chan struct{}
 	src           chan interface{}
+	shardNum      func(group string) uint32
 	nodeID        string
 	flow.ComponentState
 	interval      time.Duration
@@ -368,6 +400,7 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 	streamingFlow flow.Flow,
 	pipeline queue.Client,
 	nodeID string,
+	shardNum func(group string) uint32,
 ) *topNStreamingProcessor[K] {
 	return &topNStreamingProcessor[K]{
 		m:             m,
@@ -382,6 +415,7 @@ func newTopNStreamingProcessor[K streaming.TopSortKey](
 		streamingFlow: streamingFlow,
 		pipeline:      pipeline,
 		nodeID:        nodeID,
+		shardNum:      shardNum,
 	}
 }
 
@@ -487,11 +521,11 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 		}
 		topNValue.Reset()
 		topNValue.setMetadata(t.topNSchema.GetFieldName(), t.m.Entity.TagNames)
-		var shardID uint32
+		// A group batch mixes tuples of several source shards. They are still aggregated into one row: rows of
+		// one group and window share a series and a timestamp, so a row per source shard would overwrite each other.
 		for _, tuple := range tuples {
 			data := tuple.V2.Data().(flow.Data)
 			topNValue.addValue(tuple.V1, data[0].([]*modelv1.TagValue))
-			shardID = data[3].(uint32)
 		}
 
 		var fieldType databasev1.FieldType
@@ -538,6 +572,13 @@ func (t *topNStreamingProcessor[K]) writeStreamRecord(record flow.StreamRecord, 
 					},
 				},
 			},
+		}
+		shardNum := t.shardNum(t.topNSchema.GetMetadata().GetGroup())
+		// The row is stored where its own series is located, not on the source shard of its last tuple, so that
+		// all the windows of one group live on one data node and that node can aggregate them completely.
+		shardID, shardErr := topNResultShard(entityValues, shardNum)
+		if shardErr != nil {
+			return fmt.Errorf("locate the shard of top-n result %s/%s: %w", t.topNSchema.GetMetadata().GetName(), group, shardErr)
 		}
 		buf = buf[:0]
 		if buf, err = topNValue.marshal(buf); err != nil {
@@ -591,9 +632,10 @@ func (t *topNStreamingProcessor[K]) start(ctx context.Context) *topNStreamingPro
 			return record.Data().(flow.Data)[2].(K)
 		},
 		streaming.WithKeyExtractor(func(record flow.StreamRecord) uint64 {
-			return record.Data().(flow.Data)[4].(uint64)
+			return record.Data().(flow.Data)[3].(uint64)
 		}),
-		orderBy(t.topNSchema.GetFieldValueSort()),
+		// A TopN aggregation without a field value sort runs one processor per direction, so each ranks by its own.
+		orderBy(t.sortDirection),
 		streaming.WithGroupKeyExtractor(func(record flow.StreamRecord) string {
 			return record.Data().(flow.Data)[1].(string)
 		}),
@@ -624,7 +666,6 @@ type topNWrite struct {
 	request  *measurev1.InternalWriteRequest
 	measure  *databasev1.Measure
 	seriesID uint64
-	shardID  uint32
 }
 
 // topNProcessorManager manages multiple topNStreamingProcessor(s) belonging to a single measure.
@@ -635,6 +676,7 @@ type topNProcessorManager struct {
 	inputCh         chan topNWrite
 	stopCh          chan struct{}
 	dispatcher      *run.Task
+	shardNum        func(group string) uint32
 	nodeID          string
 	registeredTasks []*databasev1.TopNAggregation
 	processorList   []topNProcessor
@@ -703,7 +745,6 @@ func (manager *topNProcessorManager) Close() error {
 func (manager *topNProcessorManager) onMeasureWrite(
 	ctx context.Context,
 	seriesID uint64,
-	shardID uint32,
 	request *measurev1.InternalWriteRequest,
 	measure *databasev1.Measure,
 ) {
@@ -728,7 +769,6 @@ func (manager *topNProcessorManager) onMeasureWrite(
 	manager.RUnlock()
 	input := topNWrite{
 		seriesID: seriesID,
-		shardID:  shardID,
 		request:  request,
 		measure:  measure,
 	}
@@ -769,7 +809,6 @@ func (manager *topNProcessorManager) dispatchTopNWrite(input topNWrite) {
 			dp,
 			input.request.GetEntityValues(),
 			input.seriesID,
-			input.shardID,
 			spec,
 			input.measure,
 		)
@@ -845,11 +884,11 @@ func (manager *topNProcessorManager) start(ctx context.Context, topNSchema *data
 
 		if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
 			processorList[i] = newTopNStreamingProcessor[float64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, manager.shardNum,
 			).start(ctx)
 		} else {
 			processorList[i] = newTopNStreamingProcessor[int64](
-				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID,
+				manager.m, manager.l, interval, topNSchema, sortDirection, srcCh, streamingFlow, manager.pipeline, manager.nodeID, manager.shardNum,
 			).start(ctx)
 		}
 	}
@@ -952,7 +991,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 				dpWithEvs.entityValues,
 				"",
 				dpWithEvs.fieldValue(fieldName, fieldType, manager.l),
-				dpWithEvs.shardID,
 				dpWithEvs.seriesID,
 			}
 		}, fieldType, nil
@@ -985,7 +1023,6 @@ func (manager *topNProcessorManager) buildMapper(fieldName string, groupByNames 
 			dpWithEvs.entityValues,
 			GroupName(groupValues),
 			dpWithEvs.fieldValue(fieldName, fieldType, manager.l),
-			dpWithEvs.shardID,
 			dpWithEvs.seriesID,
 		}
 	}, fieldType, nil
@@ -1238,10 +1275,10 @@ func MergeTopNBinaryValues(
 	timestamp uint64, leftVersion, rightVersion int64, fieldType databasev1.FieldType,
 ) ([]byte, error) {
 	if fieldType == databasev1.FieldType_FIELD_TYPE_FLOAT {
-		topNPostAggregator := CreateTopNPostProcessorFloat(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+		topNPostAggregator := CreateTopNPostProcessorFloat(topN, sort)
 		return mergeTopNBinaryValues[float64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 	}
-	topNPostAggregator := CreateTopNPostProcessorInt(topN, modelv1.AggregationFunction_AGGREGATION_FUNCTION_UNSPECIFIED, sort)
+	topNPostAggregator := CreateTopNPostProcessorInt(topN, sort)
 	return mergeTopNBinaryValues[int64](left, right, topNPostAggregator, decoder, timestamp, leftVersion, rightVersion)
 }
 

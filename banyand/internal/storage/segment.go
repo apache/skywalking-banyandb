@@ -52,6 +52,10 @@ var (
 	// with the same directory is still being deleted: it left the controller's list but its
 	// directory is removed only once the last reference is released. The caller may retry.
 	ErrSegmentDeleting = errors.New("segment is being deleted")
+	// errSegmentShutdown is returned when a segment is acquired after its
+	// controller was closed: a caller that snapshotted the list before the close
+	// must fail instead of reopening resources nothing would close again.
+	errSegmentShutdown = errors.New("segment controller is closed")
 )
 
 var _ Cache = (*segmentCache)(nil)
@@ -97,6 +101,9 @@ type segment[T TSTable, O any] struct {
 	// -- its directory and shards are untouched -- but the failure is
 	// surfaced here instead of panicking the node, per NIDX-03 §8/§11.
 	closeFailed atomic.Bool
+	// shutdown is set under mu by segmentController.close; acquire then refuses
+	// to reopen the segment.
+	shutdown bool
 }
 
 func (sc *segmentController[T, O]) openSegment(ctx context.Context, startTime, endTime time.Time, path, suffix string, groupCache *groupCache,
@@ -186,8 +193,8 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 // open (index != nil): a segment with refCount==0 but index!=nil is "dormant"
 // -- open and reusable, yet eligible for the idle reclaimer. incRef therefore
 // does NOT touch lastAccessed: the reclaimer (closeIdleSegments) decides
-// eligibility from that field and the rotation-tick scan iterates every segment
-// via incRef on each tick, so refreshing it here would defeat the reclaimer.
+// eligibility from that field, so a housekeeping caller that incRefs a segment
+// must not keep it alive by refreshing it here.
 // Real read/write touches bump lastAccessed explicitly (see selectSegments and
 // createSegment); housekeeping iterators must not.
 //
@@ -196,19 +203,13 @@ func (s *segment[T, O]) TablesWithShardIDs() (tt []T, shardIDs []common.ShardID,
 // at refCount==0 under s.mu). When refCount<=0 it falls to the s.mu slow path
 // (acquire), which serializes the reopen and the 0->1 transition against them.
 func (s *segment[T, O]) incRef(ctx context.Context) error {
-	for {
-		current := atomic.LoadInt32(&s.refCount)
-		if current <= 0 {
-			// Dormant (index!=nil) or closed (index==nil); reopen/acquire under
-			// the mutex.
-			return s.acquire(ctx)
-		}
-		// CAS bumps only while refCount>0, so it can never resurrect a segment
-		// the idle reclaimer is closing (closeIfIdle acts only at refCount==0).
-		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
-			return nil
-		}
+	// tryPin bumps only while refCount>0, so it can never resurrect a segment
+	// the idle reclaimer is closing (closeIfIdle acts only at refCount==0).
+	if s.tryPin() {
+		return nil
 	}
+	// Dormant (index!=nil) or closed (index==nil); reopen/acquire under the mutex.
+	return s.acquire(ctx)
 }
 
 // initialize opens the segment's series index and shards if not already
@@ -273,6 +274,9 @@ func (s *segment[T, O]) acquire(ctx context.Context) error {
 		// A still-referenced (refCount>0) flagged segment is handled by the
 		// fast-bump above, since its directory stays until the last DecRef.
 		return ErrSegmentClosed
+	}
+	if s.shutdown {
+		return errSegmentShutdown
 	}
 	if err := s.initialize(ctx); err != nil {
 		return err
@@ -382,6 +386,12 @@ func (s *segment[T, O]) closeIfIdle(idleThreshold int64) bool {
 func (s *segment[T, O]) performDelete() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.deleted.Load() {
+		// Already deleted. Both delete() and the last DecRef may get here; once
+		// the directory is gone a new segment can be created at the same path,
+		// so removing it again would destroy that segment's data.
+		return
+	}
 	if atomic.LoadInt32(&s.refCount) > 0 {
 		// A reference was acquired before we ran; the next DecRef to zero
 		// retries the delete.
@@ -687,6 +697,9 @@ type segmentController[T TSTable, O any] struct {
 	idleTimeout time.Duration
 	optsMutex   sync.RWMutex
 	sync.RWMutex
+	// closed is set by close under the embedded lock; create refuses afterwards
+	// so a late write or rotation cannot add a segment nothing would close.
+	closed bool
 }
 
 func newSegmentController[T TSTable, O any](ctx context.Context, location string,
@@ -756,46 +769,75 @@ func (sc *segmentController[T, O]) updateOptions(resourceOpts *commonv1.Resource
 }
 
 func (sc *segmentController[T, O]) selectSegments(timeRange timestamp.TimeRange, reopenClosed bool) (tt []Segment[T, O], err error) {
+	// Collect the candidates under the read lock, but reopen them after releasing
+	// it: reopening a closed segment loads its series index and shards, which can
+	// take seconds, and every write of the group needs the controller lock in create.
 	sc.RLock()
-	defer sc.RUnlock()
+	var candidates []*segment[T, O]
 	last := len(sc.lst) - 1
-	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
-	now := time.Now().UnixNano()
 	for i := range sc.lst {
 		s := sc.lst[last-i]
 		if s.GetTimeRange().End.Before(timeRange.Start) {
 			break
 		}
 		if s.Overlapping(timeRange) {
-			if reopenClosed {
-				// Real read: reopen if closed and mark as accessed.
-				if err = s.incRef(ctx); err != nil {
-					// Release the segments already pinned in earlier iterations so a
-					// mid-loop incRef failure does not leak refs (which would block
-					// idle-close and retention-delete for them indefinitely).
-					for _, pinned := range tt {
-						pinned.DecRef()
-					}
-					return nil, err
-				}
-				s.lastAccessed.Store(now)
-			} else {
-				// Stats peek: pin only if already open, never reopen.
-				for {
-					current := atomic.LoadInt32(&s.refCount)
-					if current <= 0 {
-						break
-					}
-					if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
-						break
-					}
-				}
-			}
-			tt = append(tt, s)
+			candidates = append(candidates, s)
 		}
+	}
+	sc.RUnlock()
+
+	ctx := context.WithValue(context.Background(), logger.ContextKey, sc.l)
+	now := time.Now().UnixNano()
+	for _, s := range candidates {
+		if reopenClosed {
+			// Real read: reopen if closed and mark as accessed.
+			if err = s.incRef(ctx); err != nil {
+				if errors.Is(err, ErrSegmentClosed) {
+					// Retention or forced cleanup removed the segment after the snapshot above; its data is gone.
+					continue
+				}
+				// Release the segments already pinned in earlier iterations so a
+				// mid-loop incRef failure does not leak refs (which would block
+				// idle-close and retention-delete for them indefinitely).
+				for _, pinned := range tt {
+					pinned.DecRef()
+				}
+				return nil, err
+			}
+			s.lastAccessed.Store(now)
+		} else if !s.tryPin() {
+			// Stats peek: never reopen. A segment that could not be pinned is
+			// returned behind a no-op DecRef, so the caller's release cannot drop
+			// a reference some concurrent reader took in the meantime.
+			tt = append(tt, unpinnedSegment[T, O]{s})
+			continue
+		}
+		tt = append(tt, s)
 	}
 	return tt, nil
 }
+
+// tryPin adds a reference only while the segment is already actively
+// referenced (refCount>0); it never reopens a dormant or closed segment.
+func (s *segment[T, O]) tryPin() bool {
+	for {
+		current := atomic.LoadInt32(&s.refCount)
+		if current <= 0 {
+			return false
+		}
+		if atomic.CompareAndSwapInt32(&s.refCount, current, current+1) {
+			return true
+		}
+	}
+}
+
+// unpinnedSegment wraps a segment returned without a reference; its DecRef is
+// a no-op so callers cannot release a reference they never took.
+type unpinnedSegment[T TSTable, O any] struct {
+	*segment[T, O]
+}
+
+func (unpinnedSegment[T, O]) DecRef() {}
 
 // peekSegments returns lightweight descriptors of the segments overlapping timeRange
 // WITHOUT opening (incRef-ing) any of them. It snapshots the matching segments' time
@@ -850,21 +892,17 @@ func (sc *segmentController[T, O]) segments(ctx context.Context, reopenClosed bo
 	for i := range sc.lst {
 		if reopenClosed {
 			if err = sc.lst[i].incRef(ctx); err != nil {
+				// Release the segments pinned so far, or a segment deleted mid-pass
+				// would leave every earlier one held forever.
+				for _, pinned := range r[:i] {
+					pinned.DecRef()
+				}
 				return nil, err
 			}
 		} else {
-			// Pin only if already open (CAS while refCount>0); a dormant/closed
-			// segment is returned unbumped so the idle reclaimer is never raced
-			// into resurrecting it, and the caller's DecRef on it is a no-op.
-			for {
-				current := atomic.LoadInt32(&sc.lst[i].refCount)
-				if current <= 0 {
-					break
-				}
-				if atomic.CompareAndSwapInt32(&sc.lst[i].refCount, current, current+1) {
-					break
-				}
-			}
+			// Pin only if already open; a dormant/closed segment is returned
+			// unbumped so the idle reclaimer is never raced into resurrecting it.
+			sc.lst[i].tryPin()
 		}
 		r[i] = sc.lst[i]
 	}
@@ -1020,6 +1058,9 @@ func (sc *segmentController[T, O]) create(ctx context.Context, start time.Time) 
 	}
 	sc.Lock()
 	defer sc.Unlock()
+	if sc.closed {
+		return nil, errSegmentShutdown
+	}
 	last := len(sc.lst) - 1
 	for i := range sc.lst {
 		s := sc.lst[last-i]
@@ -1117,9 +1158,11 @@ func (sc *segmentController[T, O]) load(ctx context.Context, start, end time.Tim
 	return seg, nil
 }
 
-func (sc *segmentController[T, O]) remove(ctx context.Context, deadline time.Time) (hasSegment bool, err error) {
-	ss, _ := sc.segments(ctx, false)
-	for _, s := range ss {
+// remove deletes every segment that ends before deadline. It iterates a plain
+// snapshot without taking references: delete() already defers the removal of a
+// segment that a reader still holds until that reader's last DecRef.
+func (sc *segmentController[T, O]) remove(_ context.Context, deadline time.Time) (hasSegment bool, err error) {
+	for _, s := range sc.copySegments() {
 		if s.Before(deadline) {
 			hasSegment = true
 			id := s.id
@@ -1129,7 +1172,6 @@ func (sc *segmentController[T, O]) remove(ctx context.Context, deadline time.Tim
 			sc.Unlock()
 			sc.l.Info().Stringer("segment", s).Msg("removed a segment")
 		}
-		s.DecRef()
 	}
 	return hasSegment, err
 }
@@ -1151,15 +1193,13 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 		IncludeStart: true,
 		IncludeEnd:   false,
 	}
-	ss, _ := sc.segments(context.Background(), false)
-	for _, s := range ss {
+	for _, s := range sc.copySegments() {
 		if s.Before(deadline) {
 			if timeRange.Start.IsZero() {
 				timeRange.Start = s.Start
 			}
 			timeRange.End = s.End
 		}
-		s.DecRef()
 	}
 	return timeRange
 }
@@ -1167,7 +1207,7 @@ func (sc *segmentController[T, O]) getExpiredSegmentsTimeRange() *timestamp.Time
 func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []string) int64 {
 	deadline := sc.clock.Now().Local().Add(-sc.opts.TTL.estimatedDuration())
 	var count int64
-	ss, _ := sc.segments(context.Background(), false)
+	ss := sc.copySegments()
 	sc.l.Info().Str("segment_suffixes", fmt.Sprintf("%s", segmentSuffixes)).
 		Str("ttl", fmt.Sprintf("%d(%s)", sc.opts.TTL.Num, sc.opts.TTL.Unit)).
 		Str("deadline", deadline.String()).
@@ -1195,7 +1235,6 @@ func (sc *segmentController[T, O]) deleteExpiredSegments(segmentSuffixes []strin
 				Str("segment_time_range", s.GetTimeRange().String()).
 				Msg("segment is not expired or not in the time range, skipping deletion")
 		}
-		s.DecRef()
 	}
 	return count
 }
@@ -1221,7 +1260,9 @@ func (sc *segmentController[T, O]) removeSeg(segID segmentID) {
 }
 
 // peekOldestSegmentEndTime returns the end time of the oldest segment.
-// It returns the zero time and false if no segments exist or the oldest segment is closed.
+// It returns the zero time and false if the keep-one rule leaves nothing to
+// remove. An idle-closed oldest segment is still reported: its data occupies
+// disk, and removeOldest deletes it without reopening it.
 func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) {
 	sc.RLock()
 	defer sc.RUnlock()
@@ -1229,51 +1270,49 @@ func (sc *segmentController[T, O]) peekOldestSegmentEndTime() (time.Time, bool) 
 	if len(sc.lst) <= 1 {
 		return time.Time{}, false
 	}
-
-	// Segments are sorted by ID (which correlates with start time),
-	// so the first one is the oldest
-	oldest := sc.lst[0]
-
-	oldest.mu.RLock()
-	open := oldest.index != nil
-	oldest.mu.RUnlock()
-	if open {
-		return oldest.End, true
-	}
-
-	return time.Time{}, false
+	// Segments are sorted by start time, so the first one is the oldest. End is
+	// immutable, so the segment's own lock (which a slow reopen may hold) is not needed.
+	return sc.lst[0].End, true
 }
 
 // removeOldest removes exactly one oldest segment if it exists and meets the keep-one rule.
 // Returns true if a segment was deleted, false if no segments to delete or keep-one rule prevents deletion.
 func (sc *segmentController[T, O]) removeOldest() (bool, error) {
 	sc.Lock()
-	defer sc.Unlock()
-
 	if len(sc.lst) <= 1 {
 		// Keep-one rule: never delete the last remaining segment
+		sc.Unlock()
 		return false, nil
 	}
 
 	// Find the oldest segment (first in sorted list)
 	oldest := sc.lst[0]
 
-	// Delete the segment and remove from list
-	oldest.delete()
+	// Flag it before removeSeg so it is tracked in sc.deleting until its
+	// directory is gone, which keeps create from reusing the path meanwhile.
+	atomic.StoreUint32(&oldest.mustBeDeleted, 1)
 	sc.removeSeg(oldest.id)
+	remaining := append([]*segment[T, O](nil), sc.lst...)
+	sc.Unlock()
 
-	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", fmt.Sprintf("%v", sc.lst)).Msg("removed oldest segment via forced cleanup")
+	// Delete outside the controller lock: performDelete takes the segment's own
+	// lock, which a concurrent reopen may hold for seconds.
+	oldest.delete()
+
+	sc.l.Info().Stringer("segment", oldest).Str("remaining_segments", fmt.Sprintf("%v", remaining)).Msg("removed oldest segment via forced cleanup")
 	return true, nil
 }
 
 func (sc *segmentController[T, O]) close() {
 	sc.Lock()
 	defer sc.Unlock()
+	sc.closed = true
 	// Full shutdown: release every segment's resources regardless of refCount
 	// (DecRef no longer closes on reaching zero). A segment flagged for deletion
 	// also has its directory removed; the rest keep their data on disk.
 	for _, s := range sc.lst {
 		s.mu.Lock()
+		s.shutdown = true
 		s.closeResourcesLocked()
 		if atomic.LoadUint32(&s.mustBeDeleted) != 0 {
 			s.lfs.MustRMAll(s.location)

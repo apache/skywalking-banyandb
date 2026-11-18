@@ -214,13 +214,13 @@ func extractFloatFieldValues(idps []*measurev1.InternalDataPoint) []float64 {
 	return vals
 }
 
-func TestTopNDistinctIterator(t *testing.T) {
+func TestTopNResultIterator(t *testing.T) {
 	items := []*measurev1.InternalDataPoint{
 		makeIDP([]*modelv1.TagValue{strTagValue("svc-A")}, 200),
 		makeIDP([]*modelv1.TagValue{strTagValue("svc-D")}, 150),
 		makeIDP([]*modelv1.TagValue{strTagValue("svc-B")}, 90),
 	}
-	iter := &topNDistinctIterator{elements: items, index: -1}
+	iter := &topNResultIterator{elements: items, index: -1}
 
 	var result []*measurev1.InternalDataPoint
 	for iter.Next() {
@@ -234,8 +234,8 @@ func TestTopNDistinctIterator(t *testing.T) {
 	assert.Equal(t, []int64{200, 150, 90}, vals)
 }
 
-func TestTopNDistinctIterator_Empty(t *testing.T) {
-	iter := &topNDistinctIterator{elements: nil, index: -1}
+func TestTopNResultIterator_Empty(t *testing.T) {
+	iter := &topNResultIterator{elements: nil, index: -1}
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Close())
 }

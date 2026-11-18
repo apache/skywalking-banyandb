@@ -163,7 +163,7 @@ func TestTopNManager_CloseDoesNotHoldManagerLockWhileWriterDrains(t *testing.T) 
 	}
 	writeDone := make(chan struct{})
 	go func() {
-		manager.onMeasureWrite(context.Background(), 0, 0, request, measureSchema)
+		manager.onMeasureWrite(context.Background(), 0, request, measureSchema)
 		close(writeDone)
 	}()
 	require.Eventually(t, func() bool {
@@ -245,8 +245,8 @@ func TestTopNManagerQueuesWritesInOrder(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, manager.Close())
 	})
-	manager.onMeasureWrite(context.Background(), 1, 0, topNWriteRequest(firstTimestamp), measureSchema)
-	manager.onMeasureWrite(context.Background(), 2, 0, topNWriteRequest(secondTimestamp), measureSchema)
+	manager.onMeasureWrite(context.Background(), 1, topNWriteRequest(firstTimestamp), measureSchema)
+	manager.onMeasureWrite(context.Background(), 2, topNWriteRequest(secondTimestamp), measureSchema)
 	firstRecord := waitForTopNRecord(t, records)
 	secondRecord := waitForTopNRecord(t, records)
 	require.Equal(t, int64(firstTimestamp), firstRecord.TimestampMillis())

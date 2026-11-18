@@ -673,7 +673,7 @@ func TestSelectSegments_TimeRangeFilters(t *testing.T) {
 	got, err := sc.selectSegments(only, false)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
-	require.Equal(t, seg1.location, got[0].(*segment[*MockTSTable, any]).location)
+	require.Equal(t, seg1.location, got[0].Location())
 	got[0].DecRef()
 
 	// Range entirely after every segment -> none (early-break path).
