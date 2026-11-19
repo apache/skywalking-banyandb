@@ -37,6 +37,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -45,10 +46,13 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
+	dropped             meter.Counter
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
+	dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -57,6 +61,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
+		dropped:             dropped,
 	}
 }
 
@@ -80,7 +85,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 ) (map[string]*elementsInGroup, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 	eg, err := w.prepareElementsInGroup(dst, metadata, ts)
@@ -102,7 +107,7 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 
 	eg, ok := dst[gn]
@@ -192,7 +197,7 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 	stm, ok := schemaRepo.loadStream(metadata)
 	if !ok {
-		return fmt.Errorf("cannot find stream definition: %s", metadata)
+		return common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find stream definition: %s", metadata))
 	}
 
 	fLen := len(req.Element.GetTagFamilies())
@@ -309,6 +314,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.log(ctx).Warn().Msg("invalid event data type")
+		common.CountRowDrop(w.dropped, "", common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -328,11 +334,13 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.log(ctx).Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				common.RecordRowFailure(ctx, i, fmt.Errorf("stream: cannot decode write event: %w", err))
+				common.CountRowDrop(w.dropped, "", common.DropReasonDecode)
 				continue
 			}
 		default:
 			w.log(ctx).Warn().Msg("invalid event data type")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("stream: invalid event data type %T", e))
+			common.CountRowDrop(w.dropped, "", common.DropReasonInvalidType)
 			continue
 		}
 		req := writeEvent.Request
@@ -346,6 +354,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if handleErr != nil {
 			logger.ForGroup(w.log(ctx), metadata.GetGroup(), "stream").Error().Err(handleErr).Msg("cannot handle write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
+			common.CountRowDrop(w.dropped, metadata.GetGroup(), common.DropReason(handleErr))
 			continue
 		}
 		groups = newGroups

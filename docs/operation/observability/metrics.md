@@ -222,6 +222,29 @@ Write operations per second on the liaison, per `group`, for measures, streams a
 **Expression2**: `sum(rate(banyandb_stream_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 **Expression3**: `sum(rate(banyandb_trace_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 
+### Dropped Writes (reference)
+
+A write listener that cannot store a row of a batch logs it and goes on with the rest; the batch is still acknowledged, because the acknowledgement covers the batch and means the rows were applied, not that each one was (see the [0.12.0 write contract](../../design/0.12.0/streaming-api/README.md)). These counters make that loss visible. Each liaison and data node counts the rows its own write listener skipped, before anything was stored:
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `banyandb_stream_write_dropped_total` | Counter | `group`, `reason` | Stream elements a write listener skipped. |
+| `banyandb_measure_write_dropped_total` | Counter | `group`, `reason` | Measure data points a write listener skipped. |
+| `banyandb_trace_write_dropped_total` | Counter | `group`, `reason` | Trace spans a write listener skipped. |
+
+`reason` is one of:
+
+- `group_not_found`: the node does not hold the group, for example because the group was deleted or has not reached the node yet.
+- `schema_not_found`: the node has no schema for the stream, measure or trace.
+- `invalid_timestamp`: the timestamp is outside the supported range or finer than a millisecond.
+- `invalid_element`: the row does not match its schema, for example it has more tag families than the schema declares.
+- `decode`: the row's bytes are not a write request.
+- `invalid_type`: the row, or a whole message, is of a type the listener does not take. `group` is empty for this reason and for `decode`, because the row was never read.
+
+A failure after the rows were stored, such as an index write, is logged but not counted here: the rows themselves are kept. In the native self-observability mode these counters are stored in the `_monitoring` group under the same names without the `banyandb_` prefix; a row of BanyanDB's own logs that a stream write listener skips is counted in `stream_write_dropped_total`, not in `native_log_dropped_total`, which counts what the log sink lost before the write.
+
+**Expression (dropped rows per second by model, group and reason)**: `(sum(rate(banyandb_stream_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason)) or (sum(rate(banyandb_measure_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason)) or (sum(rate(banyandb_trace_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason))`
+
 ### Publish Throughput & Success
 
 The tier-2 publisher's success throughput by `operation`, alongside file-sync bytes sent by `group`. See the [queue reference](#internal-queue-metrics-reference-queue_sub--queue_pub) for the full model.

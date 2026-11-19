@@ -1,0 +1,149 @@
+// Licensed to Apache Software Foundation (ASF) under one or more contributor
+// license agreements. See the NOTICE file distributed with
+// this work for additional information regarding copyright
+// ownership. Apache Software Foundation (ASF) licenses this file to you under
+// the Apache License, Version 2.0 (the "License"); you may
+// not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
+package stream
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/apache/skywalking-banyandb/api/common"
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
+)
+
+// dropCounter records what a write listener counts as dropped, keyed by "group|reason".
+type dropCounter map[string]float64
+
+func (c dropCounter) Inc(delta float64, labelValues ...string) {
+	c[strings.Join(labelValues, "|")] += delta
+}
+
+func (c dropCounter) Delete(_ ...string) bool { return true }
+
+// emptyRepository holds no group and no stream, as a node does before a group reaches it
+// or after it was deleted.
+type emptyRepository struct{ resourceSchema.Repository }
+
+func (emptyRepository) LoadGroup(string) (resourceSchema.Group, bool) { return nil, false }
+
+func (emptyRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
+	return nil, false
+}
+
+func streamWrite(group string, ts time.Time) *streamv1.InternalWriteRequest {
+	return &streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
+		Metadata: &commonv1.Metadata{Group: group, Name: "sw"},
+		Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(ts)},
+	}}
+}
+
+// dropBatch has one row for each reason a stream write listener drops a row for before it
+// stores anything. A timestamp finer than a millisecond is out of range.
+func dropBatch() []any {
+	return []any{
+		streamWrite("default", time.Unix(1_800_000_000, 1)),
+		[]byte{0xff},
+		42,
+		streamWrite("deleted", time.Unix(1_800_000_000, 0)),
+		streamWrite("deleted", time.Unix(1_800_000_001, 0)),
+	}
+}
+
+var wantDrops = dropCounter{
+	"default|" + common.DropReasonInvalidTimestamp: 1,
+	"|" + common.DropReasonDecode:                  1,
+	"|" + common.DropReasonInvalidType:             1,
+	"deleted|" + common.DropReasonGroupNotFound:    2,
+}
+
+func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
+	dropped := dropCounter{}
+	w := &writeCallback{
+		l:          logger.GetLogger("test-stream-drop"),
+		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		dropped:    dropped,
+	}
+
+	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
+	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
+	require.Equal(t, wantDrops, dropped)
+
+	recorder := common.NewWriteRecorder(time.Time{})
+	w.Rev(common.WithWriteRecorder(context.Background(), recorder), bus.NewMessage(2, dropBatch()))
+	require.Len(t, recorder.RowFailures(), 5, "a recorder still gets every dropped row")
+	require.Equal(t, 4.0, dropped["deleted|"+common.DropReasonGroupNotFound], "the count adds up across writes")
+
+	dropped = dropCounter{}
+	w.dropped = dropped
+	w.Rev(context.Background(), bus.NewMessage(3, "not a batch"))
+	w.Rev(context.Background(), bus.NewMessage(4, []any{}))
+	require.Equal(t, dropCounter{"|" + common.DropReasonInvalidType: 1}, dropped,
+		"a message that is not a batch is one drop; an empty batch drops nothing")
+}
+
+func TestWriteQueueCallbackCountsTheRowsItDrops(t *testing.T) {
+	dropped := dropCounter{}
+	w := &writeQueueCallback{
+		l:          logger.GetLogger("test-stream-drop-liaison"),
+		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		dropped:    dropped,
+	}
+
+	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
+	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
+	require.Equal(t, wantDrops, dropped)
+}
+
+// namingRegistry records the full name and labels of each counter created through it.
+type namingRegistry struct {
+	observability.MetricsRegistry
+	created map[string][]string
+}
+
+func (r *namingRegistry) With(scope meter.Scope) observability.Factory {
+	return &namingFactory{Factory: nil, r: r, ns: scope.GetNamespace()}
+}
+
+type namingFactory struct {
+	observability.Factory
+	r  *namingRegistry
+	ns string
+}
+
+func (f *namingFactory) NewCounter(name string, labelNames ...string) meter.Counter {
+	f.r.created[f.ns+"_"+name] = labelNames
+	return dropCounter{}
+}
+
+func TestWriteDropCounterName(t *testing.T) {
+	r := &namingRegistry{created: map[string][]string{}}
+	require.NotNil(t, newWriteDropCounter(r))
+	require.Equal(t, map[string][]string{"banyandb_stream_write_dropped_total": {"group", "reason"}}, r.created,
+		"the name is unique across models, which the native meter provider keys a measure by")
+	require.Nil(t, newWriteDropCounter(nil), "a service without a registry counts nothing")
+}

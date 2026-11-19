@@ -501,3 +501,15 @@ func newCacheMetrics(omr observability.MetricsRegistry) *cacheMetrics {
 		size:     factory.NewGauge("size_bytes"),
 	}
 }
+
+// newWriteDropCounter returns measure_write_dropped_total, the counter of the rows a write
+// listener of this node skipped, by group and reason (see common.DropReason). Such a row is
+// logged and not reported to the writer, so this counter is where the loss shows. The name
+// carries the model because the native meter provider keys a measure by its bare name, and
+// stream, measure and trace count the same labels. A nil registry returns a nil counter.
+func newWriteDropCounter(omr observability.MetricsRegistry) meter.Counter {
+	if omr == nil {
+		return nil
+	}
+	return omr.With(observability.RootScope).NewCounter("measure_write_dropped_total", "group", "reason")
+}

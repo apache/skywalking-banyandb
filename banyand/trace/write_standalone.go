@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -46,10 +47,13 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
+	dropped             meter.Counter
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
+	dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -58,6 +62,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
+		dropped:             dropped,
 	}
 }
 
@@ -81,7 +86,7 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 ) (map[string]*tracesInGroup, error) {
 	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find trace definition: %s", metadata)
+		return nil, common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find trace definition: %s", metadata))
 	}
 	specMap := buildSpecMap(spec)
 	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
@@ -90,7 +95,7 @@ func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev
 	}
 	t := writeEvent.Request.Tags[idx].GetTimestamp().AsTime().Local()
 	if err = timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 	eg, err := w.prepareTracesInGroup(dst, metadata, ts)
@@ -112,7 +117,7 @@ func (w *writeCallback) prepareTracesInGroup(dst map[string]*tracesInGroup, meta
 	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 
 	eg, ok := dst[gn]
@@ -391,6 +396,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		common.CountRowDrop(w.dropped, "", common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -410,11 +416,13 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
 				common.RecordRowFailure(ctx, i, fmt.Errorf("trace: cannot decode write event: %w", err))
+				common.CountRowDrop(w.dropped, "", common.DropReasonDecode)
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("trace: invalid event data type %T", e))
+			common.CountRowDrop(w.dropped, "", common.DropReasonInvalidType)
 			continue
 		}
 		req := writeEvent.Request
@@ -428,6 +436,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("trace %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
+			common.CountRowDrop(w.dropped, metadata.GetGroup(), common.DropReason(handleErr))
 			continue
 		}
 		groups = newGroups

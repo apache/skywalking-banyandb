@@ -204,7 +204,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	node := val.(common.Node)
 	streamDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicStreamPartSync, s.option.tire2Client, s.dataNodeSelector)
 	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, streamDataNodeRegistry, node.NodeID)
-	s.writeListener = setUpWriteQueueCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client, s.pm)
+	s.writeListener = setUpWriteQueueCallback(s.l, &s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client, s.pm, newWriteDropCounter(s.omr))
 
 	// Register chunked sync handler for stream data
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
