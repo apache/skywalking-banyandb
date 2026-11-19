@@ -241,6 +241,15 @@ A write listener that cannot store a row of a batch logs it and goes on with the
 - `decode`: the row's bytes are not a write request.
 - `invalid_type`: the row, or a whole message, is of a type the listener does not take. `group` is empty for this reason and for `decode`, because the row was never read.
 
+`group` is the row's group only when the node holds that group; otherwise it is empty. A row for a deleted or unknown group (`group_not_found`), or one that names a group the node never held, is counted with an empty `group`, so the label is bounded by the groups a node holds, whatever a writer sends. The log line of the drop still names the group.
+
+**Aggregating across nodes.** A row is counted at most once, by the node whose listener skipped it:
+
+- A write the liaison drops never reaches a data node, and a write a data node drops was not dropped by the liaison, so the liaison and data-node counts are disjoint and can be summed across roles.
+- A write that tells its caller which rows failed is not counted: `bydbctl data import` writes failed rows again within its retry budget and reports those it could not write, so those rows are neither lost silently nor counted once per attempt.
+
+So `sum` over every node is the number of rows lost silently; `sum by (container_name)` shows where.
+
 A failure after the rows were stored, such as an index write, is logged but not counted here: the rows themselves are kept. In the native self-observability mode these counters are stored in the `_monitoring` group under the same names without the `banyandb_` prefix; a row of BanyanDB's own logs that a stream write listener skips is counted in `stream_write_dropped_total`, not in `native_log_dropped_total`, which counts what the log sink lost before the write.
 
 **Expression (dropped rows per second by model, group and reason)**: `(sum(rate(banyandb_stream_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason)) or (sum(rate(banyandb_measure_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason)) or (sum(rate(banyandb_trace_write_dropped_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group, reason))`

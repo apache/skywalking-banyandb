@@ -484,7 +484,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
-		common.CountRowDrop(w.dropped, "", common.DropReasonInvalidType)
+		common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -499,7 +499,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if err != nil {
 			w.l.Error().Err(err).Msg("cannot decode write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("measure: cannot decode write event: %w", err))
-			common.CountRowDrop(w.dropped, "", common.DropReason(err))
+			common.CountRowDrop(ctx, w.dropped, "", common.DropReason(err))
 			continue
 		}
 		req := writeEvent.Request
@@ -513,7 +513,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
 			common.RecordRowFailure(ctx, i, fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
-			common.CountRowDrop(w.dropped, metadata.GetGroup(), common.DropReason(handleErr))
+			common.CountRowDrop(ctx, w.dropped, heldGroup(w.schemaRepo, metadata.GetGroup()), common.DropReason(handleErr))
 			continue
 		}
 		groups = newGroups

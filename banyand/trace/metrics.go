@@ -874,3 +874,15 @@ func newWriteDropCounter(omr observability.MetricsRegistry) meter.Counter {
 	}
 	return omr.With(observability.RootScope).NewCounter("trace_write_dropped_total", "group", "reason")
 }
+
+// heldGroup returns group if this node holds it, and "" otherwise, so the group label of the
+// write drop counter is bounded by the groups the node holds whatever a dropped row names.
+func heldGroup(sr *schemaRepo, group string) string {
+	if sr == nil || sr.Repository == nil || group == "" {
+		return ""
+	}
+	if _, ok := sr.LoadGroup(group); ok {
+		return group
+	}
+	return ""
+}

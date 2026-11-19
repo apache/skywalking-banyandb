@@ -18,9 +18,11 @@
 package common
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -47,8 +49,13 @@ func TestDropReasonFindsTheTagAnywhereInTheChain(t *testing.T) {
 
 func TestCountRowDrop(t *testing.T) {
 	c := countingCounter{}
-	CountRowDrop(c, "g", DropReasonDecode)
-	CountRowDrop(c, "g", DropReasonDecode)
+	CountRowDrop(context.Background(), c, "g", DropReasonDecode)
+	CountRowDrop(context.Background(), c, "g", DropReasonDecode)
 	require.Equal(t, countingCounter{"[g decode]": 2}, c)
-	require.NotPanics(t, func() { CountRowDrop(nil, "g", DropReasonDecode) }, "a listener built without metrics counts nothing")
+
+	recorded := WithWriteRecorder(context.Background(), NewWriteRecorder(time.Time{}))
+	CountRowDrop(recorded, c, "g", DropReasonDecode)
+	require.Equal(t, countingCounter{"[g decode]": 2}, c, "a write with a recorder tells its caller, which may write the row again")
+
+	require.NotPanics(t, func() { CountRowDrop(context.Background(), nil, "g", DropReasonDecode) }, "a listener built without metrics counts nothing")
 }

@@ -45,14 +45,23 @@ func (c dropCounter) Inc(delta float64, labelValues ...string) {
 
 func (c dropCounter) Delete(_ ...string) bool { return true }
 
-// emptyRepository holds no group and no stream, as a node does before a group reaches it
-// or after it was deleted.
-type emptyRepository struct{ resourceSchema.Repository }
+// heldRepository holds the groups in its set and no stream, as a node does that holds a group
+// whose schema has not reached it yet.
+type heldRepository struct {
+	resourceSchema.Repository
+	groups map[string]bool
+}
 
-func (emptyRepository) LoadGroup(string) (resourceSchema.Group, bool) { return nil, false }
+func (r heldRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
+	return nil, r.groups[name]
+}
 
-func (emptyRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
+func (heldRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
 	return nil, false
+}
+
+func dropRepo() *schemaRepo {
+	return &schemaRepo{Repository: heldRepository{groups: map[string]bool{"default": true}}}
 }
 
 func streamWrite(group string, ts time.Time) *streamv1.InternalWriteRequest {
@@ -67,6 +76,7 @@ func streamWrite(group string, ts time.Time) *streamv1.InternalWriteRequest {
 func dropBatch() []any {
 	return []any{
 		streamWrite("default", time.Unix(1_800_000_000, 1)),
+		streamWrite("any-name-a-writer-sends", time.Unix(1_800_000_000, 1)),
 		[]byte{0xff},
 		42,
 		streamWrite("deleted", time.Unix(1_800_000_000, 0)),
@@ -76,16 +86,17 @@ func dropBatch() []any {
 
 var wantDrops = dropCounter{
 	"default|" + common.DropReasonInvalidTimestamp: 1,
+	"|" + common.DropReasonInvalidTimestamp:        1,
 	"|" + common.DropReasonDecode:                  1,
 	"|" + common.DropReasonInvalidType:             1,
-	"deleted|" + common.DropReasonGroupNotFound:    2,
+	"|" + common.DropReasonGroupNotFound:           2,
 }
 
 func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
 	dropped := dropCounter{}
 	w := &writeCallback{
 		l:          logger.GetLogger("test-stream-drop"),
-		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		schemaRepo: dropRepo(),
 		dropped:    dropped,
 	}
 
@@ -95,8 +106,8 @@ func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
 
 	recorder := common.NewWriteRecorder(time.Time{})
 	w.Rev(common.WithWriteRecorder(context.Background(), recorder), bus.NewMessage(2, dropBatch()))
-	require.Len(t, recorder.RowFailures(), 5, "a recorder still gets every dropped row")
-	require.Equal(t, 4.0, dropped["deleted|"+common.DropReasonGroupNotFound], "the count adds up across writes")
+	require.Len(t, recorder.RowFailures(), 6, "a recorder still gets every dropped row")
+	require.Equal(t, wantDrops, dropped, "a write with a recorder reports its failures to its caller, so it counts nothing")
 
 	dropped = dropCounter{}
 	w.dropped = dropped
@@ -110,7 +121,7 @@ func TestWriteQueueCallbackCountsTheRowsItDrops(t *testing.T) {
 	dropped := dropCounter{}
 	w := &writeQueueCallback{
 		l:          logger.GetLogger("test-stream-drop-liaison"),
-		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		schemaRepo: dropRepo(),
 		dropped:    dropped,
 	}
 

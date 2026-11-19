@@ -21,6 +21,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -43,14 +44,23 @@ func (c dropCounter) Inc(delta float64, labelValues ...string) {
 
 func (c dropCounter) Delete(_ ...string) bool { return true }
 
-// emptyRepository holds no group and no trace, as a node does before a schema reaches it or
-// after it was deleted.
-type emptyRepository struct{ resourceSchema.Repository }
+// heldRepository holds the groups in its set and no trace, as a node does that holds a group
+// whose schema has not reached it yet.
+type heldRepository struct {
+	resourceSchema.Repository
+	groups map[string]bool
+}
 
-func (emptyRepository) LoadGroup(string) (resourceSchema.Group, bool) { return nil, false }
+func (r heldRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
+	return nil, r.groups[name]
+}
 
-func (emptyRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
+func (heldRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
 	return nil, false
+}
+
+func dropRepo() *schemaRepo {
+	return &schemaRepo{Repository: heldRepository{groups: map[string]bool{"sw_trace": true}}}
 }
 
 // dropBatch has one row for each reason a trace write listener drops a row for before it
@@ -60,26 +70,35 @@ func dropBatch() []any {
 	unknown := &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
 		Metadata: &commonv1.Metadata{Group: "sw_trace", Name: "segment"},
 	}}
-	return []any{[]byte{0xff}, 42, unknown, unknown}
+	arbitrary := &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
+		Metadata: &commonv1.Metadata{Group: "any-name-a-writer-sends", Name: "segment"},
+	}}
+	return []any{[]byte{0xff}, 42, unknown, unknown, arbitrary}
 }
 
 var wantDrops = dropCounter{
 	"|" + common.DropReasonDecode:                 1,
 	"|" + common.DropReasonInvalidType:            1,
 	"sw_trace|" + common.DropReasonSchemaNotFound: 2,
+	"|" + common.DropReasonSchemaNotFound:         1,
 }
 
 func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
 	dropped := dropCounter{}
 	w := &writeCallback{
 		l:          logger.GetLogger("test-trace-drop"),
-		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		schemaRepo: dropRepo(),
 		dropped:    dropped,
 	}
 
 	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
 	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
 	require.Equal(t, wantDrops, dropped)
+
+	recorder := common.NewWriteRecorder(time.Time{})
+	w.Rev(common.WithWriteRecorder(context.Background(), recorder), bus.NewMessage(2, dropBatch()))
+	require.Len(t, recorder.RowFailures(), 5, "a recorder still gets every dropped row")
+	require.Equal(t, wantDrops, dropped, "a write with a recorder reports its failures to its caller, so it counts nothing")
 
 	dropped = dropCounter{}
 	w.dropped = dropped
@@ -93,7 +112,7 @@ func TestWriteQueueCallbackCountsTheRowsItDrops(t *testing.T) {
 	dropped := dropCounter{}
 	w := &writeQueueCallback{
 		l:          logger.GetLogger("test-trace-drop-liaison"),
-		schemaRepo: &schemaRepo{Repository: emptyRepository{}},
+		schemaRepo: dropRepo(),
 		dropped:    dropped,
 	}
 

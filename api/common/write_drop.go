@@ -18,6 +18,7 @@
 package common
 
 import (
+	"context"
 	"errors"
 
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -70,8 +71,12 @@ func DropReason(err error) string {
 
 // CountRowDrop adds one skipped row of group to dropped, under reason. A nil counter counts
 // nothing, so a listener built without metrics needs no guard.
-func CountRowDrop(dropped meter.Counter, group, reason string) {
-	if dropped == nil {
+//
+// A write whose ctx carries a WriteRecorder is not counted: its caller is told which rows
+// failed and may write them again, so the row is neither lost silently nor counted once per
+// attempt. Each row is thus counted at most once, by the node whose listener skipped it.
+func CountRowDrop(ctx context.Context, dropped meter.Counter, group, reason string) {
+	if dropped == nil || recorderOf(ctx) != nil {
 		return
 	}
 	dropped.Inc(1, group, reason)
