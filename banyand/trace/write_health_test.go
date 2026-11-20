@@ -37,8 +37,8 @@ func (highPressureProtector) State() protector.State { return protector.StateHig
 
 func TestWriteListenersReportServerBusyUnderMemoryPressure(t *testing.T) {
 	l := logger.GetLogger("test")
-	standalone := setUpWriteCallback(l, nil, 90, highPressureProtector{})
-	liaison := setUpWriteQueueCallback(l, nil, 90, nil, highPressureProtector{})
+	standalone := setUpWriteCallback(l, nil, 90, highPressureProtector{}, nil)
+	liaison := setUpWriteQueueCallback(l, nil, 90, nil, highPressureProtector{}, nil)
 	for name, ce := range map[string]*common.Error{"standalone": standalone.CheckHealth(), "liaison": liaison.CheckHealth()} {
 		require.NotNil(t, ce, name)
 		assert.Equal(t, modelv1.Status_STATUS_SERVER_BUSY, ce.Status(), name)
