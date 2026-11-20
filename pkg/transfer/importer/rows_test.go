@@ -47,7 +47,7 @@ func decodeRows(t *testing.T, art, target *Schemas, catalog commonv1.Catalog, gr
 	f := writeFile(t, dir, "data.csv", csvFile(t, layout, rows...))
 	b := newRowBuilder(layout, target, catalog, group)
 	var out []row
-	err := b.itemRows(context.Background(), dir, &WorkItem{Kind: ShardItem, Sources: []WorkSource{{Files: []manifest.File{f}}}}, func(r row) error {
+	err := b.itemRows(context.Background(), dir, &WorkItem{Kind: ShardItem, Sources: []WorkSource{{Files: []manifest.File{f}}}}, nil, func(r row) error {
 		out = append(out, r)
 		return nil
 	})
@@ -255,7 +255,7 @@ func collectRows(t *testing.T, s *Schemas, dir string, item *WorkItem) []row {
 	t.Helper()
 	layout := layoutOf(t, s, item.Catalog, item.Group)
 	var out []row
-	require.NoError(t, newRowBuilder(layout, s, item.Catalog, item.Group).itemRows(context.Background(), dir, item, func(r row) error {
+	require.NoError(t, newRowBuilder(layout, s, item.Catalog, item.Group).itemRows(context.Background(), dir, item, nil, func(r row) error {
 		out = append(out, r)
 		return nil
 	}))
@@ -311,7 +311,7 @@ func TestItemRowsStopOnACanceledContext(t *testing.T) {
 	cancel()
 	for dir, item := range map[string]*WorkItem{segDir: seg, propDir: props} {
 		b := newRowBuilder(layoutOf(t, s, item.Catalog, item.Group), s, item.Catalog, item.Group)
-		err := b.itemRows(ctx, dir, item, func(row) error {
+		err := b.itemRows(ctx, dir, item, nil, func(row) error {
 			t.Errorf("%s item emitted a row after cancellation", item.Catalog)
 			return nil
 		})
@@ -370,7 +370,7 @@ func TestPropertyItemRetainsNoRows(t *testing.T) {
 	base := ms.HeapAlloc
 	var peak uint64
 	sent := 0
-	require.NoError(t, b.itemRows(context.Background(), dir, item, func(row) error {
+	require.NoError(t, b.itemRows(context.Background(), dir, item, nil, func(row) error {
 		sent++
 		if sent%100 == 0 {
 			runtime.GC()

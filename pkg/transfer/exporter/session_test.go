@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -162,7 +163,7 @@ func TestClassifySessions_MergesByIDAndDetectsSplit(t *testing.T) {
 		t.Fatal("two session ids are a split")
 	}
 	s := c.String()
-	beat := time.Unix(0, newer.GetLastHeartbeatAt()).UTC().Format(time.RFC3339)
+	beat := time.Unix(0, newer.GetLastHeartbeatAt()).Format(time.RFC3339)
 	for _, want := range []string{"session aaaa", "n1", "n2", beat, "session bbbb", "split"} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("String() lacks %q:\n%s", want, s)
@@ -198,7 +199,7 @@ func TestCreateSession_RefusesOccupantWithoutPreempt(t *testing.T) {
 	if !errors.As(err, &exitErr) || exitErr.Code != exitcode.ExitPreflight {
 		t.Fatalf("want exit 2, got %v", err)
 	}
-	beat := time.Unix(0, f.listed[0].GetSession().GetLastHeartbeatAt()).UTC().Format(time.RFC3339)
+	beat := time.Unix(0, f.listed[0].GetSession().GetLastHeartbeatAt()).Format(time.RFC3339)
 	for _, want := range []string{"give --preempt to take it over", "session b0b0", "data-a:17912", "data-b:17912", beat, "already exists"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal must render the occupant (%q missing):\n%v", want, err)
@@ -359,7 +360,7 @@ func TestCreateSession_ContextCanceledDuringBackoff(t *testing.T) {
 func TestHeartbeat_SendsHeartbeatAction(t *testing.T) {
 	f := newFakeLiaison()
 	conn := dial(t, serveLiaison(t, f))
-	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
+	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", nil, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
 	deadline := time.Now().Add(5 * time.Second)
 	for f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT) < 3 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -382,7 +383,7 @@ func TestHeartbeat_LostOnFailedPrecondition(t *testing.T) {
 	f := newFakeLiaison()
 	f.hbCode = codes.FailedPrecondition
 	conn := dial(t, serveLiaison(t, f))
-	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
+	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", nil, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
 	defer stop()
 	select {
 	case err := <-lost:
@@ -410,9 +411,49 @@ func TestHeartbeatOnce_ErrorFramesAreACoverageGap(t *testing.T) {
 	f := newFakeLiaison()
 	f.hbFrames = []*transferv1.SessionsResponse{doneFrame("data-a:17912"), errorFrame("data-b:17912", "export session abcd not found on this node")}
 	conn := dial(t, serveLiaison(t, f))
-	err := HeartbeatOnce(context.Background(), conn, "abcd")
+	err := HeartbeatOnce(context.Background(), conn, "abcd", nil)
 	if err == nil || !strings.Contains(err.Error(), "heartbeat did not reach [data-b:17912]") || heartbeatLost(err) {
 		t.Fatalf("an error frame must fail the heartbeat naming the node, got %v", err)
+	}
+	// A data node that does not hold the session, such as one the cluster gained after the
+	// session was created, answers an error frame too (NotFound on the node); it is no gap.
+	if err = HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912"}); err != nil {
+		t.Fatalf("the error frame of a node outside the holders is ignored, got %v", err)
+	}
+	f.hbFrames = append(f.hbFrames, errorFrame("data-c:17912", "unreachable"))
+	if err = HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912", "data-c:17912"}); err == nil ||
+		!strings.Contains(err.Error(), "heartbeat did not reach [data-c:17912]") {
+		t.Fatalf("a holder's error frame still fails the heartbeat, got %v", err)
+	}
+}
+
+// The holders go to the liaison as required_nodes, so only an expired lease on one of them fails
+// the call; with no holder left nothing is sent, as an empty list would require every node.
+func TestHeartbeatOnce_HoldersAreTheRequiredNodes(t *testing.T) {
+	f := newFakeLiaison()
+	f.expiredNodes = []string{"data-a:17912"}
+	conn := dial(t, serveLiaison(t, f))
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-b:17912"}); err != nil {
+		t.Fatalf("an expired lease on a node outside the holders is ignored, got %v", err)
+	}
+	if got := f.lastSessions().GetRequiredNodes(); !slices.Equal(got, []string{"data-b:17912"}) {
+		t.Fatalf("required_nodes = %v, want the holders", got)
+	}
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912", "data-b:17912"}); !heartbeatLost(err) {
+		t.Fatalf("an expired lease on a holder loses the session, got %v", err)
+	}
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", nil); !heartbeatLost(err) {
+		t.Fatalf("without holders every node is required, got %v", err)
+	}
+	if got := f.lastSessions().GetRequiredNodes(); len(got) != 0 {
+		t.Fatalf("required_nodes = %v, want none", got)
+	}
+	calls := f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT)
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{}); err != nil {
+		t.Fatalf("no holder left needs no heartbeat, got %v", err)
+	}
+	if got := f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT); got != calls {
+		t.Fatalf("no holder left sends nothing, heartbeats %d -> %d", calls, got)
 	}
 }
 

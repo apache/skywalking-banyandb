@@ -50,7 +50,7 @@ before="$(dst_schema_digest "$work/schema-before")"
 run_import() {
   local name="$1" rc=0
   shift
-  bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" --include-schema=false "$@" \
+  bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" --include-schema=false --checkpoint "$work/progress.json" "$@" \
     >"$work/$name.stdout" 2>"$work/$name.stderr" || rc=$?
   echo "schema-less $name exited $rc" >&2
   tail -n 40 "$work/$name.stdout" "$work/$name.stderr" >&2

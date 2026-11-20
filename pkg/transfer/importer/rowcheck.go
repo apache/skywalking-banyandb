@@ -168,7 +168,7 @@ func CheckRows(ctx context.Context, art *Artifact, target *Schemas, entries []En
 func (b *rowBuilder) checkItem(ctx context.Context, dir string, item *WorkItem, batchBytes uint64) (*RowCheck, error) {
 	rc := &RowCheck{BadItems: map[string]uint64{}}
 	key := item.Key()
-	err := b.scanSources(ctx, dir, item, func(file string, record uint64, cells []csvfmt.Value) error {
+	err := b.scanSources(ctx, dir, item, nil, func(file string, record uint64, cells []csvfmt.Value) error {
 		rc.Rows++
 		msg, err := b.build(cells)
 		if err == nil {

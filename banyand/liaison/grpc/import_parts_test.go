@@ -761,7 +761,12 @@ func relayOnePart(t *testing.T, p *partsPayload) map[string]*transferv1.ImportPa
 	return out
 }
 
-func TestPartsPayload_StalledTargetTimesOut(t *testing.T) {
+const (
+	noAnswer         = transferv1.ImportPartsResponse_FAILURE_CAUSE_NO_ANSWER
+	unspecifiedCause = transferv1.ImportPartsResponse_FAILURE_CAUSE_UNSPECIFIED
+)
+
+func TestPartsPayload_StalledTargetGetsNoAnswer(t *testing.T) {
 	old := relayFrameTimeout
 	relayFrameTimeout = 50 * time.Millisecond
 	t.Cleanup(func() { relayFrameTimeout = old })
@@ -770,11 +775,50 @@ func TestPartsPayload_StalledTargetTimesOut(t *testing.T) {
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	got := relayOnePart(t, fakeTargetsPayload(t, fakeTarget("a", stalled), fakeTarget("b", nil)))
-	if a := got["a"]; a.GetSuccess() || !strings.Contains(a.GetError(), "answered nothing within") {
-		t.Fatalf("stalled target = %v, want a timeout failure", a)
+	if a := got["a"]; a.GetSuccess() || a.GetFailureCause() != noAnswer || a.GetCompletionSent() {
+		t.Fatalf("stalled target = %v, want a NO_ANSWER failure before the completion", a)
 	}
-	if b := got["b"]; !b.GetSuccess() {
+	if b := got["b"]; !b.GetSuccess() || b.GetFailureCause() != unspecifiedCause {
 		t.Fatalf("healthy target = %v, want success", b)
+	}
+}
+
+func TestPartsPayload_TargetStalledAfterTheCompletionGetsNoAnswer(t *testing.T) {
+	old := relayFrameTimeout
+	relayFrameTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { relayFrameTimeout = old })
+	stalledOnCompletion := func(ctx context.Context, last *clusterv1.SyncPartRequest) (*clusterv1.SyncPartResponse, error) {
+		if last.GetCompletion() == nil {
+			return ackSync(last), nil
+		}
+		<-ctx.Done()
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	got := relayOnePart(t, fakeTargetsPayload(t, fakeTarget("a", stalledOnCompletion), fakeTarget("b", nil)))
+	if a := got["a"]; a.GetSuccess() || a.GetFailureCause() != noAnswer || !a.GetCompletionSent() {
+		t.Fatalf("target stalled on the completion = %v, want NO_ANSWER and completion_sent", a)
+	}
+	if b := got["b"]; !b.GetSuccess() || b.GetFailureCause() != unspecifiedCause || b.GetCompletionSent() {
+		t.Fatalf("healthy target = %v, want success only", b)
+	}
+}
+
+func TestPartsPayload_LateTimerDoesNotMarkTheNextFrameNoAnswer(t *testing.T) {
+	old := relayFrameTimeout
+	relayFrameTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { relayFrameTimeout = old })
+	// The chunk is answered just as the frame timer fires, so the timer cancels a stream whose
+	// frame was answered; the completion then fails on the canceled stream.
+	answeredAsTheTimerFires := func(ctx context.Context, last *clusterv1.SyncPartRequest) (*clusterv1.SyncPartResponse, error) {
+		if last.GetCompletion() == nil {
+			<-ctx.Done()
+			return ackSync(last), nil
+		}
+		return nil, status.FromContextError(ctx.Err()).Err()
+	}
+	got := relayOnePart(t, fakeTargetsPayload(t, fakeTarget("a", answeredAsTheTimerFires), fakeTarget("b", nil)))
+	if a := got["a"]; a.GetSuccess() || a.GetFailureCause() != transferv1.ImportPartsResponse_FAILURE_CAUSE_STREAM_BROKEN || !a.GetCompletionSent() {
+		t.Fatalf("target = %v, want STREAM_BROKEN with completion_sent: the completion was not left unanswered by the timer", a)
 	}
 }
 
@@ -796,10 +840,19 @@ func TestPartsPayload_CompletionSentMarksAmbiguousFailures(t *testing.T) {
 	}
 	got := relayOnePart(t, fakeTargetsPayload(t,
 		fakeTarget("a", brokenAfterCompletion), fakeTarget("b", refusesCompletion), fakeTarget("c", brokenOnChunk), fakeTarget("d", nil)))
-	want := map[string][2]bool{"a": {false, true}, "b": {false, false}, "c": {false, false}, "d": {true, false}}
+	want := map[string]struct {
+		cause          transferv1.ImportPartsResponse_FailureCause
+		success        bool
+		completionSent bool
+	}{
+		"a": {cause: transferv1.ImportPartsResponse_FAILURE_CAUSE_STREAM_BROKEN, completionSent: true},
+		"b": {cause: transferv1.ImportPartsResponse_FAILURE_CAUSE_REFUSED},
+		"c": {cause: transferv1.ImportPartsResponse_FAILURE_CAUSE_STREAM_BROKEN},
+		"d": {success: true, cause: unspecifiedCause},
+	}
 	for node, w := range want {
-		if tr := got[node]; tr.GetSuccess() != w[0] || tr.GetCompletionSent() != w[1] {
-			t.Fatalf("target %s = %v, want success=%v completion_sent=%v", node, tr, w[0], w[1])
+		if tr := got[node]; tr.GetSuccess() != w.success || tr.GetCompletionSent() != w.completionSent || tr.GetFailureCause() != w.cause {
+			t.Fatalf("target %s = %v, want success=%v completion_sent=%v failure_cause=%s", node, tr, w.success, w.completionSent, w.cause)
 		}
 	}
 }
@@ -910,8 +963,9 @@ func TestImportParts_ClusterRoute(t *testing.T) {
 			}
 			for i, tr := range s.resp.GetTargets() {
 				if i == 0 {
-					if tr.GetSuccess() || !strings.Contains(tr.GetError(), c.want) {
-						t.Fatalf("target %v, want the failure %q", tr, c.want)
+					if tr.GetSuccess() || !strings.Contains(tr.GetError(), c.want) ||
+						tr.GetFailureCause() != transferv1.ImportPartsResponse_FAILURE_CAUSE_UNREACHABLE || tr.GetCompletionSent() {
+						t.Fatalf("target %v, want the UNREACHABLE failure %q", tr, c.want)
 					}
 					continue
 				}

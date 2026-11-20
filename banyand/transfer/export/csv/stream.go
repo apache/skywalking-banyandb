@@ -18,7 +18,6 @@
 package csv
 
 import (
-	"bytes"
 	"fmt"
 	"path/filepath"
 
@@ -31,8 +30,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
@@ -70,41 +69,6 @@ func tagColumns(layout *csvfmt.Layout, resource string, families []*databasev1.T
 		}
 	}
 	return out
-}
-
-// seriesDecoder decodes the EntityValues of a row (pbv1.Series: subject, then the entity
-// tag values) and remembers the last one, since rows of a block share it.
-type seriesDecoder struct {
-	err     error
-	subject string
-	last    []byte
-	values  []*modelv1.TagValue
-}
-
-func (d *seriesDecoder) decode(entityValues []byte) (string, []*modelv1.TagValue, error) {
-	if d.last != nil && bytes.Equal(d.last, entityValues) {
-		return d.subject, d.values, d.err
-	}
-	d.last = append(d.last[:0], entityValues...)
-	var s pbv1.Series
-	d.err = s.Unmarshal(entityValues)
-	d.subject, d.values = s.Subject, s.EntityValues
-	return d.subject, d.values, d.err
-}
-
-// subjectOf returns the resource of a row from its EntityValues, counting the rows whose
-// resource cannot be told.
-func subjectOf(run *unitRun, d *seriesDecoder, catalog string, entityValues []byte) (string, []*modelv1.TagValue, bool) {
-	if len(entityValues) == 0 {
-		run.dropRow(catalog + " rows without series metadata")
-		return "", nil, false
-	}
-	subject, values, err := d.decode(entityValues)
-	if err != nil || subject == "" {
-		run.dropRow(catalog + " rows with undecodable series metadata")
-		return "", nil, false
-	}
-	return subject, values, true
 }
 
 // setIfNull fills a cell that no earlier source filled.
@@ -167,13 +131,13 @@ func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *d
 		return snapshot.ReadError("list parts of "+shardDir, err)
 	}
 	cells := layout.NewRow()
-	var series seriesDecoder
+	var series rowsrc.SeriesDecoder
 	for _, id := range partIDs {
-		rofs := newReadOnlyFS()
+		rofs := rowsrc.NewReadOnlyFS()
 		part, openErr := dumpstream.OpenPart(id, shardDir, rofs)
-		if openErr == nil && rofs.err != nil {
+		if openErr == nil && rofs.Err() != nil {
 			_ = part.Close()
-			openErr = rofs.err
+			openErr = rofs.Err()
 		}
 		if openErr != nil {
 			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
@@ -183,13 +147,13 @@ func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *d
 		it := part.Iterator()
 		for it.Next() {
 			row := it.Row()
-			subject, entityValues, ok := subjectOf(run, &series, "stream", row.EntityValues)
+			subject, entityValues, ok := rowsrc.SubjectOf(run, &series, "stream", row.EntityValues)
 			if !ok {
 				continue
 			}
 			res, known := resources[subject]
 			if !known {
-				run.dropRow("stream " + subject + " is not in the schema registry")
+				run.DropRow("stream " + subject + " is not in the schema registry")
 				continue
 			}
 			resetRow(cells)

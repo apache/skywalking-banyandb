@@ -30,15 +30,18 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/importer"
 )
 
-// dryRunIgnoredImportFlags are the import settings a dry run does not use: they only shape
-// the writes, the push and the verification. --write-batch-bytes is the exception, because the
-// dry run plan warns about rows larger than it. The settings are still range-checked under
-// --dry-run, except --write-batch-size and --write-inflight-batches.
-var dryRunIgnoredImportFlags = []string{
-	"abort-on-plan-change", "verify", "verify-timeout", "write-batch-size", "write-inflight-batches",
-	"write-rate-limit",
-	"send-retry-timeout", "liaison-rate-limit", "node-rate-limit", "node-row-rate-limit", "parallelism",
-	"part-rate-limit", "part-chunk-size",
+// dryRunIgnoredImportSettings are the import settings a dry run does not use: they only shape
+// the writes, the push and the verification. --write-batch-bytes, --resume-duplication-policy and
+// --restart are the exceptions: the dry run plan warns about rows larger than the first, its
+// resume summary names the policy of every ambiguous payload, and with --restart it previews a
+// fresh import. The settings are still range-checked under
+// --dry-run, except --write-batch-size, --write-inflight-batches and --checkpoint-every-batches.
+func dryRunIgnoredImportSettings(o *config.Import) []any {
+	return []any{
+		&o.AbortOnPlanChange, &o.Verify, &o.VerifyTimeout, &o.WriteBatchSize, &o.WriteInflightBatches, &o.WriteRateLimit,
+		&o.SendRetryTimeout, &o.LiaisonRateLimit, &o.NodeRateLimit, &o.NodeRowRateLimit, &o.Parallelism,
+		&o.PartRateLimit, &o.PartChunkSize, &o.CheckpointEveryBatches, &o.Resume,
+	}
 }
 
 func newDataImportCmd() *cobra.Command {
@@ -58,7 +61,7 @@ func newDataImportCmd() *cobra.Command {
 		if sources, err = resolveSettings(cmd, conn, opts); err != nil {
 			return err
 		}
-		return validateImport(cmd.ErrOrStderr(), sources, opts)
+		return validateImport(cmd, sources, opts)
 	}
 	c.RunE = func(cmd *cobra.Command, _ []string) error {
 		return runImport(cmd, conn, opts, sources)
@@ -69,8 +72,8 @@ func newDataImportCmd() *cobra.Command {
 // validateImport checks the resolved settings before anything is contacted; every failure is
 // a usage error (exit 1). Under --dry-run the settings that only shape the writes are
 // ignored, with one notice line naming those given explicitly.
-func validateImport(errOut io.Writer, sources config.Sources, opts *config.Import) error {
-	if err := validateOutputFormat(sources, opts.OutputFormat); err != nil {
+func validateImport(cmd *cobra.Command, sources config.Sources, opts *config.Import) error {
+	if err := validateOutputFormat(sources, &opts.OutputFormat); err != nil {
 		return err
 	}
 	if opts.Input == "" {
@@ -83,34 +86,44 @@ func validateImport(errOut io.Writer, sources config.Sources, opts *config.Impor
 		return nil
 	}
 	var ignored []string
-	for _, f := range dryRunIgnoredImportFlags {
-		if sources.FromFlag(f) || sources.FromPlan(f) {
-			ignored = append(ignored, sources.Label(f))
+	for _, setting := range dryRunIgnoredImportSettings(opts) {
+		if sources.Explicit(setting) {
+			ignored = append(ignored, sources.Label(setting))
 		}
 	}
 	if len(ignored) > 0 {
-		fmt.Fprintf(errOut, "NOTE --dry-run writes nothing and ignores %s\n", strings.Join(ignored, ", "))
+		fmt.Fprintf(streamsOf(cmd, opts.OutputFormat).info, "NOTE --dry-run writes nothing and ignores %s\n", strings.Join(ignored, ", "))
 	}
 	return nil
 }
 
 // runImport prints the liaisons it uses and where they came from, connects and hands over to
 // importer.RunImport. Ctrl-C or SIGTERM stops the import, which then fails with exit 3 and
-// lists the work items done.
+// lists the work items done; the progress file lets the same command resume it. Everything but
+// the explanation of a failure and its error goes to stdout, the questions too; with -o json|yaml
+// stdout holds the plan only (streamsOf).
 func runImport(cmd *cobra.Command, conn *config.Connection, opts *config.Import, sources config.Sources) error {
-	errOut := cmd.ErrOrStderr()
-	fmt.Fprintf(errOut, "liaisons: %s (from %s)\n", strings.Join(conn.Nodes, ", "), sources.Label("nodes"))
-	lc, err := connectLiaisons(cmd, conn, 3*time.Minute, errOut)
+	s := streamsOf(cmd, opts.OutputFormat)
+	fmt.Fprintf(s.hints, "liaisons: %s (from %s)\n", strings.Join(conn.Nodes, ", "), sources.Label(&conn.Nodes))
+	lc, err := connectLiaisons(cmd, conn, 3*time.Minute, s)
 	if err != nil {
 		return err
 	}
 	defer lc.close()
-	_, err = importer.RunImport(lc.ctx, importer.Env{
-		Log:      errOut,
-		Out:      cmd.OutOrStdout(),
-		Cluster:  lc.cluster,
-		Liaisons: lc.liaisons,
-		Terminal: terminalSize(errOut),
-	}, *opts)
+	env := sourcedEnv(sources, opts)
+	var wrap func(io.Writer) io.Writer
+	env.Confirm, wrap = terminalConfirm(cmd.InOrStdin(), s.info, cmd.ErrOrStderr())
+	env.Log, env.Out, env.Err, env.Hints, env.Cluster, env.Liaisons = wrap(s.info), wrap(s.out), cmd.ErrOrStderr(), wrap(s.hints), lc.cluster, lc.liaisons
+	env.Terminal = terminalSize(s.info)
+	_, err = importer.RunImport(lc.ctx, env, *opts)
 	return err
+}
+
+// sourcedEnv is the part of the importer.Env that where the settings came from decides. Only the
+// flag asks to verify a finished import again; plan.yaml and the variable set a default.
+func sourcedEnv(sources config.Sources, opts *config.Import) importer.Env {
+	return importer.Env{
+		VerifyExplicit: sources.FromFlag(&opts.Verify), ResumeFromEnv: sources.FromEnv(&opts.Resume),
+		DuplicationSource: sources.Label(&opts.DuplicationPolicy),
+	}
 }

@@ -61,3 +61,30 @@ func TestFileSystemErrorIsMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateLockFileHeldIsErrLockHeld(t *testing.T) {
+	lfs := NewLocalFileSystem()
+	path := filepath.Join(t.TempDir(), "lock")
+	held, err := lfs.CreateLockFile(path, 0o600)
+	if err != nil {
+		t.Fatalf("lock %s: %v", path, err)
+	}
+	defer func() { _ = held.Close() }()
+	_, err = lfs.CreateLockFile(path, 0o600)
+	if !errors.Is(err, ErrLockHeld) {
+		t.Fatalf("a lock another open file holds must match ErrLockHeld, got %v", err)
+	}
+}
+
+func TestCreateLockFileOtherFailureIsNotErrLockHeld(t *testing.T) {
+	lfs := NewLocalFileSystem()
+	_, err := lfs.CreateLockFile(filepath.Join(t.TempDir(), "missing", "lock"), 0o600)
+	if err == nil || errors.Is(err, ErrLockHeld) {
+		t.Fatalf("a lock file that cannot be opened must not match ErrLockHeld, got %v", err)
+	}
+	for _, code := range []int{lockError, otherError} {
+		if errors.Is(&FileSystemError{Code: code, Message: "test"}, ErrLockHeld) {
+			t.Fatalf("code %d without a held lock must not match ErrLockHeld", code)
+		}
+	}
+}

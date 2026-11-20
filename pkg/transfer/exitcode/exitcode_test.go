@@ -32,12 +32,15 @@ func TestExitError(t *testing.T) {
 }
 
 func TestExitCodeForKeepsImportCodes(t *testing.T) {
-	for _, code := range []int{ExitVerify, ExitPlanChanged} {
+	for _, code := range []int{ExitVerify, ExitPlanChanged, ExitResume, ExitHalted} {
 		if got := For(Exit(code, "import")); got != code {
 			t.Fatalf("For kept %d as %d", code, got)
 		}
 	}
 	if ExitVerify != 4 || ExitPlanChanged != 5 {
 		t.Fatalf("import exit codes are part of the CLI contract: verify=%d planChanged=%d", ExitVerify, ExitPlanChanged)
+	}
+	if ExitResume != 6 || ExitHalted != 7 {
+		t.Fatalf("resume exit codes are part of the CLI contract: resume=%d halted=%d", ExitResume, ExitHalted)
 	}
 }

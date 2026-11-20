@@ -32,6 +32,7 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/csv"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/native"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
@@ -248,7 +249,7 @@ func (s *Service) producerFor(ctx context.Context, init *transferv1.ExportReques
 ) (unitProducer, error) {
 	switch init.GetFormat() {
 	case transferv1.Format_FORMAT_CSV:
-		indexMode, _ := s.backends[commonv1.Catalog_CATALOG_MEASURE].(csv.IndexModeReader)
+		indexMode, _ := s.backends[commonv1.Catalog_CATALOG_MEASURE].(rowsrc.IndexModeReader)
 		return csv.NewProducer(ctx, s.meta, indexMode, init, send), nil
 	case transferv1.Format_FORMAT_NATIVE:
 		return native.NewProducer(ctx, init, send)

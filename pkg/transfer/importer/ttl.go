@@ -114,17 +114,23 @@ func segmentBounds(suffix, timezone, segmentInterval string) (start, end time.Ti
 	if err != nil {
 		return time.Time{}, time.Time{}, err
 	}
-	layout := segmentDayLayout
-	if unit == commonv1.IntervalRule_UNIT_HOUR {
-		layout = segmentHourLayout
-	}
-	if start, err = time.ParseInLocation(layout, suffix, loc); err != nil {
+	if start, err = parseSegmentSuffix(suffix, unit, loc); err != nil {
 		return time.Time{}, time.Time{}, fmt.Errorf("segment suffix %q: %w", suffix, err)
 	}
 	if unit == commonv1.IntervalRule_UNIT_HOUR {
 		return start, start.Add(time.Duration(num) * time.Hour), nil
 	}
 	return start, start.AddDate(0, 0, num), nil
+}
+
+// parseSegmentSuffix parses a segment suffix in loc: an hour layout for an hourly interval unit,
+// a day layout otherwise.
+func parseSegmentSuffix(suffix string, unit commonv1.IntervalRule_Unit, loc *time.Location) (time.Time, error) {
+	layout := segmentDayLayout
+	if unit == commonv1.IntervalRule_UNIT_HOUR {
+		layout = segmentHourLayout
+	}
+	return time.ParseInLocation(layout, suffix, loc)
 }
 
 // parseIntervalLabel parses the manifest's interval labels "<n>d" and "<n>h".

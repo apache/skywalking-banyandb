@@ -1,0 +1,21 @@
+CATALOG   GROUP      STAGE  ITEMS  ROWS  EST-SIZE  TARGET-NODES  STATUS   TIME-RANGE(UTC)
+measure   sw_metric  hot    4      194   50 B      dst-hot1      expired  10-12 ~ 10-18
+measure   sw_metric  warm   1      80    10 B      dst-warm1     refused  10-10 ~ 10-12
+property  sw_prop    -      2      10    30 B      dst-hot1      ok       -
+stream    sw_stream  hot    1      2.0K  10 B      -             refused  10-18 ~ 10-18
+
+SCHEMA
+  GROUP      RESOURCES  RESULT
+  sw_metric  2          1 create, 1 ok
+
+PROBLEMS
+  - liaison liaison-b:17912 cannot serve the import: ImportService.Targets answered Unimplemented: unknown service
+  - measure/sw_metric/hot seg=20261012 shard=0: every row is in a target segment past the retention (newest 2026-10-12T10:00:00Z, its segment ends 2026-10-13T00:00:00Z, retention 3d = group 3d); imported anyway because of --force-ttl
+  - measure/sw_metric/warm/20261010/shard-0: the target route cannot be written to: liaison liaison-dst:17912: data node(s) [dst-warm1] of the route are not active
+  - row check: 1 row(s) of 1 work item(s) fail; up to 10 are listed
+  - row check: file nodes/data-a/stream/sw_stream/seg-20261018/shard-0-00001.csv.gz record 7: invalid timestamp: time is not millisecond precision
+  - warning: 1 row(s) are larger than --write-batch-bytes 4194304 (largest 5242880 bytes, file nodes/data-a/stream/sw_stream/seg-20261018/shard-0-00001.csv.gz record 3); each is sent in a batch of its own
+  - warning: group sw_metric stage warm: 2 copies wanted but only 1 node(s) match; each row is written to every one of them
+  - warning: group sw_stream: the target has no stage "cold"; its units go to hot
+  - warning: measure/sw_metric/hot/20261012/shard-0: imported although expired (--force-ttl); the rows are invisible to queries and removed by the next retention run
+  - warning: schema barrier: dst-warm1 has applied schema revision 5, not yet 9; rows routed to it may fail until it catches up

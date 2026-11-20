@@ -18,29 +18,11 @@
 package csv
 
 import (
-	"strings"
-
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
-
-// typedTagSuffixes are the suffixes a stream, measure or trace merge appends, after '#', to a tag whose
-// parts hold it with different types: each typed column keeps the values of one type.
-var typedTagSuffixes = []string{"#str_arr", "#int_arr", "#str", "#int", "#float", "#bin", "#ts"}
-
-// storedTagName is the tag a stored column holds: its name without a merge's type suffix.
-func storedTagName(column string) string {
-	if !strings.Contains(column, "#") {
-		return column
-	}
-	for _, suffix := range typedTagSuffixes {
-		if strings.HasSuffix(column, suffix) {
-			return column[:len(column)-len(suffix)]
-		}
-	}
-	return column
-}
 
 // columnTypes maps a stored value type to its column type; an unknown stored type has none.
 var columnTypes = map[pbv1.ValueType]csvfmt.ValueType{ //nolint:exhaustive // ValueTypeUnknown has no column type
@@ -64,7 +46,7 @@ func setStoredTags(cells []string, layout *csvfmt.Layout, tags map[string][]byte
 		if raw == nil {
 			continue
 		}
-		tag := storedTagName(key)
+		tag := rowsrc.StoredTagName(key)
 		idx, ok := columns[tag]
 		if !ok {
 			run.dropTag(resource, key)

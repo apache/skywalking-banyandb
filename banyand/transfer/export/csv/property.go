@@ -31,18 +31,14 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
-)
-
-// Stored fields of a property document (banyand/property/db/shard.go buildUpdateDocument).
-const (
-	propertySourceField = "_source"
-	propertyDeleteField = "_deleted"
 )
 
 func producePropertyCSV(run *unitRun, unit *transferv1.PropertyUnit, groupDir string) error {
@@ -71,7 +67,7 @@ func producePropertyCSV(run *unitRun, unit *transferv1.PropertyUnit, groupDir st
 	fixed := fixedColumns(layout)
 	for i, shard := range unit.GetShardIds() {
 		shardDir := filepath.Join(groupDir, nativefmt.ShardDir(shard))
-		prefix := fmt.Sprintf("%s/%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), csvfmt.EscapePathComponent(group), nativefmt.ShardDir(shard))
+		prefix := fmt.Sprintf("%s/%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), artifactpath.EscapeComponent(group), nativefmt.ShardDir(shard))
 		fw := run.newWriter(layout, prefix, shard, uint32(i), false, revisions)
 		if err = writePropertyShard(run, fw, shardDir, layout, fixed, resources); err != nil {
 			return err
@@ -124,9 +120,9 @@ func (pw *propertyShardWriter) write(doc native.StoredDocument) error {
 	corruptLen := -1
 	if err := doc.VisitStoredFields(func(name string, value []byte) bool {
 		switch name {
-		case propertySourceField:
+		case rowsrc.PropertySourceField:
 			pw.source = append(pw.source, value...)
-		case propertyDeleteField:
+		case rowsrc.PropertyDeleteField:
 			if len(value) != 8 {
 				corruptLen = len(value)
 				return true
@@ -151,13 +147,13 @@ func (pw *propertyShardWriter) write(doc native.StoredDocument) error {
 		return nil // not a property document
 	}
 	if malformed {
-		pw.run.dropRow("property documents with a malformed _source")
+		pw.run.DropRow("property documents with a malformed _source")
 		return nil
 	}
 	name := p.GetMetadata().GetName()
 	tags, known := pw.resources[name]
 	if !known {
-		pw.run.dropRow("property " + name + " is not in the schema registry")
+		pw.run.DropRow("property " + name + " is not in the schema registry")
 		return nil
 	}
 	cells := pw.cells

@@ -21,6 +21,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -38,6 +39,7 @@ func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, erro
 			return nil, &FileSystemError{
 				Code:    lockError,
 				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
+				held:    errors.Is(err, unix.EWOULDBLOCK),
 			}
 		}
 		return &LocalFile{

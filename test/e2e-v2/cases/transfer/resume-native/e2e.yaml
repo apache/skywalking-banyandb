@@ -1,0 +1,159 @@
+# Licensed to the Apache Software Foundation (ASF) under one or more
+# contributor license agreements.  See the NOTICE file distributed with
+# this work for additional information regarding copyright ownership.
+# The ASF licenses this file to You under the Apache License, Version 2.0
+# (the "License"); you may not use this file except in compliance with
+# the License.  You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Transfer resume e2e, run once per export format: this file runs every case with FORMAT=native and
+# ../resume-csv/e2e.yaml the same cases with FORMAT=csv; only that word differs (the native file
+# also runs the reconciliation case). The environment and the setup are those of the transfer
+# suites (../common/docker-compose.yml: a source cluster of one hot and one warm data node behind a
+# liaison fed by OAP + trace-mocker, and an empty destination cluster of the same topology; setup
+# builds bydbctl and the export checker for the host, waits for data, runs the lifecycle agent,
+# reports events, creates a UI template, empties the resume work directory and quiesces the
+# source). The scripts are ../common/scripts/resume-{common,export,import}.sh (they read the
+# progress files through export-checker resume-state), the expectations
+# ../common/expected/resume-*.yaml (the round trip reuses import-roundtrip.yaml).
+#
+# Every check runs in verify, in this order:
+#   export: interrupted by SIGINT at a low --node-rate-limit (exit 3, session id recorded, no
+#   manifest, release-session hint); resumed and killed with kill -9 while a unit is in flight
+#   (unlisted files left); rerun without --resume (exit 1, DONE/LEFT summary,
+#   --resume hint, directory unchanged); --resume with --include-schema=false (exit 6, nothing
+#   deleted); resumed without a rate limit (exit 0, manifest, no progress file, no .tmp or orphan
+#   volume, session released, accepted by the export checker, the units done before reported as
+#   resumed and none of their files rewritten, the manifest listing exactly the planned units); a second export interrupted whose
+#   session is released before --resume (exit 6, "export again").
+#   import of the resumed export into the destination: slowed down (native --part-rate-limit, CSV
+#   --write-rate-limit), interrupted by SIGINT once something is done (exit 3), resumed and killed
+#   with kill -9 while a payload is in flight (CSV: rows sent after the cursor and not
+#   acknowledged); rerun without --resume (exit 1 after the resume summary, nothing changed), then
+#   --dry-run (exit 0, summary with the AMBIGUOUS payloads and their policies); --resume --verify (exit 0, VERIFY ok, the items done before reported as done, the
+#   stream and trace rows pushed above one import's, per group, by no more than the rows recorded
+#   as possible duplicates, and equal to them for CSV); the finished import run again (exit 0,
+#   "already imported", nothing pushed, verify only with an explicit --verify); the destination re-exported as CSV holds the distinct rows of
+#   a CSV export of the source, row by row and by queries; native only, the resumed run
+#   reconciled the part in flight (landed / not landed); the groups the import wrote into deleted
+#   on the destination with bydbctl, the finished import run again (exit 6, the destination
+#   "looks reset or is another cluster", --checkpoint and --restart hints, also with --dry-run,
+#   progress file unchanged); last, --restart keeps the progress file as a .bak and imports E
+#   afresh into the reset destination.
+# The cases share state through markers in a fixed work directory (see resume-common.sh): a case
+# that passed replays its report, and a case that failed in a way a retry cannot repair (an import
+# attempt that failed after it changed the progress file, an import that finished before it could
+# be interrupted) replays its failure record, so infra-e2e retries are safe.
+#
+# Run locally after building the testing image (see test/docker/Dockerfile; TARGET_OS=linux):
+#   set -a; source <(grep -v '^#' test/e2e-v2/script/env); set +a
+#   TAG=local e2e run -c test/e2e-v2/cases/transfer/resume-native/e2e.yaml
+
+setup:
+  env: compose
+  file: ../common/docker-compose.yml
+  timeout: 25m
+  init-system-environment: ../../../script/env
+  steps:
+    - name: set PATH
+      command: export PATH=/tmp/skywalking-infra-e2e/bin:$PATH
+    - name: build bydbctl for the host
+      command: go build -o /tmp/skywalking-infra-e2e/bin/bydbctl ./bydbctl/cmd/cli
+    - name: build the export checker for the host
+      command: go build -o /tmp/skywalking-infra-e2e/bin/export-checker ./test/e2e-v2/cases/transfer/common/checker
+    - name: wait for trace-mocker data on the hot node
+      command: bash test/e2e-v2/cases/transfer/common/scripts/wait-for-data.sh
+    - name: migrate segments older than the hot TTL to the warm node
+      command: bash test/e2e-v2/cases/transfer/common/scripts/run-lifecycle.sh
+    - name: install swctl
+      command: bash test/e2e-v2/script/prepare/setup-e2e-shell/install.sh swctl
+    - name: report events so the stream catalog holds data
+      command: bash test/e2e-v2/cases/transfer/common/scripts/report-events.sh ${oap_host}:${oap_11800} ${oap_host}:${oap_12800}
+    # OAP 11 no longer writes UI templates at startup, so the property group would stay empty.
+    # One template created through ui-management gives the property catalog data to export.
+    - name: create a UI template so the property catalog holds data
+      command: |
+        printf '%s' '{"name":"transfer-e2e"}' > /tmp/transfer-uitpl.json
+        swctl --display json --admin-url=http://${oap_host}:${oap_17128} admin ui-template create --id transfer-e2e -f /tmp/transfer-uitpl.json
+    - name: reset the work directory of the resume cases
+      command: FORMAT=native bash -c 'DIR=test/e2e-v2/cases/transfer/common/scripts && source $DIR/common.sh && source $DIR/resume-common.sh && rm -rf "$RESUME_WORK"'
+    - name: stop OAP and trace-mocker and wait for the source rows to settle
+      command: bash test/e2e-v2/cases/transfer/common/scripts/quiesce.sh ${liaison_host}:${liaison_17912}
+
+verify:
+  # Every case is safe to retry (see the header); a case is retried until the state it pins has
+  # settled. An attempt waits up to ten minutes for the state it stops a process in, and up to one
+  # more minute for the process to end, so an attempt can take eleven minutes; six retries cap a
+  # failing case at about an hour, inside the job's 90-minute timeout.
+  retry:
+    count: 6
+    interval: 10s
+  fail-fast: true
+  cases:
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} sigint
+      expected: ../common/expected/resume-export-sigint.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} kill
+      expected: ../common/expected/resume-export-kill.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} summary
+      expected: ../common/expected/resume-export-summary.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} binding
+      expected: ../common/expected/resume-export-binding.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} resumed
+      expected: ../common/expected/resume-export-resumed.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-export.sh ${liaison_host}:${liaison_17912} session-lost
+      expected: ../common/expected/resume-export-session-lost.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} interrupt
+      expected: ../common/expected/resume-import-interrupt.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} summary
+      expected: ../common/expected/resume-import-summary.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} resumed
+      expected: ../common/expected/resume-import-resumed.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} again
+      expected: ../common/expected/resume-import-again.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} roundtrip
+      expected: ../common/expected/import-roundtrip.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} reconcile
+      expected: ../common/expected/resume-import-reconcile.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} reset
+      expected: ../common/expected/resume-import-reset.yaml
+    - query: FORMAT=native bash test/e2e-v2/cases/transfer/common/scripts/resume-import.sh ${liaison_host}:${liaison_17912} restart
+      expected: ../common/expected/resume-import-restart.yaml
+
+cleanup:
+  on: always
+  collect:
+    on: failure
+    output-dir: $SW_INFRA_E2E_LOG_DIR/banyandb-data
+    items:
+      - service: data-hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+          - /tmp/lifecycle-report/ # only present once run-lifecycle.sh ran; missing before that
+      - service: data-warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_hot1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/
+      - service: data_dst_warm1
+        paths:
+          - /tmp/stream/
+          - /tmp/measure/
+          - /tmp/trace/
+          - /tmp/property/

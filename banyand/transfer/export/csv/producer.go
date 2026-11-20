@@ -21,9 +21,7 @@ package csv
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
 	"maps"
 	"slices"
 	"strings"
@@ -36,9 +34,10 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
-	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
@@ -47,22 +46,19 @@ import (
 // segmentFileName is the name of the segment-level file of an index-mode measure unit.
 const segmentFileName = "segment"
 
-// localFS is the file system the part readers open snapshot files through.
-var localFS = pkgfs.NewLocalFileSystem()
-
 // Producer writes every unit of one Export stream as CSV: one CSV stream per
 // shard, rows of every resource of the group in it, told apart by the _name column.
 type Producer struct {
 	ctx       context.Context
 	meta      metadata.Repo
-	indexMode IndexModeReader
+	indexMode rowsrc.IndexModeReader
 	settings  *streamSettings
 }
 
 // NewProducer creates the CSV producer of one Export stream. init carries the stream
 // settings (compression, file size, annotations and rate limit); send writes a frame to
 // the stream. indexMode reads index-mode measure rows and may be nil.
-func NewProducer(ctx context.Context, meta metadata.Repo, indexMode IndexModeReader, init *transferv1.ExportRequest_Init,
+func NewProducer(ctx context.Context, meta metadata.Repo, indexMode rowsrc.IndexModeReader, init *transferv1.ExportRequest_Init,
 	send func(*transferv1.ExportResponse) error,
 ) *Producer {
 	limit := init.GetRateLimit()
@@ -162,8 +158,8 @@ func (r *unitRun) dropTagN(resource, tag string, n uint64) {
 	r.dropped[resource][tag] += n
 }
 
-// dropRow counts a row whose resource cannot be determined or is not in the schema.
-func (r *unitRun) dropRow(reason string) {
+// DropRow counts a row whose resource cannot be determined or is not in the schema.
+func (r *unitRun) DropRow(reason string) {
 	r.unknown[reason]++
 }
 
@@ -290,54 +286,9 @@ func (s *frameSink) FinishFile(size uint64, crc uint32, rowCounts map[string]uin
 	})
 }
 
-// readOnlyFS is the file system the part readers open snapshot files through. It never
-// writes; ReadDir reports a failure instead of panicking (a preempted session can remove
-// the directory mid-read). The part readers skip some files they cannot open, so the first
-// failure to list, open or read is kept for the caller to check; only a missing file may be
-// opened or read without failing, as the readers probe optional files that way.
-type readOnlyFS struct {
-	pkgfs.FileSystem
-	err error
-}
-
-func newReadOnlyFS() *readOnlyFS {
-	return &readOnlyFS{FileSystem: localFS}
-}
-
-func (f *readOnlyFS) keep(err error) {
-	if err != nil && f.err == nil {
-		f.err = err
-	}
-}
-
-// keepPresent keeps err unless it reports a missing file.
-func (f *readOnlyFS) keepPresent(err error) {
-	if !errors.Is(err, fs.ErrNotExist) {
-		f.keep(err)
-	}
-}
-
-func (f *readOnlyFS) ReadDir(dirname string) []pkgfs.DirEntry {
-	entries, err := f.ReadDirLimit(dirname, 0)
-	f.keep(err)
-	return entries
-}
-
-func (f *readOnlyFS) OpenFile(name string) (pkgfs.File, error) {
-	file, err := f.FileSystem.OpenFile(name)
-	f.keepPresent(err)
-	return file, err
-}
-
-func (f *readOnlyFS) Read(name string) ([]byte, error) {
-	data, err := f.FileSystem.Read(name)
-	f.keepPresent(err)
-	return data, err
-}
-
 // shardPrefix is the path prefix of one shard's files in a segment unit.
 func shardPrefix(unit *transferv1.SegmentUnit, shard uint32) string {
-	return fmt.Sprintf("%s/%s/%s%s/%s", transfer.CatalogName(unit.GetCatalog()), csvfmt.EscapePathComponent(unit.GetGroup()),
+	return fmt.Sprintf("%s/%s/%s%s/%s", transfer.CatalogName(unit.GetCatalog()), artifactpath.EscapeComponent(unit.GetGroup()),
 		nativefmt.SegDirPrefix, unit.GetSegmentSuffix(), nativefmt.ShardDir(shard))
 }
 

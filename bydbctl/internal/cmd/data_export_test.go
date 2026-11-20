@@ -137,8 +137,8 @@ var _ = Describe("Data Export Dry Run", func() {
 			g.Expect(out).To(ContainSubstring("NODE"))
 			g.Expect(out).To(MatchRegexp(`stream\s+default\s+hot`))
 			g.Expect(out).To(ContainSubstring("SNAPSHOT"))
-			g.Expect(stderr).To(ContainSubstring("standalone=true"))
-			g.Expect(stderr).To(MatchRegexp(`parallelism: (max -> )?1`))
+			g.Expect(out).To(ContainSubstring("standalone=true"))
+			g.Expect(out).To(MatchRegexp(`parallelism: (max -> )?1`))
 		}, flags.EventuallyTimeout, time.Second).Should(Succeed())
 		var before map[string]string
 		Eventually(func() bool {
@@ -153,10 +153,12 @@ var _ = Describe("Data Export Dry Run", func() {
 	})
 
 	It("emits machine-readable JSON on stdout only", func() {
-		out, _, err := run("data", "export", "--dry-run", "--nodes", grpcAddr, "-o", "json", "--parallelism", "4")
+		out, stderr, err := run("data", "export", "--dry-run", "--nodes", grpcAddr, "-o", "json", "--parallelism", "4")
 		Expect(err).NotTo(HaveOccurred())
 		var rep map[string]any
 		Expect(json.Unmarshal([]byte(out), &rep)).To(Succeed(), out)
+		Expect(stderr).NotTo(ContainSubstring("liaison: "), "the connection line is left out of a structured rendering")
+		Expect(stderr).NotTo(ContainSubstring("parallelism: "))
 		Expect(rep).To(HaveKey("rows"))
 		Expect(rep).To(HaveKeyWithValue("standalone", true))
 	})
@@ -212,6 +214,29 @@ var _ = Describe("Data Export Dry Run", func() {
 			Expect(exitErr.Code).To(Equal(exitcode.ExitUsage), "%q", id)
 			Expect(err).To(MatchError(ContainSubstring("--id")), "%q", id)
 		}
+	})
+
+	It("leaves the selectors of an export with a progress file to the resume", func() {
+		// A group the selectors name may have been deleted after the first run: the resume, not
+		// the check of a fresh export's selectors (exit 1), decides. The progress file here is
+		// unreadable, which the resume refuses with exit 6.
+		out := filepath.Join(dataDir, "out")
+		Expect(os.MkdirAll(out, 0o700)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(out, ".export-progress.json"), []byte("{"), 0o600)).To(Succeed())
+		var exitErr *exitcode.ExitError
+		for _, args := range [][]string{
+			{"--output", out, "--resume"},
+			{"--dry-run", "--output", out},
+		} {
+			_, _, err := run(append([]string{"data", "export", "--nodes", grpcAddr, "--selector", "catalog=stream,groups=deleted"}, args...)...)
+			Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
+			Expect(exitErr.Code).To(Equal(exitcode.ExitResume), "%v: %v", args, err)
+			Expect(err).NotTo(MatchError(ContainSubstring("does not exist")), "%v", args)
+		}
+		_, _, err := run("data", "export", "--nodes", grpcAddr, "--selector", "catalog=stream,groups=deleted", "--output", filepath.Join(dataDir, "fresh"))
+		Expect(errors.As(err, &exitErr)).To(BeTrue(), "%v", err)
+		Expect(exitErr.Code).To(Equal(exitcode.ExitUsage), "a fresh export still checks its selectors")
+		Expect(err).To(MatchError(ContainSubstring("does not exist")))
 	})
 
 	It("refuses the real-export flags in a dry run and a native export", func() {
