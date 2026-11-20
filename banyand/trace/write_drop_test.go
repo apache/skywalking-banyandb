@@ -19,133 +19,133 @@ package trace
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// dropCounter records what a write listener counts as dropped, keyed by "group|reason".
-type dropCounter map[string]float64
+const (
+	heldGroup    = "sw_trace"
+	segment      = "segment" // registered, with a timestamp tag
+	noTimestamp  = "no_ts"   // registered, without its timestamp tag: rows do not match it
+	unknownTrace = "unknown" // not registered
+	unheldGroup  = "any-name-a-writer-sends"
+)
 
-func (c dropCounter) Inc(delta float64, labelValues ...string) {
-	c[strings.Join(labelValues, "|")] += delta
+// dropRepository holds heldGroup and the traces segment and noTimestamp in it. A row is
+// dropped before it reaches storage, so the group supplies none.
+type dropRepository struct{ resourceSchema.Repository }
+
+func (dropRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
+	return nil, name == heldGroup
 }
 
-func (c dropCounter) Delete(_ ...string) bool { return true }
-
-// heldRepository holds the groups in its set and no trace, as a node does that holds a group
-// whose schema has not reached it yet.
-type heldRepository struct {
-	resourceSchema.Repository
-	groups map[string]bool
+func (dropRepository) LoadResource(metadata *commonv1.Metadata) (resourceSchema.Resource, bool) {
+	if metadata.GetGroup() != heldGroup {
+		return nil, false
+	}
+	schema := &databasev1.Trace{Metadata: metadata, TimestampTagName: "ts"}
+	switch metadata.GetName() {
+	case segment:
+		schema.Tags = []*databasev1.TraceTagSpec{{Name: "ts", Type: databasev1.TagType_TAG_TYPE_TIMESTAMP}}
+	case noTimestamp:
+	default:
+		return nil, false
+	}
+	return traceResource{t: &trace{schema: schema, name: metadata.GetName()}}, true
 }
 
-func (r heldRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
-	return nil, r.groups[name]
+type traceResource struct {
+	resourceSchema.Resource
+	t *trace
 }
 
-func (heldRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
-	return nil, false
+func (r traceResource) Delegated() resourceSchema.IndexListener { return r.t }
+
+func traceWrite(group, name string, tags ...*modelv1.TagValue) *tracev1.InternalWriteRequest {
+	return &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
+		Metadata: &commonv1.Metadata{Group: group, Name: name},
+		Tags:     tags,
+	}}
 }
 
-func dropRepo() *schemaRepo {
-	return &schemaRepo{Repository: heldRepository{groups: map[string]bool{"sw_trace": true}}}
-}
-
-// dropBatch has one row for each reason a trace write listener drops a row for before it
-// stores anything. A trace looks its schema up first, so an unknown trace is the drop a
-// missing schema causes.
+// dropBatch has a row for each reason a trace write listener drops a row for before it
+// stores anything. A timestamp finer than a millisecond is out of range.
 func dropBatch() []any {
-	unknown := &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
-		Metadata: &commonv1.Metadata{Group: "sw_trace", Name: "segment"},
-	}}
-	arbitrary := &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
-		Metadata: &commonv1.Metadata{Group: "any-name-a-writer-sends", Name: "segment"},
-	}}
-	return []any{[]byte{0xff}, 42, unknown, unknown, arbitrary}
+	invalid := &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(time.Unix(1_800_000_000, 1))}}
+	return []any{
+		[]byte{0xff},
+		42,
+		traceWrite("deleted", segment),
+		traceWrite(unheldGroup, segment),
+		traceWrite(heldGroup, unknownTrace),
+		traceWrite(heldGroup, noTimestamp),
+		traceWrite(heldGroup, segment, invalid),
+	}
 }
 
-var wantDrops = dropCounter{
-	"|" + common.DropReasonDecode:                 1,
-	"|" + common.DropReasonInvalidType:            1,
-	"sw_trace|" + common.DropReasonSchemaNotFound: 2,
-	"|" + common.DropReasonSchemaNotFound:         1,
+// expectDrops expects the drops of dropBatch, with a group label only for the held group. A
+// row for a group the node does not hold is group_not_found, though the trace is looked up first.
+func expectDrops(t *testing.T) *meter.MockCounter {
+	counter := meter.NewMockCounter(gomock.NewController(t))
+	for _, d := range []struct {
+		group  string
+		reason common.DropReason
+		times  int
+	}{
+		{"", common.DropReasonDecode, 1},
+		{"", common.DropReasonInvalidType, 1},
+		{"", common.DropReasonGroupNotFound, 2},
+		{heldGroup, common.DropReasonSchemaNotFound, 1},
+		{heldGroup, common.DropReasonInvalidElement, 1},
+		{heldGroup, common.DropReasonInvalidTimestamp, 1},
+	} {
+		counter.EXPECT().Inc(float64(1), d.group, string(d.reason)).Times(d.times)
+	}
+	return counter
 }
 
 func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
-	dropped := dropCounter{}
+	repo := &schemaRepo{Repository: dropRepository{}}
 	w := &writeCallback{
 		l:          logger.GetLogger("test-trace-drop"),
-		schemaRepo: dropRepo(),
-		dropped:    dropped,
+		schemaRepo: repo,
+		drops:      common.NewWriteDrops[resourceSchema.Group](expectDrops(t), repo),
 	}
 
 	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
 	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
-	require.Equal(t, wantDrops, dropped)
 
 	recorder := common.NewWriteRecorder(time.Time{})
 	w.Rev(common.WithWriteRecorder(context.Background(), recorder), bus.NewMessage(2, dropBatch()))
-	require.Len(t, recorder.RowFailures(), 5, "a recorder still gets every dropped row")
-	require.Equal(t, wantDrops, dropped, "a write with a recorder reports its failures to its caller, so it counts nothing")
-
-	dropped = dropCounter{}
-	w.dropped = dropped
-	w.Rev(context.Background(), bus.NewMessage(2, "not a batch"))
-	w.Rev(context.Background(), bus.NewMessage(3, []any{}))
-	require.Equal(t, dropCounter{"|" + common.DropReasonInvalidType: 1}, dropped,
-		"a message that is not a batch is one drop; an empty batch drops nothing")
+	require.Len(t, recorder.RowFailures(), 7, "a write with a recorder reports every dropped row to its caller instead of counting it")
 }
 
 func TestWriteQueueCallbackCountsTheRowsItDrops(t *testing.T) {
-	dropped := dropCounter{}
+	repo := &schemaRepo{Repository: dropRepository{}}
+	counter := expectDrops(t)
+	counter.EXPECT().Inc(float64(1), "", string(common.DropReasonInvalidType)) // the message that is not a batch
 	w := &writeQueueCallback{
 		l:          logger.GetLogger("test-trace-drop-liaison"),
-		schemaRepo: dropRepo(),
-		dropped:    dropped,
+		schemaRepo: repo,
+		drops:      common.NewWriteDrops[resourceSchema.Group](counter, repo),
 	}
 
 	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
 	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
-	require.Equal(t, wantDrops, dropped)
-}
-
-// namingRegistry records the full name and labels of each counter created through it.
-type namingRegistry struct {
-	observability.MetricsRegistry
-	created map[string][]string
-}
-
-func (r *namingRegistry) With(scope meter.Scope) observability.Factory {
-	return &namingFactory{Factory: nil, r: r, ns: scope.GetNamespace()}
-}
-
-type namingFactory struct {
-	observability.Factory
-	r  *namingRegistry
-	ns string
-}
-
-func (f *namingFactory) NewCounter(name string, labelNames ...string) meter.Counter {
-	f.r.created[f.ns+"_"+name] = labelNames
-	return dropCounter{}
-}
-
-func TestWriteDropCounterName(t *testing.T) {
-	r := &namingRegistry{created: map[string][]string{}}
-	require.NotNil(t, newWriteDropCounter(r))
-	require.Equal(t, map[string][]string{"banyandb_trace_write_dropped_total": {"group", "reason"}}, r.created,
-		"the name is unique across models, which the native meter provider keys a measure by")
-	require.Nil(t, newWriteDropCounter(nil), "a service without a registry counts nothing")
+	w.Rev(context.Background(), bus.NewMessage(2, "not a batch"))
+	w.Rev(context.Background(), bus.NewMessage(3, []any{}))
 }

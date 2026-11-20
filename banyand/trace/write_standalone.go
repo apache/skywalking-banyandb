@@ -40,6 +40,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -47,7 +48,7 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
-	dropped             meter.Counter
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
@@ -62,7 +63,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
-		dropped:             dropped,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -81,12 +82,24 @@ func (w *writeCallback) CheckHealth() *common.Error {
 	return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high, stop writing")
 }
 
+// errTraceNotFound is the error a row for metadata is skipped for when this node has no trace
+// definition for it. The schema is looked up before the group, so the group is checked here:
+// a row for a group the node does not hold is counted as group_not_found, as stream and
+// measure count it.
+func errTraceNotFound(sr *schemaRepo, metadata *commonv1.Metadata) error {
+	err := fmt.Errorf("cannot find trace definition: %s", metadata)
+	if _, held := sr.LoadGroup(metadata.GetGroup()); !held {
+		return common.NewRowDropError(common.DropReasonGroupNotFound, err)
+	}
+	return common.NewRowDropError(common.DropReasonSchemaNotFound, err)
+}
+
 func (w *writeCallback) handle(dst map[string]*tracesInGroup, writeEvent *tracev1.InternalWriteRequest,
 	metadata *commonv1.Metadata, spec *tracev1.TagSpec,
 ) (map[string]*tracesInGroup, error) {
 	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find trace definition: %s", metadata))
+		return nil, errTraceNotFound(w.schemaRepo, metadata)
 	}
 	specMap := buildSpecMap(spec)
 	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
@@ -396,7 +409,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
-		common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -415,14 +428,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			writeEvent = &tracev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
-				common.RecordRowFailure(ctx, i, fmt.Errorf("trace: cannot decode write event: %w", err))
-				common.CountRowDrop(ctx, w.dropped, "", common.DropReasonDecode)
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("trace: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("trace: invalid event data type %T", e))
-			common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("trace: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -435,8 +446,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("trace %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
-			common.CountRowDrop(ctx, w.dropped, heldGroup(w.schemaRepo, metadata.GetGroup()), common.DropReason(handleErr))
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("trace %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups

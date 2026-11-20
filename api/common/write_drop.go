@@ -24,34 +24,38 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
 
-// The reasons a write listener skips a row of a message. A skipped row is logged and not
-// reported to the writer (the acknowledgement covers the batch), so the listener counts it
-// under one of these reasons in its <model>_write_dropped_total counter.
+// DropReason is why a write listener skipped a row of a message. A skipped row is logged and
+// not reported to the writer (the acknowledgement covers the batch), so the listener counts it
+// under its reason in its <model>_write_dropped_total counter.
+type DropReason string
+
+// The reasons a write listener skips a row for.
 const (
 	// DropReasonDecode is a row whose bytes are not a write request.
-	DropReasonDecode = "decode"
+	DropReasonDecode DropReason = "decode"
 	// DropReasonInvalidType is a row, or a whole message, of a type the listener does not take.
-	DropReasonInvalidType = "invalid_type"
+	DropReasonInvalidType DropReason = "invalid_type"
 	// DropReasonInvalidTimestamp is a row whose timestamp is out of the supported range.
-	DropReasonInvalidTimestamp = "invalid_timestamp"
+	DropReasonInvalidTimestamp DropReason = "invalid_timestamp"
 	// DropReasonGroupNotFound is a row for a group this node does not hold.
-	DropReasonGroupNotFound = "group_not_found"
-	// DropReasonSchemaNotFound is a row for a resource this node has no schema for.
-	DropReasonSchemaNotFound = "schema_not_found"
+	DropReasonGroupNotFound DropReason = "group_not_found"
+	// DropReasonSchemaNotFound is a row for a resource this node has no schema for, in a group
+	// it holds.
+	DropReasonSchemaNotFound DropReason = "schema_not_found"
 	// DropReasonInvalidElement is any other row the listener cannot store, such as one that
 	// does not match its schema.
-	DropReasonInvalidElement = "invalid_element"
+	DropReasonInvalidElement DropReason = "invalid_element"
 )
 
 // RowDropError is the error a write listener skips a row for, tagged with the reason the row
 // is counted under. Its message is the one of the error it wraps.
 type RowDropError struct {
 	Err    error
-	Reason string
+	Reason DropReason
 }
 
 // NewRowDropError tags err with reason.
-func NewRowDropError(reason string, err error) error {
+func NewRowDropError(reason DropReason, err error) error {
 	return &RowDropError{Reason: reason, Err: err}
 }
 
@@ -59,9 +63,9 @@ func (e *RowDropError) Error() string { return e.Err.Error() }
 
 func (e *RowDropError) Unwrap() error { return e.Err }
 
-// DropReason returns the reason err was tagged with by NewRowDropError, anywhere in its chain,
+// ReasonOf returns the reason err was tagged with by NewRowDropError, anywhere in its chain,
 // and DropReasonInvalidElement for an error that carries none.
-func DropReason(err error) string {
+func ReasonOf(err error) DropReason {
 	var de *RowDropError
 	if errors.As(err, &de) {
 		return de.Reason
@@ -69,15 +73,55 @@ func DropReason(err error) string {
 	return DropReasonInvalidElement
 }
 
-// CountRowDrop adds one skipped row of group to dropped, under reason. A nil counter counts
-// nothing, so a listener built without metrics needs no guard.
+// WriteDrops is where a write listener reports the rows it skips. A nil *WriteDrops, a listener
+// built without metrics, still records the rows for a caller that asked for them.
+type WriteDrops struct {
+	counter meter.Counter
+	holds   func(group string) bool
+}
+
+// NewWriteDrops returns the WriteDrops that counts in counter, labeling a row with its group
+// only when groups holds it, so the label is bounded by the groups the node holds whatever a
+// row names. A nil counter returns nil.
+func NewWriteDrops[G any](counter meter.Counter, groups interface{ LoadGroup(name string) (G, bool) }) *WriteDrops {
+	if counter == nil {
+		return nil
+	}
+	return &WriteDrops{counter: counter, holds: func(group string) bool {
+		_, ok := groups.LoadGroup(group)
+		return ok
+	}}
+}
+
+// SkipRow reports that row row of the message, of group, was skipped for reason with err.
 //
-// A write whose ctx carries a WriteRecorder is not counted: its caller is told which rows
+// A write whose ctx carries a WriteRecorder gets err recorded: its caller is told which rows
 // failed and may write them again, so the row is neither lost silently nor counted once per
-// attempt. Each row is thus counted at most once, by the node whose listener skipped it.
-func CountRowDrop(ctx context.Context, dropped meter.Counter, group, reason string) {
-	if dropped == nil || recorderOf(ctx) != nil {
+// attempt. Any other write counts the row. Each row is thus counted at most once, by the node
+// whose listener skipped it.
+func (d *WriteDrops) SkipRow(ctx context.Context, row int, group string, reason DropReason, err error) {
+	if recorderOf(ctx) != nil {
+		RecordRowFailure(ctx, row, err)
 		return
 	}
-	dropped.Inc(1, group, reason)
+	d.count(group, reason)
+}
+
+// SkipMessage reports that a whole message, which is not a batch of rows, was skipped for
+// reason. It is counted once, under no group, unless the write's caller records failures.
+func (d *WriteDrops) SkipMessage(ctx context.Context, reason DropReason) {
+	if recorderOf(ctx) != nil {
+		return
+	}
+	d.count("", reason)
+}
+
+func (d *WriteDrops) count(group string, reason DropReason) {
+	if d == nil {
+		return
+	}
+	if group != "" && !d.holds(group) {
+		group = ""
+	}
+	d.counter.Inc(1, group, string(reason))
 }

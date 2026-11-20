@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -53,7 +54,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		tire2Client:         tire2Client,
 		pm:                  pm,
-		dropped:             dropped,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -62,7 +63,7 @@ type writeQueueCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
-	dropped             meter.Counter
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
@@ -85,7 +86,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
-		common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -104,12 +105,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			writeEvent = &measurev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
-				common.CountRowDrop(ctx, w.dropped, "", common.DropReasonDecode)
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("measure: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
-			common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("measure: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -122,7 +123,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
-			common.CountRowDrop(ctx, w.dropped, heldGroup(w.schemaRepo, metadata.GetGroup()), common.DropReason(handleErr))
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr),
+				fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups

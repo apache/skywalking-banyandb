@@ -20,6 +20,7 @@ package measure
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
@@ -40,6 +41,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -49,7 +51,7 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
-	dropped             meter.Counter
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
@@ -64,7 +66,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
-		dropped:             dropped,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -463,6 +465,10 @@ func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *p
 
 // decodeWriteEvent returns the write request an event carries and whether it skips Top-N
 // aggregation, which only a data import's in-process write does.
+// errInvalidEventType is the error decodeWriteEvent returns for an event of a type a measure
+// write does not take.
+var errInvalidEventType = errors.New("invalid event data type")
+
 func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) {
 	switch e := event.(type) {
 	case *measurev1.InternalWriteRequest:
@@ -472,11 +478,11 @@ func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) 
 	case []byte:
 		writeEvent := &measurev1.InternalWriteRequest{}
 		if err := proto.Unmarshal(e, writeEvent); err != nil {
-			return nil, false, common.NewRowDropError(common.DropReasonDecode, fmt.Errorf("unmarshal event: %w", err))
+			return nil, false, fmt.Errorf("unmarshal event: %w", err)
 		}
 		return writeEvent, false, nil
 	default:
-		return nil, false, common.NewRowDropError(common.DropReasonInvalidType, fmt.Errorf("invalid event data type %T", event))
+		return nil, false, fmt.Errorf("%w %T", errInvalidEventType, event)
 	}
 }
 
@@ -484,7 +490,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
-		common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -498,8 +504,11 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		writeEvent, skipTopN, err := decodeWriteEvent(events[i])
 		if err != nil {
 			w.l.Error().Err(err).Msg("cannot decode write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("measure: cannot decode write event: %w", err))
-			common.CountRowDrop(ctx, w.dropped, "", common.DropReason(err))
+			reason := common.DropReasonDecode
+			if errors.Is(err, errInvalidEventType) {
+				reason = common.DropReasonInvalidType
+			}
+			w.drops.SkipRow(ctx, i, "", reason, fmt.Errorf("measure: cannot decode write event: %w", err))
 			continue
 		}
 		req := writeEvent.Request
@@ -512,8 +521,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec, skipTopN)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
-			common.CountRowDrop(ctx, w.dropped, heldGroup(w.schemaRepo, metadata.GetGroup()), common.DropReason(handleErr))
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups

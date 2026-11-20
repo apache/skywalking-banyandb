@@ -862,27 +862,3 @@ type tbMetrics struct {
 
 	mergeQuarantinedParts meter.Gauge
 }
-
-// newWriteDropCounter returns trace_write_dropped_total, the counter of the rows a write
-// listener of this node skipped, by group and reason (see common.DropReason). Such a row is
-// logged and not reported to the writer, so this counter is where the loss shows. The name
-// carries the model because the native meter provider keys a measure by its bare name, and
-// stream, measure and trace count the same labels. A nil registry returns a nil counter.
-func newWriteDropCounter(omr observability.MetricsRegistry) meter.Counter {
-	if omr == nil {
-		return nil
-	}
-	return omr.With(observability.RootScope).NewCounter("trace_write_dropped_total", "group", "reason")
-}
-
-// heldGroup returns group if this node holds it, and "" otherwise, so the group label of the
-// write drop counter is bounded by the groups the node holds whatever a dropped row names.
-func heldGroup(sr *schemaRepo, group string) string {
-	if sr == nil || sr.Repository == nil || group == "" {
-		return ""
-	}
-	if _, ok := sr.LoadGroup(group); ok {
-		return group
-	}
-	return ""
-}

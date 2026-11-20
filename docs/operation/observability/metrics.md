@@ -235,7 +235,7 @@ A write listener that cannot store a row of a batch logs it and goes on with the
 `reason` is one of:
 
 - `group_not_found`: the node does not hold the group, for example because the group was deleted or has not reached the node yet.
-- `schema_not_found`: the node has no schema for the stream, measure or trace.
+- `schema_not_found`: the node holds the group but has no schema for the stream, measure or trace.
 - `invalid_timestamp`: the timestamp is outside the supported range or finer than a millisecond.
 - `invalid_element`: the row does not match its schema, for example it has more tag families than the schema declares.
 - `decode`: the row's bytes are not a write request.

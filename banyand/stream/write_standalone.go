@@ -39,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -46,7 +47,7 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
-	dropped             meter.Counter
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
@@ -61,7 +62,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
-		dropped:             dropped,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -314,7 +315,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.log(ctx).Warn().Msg("invalid event data type")
-		common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -333,14 +334,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.log(ctx).Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
-				common.RecordRowFailure(ctx, i, fmt.Errorf("stream: cannot decode write event: %w", err))
-				common.CountRowDrop(ctx, w.dropped, "", common.DropReasonDecode)
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("stream: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.log(ctx).Warn().Msg("invalid event data type")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("stream: invalid event data type %T", e))
-			common.CountRowDrop(ctx, w.dropped, "", common.DropReasonInvalidType)
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("stream: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -353,8 +352,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			logger.ForGroup(w.log(ctx), metadata.GetGroup(), "stream").Error().Err(handleErr).Msg("cannot handle write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
-			common.CountRowDrop(ctx, w.dropped, heldGroup(w.schemaRepo, metadata.GetGroup()), common.DropReason(handleErr))
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups

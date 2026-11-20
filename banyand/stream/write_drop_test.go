@@ -19,142 +19,145 @@ package stream
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
-	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
+	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
 
-// dropCounter records what a write listener counts as dropped, keyed by "group|reason".
-type dropCounter map[string]float64
+const (
+	heldGroup     = "default"
+	knownStream   = "sw"
+	unknownStream = "not_registered"
+	unheldGroup   = "any-name-a-writer-sends"
+)
 
-func (c dropCounter) Inc(delta float64, labelValues ...string) {
-	c[strings.Join(labelValues, "|")] += delta
+// dropRepository holds heldGroup and knownStream in it. A dropped row never reaches the
+// group's storage, so the group supplies none.
+type dropRepository struct{ resourceSchema.Repository }
+
+func (dropRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
+	return nil, name == heldGroup
 }
 
-func (c dropCounter) Delete(_ ...string) bool { return true }
-
-// heldRepository holds the groups in its set and no stream, as a node does that holds a group
-// whose schema has not reached it yet.
-type heldRepository struct {
-	resourceSchema.Repository
-	groups map[string]bool
+func (dropRepository) LoadResource(metadata *commonv1.Metadata) (resourceSchema.Resource, bool) {
+	if metadata.GetGroup() != heldGroup || metadata.GetName() != knownStream {
+		return nil, false
+	}
+	return streamResource{s: &stream{schema: &databasev1.Stream{
+		Metadata:    metadata,
+		TagFamilies: []*databasev1.TagFamilySpec{{Name: "searchable", Tags: []*databasev1.TagSpec{{Name: "id", Type: databasev1.TagType_TAG_TYPE_STRING}}}},
+	}}}, true
 }
 
-func (r heldRepository) LoadGroup(name string) (resourceSchema.Group, bool) {
-	return nil, r.groups[name]
+type streamResource struct {
+	resourceSchema.Resource
+	s *stream
 }
 
-func (heldRepository) LoadResource(*commonv1.Metadata) (resourceSchema.Resource, bool) {
-	return nil, false
-}
+func (r streamResource) Delegated() resourceSchema.IndexListener { return r.s }
 
-func dropRepo() *schemaRepo {
-	return &schemaRepo{Repository: heldRepository{groups: map[string]bool{"default": true}}}
-}
-
-func streamWrite(group string, ts time.Time) *streamv1.InternalWriteRequest {
+func streamWrite(group, name string, ts time.Time) *streamv1.InternalWriteRequest {
 	return &streamv1.InternalWriteRequest{Request: &streamv1.WriteRequest{
-		Metadata: &commonv1.Metadata{Group: group, Name: "sw"},
-		Element:  &streamv1.ElementValue{Timestamp: timestamppb.New(ts)},
+		Metadata: &commonv1.Metadata{Group: group, Name: name},
+		Element:  &streamv1.ElementValue{ElementId: "e1", Timestamp: timestamppb.New(ts)},
 	}}
 }
 
-// dropBatch has one row for each reason a stream write listener drops a row for before it
-// stores anything. A timestamp finer than a millisecond is out of range.
+// dropBatch has a row for each reason a stream write listener drops a row for before the row
+// reaches the group's storage. A timestamp finer than a millisecond is out of range.
 func dropBatch() []any {
+	valid, invalid := time.Unix(1_800_000_000, 0), time.Unix(1_800_000_000, 1)
 	return []any{
-		streamWrite("default", time.Unix(1_800_000_000, 1)),
-		streamWrite("any-name-a-writer-sends", time.Unix(1_800_000_000, 1)),
+		streamWrite(heldGroup, knownStream, invalid),
+		streamWrite(unheldGroup, knownStream, invalid),
 		[]byte{0xff},
 		42,
-		streamWrite("deleted", time.Unix(1_800_000_000, 0)),
-		streamWrite("deleted", time.Unix(1_800_000_001, 0)),
+		streamWrite("deleted", knownStream, valid),
+		streamWrite("deleted", knownStream, valid),
 	}
 }
 
-var wantDrops = dropCounter{
-	"default|" + common.DropReasonInvalidTimestamp: 1,
-	"|" + common.DropReasonInvalidTimestamp:        1,
-	"|" + common.DropReasonDecode:                  1,
-	"|" + common.DropReasonInvalidType:             1,
-	"|" + common.DropReasonGroupNotFound:           2,
+// expectDrops expects the drops of dropBatch, with a group label only for the held group.
+func expectDrops(t *testing.T) *meter.MockCounter {
+	counter := meter.NewMockCounter(gomock.NewController(t))
+	for _, d := range []struct {
+		group  string
+		reason common.DropReason
+		times  int
+	}{
+		{heldGroup, common.DropReasonInvalidTimestamp, 1},
+		{"", common.DropReasonInvalidTimestamp, 1},
+		{"", common.DropReasonDecode, 1},
+		{"", common.DropReasonInvalidType, 1},
+		{"", common.DropReasonGroupNotFound, 2},
+	} {
+		counter.EXPECT().Inc(float64(1), d.group, string(d.reason)).Times(d.times)
+	}
+	return counter
 }
 
 func TestWriteCallbackCountsTheRowsItDrops(t *testing.T) {
-	dropped := dropCounter{}
+	repo := &schemaRepo{Repository: dropRepository{}}
 	w := &writeCallback{
 		l:          logger.GetLogger("test-stream-drop"),
-		schemaRepo: dropRepo(),
-		dropped:    dropped,
+		schemaRepo: repo,
+		drops:      common.NewWriteDrops[resourceSchema.Group](expectDrops(t), repo),
 	}
 
 	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
 	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
-	require.Equal(t, wantDrops, dropped)
 
 	recorder := common.NewWriteRecorder(time.Time{})
 	w.Rev(common.WithWriteRecorder(context.Background(), recorder), bus.NewMessage(2, dropBatch()))
-	require.Len(t, recorder.RowFailures(), 6, "a recorder still gets every dropped row")
-	require.Equal(t, wantDrops, dropped, "a write with a recorder reports its failures to its caller, so it counts nothing")
-
-	dropped = dropCounter{}
-	w.dropped = dropped
-	w.Rev(context.Background(), bus.NewMessage(3, "not a batch"))
-	w.Rev(context.Background(), bus.NewMessage(4, []any{}))
-	require.Equal(t, dropCounter{"|" + common.DropReasonInvalidType: 1}, dropped,
-		"a message that is not a batch is one drop; an empty batch drops nothing")
+	require.Len(t, recorder.RowFailures(), 6, "a write with a recorder reports every dropped row to its caller instead of counting it")
 }
 
 func TestWriteQueueCallbackCountsTheRowsItDrops(t *testing.T) {
-	dropped := dropCounter{}
+	repo := &schemaRepo{Repository: dropRepository{}}
+	counter := expectDrops(t)
+	counter.EXPECT().Inc(float64(1), "", string(common.DropReasonInvalidType)) // the message that is not a batch
 	w := &writeQueueCallback{
 		l:          logger.GetLogger("test-stream-drop-liaison"),
-		schemaRepo: dropRepo(),
-		dropped:    dropped,
+		schemaRepo: repo,
+		drops:      common.NewWriteDrops[resourceSchema.Group](counter, repo),
 	}
 
 	reply := w.Rev(context.Background(), bus.NewMessage(1, dropBatch()))
 	require.Nil(t, reply.Data(), "counting a drop leaves the acknowledgement as it was")
-	require.Equal(t, wantDrops, dropped)
+	w.Rev(context.Background(), bus.NewMessage(2, "not a batch"))
+	w.Rev(context.Background(), bus.NewMessage(3, []any{}))
 }
 
-// namingRegistry records the full name and labels of each counter created through it.
-type namingRegistry struct {
-	observability.MetricsRegistry
-	created map[string][]string
-}
-
-func (r *namingRegistry) With(scope meter.Scope) observability.Factory {
-	return &namingFactory{Factory: nil, r: r, ns: scope.GetNamespace()}
-}
-
-type namingFactory struct {
-	observability.Factory
-	r  *namingRegistry
-	ns string
-}
-
-func (f *namingFactory) NewCounter(name string, labelNames ...string) meter.Counter {
-	f.r.created[f.ns+"_"+name] = labelNames
-	return dropCounter{}
-}
-
-func TestWriteDropCounterName(t *testing.T) {
-	r := &namingRegistry{created: map[string][]string{}}
-	require.NotNil(t, newWriteDropCounter(r))
-	require.Equal(t, map[string][]string{"banyandb_stream_write_dropped_total": {"group", "reason"}}, r.created,
-		"the name is unique across models, which the native meter provider keys a measure by")
-	require.Nil(t, newWriteDropCounter(nil), "a service without a registry counts nothing")
+// A stream checks the schema of a row after it has a table for it, so both listeners reach
+// these reasons through processElements, which they share.
+func TestProcessElementsTagsTheRowsItCannotStore(t *testing.T) {
+	repo := &schemaRepo{Repository: dropRepository{}}
+	ts := time.Unix(1_800_000_000, 0)
+	for _, c := range []struct {
+		name string
+		want common.DropReason
+	}{
+		{unknownStream, common.DropReasonSchemaNotFound},
+		{knownStream, common.DropReasonInvalidElement}, // the element has no tag family
+	} {
+		writeEvent := streamWrite(heldGroup, c.name, ts)
+		var docs index.Documents
+		series := seriesDoc{docIDsAdded: map[uint64]struct{}{}}
+		err := processElements(repo, &elements{}, writeEvent, ts.UnixNano(), &docs, &series, writeEvent.Request.Metadata, nil)
+		require.Error(t, err, c.name)
+		require.Equal(t, c.want, common.ReasonOf(err), c.name)
+	}
 }
