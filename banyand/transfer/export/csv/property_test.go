@@ -28,6 +28,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
@@ -71,7 +72,7 @@ func propertySource(t *testing.T) []byte {
 func TestPropertyCSV_ShortDeletedValueIsCorruption(t *testing.T) {
 	for _, value := range [][]byte{{1}, {1, 2, 3, 4, 5, 6, 7}, make([]byte, 9), {}} {
 		pw, _ := newPropertyShardWriter(t)
-		err := pw.write(fakeStoredDocument{propertySourceField: propertySource(t), propertyDeleteField: value})
+		err := pw.write(fakeStoredDocument{rowsrc.PropertySourceField: propertySource(t), rowsrc.PropertyDeleteField: value})
 		require.Equal(t, codes.Internal, status.Code(err), err)
 		require.Contains(t, err.Error(), "shard /data/property/g/shard-0")
 		require.Contains(t, err.Error(), "property ui/p1")
@@ -81,9 +82,9 @@ func TestPropertyCSV_ShortDeletedValueIsCorruption(t *testing.T) {
 
 func TestPropertyCSV_DeleteTimeCells(t *testing.T) {
 	pw, fw := newPropertyShardWriter(t)
-	require.NoError(t, pw.write(fakeStoredDocument{propertySourceField: propertySource(t)}))
+	require.NoError(t, pw.write(fakeStoredDocument{rowsrc.PropertySourceField: propertySource(t)}))
 	require.Equal(t, csvfmt.EncodeTimestamp(0), pw.cells[pw.fixed[csvfmt.KindDeleteTime]], "a live property keeps _delete_time 0")
-	require.NoError(t, pw.write(fakeStoredDocument{propertySourceField: propertySource(t), propertyDeleteField: convert.Int64ToBytes(42)}))
+	require.NoError(t, pw.write(fakeStoredDocument{rowsrc.PropertySourceField: propertySource(t), rowsrc.PropertyDeleteField: convert.Int64ToBytes(42)}))
 	require.Equal(t, csvfmt.EncodeTimestamp(42), pw.cells[pw.fixed[csvfmt.KindDeleteTime]])
 	require.NoError(t, fw.close())
 	require.Equal(t, uint64(2), fw.w.Rows())

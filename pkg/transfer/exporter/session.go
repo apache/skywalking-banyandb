@@ -108,7 +108,7 @@ func unixNano(ns int64) string {
 	if ns == 0 {
 		return "unknown"
 	}
-	return time.Unix(0, ns).UTC().Format(time.RFC3339)
+	return time.Unix(0, ns).Format(time.RFC3339)
 }
 
 // ListSessions collects the ACTION_LIST frames, one per data node.
@@ -245,11 +245,23 @@ retry:
 		for i, id := range announced {
 			hints[i] = "bydbctl data release-session --id " + id
 		}
-		return nil, nil, exitcode.Exit(code, "create export session: %w; a session that was announced may still be held, release it with: %s",
-			errors.Join(errs...), strings.Join(hints, "; "))
+		return nil, nil, exitcode.Exit(code, "create export session: %w", &announcedError{err: errors.Join(errs...), hints: strings.Join(hints, "; ")})
 	}
 	return nil, nil, exitcode.Exit(code, "create export session: %w", errors.Join(errs...))
 }
+
+// announcedError is the failure of a create that announced a session id and may have left it
+// held: it says how to release it.
+type announcedError struct {
+	err   error
+	hints string
+}
+
+func (e *announcedError) Error() string {
+	return e.err.Error() + "; a session that was announced may still be held, release it with: " + e.hints
+}
+
+func (e *announcedError) Unwrap() error { return e.err }
 
 // createExitCode follows exitcode.For while no attempt got past the first frame, and is
 // exitcode.ExitRuntime afterwards; a data node without data export is a preflight refusal either
@@ -369,11 +381,12 @@ func createOnce(ctx context.Context, conn *grpc.ClientConn, req *transferv1.Plan
 var heartbeatInterval = HeartbeatInterval
 
 // StartHeartbeat sends ACTION_HEARTBEAT for the session every interval until stop is called
-// (0 means HeartbeatInterval). A transport failure or an error frame is a WARN line on warn, not fatal:
-// the lease outlives several missed heartbeats, so the next tick retries. FAILED_PRECONDITION
-// means the session expired or its lease is unreadable on some node; it is sent on lost once
-// and the heartbeat stops.
-func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string, interval time.Duration, l *logger.Logger, warn io.Writer,
+// (0 means HeartbeatInterval). holders, asked before every tick, names the data nodes that must
+// still hold the session (nil func: every node), see HeartbeatOnce. A transport failure or an
+// error frame of a holder is a WARN line on warn, not fatal: the lease outlives several missed
+// heartbeats, so the next tick retries. FAILED_PRECONDITION means the session expired or its
+// lease is unreadable on a holder; it is sent on lost once and the heartbeat stops.
+func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders func() []string, interval time.Duration, l *logger.Logger, warn io.Writer,
 ) (stop func(), lost <-chan error) {
 	if interval <= 0 {
 		interval = heartbeatInterval
@@ -390,14 +403,18 @@ func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				err := HeartbeatOnce(ctx, conn, sessionID)
+				var nodes []string
+				if holders != nil {
+					nodes = holders()
+				}
+				err := HeartbeatOnce(ctx, conn, sessionID, nodes)
 				switch {
 				case err == nil, ctx.Err() != nil:
 				case heartbeatLost(err):
 					lostCh <- fmt.Errorf("export session %s lost: %w", sessionID, err)
 					return
 				default:
-					fmt.Fprintf(warn, "WARN export session %s heartbeat failed, retrying: %v\n", sessionID, err)
+					warnHeartbeatFailed(warn, sessionID, err)
 				}
 			}
 		}
@@ -410,15 +427,28 @@ func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string
 
 func heartbeatLost(err error) bool { return status.Code(err) == codes.FailedPrecondition }
 
-// HeartbeatOnce sends one ACTION_HEARTBEAT and fails if any data node did not take it: a
-// node that was unreachable or no longer holds the session answers an error frame, which is
-// a coverage gap; an expired session fails the call itself with FAILED_PRECONDITION.
-func HeartbeatOnce(ctx context.Context, conn *grpc.ClientConn, sessionID string) error {
+// HeartbeatOnce sends one ACTION_HEARTBEAT and fails if any of holders (nil: any data node) did
+// not take it: a node that was unreachable or no longer holds the session answers an error
+// frame, which is a coverage gap; a node outside holders, which never held the session or has
+// no unit left to export, answers one too and is ignored. holders go to the liaison as
+// required_nodes, so the lease of a node outside them expiring is such an error frame too, while
+// an expired session on a holder fails the call itself with FAILED_PRECONDITION. With holders
+// empty but not nil no node needs the session any more and nothing is sent.
+func HeartbeatOnce(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders []string) error {
+	if holders != nil && len(holders) == 0 {
+		// An empty required_nodes would mean every node to the liaison.
+		return nil
+	}
 	ctx, cancel := context.WithTimeout(ctx, sessionsCallTimeout)
 	defer cancel()
-	frames, err := sessions(ctx, conn, &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: sessionID})
+	frames, err := sessions(ctx, conn, &transferv1.SessionsRequest{
+		Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: sessionID, RequiredNodes: holders,
+	})
 	if err != nil {
 		return err
+	}
+	if holders != nil {
+		frames = slices.DeleteFunc(slices.Clone(frames), func(f *transferv1.SessionsResponse) bool { return !slices.Contains(holders, f.GetNodeId()) })
 	}
 	if nodes, errs := failedNodes(frames); len(nodes) > 0 {
 		return fmt.Errorf("heartbeat did not reach %v: %s", nodes, strings.Join(errs, "; "))

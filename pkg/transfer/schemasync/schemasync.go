@@ -29,6 +29,7 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -36,6 +37,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 )
 
 // Dir is the schema directory below the artifact root.
@@ -71,9 +73,10 @@ type resourceKey struct {
 
 // Result is what Export wrote, with the decoded measures the exporter needs afterwards.
 type Result struct {
-	revisions map[resourceKey]int64
-	Measures  []*databasev1.Measure
-	Files     []File
+	revisions    map[resourceKey]int64
+	fingerprints map[string]string
+	Measures     []*databasev1.Measure
+	Files        []File
 }
 
 // GroupRevisions returns the mod revision the registry reported for every stream, measure,
@@ -93,28 +96,22 @@ func (r *Result) GroupRevisions(catalog commonv1.Catalog, group string) map[stri
 // catalog can hold are listed. Every kind gets a file, possibly empty, so the artifact's
 // file set does not depend on the data. Files are 0600 and the directory 0700.
 func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group, dir string) (*Result, error) {
-	res := &Result{revisions: map[resourceKey]int64{}}
+	res := &Result{revisions: map[resourceKey]int64{}, fingerprints: map[string]string{}}
 	lines := map[string][]proto.Message{KindGroup: nil}
 	for _, g := range groups {
 		lines[KindGroup] = append(lines[KindGroup], g)
+		res.addFingerprint(KindGroup, g)
 		catalog := g.GetCatalog()
 		if err := ListGroup(ctx, conn, g, func(kind string, m proto.Message) error {
 			lines[kind] = append(lines[kind], m)
-			switch kind {
-			case KindStream, KindMeasure, KindTrace, KindProperty:
-				md := m.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
-				res.revisions[resourceKey{catalog: catalog, group: md.GetGroup(), name: md.GetName()}] = md.GetModRevision()
-			}
-			if v, ok := m.(*databasev1.Measure); ok {
-				res.Measures = append(res.Measures, v)
-			}
+			res.record(kind, catalog, m)
 			return nil
 		}); err != nil {
 			return nil, err
 		}
 	}
 	schemaDir := filepath.Join(dir, Dir)
-	if err := os.MkdirAll(schemaDir, 0o700); err != nil {
+	if err := resume.MkdirAll(schemaDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create schema directory: %w", err)
 	}
 	for _, kind := range Kinds {
@@ -130,6 +127,107 @@ func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group
 		return nil, err
 	}
 	return res, nil
+}
+
+// Fingerprints maps every resource of the schema, keyed "<kind> <group>/<name>" ("group <name>"
+// for a group), to what tells its versions apart: "revision <n>", its metadata's mod revision,
+// which the registry sets on every create and every update that changes it, of any kind. Two
+// schemas with the same fingerprints are the same schema. The content itself is not compared: a
+// resource read back from a schema file lacks the fields this bydbctl does not know, which the
+// one read from the registry keeps.
+func (r *Result) Fingerprints() map[string]string { return r.fingerprints }
+
+// Live lists every resource of groups through conn, as Export does, without writing anything,
+// and returns their Fingerprints.
+func Live(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group) (map[string]string, error) {
+	res := &Result{fingerprints: map[string]string{}}
+	for _, g := range groups {
+		res.addFingerprint(KindGroup, g)
+		if err := ListGroup(ctx, conn, g, func(kind string, m proto.Message) error {
+			res.addFingerprint(kind, m)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return res.fingerprints, nil
+}
+
+// DiffFingerprints spells, sorted, every resource whose fingerprint differs between recorded and
+// live, or that only one of them holds; nil when they are equal.
+func DiffFingerprints(recorded, live map[string]string) []string {
+	var out []string
+	for k, v := range recorded {
+		w, ok := live[k]
+		switch {
+		case !ok:
+			out = append(out, k+": removed")
+		case v != w:
+			out = append(out, fmt.Sprintf("%s: recorded %s, now %s", k, v, w))
+		}
+	}
+	for k := range live {
+		if _, ok := recorded[k]; !ok {
+			out = append(out, k+": added")
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// DataKinds are the kinds of the resources a CSV file binds its columns to: a node encodes a
+// unit of a group with every resource of these kinds in the group and reports their mod revisions.
+// Index rules, their bindings, Top-N aggregations and the group itself are not among them.
+var DataKinds = []string{KindStream, KindMeasure, KindTrace, KindProperty}
+
+// Select keeps the fingerprints of the resources of kinds that belong to groups.
+func Select(fingerprints map[string]string, kinds, groups []string) map[string]string {
+	out := map[string]string{}
+	for k, v := range fingerprints {
+		kind, rest, ok := strings.Cut(k, " ")
+		if !ok || !slices.Contains(kinds, kind) {
+			continue
+		}
+		group, _, _ := strings.Cut(rest, "/")
+		if slices.Contains(groups, group) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// Restrict splits live into the fingerprints of the resources recorded holds and, sorted, the
+// keys of those it lacks: the resources added since recorded was taken.
+func Restrict(live, recorded map[string]string) (known map[string]string, added []string) {
+	known = make(map[string]string, len(recorded))
+	for k, v := range live {
+		if _, ok := recorded[k]; ok {
+			known[k] = v
+		} else {
+			added = append(added, k)
+		}
+	}
+	slices.Sort(added)
+	return known, added
+}
+
+// record adds a resource of kind in a group of catalog: its fingerprint, the mod revision of a
+// stream, measure, trace or property, and a measure itself.
+func (r *Result) record(kind string, catalog commonv1.Catalog, m proto.Message) {
+	r.addFingerprint(kind, m)
+	switch kind {
+	case KindStream, KindMeasure, KindTrace, KindProperty:
+		md := m.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+		r.revisions[resourceKey{catalog: catalog, group: md.GetGroup(), name: md.GetName()}] = md.GetModRevision()
+	}
+	if v, ok := m.(*databasev1.Measure); ok {
+		r.Measures = append(r.Measures, v)
+	}
+}
+
+func (r *Result) addFingerprint(kind string, m proto.Message) {
+	md := m.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
+	r.fingerprints[kind+" "+path.Join(md.GetGroup(), md.GetName())] = fmt.Sprintf("revision %d", md.GetModRevision())
 }
 
 // compareByMetadata orders schema messages by group, then name.

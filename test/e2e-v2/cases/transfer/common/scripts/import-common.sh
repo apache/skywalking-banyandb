@@ -33,6 +33,12 @@
 #   import.failed   the destination may hold a partial import: every later attempt prints this
 #                   file (a report no expectation matches) instead of importing again.
 # IMPORT_WORK lives under the e2e log directory so the artifacts and logs are uploaded with it.
+#
+# Every import gives its own --checkpoint below its case's work directory: the default progress
+# file (<input>/.import-progress.json) is one per artifact, so a second import of ARTIFACT_IN into
+# the destination would read the first one's progress file (a finished import is not imported
+# again, an unfinished one is a resume: exit 1, or exit 6 with other options), and a copy of the
+# artifact would carry it along.
 
 require_format
 IMPORT_WORK="${SW_INFRA_E2E_LOG_DIR:-/tmp}/transfer-$FORMAT"
@@ -46,24 +52,29 @@ fi
 DST_GRPC=127.0.0.1:27912
 DST_HTTP=http://127.0.0.1:27913
 
-# table_section prints the import decision table of a bydbctl data import output: everything up
-# to and including the line starting with "RESULT" (or to the end of the output). The dry run
-# prints only this; the real import prints the same bytes first and its progress and verify
-# output afterwards. Adjust the awk end condition here if the rendering changes.
+# table_section prints the import decision table of a bydbctl data import output: from the line
+# starting with "TARGET " up to and including the line starting with "RESULT" (or to the end of
+# the output). An output without a TARGET line fails, so two such outputs never compare equal as
+# two empty sections. The dry run and the real import print the same bytes there, after the same
+# connection lines; the real import prints its progress and verify output afterwards. Adjust the
+# awk conditions here if the rendering changes.
 table_section() {
   awk '
-    { print }
-    /^RESULT/ { exit }
+    /^TARGET / { on = 1 }
+    on { print }
+    on && /^RESULT/ { exit }
+    END { if (!on) { print "table_section: no TARGET line in " FILENAME > "/dev/stderr"; exit 1 } }
   ' "$1"
 }
 
 # release_hinted_sessions releases the export sessions an export named in its release-session
-# hints (log file $1, liaison $2): after a failure, or after a successful export whose release
-# failed. Then a retry is not refused as a second export.
+# hints (stdout file $1, stderr file $2, liaison $3): after a failure (stderr), or after a
+# successful export whose release failed (a warning, stdout). Then a retry is not refused as a
+# second export.
 release_hinted_sessions() {
   local id
-  for id in $(grep -oE 'release-session --id [0-9a-f]{32}' "$1" | awk '{print $3}' | sort -u); do
-    bydbctl data release-session --id "$id" --nodes "$2" >&2 || true
+  for id in $(grep -ohE 'release-session --id [0-9a-f]{32}' "$1" "$2" | awk '{print $3}' | sort -u); do
+    bydbctl data release-session --id "$id" --nodes "$3" >&2 || true
   done
 }
 
@@ -74,7 +85,7 @@ export_all() {
   local rc=0
   rm -rf "$2"
   bydbctl data export --nodes "$1" --output "$2" "${ALL_CATALOGS[@]}" "${@:3}" >"$2.stdout" 2>"$2.log" || rc=$?
-  release_hinted_sessions "$2.log" "$1"
+  release_hinted_sessions "$2.stdout" "$2.log" "$1"
   if [ "$rc" -ne 0 ]; then
     echo "export through $1 into $2 exited $rc:" >&2
     tail -n 50 "$2.stdout" "$2.log" >&2

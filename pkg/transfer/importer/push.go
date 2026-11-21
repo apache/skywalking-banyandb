@@ -51,13 +51,24 @@ import (
 
 // PushOptions configure Push.
 type PushOptions struct {
-	// Log receives warnings and retry notes.
+	// Log receives warnings and retry notes; Err the work items done and not done of a push that
+	// fails, Log when nil.
 	Log io.Writer
+	Err io.Writer
 	// Hook, when set, is called on the worker goroutine after every acknowledged batch with
 	// "batch <work item key> seq=<n> rows=<r>".
 	Hook func(event string)
 	// Progress, when set, shows the progress per (catalog, group, target stage).
 	Progress *output.Progress
+	// reconciler, when set, decides from the target's counts whether a stream or trace part
+	// that failed on a target after its completion was sent landed there; without it such a
+	// failure fails the import.
+	reconciler *reconciler
+	// track, when set, records the progress in the progress file.
+	track *tracker
+	// resume, when set, says what a resumed push skips: CSV rows up to each item's cursor, native
+	// payloads done, and the nodes a payload is pushed again to.
+	resume *resumePlan
 	// Import holds the batch, rate, retry and parallelism settings; math.MaxInt parallelism
 	// means max.
 	config.Import
@@ -183,6 +194,7 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 		p.progress = newImportProgress(opts.Progress, entries)
 	}
 	p.limiter = ratelimit.NewClient(opts.WriteRateLimit, opts.WriteBatchSize)
+	opts.track.sendWindow(opts.WriteInflightBatches, opts.WriteBatchSize)
 	workers, _ := WorkerCount(opts.Parallelism, entries)
 	result := &PushResult{Rows: p.rows}
 	if workers == 0 {
@@ -197,12 +209,15 @@ func Push(ctx context.Context, liaisons []*cluster.Liaison, art *Artifact, targe
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	runWorkers(runCtx, cancel, workers, "import-push-worker", func(ctx context.Context, i int) {
-		w := &worker{p: p, next: i, streams: map[streamKey]*importStream{}, items: map[string]*itemProgress{}, window: max(1, opts.WriteInflightBatches)}
+		w := &worker{
+			p: p, next: i, streams: map[streamKey]*importStream{}, items: map[string]*itemProgress{}, window: max(1, opts.WriteInflightBatches),
+			fail: cancel,
+		}
 		if workerErr := w.run(ctx, entries, work); workerErr != nil {
 			cancel(workerErr)
 		}
 	})
-	return finishPush(runCtx, opts.Log, entries, p.done, result, "stream and trace rows")
+	return finishPush(runCtx, opts.errLog(), entries, p.done, result, opts.track, "stream and trace rows")
 }
 
 // runWorkers runs fn(ctx, i) for i in [0, n) concurrently and waits for all of them; a worker
@@ -225,9 +240,26 @@ func runWorkers(ctx context.Context, cancel context.CancelCauseFunc, n int, name
 	}
 }
 
+// errLog is where a failed push lists its work items: Err, else Log.
+func (o *PushOptions) errLog() io.Writer {
+	if o.Err != nil {
+		return o.Err
+	}
+	return o.Log
+}
+
+// interrupted tells whether ctx was stopped by an interrupt (a plain cancel, as a signal does),
+// not by a failure that canceled it with its cause.
+func interrupted(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), context.Canceled)
+}
+
 // finishPush fills result.Done from done. When runCtx was canceled it lists the work items
-// done and not done to log and returns the exit-3 error, naming what a rerun stores twice.
-func finishPush(runCtx context.Context, log io.Writer, entries []Entry, done map[string]bool, result *PushResult, duplicated string) (*PushResult, error) {
+// done and not done to log and returns the exit-3 error: with a progress file (track), how to
+// resume; without one, what a rerun stores twice (duplicated). An interrupt once every item is
+// done is no failure; any other cause is, every item done or not.
+func finishPush(runCtx context.Context, log io.Writer, entries []Entry, done map[string]bool, result *PushResult, track *tracker, duplicated string,
+) (*PushResult, error) {
 	var undone []string
 	for i := range entries {
 		if k := entries[i].Item.Key(); done[k] {
@@ -236,7 +268,9 @@ func finishPush(runCtx context.Context, log io.Writer, entries []Entry, done map
 			undone = append(undone, k)
 		}
 	}
-	if runCtx.Err() == nil {
+	if runCtx.Err() == nil || (len(undone) == 0 && interrupted(runCtx)) {
+		// An interrupt that came once every item was done stopped nothing: the caller sees it next.
+		// A failure, such as a stream that did not close cleanly or a progress write, is reported.
 		return result, nil
 	}
 	fmt.Fprintf(log, "work items done (%d):\n", len(result.Done))
@@ -246,6 +280,12 @@ func finishPush(runCtx context.Context, log io.Writer, entries []Entry, done map
 	fmt.Fprintf(log, "work items not done (%d):\n", len(undone))
 	for _, k := range undone {
 		fmt.Fprintf(log, "  %s\n", k)
+	}
+	if track != nil {
+		return result, namingProgress(exitcode.Exit(exitcode.ExitRuntime, "import failed: %w; %d of this run's %d work item(s) done (listed above); "+
+			"the progress file %s is kept: %s (what is done is not pushed again; only the payloads "+
+			"a resume lists as AMBIGUOUS may be stored twice, as resumeDuplicationPolicy decides)",
+			context.Cause(runCtx), len(result.Done), len(entries), track.path, resumeHint))
 	}
 	return result, exitcode.Exit(exitcode.ExitRuntime, "import failed: %w; %d of %d work item(s) done (listed above), %s of a rerun are stored twice",
 		context.Cause(runCtx), len(result.Done), len(entries), duplicated)
@@ -277,30 +317,72 @@ type sentBatch struct {
 // the count is 0 once all its rows were sent.
 type itemProgress struct {
 	// start and rows are when the item started and its acknowledged rows, for the progress.
-	start   time.Time
-	rows    uint64
-	unacked int
-	sent    bool
+	start time.Time
+	// from is where a CSV item starts; started records that its first batch is about to be sent.
+	from *csvCursor
+	// lastSent is the Sent mark recorded last, and restore the one before it, which is recorded
+	// again when the batch of lastSent was not sent after all.
+	lastSent *csvMark
+	restore  *csvMark
+	rows     uint64
+	// sentRows counts the rows of the item this run sent.
+	sentRows uint64
+	unacked  int
+	sent     bool
+	started  bool
 }
+
+// drainTimeout bounds how long a stopped worker waits for the acknowledgements of the batches it
+// has in flight; tests shorten it.
+var drainTimeout = 30 * time.Second
 
 type worker struct {
 	p       *pusher
 	streams map[streamKey]*importStream
 	items   map[string]*itemProgress
-	next    int
-	window  int
+	// streamCtx is the context of the worker's streams: it outlives the worker's context by up
+	// to drainTimeout, so that a stopped worker still receives the acknowledgements in flight.
+	streamCtx     context.Context
+	cancelStreams context.CancelFunc
+	// fail, when set, cancels the other workers with the cause of this one's failure, before it
+	// waits for its own acknowledgements.
+	fail   context.CancelCauseFunc
+	next   int
+	window int
 }
 
 func (w *worker) liaison() *cluster.Liaison { return w.p.liaisons[w.next%len(w.p.liaisons)] }
 
 func (w *worker) run(ctx context.Context, entries []Entry, work <-chan int) (err error) {
+	w.streamCtx, w.cancelStreams = context.WithCancel(context.WithoutCancel(ctx))
+	drain := drainTimeout
+	stopTimer := context.AfterFunc(ctx, func() { time.AfterFunc(drain, w.cancelStreams) })
 	defer func() {
-		// A canceled worker only cancels its streams: a clean close would fail with Canceled
-		// and hide the cause Push reports.
+		if err != nil && ctx.Err() == nil && w.fail != nil {
+			// The others stop sending before this worker waits for its acknowledgements.
+			w.fail(err)
+		}
 		live := err == nil && ctx.Err() == nil
+		if !live {
+			// Not stopped yet: a worker that fails on its own bounds its wait for the acknowledgements too.
+			if stopTimer() {
+				defer time.AfterFunc(drain, w.cancelStreams).Stop()
+			}
+			// A stopped worker sends nothing more, but first collects the acknowledgements of the
+			// batches in flight, so they are recorded instead of left ambiguous; then it only cancels
+			// its streams: a clean close would fail with Canceled and hide the cause Push reports.
+			if n := w.inflight(); n > 0 {
+				waitingForBatches(w.p.opts.Log, drain, n, interrupted(ctx))
+			}
+			w.settle()
+		}
+		// The stop watch stays on through a clean close: a stop meanwhile cancels the streams
+		// drainTimeout later, so a liaison that never ends a stream cannot hold the import.
 		if closeErr := w.closeAll(live); live {
 			err = closeErr
 		}
+		stopTimer()
+		w.cancelStreams()
 	}()
 	for idx := range work {
 		if ctx.Err() != nil {
@@ -317,7 +399,9 @@ func (w *worker) run(ctx context.Context, entries []Entry, work <-chan int) (err
 		ip := w.progress(e)
 		ip.sent = true
 		if ip.unacked == 0 {
-			w.markDone(e, ip)
+			if err = w.markDone(e, ip); err != nil {
+				return err
+			}
 		}
 	}
 	if err = w.drain(); err != nil && ctx.Err() != nil {
@@ -335,11 +419,39 @@ func (w *worker) progress(e *Entry) *itemProgress {
 	return ip
 }
 
-func (w *worker) markDone(e *Entry, ip *itemProgress) {
+func (w *worker) markDone(e *Entry, ip *itemProgress) error {
+	if err := w.p.opts.track.itemComplete(e.Item.Key()); err != nil {
+		return err
+	}
 	w.p.mu.Lock()
 	w.p.done[e.Item.Key()] = true
 	w.p.mu.Unlock()
 	w.p.progress.itemDone(e, ip)
+	return nil
+}
+
+// inflight counts the batches sent on the worker's streams and not acknowledged yet.
+func (w *worker) inflight() int {
+	n := 0
+	for _, st := range w.streams {
+		if st.client != nil {
+			n += len(st.inflight)
+		}
+	}
+	return n
+}
+
+// settle receives the acknowledgements of the batches in flight on every stream of a stopped
+// worker, until a stream fails or drainTimeout after the stop cancels the streams.
+func (w *worker) settle() {
+	for _, k := range w.sortedKeys() {
+		st := w.streams[k]
+		for st.client != nil && len(st.inflight) > 0 {
+			if w.recvAck(st) != nil {
+				break
+			}
+		}
+	}
 }
 
 // drain waits for the acknowledgement of every batch in flight on the worker's streams but
@@ -371,11 +483,14 @@ func (w *worker) runEntry(ctx context.Context, e *Entry) error {
 		st = &importStream{key: k}
 		w.streams[k] = st
 	}
-	w.p.progress.itemStarted(e, w.progress(e))
+	ip := w.progress(e)
+	w.p.progress.itemStarted(e, ip)
+	from := w.p.opts.resume.cursor(e.Item.Key())
+	ip.from = from
 	b := w.p.builders[builderKey{catalog: e.Item.Catalog, group: e.Item.Group}]
 	// A failed batch already names the work item; reading and assembling errors do not.
 	var batchErr error
-	if err := b.itemRows(ctx, w.p.art.Dir, &e.Item, func(r row) error {
+	if err := b.itemRows(ctx, w.p.art.Dir, &e.Item, from, func(r row) error {
 		batchErr = w.add(ctx, st, e, r)
 		return batchErr
 	}); err != nil {
@@ -402,8 +517,7 @@ func (w *worker) add(ctx context.Context, st *importStream, e *Entry, r row) err
 	st.pending = append(st.pending, r)
 	st.bytes += size
 	if size > maxBytes {
-		fmt.Fprintf(w.p.opts.Log, "WARN %s: file %s record %d is %d bytes, more than --write-batch-bytes %d; it is sent in a batch of its own\n",
-			e.Item.Key(), r.file, r.record, size, maxBytes)
+		warnOversizedRow(w.p.opts.Log, e.Item.Key(), r.file, r.record, size, maxBytes)
 		return w.flush(ctx, st, e)
 	}
 	if len(st.pending) >= w.p.opts.WriteBatchSize || st.bytes >= maxBytes {
@@ -421,6 +535,10 @@ func (w *worker) flush(ctx context.Context, st *importStream, e *Entry) error {
 	if n == 0 {
 		return nil
 	}
+	if ctx.Err() != nil {
+		// Stopped: nothing more is sent.
+		return context.Cause(ctx)
+	}
 	if w.p.limiter != nil {
 		if err := w.p.limiter.WaitN(ctx, n); err != nil {
 			return fmt.Errorf("%s: %w", e.Item.Key(), err)
@@ -430,29 +548,53 @@ func (w *worker) flush(ctx context.Context, st *importStream, e *Entry) error {
 	for i, r := range st.pending {
 		b.rows[i] = rowPos{file: r.file, record: r.record}
 	}
+	if err := w.recordSending(e, b); err != nil {
+		return err
+	}
 	req := batchRequest(st.seq, st.pending)
 	st.seq++
 	st.pending = st.pending[:0]
 	st.bytes = 0
 	w.progress(e).unacked++
 	if st.client == nil {
-		if err := w.open(ctx, st, req); err != nil {
+		if sent, err := w.open(ctx, st, req); err != nil {
+			if !sent {
+				// The batch reached no liaison: its rows were not sent, the window stays as it was.
+				if unsentErr := w.unsent(e, b); unsentErr != nil {
+					return errors.Join(w.batchError(st, b, err), unsentErr)
+				}
+			}
 			return w.batchError(st, b, err)
 		}
-		w.acked(st, b)
-		return nil
+		return w.acked(st, b)
 	}
 	st.inflight = append(st.inflight, b)
 	if err := st.client.Send(req); err != nil {
 		if !errors.Is(err, io.EOF) {
+			// gRPC returns an error of its own making (a batch over the client's send limit, one it
+			// cannot encode) only when none of b reached the wire: the rows were not sent. Whatever
+			// else is in flight stays in the window, as the stream ends with it.
+			st.inflight = st.inflight[:len(st.inflight)-1]
+			if unsentErr := w.unsent(e, b); unsentErr != nil {
+				return errors.Join(w.batchError(st, b, err), unsentErr)
+			}
 			return w.batchError(st, b, err)
 		}
-		// The liaison ended the stream: its status follows the acknowledgements already sent.
-		for {
+		// The liaison ended the stream before b reached it: b was not sent, so its rows leave the
+		// window a resume treats as ambiguous. The status follows the acknowledgements already sent.
+		st.inflight = st.inflight[:len(st.inflight)-1]
+		if err = w.unsent(e, b); err != nil {
+			return err
+		}
+		for len(st.inflight) > 0 {
 			if err = w.recvAck(st); err != nil {
 				return err
 			}
 		}
+		if _, err = st.client.Recv(); err == nil || errors.Is(err, io.EOF) {
+			err = errors.New("the liaison ended the import stream")
+		}
+		return w.batchError(st, b, err)
 	}
 	for len(st.inflight) >= w.window {
 		if err := w.recvAck(st); err != nil {
@@ -475,8 +617,7 @@ func (w *worker) recvAck(st *importStream) error {
 	}
 	st.inflight[0] = nil
 	st.inflight = st.inflight[1:]
-	w.acked(st, oldest)
-	return nil
+	return w.acked(st, oldest)
 }
 
 // failedBatch is the batch in flight a failure names by its batch_seq, else the oldest one.
@@ -492,12 +633,18 @@ func (w *worker) failedBatch(st *importStream, err error) *sentBatch {
 	return st.inflight[0]
 }
 
-// acked counts the rows of an acknowledged batch and marks its work item done once all its
-// batches are acknowledged.
-func (w *worker) acked(st *importStream, b *sentBatch) {
+// acked counts the rows of an acknowledged batch, moves its work item's cursor past them, and
+// marks the work item done once all its batches are acknowledged.
+func (w *worker) acked(st *importStream, b *sentBatch) error {
+	k := PushKey{streamKey: st.key, Kind: b.entry.Item.Kind}
 	w.p.mu.Lock()
-	w.p.rows[PushKey{streamKey: st.key, Kind: b.entry.Item.Kind}] += uint64(len(b.rows))
+	w.p.rows[k] += uint64(len(b.rows))
 	w.p.mu.Unlock()
+	if len(b.rows) > 0 {
+		if err := w.p.opts.track.csvAcked(b.entry, k, b.rows[len(b.rows)-1], len(b.rows)); err != nil {
+			return err
+		}
+	}
 	ip := w.progress(b.entry)
 	w.p.progress.acked(b.entry, ip, len(b.rows))
 	if w.p.opts.Hook != nil {
@@ -505,8 +652,46 @@ func (w *worker) acked(st *importStream, b *sentBatch) {
 	}
 	ip.unacked--
 	if ip.sent && ip.unacked == 0 {
-		w.markDone(b.entry, ip)
+		return w.markDone(b.entry, ip)
 	}
+	return nil
+}
+
+// recordSending records, before a batch is sent, the last row it sends: from here on its rows may
+// land, and a resume treats the rows after the cursor up to it as ambiguous. The first batch of
+// an item also records that the item started, synced.
+func (w *worker) recordSending(e *Entry, b *sentBatch) error {
+	ip := w.progress(e)
+	var base uint64
+	if ip.from != nil {
+		base = ip.from.Rows
+	}
+	ip.sentRows += uint64(len(b.rows))
+	last := b.rows[len(b.rows)-1]
+	mark := csvMark{File: last.file, Record: last.record, Rows: base + ip.sentRows}
+	if !ip.started {
+		if ip.from != nil {
+			ip.lastSent = ip.from.Sent
+		}
+		if err := w.p.opts.track.csvStarted(e.Item.Key(), ip.from, mark); err != nil {
+			return err
+		}
+		ip.started = true
+	} else if err := w.p.opts.track.csvSending(e.Item.Key(), mark); err != nil {
+		return err
+	}
+	prev := ip.lastSent
+	ip.lastSent = &mark
+	ip.restore = prev
+	return nil
+}
+
+// unsent records that batch b of e, recorded as sending, was not sent.
+func (w *worker) unsent(e *Entry, b *sentBatch) error {
+	ip := w.progress(e)
+	ip.sentRows -= uint64(len(b.rows))
+	ip.lastSent = ip.restore
+	return w.p.opts.track.csvUnsent(e.Item.Key(), ip.restore)
 }
 
 func batchRequest(seq uint64, rows []row) *transferv1.ImportRowsRequest {
@@ -548,8 +733,10 @@ func msgsOf[T any](rows []row) []T {
 // yet) on the same one, with a back-off doubling from transfer.RetryBase to transfer.RetryMax until
 // --send-retry-timeout is used up. NODE_FAILED (the batch may be partly written) and
 // MESSAGE_TOO_LARGE are never retried, nor is a stream or trace batch's UNAVAILABLE without
-// a detail once the batch was sent (see retryableFirst).
-func (w *worker) open(ctx context.Context, st *importStream, first *transferv1.ImportRowsRequest) error {
+// a detail once the batch was sent (see retryableFirst). sent reports whether any attempt may have
+// written the batch: one that sent it and was not refused as NOT_WRITTEN or SCHEMA_NOT_FOUND,
+// which the liaison answers before it writes anything.
+func (w *worker) open(ctx context.Context, st *importStream, first *transferv1.ImportRowsRequest) (sent bool, err error) {
 	deadline := time.Now().Add(w.p.opts.SendRetryTimeout)
 	backoff := transfer.RetryBase
 	init := &transferv1.ImportRowsRequest_Init{
@@ -558,38 +745,42 @@ func (w *worker) open(ctx context.Context, st *importStream, first *transferv1.I
 		RateLimit:             ratelimit.Proto(w.p.opts.NodeRateLimit, w.p.opts.NodeRowRateLimit),
 	}
 	// A resent stream or trace batch writes its rows twice; measure and property overwrite.
-	duplicates := st.key.catalog == commonv1.Catalog_CATALOG_STREAM || st.key.catalog == commonv1.Catalog_CATALOG_TRACE
+	duplicates := storesDuplicates(st.key.catalog)
 	for {
 		via := w.liaison()
 		st.via = via
-		streamCtx, cancel := context.WithCancel(ctx)
-		sent := false
-		client, err := transferv1.NewImportServiceClient(via.Conn).ImportRows(streamCtx)
+		streamCtx, cancel := context.WithCancel(w.streamCtx)
+		attemptSent := false
+		var client transferv1.ImportService_ImportRowsClient
+		//nolint:contextcheck // the stream outlives the worker's context by up to drainTimeout to collect the acknowledgements in flight
+		client, err = transferv1.NewImportServiceClient(via.Conn).ImportRows(streamCtx)
 		if err == nil {
 			err = sendErr(client, client.Send(&transferv1.ImportRowsRequest{Frame: &transferv1.ImportRowsRequest_Init_{Init: init}}))
 		}
 		if err == nil {
-			sent, err = exchange(client, first)
+			attemptSent, err = exchange(client, first)
 		}
 		if err == nil {
 			st.client, st.cancel = client, cancel
-			return nil
+			return true, nil
 		}
 		cancel()
 		if ctx.Err() != nil {
-			return context.Cause(ctx)
+			return sent || attemptSent, context.Cause(ctx)
 		}
 		code, reason, _ := failureOf(err)
-		if !retryableFirst(code, reason, sent && duplicates) || time.Now().Add(backoff).After(deadline) {
-			return err
+		if attemptSent && reason != transfer.ImportReasonNotWritten && reason != transfer.ImportReasonSchemaNotFound {
+			sent = true
+		}
+		if !retryableFirst(code, reason, attemptSent && duplicates) || time.Now().Add(backoff).After(deadline) {
+			return sent, err
 		}
 		if !schemaNotFound(code, reason) {
 			w.next++
 		}
-		fmt.Fprintf(w.p.opts.Log, "import stream %s/%s/%s refused via %s (%s: %s); retrying via %s in %s\n",
-			st.key.catalog, st.key.group, stageLabel(st.key.stage), via.Addr, code, status.Convert(err).Message(), w.liaison().Addr, backoff)
+		streamRetry(w.p.opts.Log, st.key, via.Addr, code, status.Convert(err).Message(), w.liaison().Addr, backoff)
 		if err = transfer.SleepCtx(ctx, backoff); err != nil {
-			return err
+			return sent, err
 		}
 		backoff = transfer.NextBackoff(backoff)
 	}

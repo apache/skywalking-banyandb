@@ -271,23 +271,3 @@ func decodeString(cell string) (string, error) {
 		return cell, nil
 	}
 }
-
-// EscapePathComponent makes s safe as one path component: every byte outside
-// [A-Za-z0-9._-] is written as %XX (upper-case hex). The names "." and ".." have their
-// dots escaped too so the result can never traverse directories.
-func EscapePathComponent(s string) string {
-	if s == "." || s == ".." {
-		return strings.Repeat("%2E", len(s))
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '.' || c == '_' || c == '-' {
-			b.WriteByte(c)
-			continue
-		}
-		fmt.Fprintf(&b, "%%%02X", c)
-	}
-	return b.String()
-}

@@ -101,6 +101,15 @@ jobs:
             config: test/e2e-v2/cases/transfer/native/e2e.yaml
             # The same cases as Transfer CSV in the native format; it needs the same artifacts.
             download-artifacts: 'true'
+          - name: Transfer Resume CSV
+            config: test/e2e-v2/cases/transfer/resume-csv/e2e.yaml
+            # Interrupted, killed and resumed exports and imports; builds bydbctl and the export
+            # checker on the host like Transfer CSV, so it needs the same artifacts.
+            download-artifacts: 'true'
+          - name: Transfer Resume Native
+            config: test/e2e-v2/cases/transfer/resume-native/e2e.yaml
+            # The same cases as Transfer Resume CSV in the native format, plus reconciliation.
+            download-artifacts: 'true'
     env:
       TAG: ${{ github.sha }}
     steps:

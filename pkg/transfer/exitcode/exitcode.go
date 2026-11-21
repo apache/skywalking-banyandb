@@ -26,7 +26,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Exit codes of data export and import; codes 1 to 3 are shared, 4 and 5 are import only.
+// Exit codes of data export and import; codes 1 to 3 and 6 are shared, 4, 5 and 7 are import only.
 const (
 	// ExitUsage is a parameter or usage error.
 	ExitUsage = 1
@@ -40,6 +40,14 @@ const (
 	// ExitPlanChanged is an import stopped by --abort-on-plan-change: the plan re-checked after
 	// writing the schema differed, so the schema is written but no data was sent.
 	ExitPlanChanged = 5
+	// ExitResume is a resume that is impossible: the progress file is unusable, a binding
+	// differs, the export session is gone, the exported schema changed, or the plan differs
+	// from the recorded one. No data was sent, nothing was deleted, and the progress file is
+	// kept; an import may have written the schema already.
+	ExitResume = 6
+	// ExitHalted is an import halted by its resume duplication policy (block); what was
+	// imported before is valid.
+	ExitHalted = 7
 )
 
 // ExitError carries a process exit code alongside the error.

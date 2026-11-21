@@ -20,15 +20,16 @@ package measure
 import (
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/csv"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 )
 
 // The export unit reads part metadata, index-mode rows and Top-N merges through these
 // services; it finds the last two by type assertion, so a signature drift fails here.
 var (
-	_ export.PartReader   = (*standalone)(nil)
-	_ export.PartReader   = (*dataSVC)(nil)
-	_ csv.IndexModeReader = (*standalone)(nil)
-	_ csv.IndexModeReader = (*dataSVC)(nil)
-	_ csv.TopNMerger      = (*standalone)(nil)
-	_ csv.TopNMerger      = (*dataSVC)(nil)
+	_ export.PartReader      = (*standalone)(nil)
+	_ export.PartReader      = (*dataSVC)(nil)
+	_ rowsrc.IndexModeReader = (*standalone)(nil)
+	_ rowsrc.IndexModeReader = (*dataSVC)(nil)
+	_ csv.TopNMerger         = (*standalone)(nil)
+	_ csv.TopNMerger         = (*dataSVC)(nil)
 )

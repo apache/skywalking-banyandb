@@ -19,6 +19,7 @@ package config
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -53,6 +54,7 @@ const (
 	kindConflictRules
 	kindConflictPolicy
 	kindCount
+	kindDuplicationPolicy
 )
 
 var (
@@ -60,22 +62,24 @@ var (
 		"size": kindSize, "rate-bytes": kindRateBytes, "rate-rows": kindRateRows, "parallelism": kindParallelism,
 		"selector": kindSelector, "format": kindFormat, "compress": kindCompress,
 		"conflict-rules": kindConflictRules, "conflict-policy": kindConflictPolicy, "count": kindCount,
+		"duplication-policy": kindDuplicationPolicy,
 	}
 	kindTypes = map[kind]reflect.Type{
-		kindString:         reflect.TypeOf(""),
-		kindBool:           reflect.TypeOf(false),
-		kindStrings:        reflect.TypeOf([]string(nil)),
-		kindDuration:       reflect.TypeOf(time.Duration(0)),
-		kindSize:           reflect.TypeOf(uint64(0)),
-		kindRateBytes:      reflect.TypeOf(float64(0)),
-		kindRateRows:       reflect.TypeOf(float64(0)),
-		kindParallelism:    reflect.TypeOf(0),
-		kindSelector:       reflect.TypeOf([]*transferv1.Selector(nil)),
-		kindFormat:         reflect.TypeOf(transferv1.Format(0)),
-		kindCompress:       reflect.TypeOf(transferv1.Compress(0)),
-		kindConflictRules:  reflect.TypeOf([]ConflictRule(nil)),
-		kindConflictPolicy: reflect.TypeOf(""),
-		kindCount:          reflect.TypeOf(0),
+		kindString:            reflect.TypeOf(""),
+		kindBool:              reflect.TypeOf(false),
+		kindStrings:           reflect.TypeOf([]string(nil)),
+		kindDuration:          reflect.TypeOf(time.Duration(0)),
+		kindSize:              reflect.TypeOf(uint64(0)),
+		kindRateBytes:         reflect.TypeOf(float64(0)),
+		kindRateRows:          reflect.TypeOf(float64(0)),
+		kindParallelism:       reflect.TypeOf(0),
+		kindSelector:          reflect.TypeOf([]*transferv1.Selector(nil)),
+		kindFormat:            reflect.TypeOf(transferv1.Format(0)),
+		kindCompress:          reflect.TypeOf(transferv1.Compress(0)),
+		kindConflictRules:     reflect.TypeOf([]ConflictRule(nil)),
+		kindConflictPolicy:    reflect.TypeOf(""),
+		kindCount:             reflect.TypeOf(0),
+		kindDuplicationPolicy: reflect.TypeOf(""),
 	}
 )
 
@@ -89,12 +93,13 @@ type field struct {
 	kind                               kind
 }
 
-// key names the setting in Sources: its flag, or its plan path for a plan-only setting.
-func (f field) key() string {
+// defaultLabel names a setting left at its default: "--<flag>", or "plan.yaml <path>" for a
+// plan-only setting.
+func (f field) defaultLabel() string {
 	if f.flag == planOnly {
-		return f.plan
+		return "plan.yaml " + f.plan
 	}
-	return f.flag
+	return "--" + f.flag
 }
 
 // fieldsOf reads the tags of the struct opts points to (or is). A malformed declaration is a
@@ -210,28 +215,73 @@ func bindFields(fs *pflag.FlagSet, opts any) {
 	}
 }
 
-// Sources records where each resolved setting came from, by flag name (by plan path for a
-// plan-only setting): "--<flag>", "plan.yaml <path>" or "BYDBCTL_<NAME>"; a setting left at
-// its default is absent.
-type Sources map[string]string
+// Sources records where each setting Resolve filled came from: "--<flag>", "plan.yaml <path>"
+// or "BYDBCTL_<NAME>", nothing for a setting left at its default. A setting is named by a
+// pointer to its field in the option struct Resolve filled, such as sources.FromFlag(&opts.Verify),
+// so that settings of different structs sharing a flag name are told apart. A pointer to
+// anything else is a programming error and panics.
+type Sources struct {
+	structs []resolvedStruct
+}
+
+// resolvedStruct is one option struct Resolve filled, with the source label of each field, ""
+// for a default, in the order of fields.
+type resolvedStruct struct {
+	v      reflect.Value
+	fields []field
+	labels []string
+}
+
+// lookup finds the field setting points to and its source label.
+func (s Sources) lookup(setting any) (field, string) {
+	p := reflect.ValueOf(setting)
+	if p.Kind() != reflect.Pointer || p.IsNil() {
+		panic(fmt.Sprintf("config: %T is not a pointer to a setting", setting))
+	}
+	addr, typ := p.Pointer(), p.Type().Elem()
+	for _, r := range s.structs {
+		for i, f := range r.fields {
+			// The first field shares the address of its struct; the type tells them apart.
+			if fv := r.v.Field(f.index); fv.Addr().Pointer() == addr && fv.Type() == typ {
+				return f, r.labels[i]
+			}
+		}
+	}
+	panic(fmt.Sprintf("config: %T points to no setting of the option structs Resolve filled", setting))
+}
 
 // FromFlag reports whether the setting was given as an explicit flag.
-func (s Sources) FromFlag(flag string) bool { return s[flag] == "--"+flag }
+func (s Sources) FromFlag(setting any) bool {
+	f, l := s.lookup(setting)
+	return f.flag != planOnly && l == "--"+f.flag
+}
+
+// FromEnv reports whether the setting came from its BYDBCTL_* environment variable.
+func (s Sources) FromEnv(setting any) bool {
+	_, l := s.lookup(setting)
+	return strings.HasPrefix(l, EnvPrefix)
+}
 
 // FromPlan reports whether the setting came from plan.yaml.
-func (s Sources) FromPlan(flag string) bool { return strings.HasPrefix(s[flag], "plan.yaml ") }
+func (s Sources) FromPlan(setting any) bool {
+	_, l := s.lookup(setting)
+	return strings.HasPrefix(l, "plan.yaml ")
+}
+
+// Explicit reports whether the setting was given as a flag or in plan.yaml, rather than by the
+// environment or the default.
+func (s Sources) Explicit(setting any) bool {
+	return s.FromFlag(setting) || s.FromPlan(setting)
+}
 
 // Label names the source of a setting for messages; "--<flag>" for a default, or
 // "plan.yaml <path>" for a plan-only setting left at its default.
-func (s Sources) Label(flag string) string {
-	if l := s[flag]; l != "" {
+func (s Sources) Label(setting any) string {
+	f, l := s.lookup(setting)
+	if l != "" {
 		return l
 	}
-	// Flag names never contain a dot; plan paths always do.
-	if strings.Contains(flag, ".") {
-		return "plan.yaml " + flag
-	}
-	return "--" + flag
+	return f.defaultLabel()
 }
 
 // Resolve fills every option struct in opts (pointers to structs bound with Bind on fs) with
@@ -242,30 +292,41 @@ func (s Sources) Label(flag string) string {
 func Resolve(fs *pflag.FlagSet, lookupEnv func(string) (string, bool), opts ...any) (Sources, error) {
 	planFile, err := fs.GetString(PlanFlag)
 	if err != nil {
-		return nil, err
+		return Sources{}, err
 	}
 	plan, err := LoadPlan(planFile)
 	if err != nil {
-		return nil, err
+		return Sources{}, err
 	}
 	if lookupEnv == nil {
 		lookupEnv = func(string) (string, bool) { return "", false }
 	}
-	sources := Sources{}
+	var sources Sources
 	for _, o := range opts {
-		v, fields := fieldsOf(o)
-		for _, f := range fields {
-			dst := v.Field(f.index)
-			source, resolveErr := resolveField(fs, plan, lookupEnv, f, dst)
-			if source != "" {
-				sources[f.key()] = source
-			}
-			if resolveErr != nil {
-				return nil, fmt.Errorf("%s: %w", sources.Label(f.key()), resolveErr)
-			}
+		if reflect.ValueOf(o).Kind() != reflect.Pointer {
+			panic(fmt.Sprintf("config: Resolve needs a pointer to the option struct, got %T", o))
 		}
+		v, fields := fieldsOf(o)
+		r := resolvedStruct{v: v, fields: fields, labels: make([]string, len(fields))}
+		for i, f := range fields {
+			source, resolveErr := resolveField(fs, plan, lookupEnv, f, v.Field(f.index))
+			if resolveErr != nil {
+				return Sources{}, fmt.Errorf("%s: %w", cmp.Or(source, f.defaultLabel()), resolveErr)
+			}
+			r.labels[i] = source
+		}
+		sources.structs = append(sources.structs, r)
 	}
 	return sources, nil
+}
+
+// Defaults fills the option struct opts points to with the defaults its fields declare.
+func Defaults(opts any) {
+	fs := pflag.NewFlagSet("defaults", pflag.ContinueOnError)
+	Bind(fs, opts)
+	if _, err := Resolve(fs, nil, opts); err != nil {
+		panic(fmt.Sprintf("config: the defaults of %T: %v", opts, err))
+	}
 }
 
 // resolveField picks the source of one setting and parses its value into dst. It returns
@@ -397,6 +458,12 @@ func setText(dst reflect.Value, k kind, text string) error {
 			return err
 		}
 		dst.SetInt(int64(n))
+	case kindDuplicationPolicy:
+		p, err := ParseDuplicationPolicy(text)
+		if err != nil {
+			return err
+		}
+		dst.SetString(p)
 	default:
 		return fmt.Errorf("grammar %d takes no text", k)
 	}

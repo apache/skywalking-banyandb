@@ -19,6 +19,7 @@ package transfer
 
 import (
 	"context"
+	"path/filepath"
 	"time"
 
 	"github.com/onsi/ginkgo/v2"
@@ -50,7 +51,10 @@ func (r ImportRun) ExitCode() int {
 }
 
 // DefaultImportOptions are the bydbctl defaults of an import of input, read from the option
-// tags, with --verify-timeout at least the suite's eventually timeout.
+// tags, with --verify-timeout at least the suite's eventually timeout. Each gets its own progress
+// file outside input: the default is one per artifact, and a finished import is not imported
+// again, but the suites import one artifact into the same target more than once expecting a
+// fresh import each time (a re-import onto the rows already stored). A resume reuses the options of the run it resumes.
 func DefaultImportOptions(input string) config.Import {
 	var opts config.Import
 	fs := pflag.NewFlagSet("import", pflag.ContinueOnError)
@@ -58,6 +62,7 @@ func DefaultImportOptions(input string) config.Import {
 	_, err := config.Resolve(fs, nil, &opts)
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 	opts.Input = input
+	opts.Checkpoint = filepath.Join(ginkgo.GinkgoT().TempDir(), "import-progress.json")
 	opts.VerifyTimeout = max(opts.VerifyTimeout, flags.EventuallyTimeout)
 	return opts
 }
@@ -68,6 +73,12 @@ func DefaultImportOptions(input string) config.Import {
 // rows=<r>" right after its acknowledgement, on the pushing goroutine, so a test can stop a
 // node in the middle of an import.
 func RunImport(ctx context.Context, addr string, opts config.Import, hook func(event string)) ImportRun {
+	return RunImportAt(ctx, addr, opts, nil, hook)
+}
+
+// RunImportAt is RunImport with now as the reference time of the TTL gate (nil for time.Now), so
+// that a spec can import as if later, when the target TTL refuses the artifact's rows.
+func RunImportAt(ctx context.Context, addr string, opts config.Import, now func() time.Time, hook func(event string)) ImportRun {
 	logW := &lineWriter{hook: hook}
 	preflightCtx, cancel := context.WithTimeout(ctx, flags.EventuallyTimeout)
 	defer cancel()
@@ -75,7 +86,7 @@ func RunImport(ctx context.Context, addr string, opts config.Import, hook func(e
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 	defer func() { _ = liaisons.Close() }()
 	outW := &lineWriter{hook: hook}
-	res, err := importer.RunImport(ctx, importer.Env{Log: logW, Out: outW, Cluster: info, Liaisons: liaisons, Hook: hook}, opts)
+	res, err := importer.RunImport(ctx, importer.Env{Log: logW, Out: outW, Cluster: info, Liaisons: liaisons, Hook: hook, Now: now}, opts)
 	run := ImportRun{Err: err, Result: res, Log: logW.String(), Out: outW.String()}
 	ginkgo.GinkgoWriter.Printf("import of %s: err=%v\n%s%s", opts.Input, err, run.Out, run.Log)
 	return run

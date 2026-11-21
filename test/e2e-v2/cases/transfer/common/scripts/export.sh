@@ -89,7 +89,7 @@ echo "checkerExitCode: $check_rc"
 # A kept session (after a failure, or a release that failed after a successful export) is
 # named in release-session hints: release it, after the leftovers above were reported, so the
 # next attempt is not refused as a second concurrent export.
-for id in $(grep -oE 'release-session --id [0-9a-f]{32}' "$work/export.log" | awk '{print $3}' | sort -u); do
+for id in $(grep -ohE 'release-session --id [0-9a-f]{32}' "$work/export.stdout" "$work/export.log" | awk '{print $3}' | sort -u); do
   bydbctl data release-session --id "$id" --nodes "$liaison" >&2 || true
 done
 
