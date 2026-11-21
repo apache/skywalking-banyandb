@@ -985,6 +985,13 @@ func TestResume_ANodeDoneLeavesTheHeartbeatsRequiredNodes(t *testing.T) {
 	opts.Log, opts.Out, opts.Resume = log, log, true
 	f.mu.Lock()
 	f.exportScript = func(f *fakeLiaison, init *transferv1.ExportRequest_Init, stream transferv1.ExportService_ExportServer) error {
+		if init.GetTargetNode() == nodeA {
+			// Node A exports nothing before the first heartbeat of the resume went out, which
+			// requires both nodes: a node done earlier would already have left the heartbeat.
+			if err := waitUntil(func() bool { return len(heartbeatRequired(f)) > hbBefore }); err != nil {
+				return status.Error(codes.Internal, "no heartbeat before node A exported")
+			}
+		}
 		if init.GetTargetNode() == nodeB {
 			// Node A finishes first; once the heartbeat dropped it, its lease expires and node B
 			// keeps exporting over a few more heartbeats.
