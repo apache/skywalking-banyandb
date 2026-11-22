@@ -731,15 +731,27 @@ func limitedUnordered(series []*pbv1.Series, subject string, opts IndexSearchOpt
 	return len(series) == 0 && subject != "" && opts.Limit > 0 && opts.IsShadowed != nil && opts.Order == nil
 }
 
-// postingFilters returns the term sets every hit of opts must match: the indexed LIKE patterns and the exact conditions
-// the criteria joins by AND. A search intersects them with its candidates at posting level, before it decodes any
-// document, and still applies filterHits afterwards, so they only make a selective filter cheap.
-func postingFilters(opts IndexSearchOpts) []native.TermSetRequest {
-	var filters []native.TermSetRequest
+// postingFilter returns the filter every hit of opts must match, evaluated on postings: the criteria and the indexed LIKE
+// patterns. A search narrows its candidates with it before it decodes any document, and still applies filterHits
+// afterwards, so a condition that cannot be pushed down only costs speed. It returns nil when nothing can be pushed down.
+func postingFilter(opts IndexSearchOpts) *native.PostingFilter {
+	var parts []*native.PostingFilter
 	if opts.Criteria != nil && opts.Fields != nil {
-		filters = criteria.ConjunctiveTermSets(opts.Criteria, opts.Fields)
+		if filter := criteria.PostingFilterOf(opts.Criteria, opts.Fields); filter != nil {
+			parts = append(parts, filter)
+		}
 	}
-	return append(filters, opts.PatternRequests...)
+	for i := range opts.PatternRequests {
+		parts = append(parts, native.FilterTerms(opts.PatternRequests[i]))
+	}
+	switch len(parts) {
+	case 0:
+		return nil
+	case 1:
+		return parts[0]
+	default:
+		return native.AllOf(parts...)
+	}
 }
 
 // unorderedLimitedHits returns the first opts.Limit candidates of the subject that the criteria keep and that no newer
@@ -748,7 +760,7 @@ func postingFilters(opts IndexSearchOpts) []native.TermSetRequest {
 // neither reads nor charges the rest. Past topFetchCap it lists every candidate.
 func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
 	request := subjectRequest(subject, opts.TimeRange)
-	filters := postingFilters(opts)
+	filter := postingFilter(opts)
 	known := make(map[string]bool)
 	fetch := opts.Limit
 	if opts.Criteria != nil || len(opts.PatternRequests) > 0 {
@@ -759,7 +771,7 @@ func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject st
 		if fetch > topFetchCap {
 			fetch = 0 // every candidate
 		}
-		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, filters, fetch)
+		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, filter, fetch)
 		if err != nil {
 			return nil, err
 		}
@@ -840,7 +852,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 		}}
 		if timeRange != nil {
 			ranker.top = func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
-				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Filters: postingFilters(opts), Limit: fetch, Desc: desc})
+				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Filter: postingFilter(opts), Limit: fetch, Desc: desc})
 			}
 		}
 		return ranker, nil
@@ -856,7 +868,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 			return plan, nil
 		}
 		var planErr error
-		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Filters: postingFilters(opts), Field: field, Desc: desc})
+		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Filter: postingFilter(opts), Field: field, Desc: desc})
 		return plan, planErr
 	}
 	return hitRanker{
@@ -896,7 +908,7 @@ func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string
 		if subject == "" {
 			return nil, nil
 		}
-		hits, _, err := view.MatchTermsSetPrefixFiltered(ctx, subjectRequest(subject, opts.TimeRange), postingFilters(opts), 0)
+		hits, _, err := view.MatchTermsSetPrefixFiltered(ctx, subjectRequest(subject, opts.TimeRange), postingFilter(opts), 0)
 		return hits, err
 	}
 	return rankedPrefix(ctx, view, subjectRequest(subject, opts.TimeRange), universe, opts, opts.Limit, opts.IsShadowed)
@@ -921,8 +933,10 @@ func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv
 	if err != nil {
 		return nil, false, err
 	}
+	// The whole-universe fallback lists only the series the posting filter keeps.
 	universe := func(ctx context.Context) ([]native.QueryHit, error) {
-		return view.MatchTermsSet(ctx, request)
+		listed, _, listErr := view.MatchTermsSetPrefixFiltered(ctx, request, postingFilter(opts), 0)
+		return listed, listErr
 	}
 	hits, err = rankedPrefix(ctx, view, request, universe, opts, opts.Limit+1, nil)
 	if err != nil {

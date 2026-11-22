@@ -300,55 +300,70 @@ func orOf(left, right *modelv1.Criteria) *modelv1.Criteria {
 	return &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{Op: modelv1.LogicalExpression_LOGICAL_OP_OR, Left: left, Right: right}}}
 }
 
-func TestConjunctiveTermSetsKeepsOnlyAndConnectedExactConditions(t *testing.T) {
-	eq := condition("name", modelv1.Condition_BINARY_OP_EQ, strValue("bob"))
-	in := condition("name", modelv1.Condition_BINARY_OP_IN, strArrayValue("bob", "carol"))
-	ne := condition("name", modelv1.Condition_BINARY_OP_NE, strValue("bob"))
-	age := condition("age", modelv1.Condition_BINARY_OP_GT, intValue(3))
-	unresolved := condition("unresolvable", modelv1.Condition_BINARY_OP_EQ, strValue("x"))
-	for _, tc := range []struct {
+// The posting-level filter of a criteria selects the same documents Filter selects, for every operator and combination:
+// narrowing the universe by the filter and then applying Filter gives Filter's answer, and when every condition translates
+// the filter alone already is that answer.
+func TestPostingFilterOfAgreesWithFilter(t *testing.T) {
+	view, closeFn := newCriteriaTestView(t)
+	defer closeFn()
+	name := func(op modelv1.Condition_BinaryOp, value *modelv1.TagValue) *modelv1.Criteria {
+		return condition("name", op, value)
+	}
+	eq := name(modelv1.Condition_BINARY_OP_EQ, strValue("bob"))
+	in := name(modelv1.Condition_BINARY_OP_IN, strArrayValue("bob", "carol"))
+	ne := name(modelv1.Condition_BINARY_OP_NE, strValue("bob"))
+	notIn := name(modelv1.Condition_BINARY_OP_NOT_IN, strArrayValue("bob", "carol"))
+	having := condition("colors", modelv1.Condition_BINARY_OP_HAVING, strArrayValue("red", "blue"))
+	notHaving := condition("colors", modelv1.Condition_BINARY_OP_NOT_HAVING, strArrayValue("red", "blue"))
+	gt := condition("age", modelv1.Condition_BINARY_OP_GT, intValue(10))
+	ge := condition("age", modelv1.Condition_BINARY_OP_GE, intValue(10))
+	lt := condition("age", modelv1.Condition_BINARY_OP_LT, intValue(30))
+	le := condition("age", modelv1.Condition_BINARY_OP_LE, intValue(20))
+	unindexed := condition("unresolvable", modelv1.Condition_BINARY_OP_EQ, strValue("x"))
+	unindexedNot := condition("unresolvable", modelv1.Condition_BINARY_OP_NE, strValue("x"))
+	invalid := name(modelv1.Condition_BINARY_OP_IN, strValue("bob")) // IN needs an array: Filter reports the error
+	matchAny := buildMatchCondition("bio", &modelv1.Condition_MatchOption{Analyzer: "standard", Operator: modelv1.Condition_MatchOption_OPERATOR_OR}, strValue("red dog"))
+	matchAll := buildMatchCondition("bio", &modelv1.Condition_MatchOption{Analyzer: "standard", Operator: modelv1.Condition_MatchOption_OPERATOR_AND}, strValue("red dog"))
+	matchName := buildMatchCondition("name", &modelv1.Condition_MatchOption{Analyzer: "standard", Operator: modelv1.Condition_MatchOption_OPERATOR_OR}, strValue("bob"))
+	for label, tc := range map[string]struct {
 		criteria *modelv1.Criteria
-		name     string
-		want     int
+		exact    bool // every condition translates, so the filter alone is Filter's answer
 	}{
-		{name: "nil", criteria: nil, want: 0},
-		{name: "eq", criteria: eq, want: 1},
-		{name: "in", criteria: in, want: 1},
-		{name: "ne is not exact", criteria: ne, want: 0},
-		{name: "range is not exact", criteria: age, want: 0},
-		{name: "unindexed tag", criteria: unresolved, want: 0},
-		{name: "and of two", criteria: andOf(eq, in), want: 2},
-		{name: "and keeps the exact side", criteria: andOf(eq, age), want: 1},
-		{name: "nested and", criteria: andOf(andOf(eq, in), eq), want: 3},
-		{name: "or keeps nothing", criteria: orOf(eq, in), want: 0},
-		{name: "or under and", criteria: andOf(eq, orOf(in, eq)), want: 1},
+		"eq": {eq, true}, "in": {in, true}, "ne": {ne, true}, "not in": {notIn, true}, "having": {having, true},
+		"not having": {notHaving, true}, "gt": {gt, true}, "ge": {ge, true}, "lt": {lt, true}, "le": {le, true},
+		"match any": {matchAny, true}, "match all": {matchAll, true}, "match and range": {andOf(matchAll, ge), true},
+		"match on a keyword field": {matchName, true},
+		"unindexed":                {unindexed, true}, "unindexed negation": {unindexedNot, true},
+		"and": {andOf(in, ne), true}, "and range": {andOf(in, gt), true}, "or": {orOf(eq, ne), true},
+		"or of ranges": {orOf(lt, gt), true}, "not in and range": {andOf(notIn, le), true},
+		"nested": {andOf(orOf(eq, in), andOf(in, gt)), true}, "deep": {orOf(andOf(eq, ge), andOf(notHaving, lt)), true},
+		"unindexed under or": {orOf(eq, unindexed), true}, "unindexed negation under and": {andOf(eq, unindexedNot), true},
+		"and with an untranslatable side": {andOf(eq, invalid), false}, "or with an untranslatable side": {orOf(eq, invalid), false},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require.Len(t, ConjunctiveTermSets(tc.criteria, identityResolver{}), tc.want)
-		})
+		base := universe(t, view)
+		filter := PostingFilterOf(tc.criteria, identityResolver{})
+		narrowed, narrowErr := view.FilterByPosting(context.Background(), base, filter)
+		require.NoError(t, narrowErr, label)
+		want, wantErr := Filter(context.Background(), view, base, tc.criteria, identityResolver{})
+		if label == "and with an untranslatable side" || label == "or with an untranslatable side" {
+			require.Error(t, wantErr, label)
+			// Filter rejects the condition, so the narrowed candidates only have to keep every document eq keeps.
+			eqHits, err := Filter(context.Background(), view, base, eq, identityResolver{})
+			require.NoError(t, err)
+			require.Subset(t, ids(narrowed), ids(eqHits), label)
+			continue
+		}
+		require.NoError(t, wantErr, label)
+		if tc.exact {
+			require.ElementsMatch(t, ids(want), ids(narrowed), label)
+		}
+		got, err := Filter(context.Background(), view, narrowed, tc.criteria, identityResolver{})
+		require.NoError(t, err, label)
+		require.ElementsMatch(t, ids(want), ids(got), label)
 	}
 }
 
-// Narrowing the universe by the conjunctive term sets must never drop a hit the whole criteria keeps.
-func TestConjunctiveTermSetsAreImpliedByTheCriteria(t *testing.T) {
-	view, closeFn := newCriteriaTestView(t)
-	defer closeFn()
-	eq := condition("name", modelv1.Condition_BINARY_OP_EQ, strValue("bob"))
-	in := condition("name", modelv1.Condition_BINARY_OP_IN, strArrayValue("bob", "carol"))
-	ne := condition("name", modelv1.Condition_BINARY_OP_NE, strValue("bob"))
-	age := condition("age", modelv1.Condition_BINARY_OP_GT, intValue(3))
-	for name, c := range map[string]*modelv1.Criteria{
-		"eq": eq, "in": in, "and": andOf(in, ne), "and range": andOf(in, age), "or": orOf(eq, ne), "nested": andOf(orOf(eq, in), andOf(in, age)),
-	} {
-		want, err := Filter(context.Background(), view, universe(t, view), c, identityResolver{})
-		require.NoError(t, err, name)
-		narrowed := universe(t, view)
-		for _, set := range ConjunctiveTermSets(c, identityResolver{}) {
-			narrowed, err = view.FilterTermsSet(context.Background(), narrowed, set)
-			require.NoError(t, err, name)
-		}
-		got, err := Filter(context.Background(), view, narrowed, c, identityResolver{})
-		require.NoError(t, err, name)
-		require.ElementsMatch(t, ids(want), ids(got), name)
-	}
+func TestPostingFilterOfPushesNothingForNoCriteria(t *testing.T) {
+	require.Nil(t, PostingFilterOf(nil, identityResolver{}))
+	require.Nil(t, PostingFilterOf(condition("name", modelv1.Condition_BINARY_OP_EQ, strValue("bob")), nil))
 }

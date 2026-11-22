@@ -122,6 +122,22 @@ func TestSeriesIndex_IndexModeLimitWithSelectiveCriteria(t *testing.T) {
 			criteria: strCondition("bucket", modelv1.Condition_BINARY_OP_EQ, "t7"),
 			matches:  func(number int) bool { return number%100 == 7 }, want: 5,
 		},
+		"or of exact values": {
+			criteria: &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
+				Op:    modelv1.LogicalExpression_LOGICAL_OP_OR,
+				Left:  strCondition("unique", modelv1.Condition_BINARY_OP_EQ, "u5999"),
+				Right: strCondition("unique", modelv1.Condition_BINARY_OP_EQ, "u17"),
+			}}},
+			matches: func(number int) bool { return number == 5999 || number == 17 }, want: 2,
+		},
+		"not in a narrow set": {
+			criteria: &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
+				Op:    modelv1.LogicalExpression_LOGICAL_OP_AND,
+				Left:  strCondition("bucket", modelv1.Condition_BINARY_OP_EQ, "t7"),
+				Right: strCondition("bucket", modelv1.Condition_BINARY_OP_NE, "t8"),
+			}}},
+			matches: func(number int) bool { return number%100 == 7 }, want: 5,
+		},
 		"and of exact and negation": {
 			criteria: &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
 				Op:    modelv1.LogicalExpression_LOGICAL_OP_AND,
@@ -141,7 +157,20 @@ func TestSeriesIndex_IndexModeLimitWithSelectiveCriteria(t *testing.T) {
 		require.Less(t, reserved*10, reservedEverything, "%s reserved %d bytes against %d for listing every candidate", name, reserved, reservedEverything)
 	}
 
-	// A criteria that cannot narrow at posting level (an OR) is still applied, and still returns every match.
+	// A range expands the dictionary terms it spans, so it is not as cheap as an exact value, but it still decodes only the
+	// documents it keeps: it returns the right rows and reserves less than listing every candidate.
+	rangeOpts := base
+	rangeOpts.Criteria = &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
+		Op:    modelv1.LogicalExpression_LOGICAL_OP_AND,
+		Left:  strCondition("unique", modelv1.Condition_BINARY_OP_GE, "u1"),
+		Right: strCondition("unique", modelv1.Condition_BINARY_OP_LE, "u1"),
+	}}}
+	rangeOpts.Limit, rangeOpts.IsShadowed = 5, notShadowed
+	rangeServices, rangeReserved := searchReserved(t, si, rangeOpts)
+	require.Equal(t, []int{1}, rangeServices)
+	require.Less(t, rangeReserved, reservedEverything)
+
+	// An OR narrows at posting level too, and still returns every match.
 	opts := base
 	opts.Criteria = &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{
 		Op:    modelv1.LogicalExpression_LOGICAL_OP_OR,
@@ -149,11 +178,12 @@ func TestSeriesIndex_IndexModeLimitWithSelectiveCriteria(t *testing.T) {
 		Right: strCondition("bucket", modelv1.Condition_BINARY_OP_EQ, "t8"),
 	}}}
 	opts.Limit, opts.IsShadowed = 1000, notShadowed
-	services, _ := searchReserved(t, si, opts)
+	services, reserved := searchReserved(t, si, opts)
 	require.Len(t, services, 120)
 	for _, number := range services {
 		require.Contains(t, []int{7, 8}, number%100)
 	}
+	require.Less(t, reserved*10, reservedEverything, "an OR reserved %d bytes against %d for listing every candidate", reserved, reservedEverything)
 }
 
 // An index-ordered limit with a selective criteria must also narrow the candidates at posting level: it returns the

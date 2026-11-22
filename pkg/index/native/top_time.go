@@ -44,12 +44,12 @@ const (
 // The request's Scope.TimeRange is required: documents without a timestamp never match a time range, which is what
 // makes the _timestamp trie a complete index of the candidates.
 type TopTimeRequest struct {
+	// Filter, when set, narrows the candidates at posting level, before any document is decoded, so a selective filter
+	// ranks only the documents it keeps.
+	Filter     *PostingFilter
 	Candidates TermSetRequest
-	// Filters are term sets the candidates must also match. They intersect with the candidates at posting level, before
-	// any document is decoded, so a selective filter ranks only the documents it keeps. A filter carries no time range.
-	Filters []TermSetRequest
-	Limit   int
-	Desc    bool
+	Limit      int
+	Desc       bool
 }
 
 // TopTimeHits returns at most Limit candidates in timestamp order (newest first with Desc), ties by identifier, segment
@@ -79,7 +79,7 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 	if patternErr != nil {
 		return nil, patternErr
 	}
-	filterPatterns, filterErr := compileTopTimeFilters(ctx, request.Filters)
+	compiledFilter, filterErr := compilePostingFilter(ctx, request.Filter)
 	if filterErr != nil {
 		return nil, filterErr
 	}
@@ -104,7 +104,7 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 		if err != nil {
 			return nil, err
 		}
-		if candidates, err = narrowByFilters(ctx, segment, candidates, request.Filters, filterPatterns); err != nil {
+		if candidates, err = narrowByFilter(ctx, segment, candidates, compiledFilter); err != nil {
 			return nil, err
 		}
 		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, timeRange)
@@ -125,43 +125,6 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 		best = mergeTopTime(best, hits, request.Limit, request.Desc)
 	}
 	return best, nil
-}
-
-// compileTopTimeFilters validates the filters of a top-time request and compiles their wildcard patterns.
-func compileTopTimeFilters(ctx context.Context, filters []TermSetRequest) ([]compiledTermPatterns, error) {
-	compiled := make([]compiledTermPatterns, len(filters))
-	for i := range filters {
-		if filters[i].Scope.TimeRange != nil {
-			return nil, fmt.Errorf("filter terms on %q cannot apply a time range: %w", filters[i].Field, ErrInvalidQuery)
-		}
-		if err := validateTermSetRequest(filters[i]); err != nil {
-			return nil, err
-		}
-		patterns, err := compileTermPatterns(ctx, filters[i], nil)
-		if err != nil {
-			return nil, err
-		}
-		compiled[i] = patterns
-	}
-	return compiled, nil
-}
-
-// narrowByFilters intersects the candidates of one segment with every filter's exact candidates, at posting level and
-// without decoding a document. The candidates are never modified: the result is a new bitmap.
-func narrowByFilters(
-	ctx context.Context, segment *memorySegment, candidates *roaringpkg.Bitmap, filters []TermSetRequest, patterns []compiledTermPatterns,
-) (*roaringpkg.Bitmap, error) {
-	for i := range filters {
-		if candidates == nil || candidates.IsEmpty() {
-			break
-		}
-		matched, err := exactCandidates(ctx, segment, filters[i], patterns[i])
-		if err != nil {
-			return nil, err
-		}
-		candidates = roaringpkg.And(candidates, matched)
-	}
-	return candidates, nil
 }
 
 // topTimeSegmentOrder returns the segment ordinals in the order that ranks first, so that the Limit-th timestamp found so

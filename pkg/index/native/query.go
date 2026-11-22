@@ -211,11 +211,10 @@ func (v *ReadView) MatchTermsSetPrefix(ctx context.Context, request TermSetReque
 	return v.MatchTermsSetPrefixFiltered(ctx, request, nil, limit)
 }
 
-// MatchTermsSetPrefixFiltered is MatchTermsSetPrefix over the candidates that every filter also matches. The filters
-// intersect with the candidates at posting level, before any document is decoded, so a selective filter lists and charges
-// only the documents it keeps instead of every candidate. A filter is a term set like the one FilterTermsSet takes: it
-// must not carry a time range.
-func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request TermSetRequest, filters []TermSetRequest, limit int,
+// MatchTermsSetPrefixFiltered is MatchTermsSetPrefix over the candidates that the filter also matches. The filter is
+// evaluated on postings, before any document is decoded, so a selective filter lists and charges only the documents it
+// keeps instead of every candidate. A nil filter keeps every candidate.
+func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request TermSetRequest, filter *PostingFilter, limit int,
 ) (hits []QueryHit, truncated bool, err error) {
 	if err = v.check(ctx); err != nil {
 		return nil, false, err
@@ -230,13 +229,7 @@ func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request Term
 	if patternErr != nil {
 		return nil, false, patternErr
 	}
-	for i := range filters {
-		if termSetRequestEmpty(filters[i]) {
-			// A filter that selects nothing leaves no candidate.
-			return nil, false, nil
-		}
-	}
-	filterPatterns, filterErr := compileTopTimeFilters(ctx, filters)
+	compiledFilter, filterErr := compilePostingFilter(ctx, filter)
 	if filterErr != nil {
 		return nil, false, filterErr
 	}
@@ -254,7 +247,7 @@ func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request Term
 		if candidatesErr != nil {
 			return nil, false, candidatesErr
 		}
-		if candidates, candidatesErr = narrowByFilters(ctx, segment, candidates, filters, filterPatterns); candidatesErr != nil {
+		if candidates, candidatesErr = narrowByFilter(ctx, segment, candidates, compiledFilter); candidatesErr != nil {
 			return nil, false, candidatesErr
 		}
 		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)

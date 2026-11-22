@@ -248,90 +248,141 @@ func subtractHits(universe, excluded []native.QueryHit) []native.QueryHit {
 	return result
 }
 
-// ConjunctiveTermSets returns the exact term sets that every hit of criteria must match: the EQ, IN, HAVING and MATCH
-// conditions joined to the root only by AND. A caller intersects them with its candidates at posting level, before it
-// decodes any document, and still applies Filter afterwards, so a condition that is left out here (a range, a negation,
-// anything under an OR, a tag the resolver does not index, an invalid condition) only costs speed, never correctness.
-func ConjunctiveTermSets(criteria *modelv1.Criteria, fields FieldResolver) []native.TermSetRequest {
+// PostingFilterOf translates criteria into a posting-level filter that selects a superset of what Filter selects: the same
+// documents when every condition translates, and otherwise the documents the translatable conditions leave. A caller
+// narrows its candidates with it at posting level, before it decodes any document, and still applies Filter afterwards, so
+// a condition that is left out (an invalid one, or one under an OR next to a condition that is left out) only costs speed,
+// never correctness. It returns nil when nothing can be pushed down, which matches every candidate.
+func PostingFilterOf(criteria *modelv1.Criteria, fields FieldResolver) *native.PostingFilter {
 	if criteria == nil || fields == nil {
 		return nil
 	}
 	switch expression := criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
-		if request, ok := conditionTermSet(expression.Condition, fields); ok {
-			return []native.TermSetRequest{request}
-		}
+		return conditionPostingFilter(expression.Condition, fields)
 	case *modelv1.Criteria_Le:
-		if expression.Le == nil || expression.Le.Op != modelv1.LogicalExpression_LOGICAL_OP_AND {
+		if expression.Le == nil {
 			return nil
 		}
-		return append(ConjunctiveTermSets(expression.Le.Left, fields), ConjunctiveTermSets(expression.Le.Right, fields)...)
+		if expression.Le.Left == nil {
+			return PostingFilterOf(expression.Le.Right, fields)
+		}
+		if expression.Le.Right == nil {
+			return PostingFilterOf(expression.Le.Left, fields)
+		}
+		left, right := PostingFilterOf(expression.Le.Left, fields), PostingFilterOf(expression.Le.Right, fields)
+		switch expression.Le.Op {
+		case modelv1.LogicalExpression_LOGICAL_OP_AND:
+			// A conjunct that cannot be pushed only leaves more documents than the criteria keeps.
+			switch {
+			case left == nil:
+				return right
+			case right == nil:
+				return left
+			}
+			return native.AllOf(left, right)
+		case modelv1.LogicalExpression_LOGICAL_OP_OR:
+			// A disjunct that cannot be pushed may select any document, so the union cannot be narrowed.
+			if left == nil || right == nil {
+				return nil
+			}
+			return native.AnyOf(left, right)
+		}
 	}
 	return nil
 }
 
-// conditionTermSet is the term set a positive exact condition selects, the same one matchCondition filters with.
-func conditionTermSet(condition *modelv1.Condition, fields FieldResolver) (native.TermSetRequest, bool) {
+// conditionPostingFilter is the posting-level filter of one condition, the one matchCondition evaluates over hits. It
+// returns nil for a condition matchCondition rejects, so that Filter reports the error.
+//
+//nolint:gocyclo // the condition-op switch is kept explicit, matching matchCondition.
+func conditionPostingFilter(condition *modelv1.Condition, fields FieldResolver) *native.PostingFilter {
 	if condition == nil || condition.Value == nil || condition.Value.Value == nil {
-		return native.TermSetRequest{}, false
-	}
-	switch condition.Op {
-	case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN, modelv1.Condition_BINARY_OP_HAVING,
-		modelv1.Condition_BINARY_OP_MATCH:
-	default:
-		return native.TermSetRequest{}, false
+		return nil
 	}
 	if condition.Op == modelv1.Condition_BINARY_OP_MATCH {
 		if _, ok := condition.Value.Value.(*modelv1.TagValue_Str); !ok {
-			return native.TermSetRequest{}, false
+			return nil
 		}
 	}
-	if condition.Op == modelv1.Condition_BINARY_OP_IN {
+	if condition.Op == modelv1.Condition_BINARY_OP_IN || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN {
 		switch condition.Value.Value.(type) {
 		case *modelv1.TagValue_StrArray, *modelv1.TagValue_IntArray:
 		default:
-			return native.TermSetRequest{}, false
+			return nil
 		}
 	}
 	expr, err := logical.ParseExpr(condition)
 	if err != nil {
-		return native.TermSetRequest{}, false
+		return nil
 	}
+	negated := condition.Op == modelv1.Condition_BINARY_OP_NE || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN ||
+		condition.Op == modelv1.Condition_BINARY_OP_NOT_HAVING
 	field, analyzer, ok := fields.Field(condition.Name)
 	if !ok {
-		return native.TermSetRequest{}, false
+		// A tag that is not indexed never has a posting to find or exclude.
+		if negated {
+			return native.MatchAll()
+		}
+		return native.MatchNone()
 	}
 	values := expr.Bytes()
+	terms := func(terms [][]byte, mode native.TermSetMode) *native.PostingFilter {
+		return native.FilterTerms(native.TermSetRequest{Field: field, Terms: terms, Mode: mode})
+	}
 	switch condition.Op {
 	case modelv1.Condition_BINARY_OP_EQ:
 		if len(values) != 1 {
-			return native.TermSetRequest{}, false
+			return nil
 		}
-		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAnyTerm}, true
+		return terms(values, native.MatchAnyTerm)
 	case modelv1.Condition_BINARY_OP_IN:
-		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAnyTerm}, true
+		return terms(values, native.MatchAnyTerm)
 	case modelv1.Condition_BINARY_OP_HAVING:
-		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAllTerms}, true
-	default: // MATCH
+		return terms(values, native.MatchAllTerms)
+	case modelv1.Condition_BINARY_OP_MATCH:
 		if len(values) != 1 {
-			return native.TermSetRequest{}, false
+			return nil
 		}
 		requestAnalyzer := condition.MatchOption.GetAnalyzer()
 		if requestAnalyzer == "" {
 			requestAnalyzer = analyzer
 		}
-		terms, analyzeErr := nativeanalysis.Analyze(requestAnalyzer, values[0])
-		if analyzeErr != nil || len(terms) == 0 {
-			return native.TermSetRequest{}, false
+		analyzedTerms, analyzeErr := nativeanalysis.Analyze(requestAnalyzer, values[0])
+		if analyzeErr != nil {
+			return nil
 		}
-		analyzed := make([][]byte, 0, len(terms))
-		for _, term := range terms {
+		analyzed := make([][]byte, 0, len(analyzedTerms))
+		for _, term := range analyzedTerms {
 			analyzed = append(analyzed, term.Value)
 		}
 		mode := native.MatchAnyTerm
 		if condition.MatchOption.GetOperator() == modelv1.Condition_MatchOption_OPERATOR_AND {
 			mode = native.MatchAllTerms
 		}
-		return native.TermSetRequest{Field: field, Terms: analyzed, Mode: mode}, true
+		return terms(analyzed, mode)
+	case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE,
+		modelv1.Condition_BINARY_OP_LT, modelv1.Condition_BINARY_OP_LE:
+		if len(values) != 1 {
+			return nil
+		}
+		request := native.RangeRequest{Field: field, MaxTerms: ^uint64(0)}
+		switch condition.Op {
+		case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE:
+			request.Lower, request.IncludesLower = values[0], condition.Op == modelv1.Condition_BINARY_OP_GE
+		default:
+			request.Upper, request.IncludesUpper = values[0], condition.Op == modelv1.Condition_BINARY_OP_LE
+		}
+		return native.FilterRanges(request)
+	case modelv1.Condition_BINARY_OP_NE:
+		if len(values) != 1 {
+			return nil
+		}
+		return native.NotOf(terms(values, native.MatchAnyTerm))
+	case modelv1.Condition_BINARY_OP_NOT_IN:
+		return native.NotOf(terms(values, native.MatchAnyTerm))
+	case modelv1.Condition_BINARY_OP_NOT_HAVING:
+		return native.NotOf(terms(values, native.MatchAllTerms))
 	}
+	return nil
 }
