@@ -42,23 +42,33 @@ type limitTestRow struct {
 
 func newIndexModeSegment(t *testing.T, rows []limitTestRow) *seriesIndex {
 	t.Helper()
+	return newIndexModeSegmentWith(t, len(rows), func(i int) (string, int64, []index.Field) {
+		return rows[i].service, rows[i].timestamp, nil
+	})
+}
+
+// newIndexModeSegmentWith writes one index-mode segment of count documents. build gives the i-th document's service (its
+// entity value), its timestamp and the fields it carries beside the subject field every index-mode document has.
+func newIndexModeSegmentWith(t *testing.T, count int, build func(i int) (service string, timestamp int64, fields []index.Field)) *seriesIndex {
+	t.Helper()
 	dir, fn := setUp(require.New(t))
 	t.Cleanup(fn)
 	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, si.Close()) })
 	var docs index.Documents
-	for _, row := range rows {
+	for i := 0; i < count; i++ {
+		service, timestamp, fields := build(i)
 		var series pbv1.Series
 		series.Subject = "idx_measure"
-		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: row.service}}}}
+		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: service}}}}
 		require.NoError(t, series.Marshal())
 		subjectField := index.NewStringField(index.FieldKey{TagName: index.IndexModeName}, "idx_measure")
 		subjectField.Index, subjectField.NoSort = true, true
 		docs = append(docs, index.Document{
 			EntityValues: append([]byte(nil), series.Buffer...),
-			Fields:       []index.Field{subjectField},
-			Timestamp:    row.timestamp,
+			Fields:       append([]index.Field{subjectField}, fields...),
+			Timestamp:    timestamp,
 			Version:      1,
 		})
 	}

@@ -33,7 +33,7 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
-	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/query"
 )
 
@@ -45,32 +45,13 @@ func (tagResolver) Field(tagName string) (string, string, bool) {
 
 func newTaggedIndexModeSegment(t *testing.T, count int) *seriesIndex {
 	t.Helper()
-	dir, fn := setUp(require.New(t))
-	t.Cleanup(fn)
-	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, si.Close()) })
-	var docs index.Documents
-	for i := 0; i < count; i++ {
-		var series pbv1.Series
-		series.Subject = "idx_measure"
-		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("svc-%05d", i)}}}}
-		require.NoError(t, series.Marshal())
-		subjectField := index.NewStringField(index.FieldKey{TagName: index.IndexModeName}, "idx_measure")
-		subjectField.Index, subjectField.NoSort = true, true
+	return newIndexModeSegmentWith(t, count, func(i int) (string, int64, []index.Field) {
 		groupField := index.NewStringField(index.FieldKey{TagName: "bucket"}, fmt.Sprintf("t%d", i%100))
 		groupField.Index, groupField.NoSort = true, true
 		uniqueField := index.NewStringField(index.FieldKey{TagName: "unique"}, fmt.Sprintf("u%d", i))
 		uniqueField.Index, uniqueField.NoSort = true, true
-		docs = append(docs, index.Document{
-			EntityValues: append([]byte(nil), series.Buffer...),
-			Fields:       []index.Field{subjectField, groupField, uniqueField},
-			Timestamp:    1000,
-			Version:      1,
-		})
-	}
-	require.NoError(t, si.Insert(docs))
-	return si
+		return fmt.Sprintf("svc-%05d", i), 1000, []index.Field{groupField, uniqueField}
+	})
 }
 
 func strCondition(name string, op modelv1.Condition_BinaryOp, value string) *modelv1.Criteria {
@@ -193,31 +174,14 @@ func ladderValue(i int) int64 { return int64((i * 7919) % 100003) }
 // value with the sort ladder, the way the measure writer writes a scalar int index-rule tag.
 func newLadderIndexModeSegment(t *testing.T, count int) *seriesIndex {
 	t.Helper()
-	dir, fn := setUp(require.New(t))
-	t.Cleanup(fn)
-	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, si.Close()) })
-	var docs index.Documents
-	for i := 0; i < count; i++ {
-		var series pbv1.Series
-		series.Subject = "idx_measure"
-		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: fmt.Sprintf("svc-%05d", i)}}}}
-		require.NoError(t, series.Marshal())
-		subjectField := index.NewStringField(index.FieldKey{TagName: index.IndexModeName}, "idx_measure")
-		subjectField.Index, subjectField.NoSort = true, true
+	return newIndexModeSegmentWith(t, count, func(i int) (string, int64, []index.Field) {
 		bucket := index.NewStringField(index.FieldKey{TagName: "bucket"}, fmt.Sprintf("t%d", i%100))
 		bucket.Index, bucket.NoSort = true, true
 		sortField := index.NewBytesField(index.FieldKey{IndexRuleID: orderRuleID}, convert.Int64ToBytes(ladderValue(i)))
 		sortField.Store, sortField.Index = true, true
 		sortField.Numeric, sortField.NumericKey = true, ladderValue(i)
-		docs = append(docs, index.Document{
-			EntityValues: append([]byte(nil), series.Buffer...), Fields: []index.Field{subjectField, bucket, sortField},
-			Timestamp: 1000, Version: 1,
-		})
-	}
-	require.NoError(t, si.Insert(docs))
-	return si
+		return fmt.Sprintf("svc-%05d", i), 1000, []index.Field{bucket, sortField}
+	})
 }
 
 // An index-ordered limit with a selective criteria must also narrow the candidates at posting level: it returns the
@@ -308,6 +272,37 @@ func TestSeriesIndex_IndexModeLargeLimitStaysProportionalToTheLimit(t *testing.T
 					}
 				}
 			}
+		})
+	}
+}
+
+// A limited search expands an indexed LIKE pattern once per segment: the postings apply it exactly, so the hit-level filter
+// must not expand it again over the hits, and a chunk that grows must not expand it again. The pattern budget is shared and
+// cumulative across the whole query, so a pattern that fits it once must keep fitting however the search is ordered.
+func TestSeriesIndex_LimitedSearchSpendsThePatternBudgetOnce(t *testing.T) {
+	si := newLadderIndexModeSegment(t, 2000) // 100 distinct buckets: t0..t99
+	notShadowed := func(context.Context, [][]byte) (map[string]struct{}, error) { return nil, nil }
+	rule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Id: orderRuleID}}
+	for name, order := range map[string]*index.OrderBy{
+		"unordered": nil,
+		"by time":   {Type: index.OrderByTypeTime, Sort: modelv1.Sort_SORT_ASC},
+		"by index":  {Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_ASC, Index: rule},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// One expansion of the 100 buckets fits the 150 terms the budget allows, and two would not.
+			budget := native.NewWildcardBudget(native.WildcardLimits{MaxTerms: 150})
+			opts := IndexSearchOpts{
+				IndexModeSubject: "idx_measure", TimeRange: limitTestAllTime(), Order: order, Limit: 5, IsShadowed: notShadowed,
+				PatternRequests: []native.TermSetRequest{{
+					Field:            index.FieldKey{TagName: "bucket"}.Marshal(),
+					WildcardPatterns: []native.WildcardPattern{{Pattern: "t%", Syntax: native.WildcardSyntaxSQL}},
+					PatternBudget:    budget,
+				}},
+			}
+			sd, _, err := si.SearchWithoutSeries(context.Background(), opts)
+			require.NoError(t, err)
+			require.Len(t, sd.SeriesList, 5)
+			require.LessOrEqual(t, budget.Stats().Terms, uint64(100), "the pattern expanded more than once")
 		})
 	}
 }

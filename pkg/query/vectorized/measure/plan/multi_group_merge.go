@@ -193,7 +193,8 @@ func (m *MultiGroupMerge) hideCriteriaOnlyKeys(req *measurev1.QueryRequest, sche
 	}
 }
 
-// GroupRequest returns the request every group is dispatched with.
+// GroupRequest returns the shared request, which still names every group. A group is dispatched with GroupRequestFor, which
+// narrows it to that group when the query's window can be pushed down.
 func (m *MultiGroupMerge) GroupRequest() *measurev1.QueryRequest { return m.groupReq }
 
 // GroupRequestFor returns the request to dispatch for one group. A plain-row query names only that group, so the scan can

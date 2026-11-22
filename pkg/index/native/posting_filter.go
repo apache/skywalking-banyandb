@@ -21,7 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"math"
+	"sync"
 
 	roaringpkg "github.com/RoaringBitmap/roaring"
 )
@@ -42,11 +42,23 @@ const (
 // it decodes any document. Every leaf is evaluated against the whole segment and then combined, so a selective filter costs
 // the postings it touches and not a document per candidate. A negation subtracts from the candidates the filter is applied
 // to, the way a hit-level subtraction of the same condition would.
+//
+// A leaf keeps the bitmap it evaluated for each segment, so a search that evaluates the filter again (a chunk that grows, a
+// fallback) expands a wildcard pattern or a range once, not once per evaluation. That makes a filter valid for the
+// segments of one view only: build one filter per search and do not use it with another view.
 type PostingFilter struct {
+	memo     map[*memorySegment]*roaringpkg.Bitmap
+	patterns compiledTermPatterns // the compiled wildcard patterns of a terms leaf, once compiled
 	terms    TermSetRequest
 	rng      RangeRequest
 	children []*PostingFilter
+	mu       sync.Mutex
 	kind     postingFilterKind
+	// singleTerm marks a range over a field that holds exactly one term per document, the only kind of range that may be
+	// folded with another range of the same field.
+	singleTerm bool
+	// patternsCompiled records that patterns holds the compiled form of terms.
+	patternsCompiled bool
 }
 
 // FilterTerms matches the documents a term set selects, as FilterTermsSet does. A request with no terms and no pattern
@@ -55,14 +67,25 @@ func FilterTerms(request TermSetRequest) *PostingFilter {
 	return &PostingFilter{kind: filterTerms, terms: request}
 }
 
-// FilterRanges matches the documents whose field falls in a range, as FilterRange does.
+// FilterRanges matches the documents whose field falls in a range, as FilterRange does: a document matches when any of its
+// terms falls in the range.
 func FilterRanges(request RangeRequest) *PostingFilter {
 	return &PostingFilter{kind: filterRange, rng: request}
 }
 
-// AllOf matches the documents every child matches. No child matches everything.
+// FilterSingleTermRanges is FilterRanges over a field that holds exactly one term per document. Two such ranges of one field
+// inside an AllOf fold into one range with the tightest bounds, so only the dictionary terms between the bounds are
+// expanded. A field that can hold several terms (an analyzed text, an array) must not use it: a document with the terms
+// "apple" and "zebra" matches "x >= m" and "x <= c" taken one at a time, and matches no term of the folded range [m, c].
+func FilterSingleTermRanges(request RangeRequest) *PostingFilter {
+	return &PostingFilter{kind: filterRange, rng: request, singleTerm: true}
+}
+
+// AllOf matches the documents every child matches. No child matches everything. A nested AllOf is spliced into this one,
+// and the single-term ranges of one field are folded into one range, so the order the conditions were joined in does not
+// decide whether two bounds of a field meet.
 func AllOf(children ...*PostingFilter) *PostingFilter {
-	return &PostingFilter{kind: filterAnd, children: children}
+	return &PostingFilter{kind: filterAnd, children: foldRanges(flattenAnd(children))}
 }
 
 // AnyOf matches the documents at least one child matches. No child matches nothing.
@@ -105,7 +128,7 @@ func compilePostingFilter(ctx context.Context, filter *PostingFilter) (*compiled
 		if err := validateTermSetRequest(filter.terms); err != nil {
 			return nil, err
 		}
-		patterns, err := compileTermPatterns(ctx, filter.terms, nil)
+		patterns, err := filter.compiledPatterns(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -118,12 +141,8 @@ func compilePostingFilter(ctx context.Context, filter *PostingFilter) (*compiled
 			return nil, fmt.Errorf("filter range on %q cannot apply a time range: %w", filter.rng.Field, ErrInvalidQuery)
 		}
 	case filterAnd, filterOr, filterNot:
-		children := filter.children
-		if filter.kind == filterAnd {
-			children = mergeRangeChildren(children)
-		}
-		compiled.children = make([]*compiledPostingFilter, 0, len(children))
-		for _, child := range children {
+		compiled.children = make([]*compiledPostingFilter, 0, len(filter.children))
+		for _, child := range filter.children {
 			compiledChild, err := compilePostingFilter(ctx, child)
 			if err != nil {
 				return nil, err
@@ -155,9 +174,13 @@ func (c *compiledPostingFilter) candidates(ctx context.Context, segment *memoryS
 		if termSetRequestEmpty(c.filter.terms) {
 			return roaringpkg.New(), nil
 		}
-		return exactCandidates(ctx, segment, c.filter.terms, c.patterns)
+		return c.filter.leaf(segment, func() (*roaringpkg.Bitmap, error) {
+			return exactCandidates(ctx, segment, c.filter.terms, c.patterns)
+		})
 	case filterRange:
-		return rangeCandidates(ctx, segment, c.filter.rng)
+		return c.filter.leaf(segment, func() (*roaringpkg.Bitmap, error) {
+			return rangeCandidates(ctx, segment, c.filter.rng)
+		})
 	case filterNot:
 		if len(c.children) != 1 {
 			return nil, fmt.Errorf("a negation takes one child, got %d: %w", len(c.children), ErrInvalidQuery)
@@ -209,65 +232,65 @@ func narrowByFilter(
 	return roaringpkg.And(candidates, matched), nil
 }
 
-// FilterByPosting keeps the hits, taken from this view, that the filter matches among the hits of their segment, without
-// decoding any stored document. It is the hit-level counterpart of what the search methods do with a filter at posting
-// level, and gives the same answer as narrowing the hits with FilterTermsSet and FilterRange one condition at a time.
-func (v *ReadView) FilterByPosting(ctx context.Context, hits []QueryHit, filter *PostingFilter) ([]QueryHit, error) {
-	if err := v.check(ctx); err != nil {
-		return nil, err
+// compiledPatterns compiles the wildcard patterns of a terms leaf the first time only: compiling spends the query's pattern
+// budget, and a filter is evaluated once per chunk of a growing search.
+func (f *PostingFilter) compiledPatterns(ctx context.Context) (compiledTermPatterns, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.patternsCompiled {
+		return f.patterns, nil
 	}
-	compiled, err := compilePostingFilter(ctx, filter)
+	patterns, err := compileTermPatterns(ctx, f.terms, nil)
+	if err != nil {
+		return compiledTermPatterns{}, err
+	}
+	f.patterns, f.patternsCompiled = patterns, true
+	return patterns, nil
+}
+
+// leaf returns the bitmap a leaf matches in one segment, evaluating it the first time only.
+func (f *PostingFilter) leaf(segment *memorySegment, evaluate func() (*roaringpkg.Bitmap, error)) (*roaringpkg.Bitmap, error) {
+	f.mu.Lock()
+	matched, evaluated := f.memo[segment]
+	f.mu.Unlock()
+	if evaluated {
+		return matched, nil
+	}
+	matched, err := evaluate()
 	if err != nil {
 		return nil, err
 	}
-	if compiled == nil {
-		return hits, nil
+	f.mu.Lock()
+	if f.memo == nil {
+		f.memo = make(map[*memorySegment]*roaringpkg.Bitmap)
 	}
-	universes := make(map[uint64]*roaringpkg.Bitmap)
-	for _, hit := range hits {
-		if hit.DocumentNumber > math.MaxUint32 {
-			continue
-		}
-		universe, ok := universes[hit.Segment]
-		if !ok {
-			universe = roaringpkg.New()
-			universes[hit.Segment] = universe
-		}
-		universe.Add(uint32(hit.DocumentNumber))
-	}
-	matches := make(map[uint64]*roaringpkg.Bitmap, len(universes))
-	for segmentIndex, universe := range universes {
-		if segmentIndex >= uint64(len(v.root.segments)) {
-			return nil, fmt.Errorf("hit segment %d is outside this view: %w", segmentIndex, ErrInvalidQuery)
-		}
-		segment, ok := v.root.segments[segmentIndex].(*memorySegment)
-		if !ok {
-			return nil, fmt.Errorf("filter segment %d has type %T", segmentIndex, v.root.segments[segmentIndex])
-		}
-		narrowed, narrowErr := narrowByFilter(ctx, segment, universe, compiled)
-		if narrowErr != nil {
-			return nil, narrowErr
-		}
-		matches[segmentIndex] = narrowed
-	}
-	result := make([]QueryHit, 0, len(hits))
-	for _, hit := range hits {
-		if matched := matches[hit.Segment]; matched != nil && hit.DocumentNumber <= math.MaxUint32 && matched.Contains(uint32(hit.DocumentNumber)) {
-			result = append(result, hit)
-		}
-	}
-	return result, nil
+	f.memo[segment] = matched
+	f.mu.Unlock()
+	return matched, nil
 }
 
-// mergeRangeChildren folds the range children of a conjunction that constrain the same field into one range with the
-// tightest bounds, in the position of the first. A range expands the dictionary terms it spans, so "a <= x AND x <= b"
-// as two open-ended ranges would expand both halves of the dictionary, where the one range between a and b expands only
-// the terms in it. The other children keep their order.
-func mergeRangeChildren(children []*PostingFilter) []*PostingFilter {
+// flattenAnd splices the children of nested conjunctions into one list, in order.
+func flattenAnd(children []*PostingFilter) []*PostingFilter {
+	flat := make([]*PostingFilter, 0, len(children))
+	for _, child := range children {
+		if child != nil && child.kind == filterAnd {
+			flat = append(flat, flattenAnd(child.children)...)
+			continue
+		}
+		flat = append(flat, child)
+	}
+	return flat
+}
+
+// foldRanges folds the single-term range children of a conjunction that constrain the same field into one range with the
+// tightest bounds, in the position of the first. A range expands the dictionary terms it spans, so "a <= x AND x <= b" as
+// two open-ended ranges would expand both halves of the dictionary, where the one range between a and b expands only the
+// terms in it. A range over a field that may hold several terms is left alone, as are the other children, in order.
+func foldRanges(children []*PostingFilter) []*PostingFilter {
 	merged := make(map[string]int, len(children))
 	result := make([]*PostingFilter, 0, len(children))
 	for _, child := range children {
-		if child == nil || child.kind != filterRange || child.rng.Scope.TimeRange != nil {
+		if child == nil || child.kind != filterRange || !child.singleTerm || child.rng.Scope.TimeRange != nil {
 			result = append(result, child)
 			continue
 		}
@@ -277,7 +300,7 @@ func mergeRangeChildren(children []*PostingFilter) []*PostingFilter {
 			result = append(result, child)
 			continue
 		}
-		result[at] = &PostingFilter{kind: filterRange, rng: intersectRanges(result[at].rng, child.rng)}
+		result[at] = FilterSingleTermRanges(intersectRanges(result[at].rng, child.rng))
 	}
 	return result
 }

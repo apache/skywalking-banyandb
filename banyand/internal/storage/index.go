@@ -501,13 +501,17 @@ func searchCandidates(ctx context.Context, view *native.ReadView, series []*pbv1
 	found.limited = limitedOrder(series, subject, opts)
 	found.seriesLimited = limitedSeriesOrder(series, subject, opts)
 	found.unorderedLimited = limitedUnordered(series, subject, opts)
+	var pd pushdown
+	if found.limited || found.seriesLimited || found.unorderedLimited {
+		pd = newPushdown(opts)
+	}
 	switch {
 	case found.unorderedLimited:
-		found.hits, err = unorderedLimitedHits(ctx, view, subject, opts)
+		found.hits, err = unorderedLimitedHits(ctx, view, subject, opts, pd)
 	case found.limited:
-		found.hits, err = limitedOrderHits(ctx, view, subject, opts)
+		found.hits, err = limitedOrderHits(ctx, view, subject, opts, pd)
 	case found.seriesLimited:
-		found.hits, found.moreSeries, err = limitedSeriesHits(ctx, view, series, opts)
+		found.hits, found.moreSeries, err = limitedSeriesHits(ctx, view, series, opts, pd)
 	default:
 		found.hits, err = candidateHits(ctx, view, series, subject, opts)
 	}
@@ -732,16 +736,11 @@ func limitedUnordered(series []*pbv1.Series, subject string, opts IndexSearchOpt
 	return len(series) == 0 && subject != "" && opts.Limit > 0 && opts.IsShadowed != nil && opts.Order == nil
 }
 
-// postingFilter returns the filter every hit of opts must match, evaluated on postings: the criteria and the indexed LIKE
-// patterns. A search narrows its candidates with it before it decodes any document, and still applies filterHits
-// afterwards, so a condition that cannot be pushed down only costs speed. It returns nil when nothing can be pushed down.
-func postingFilter(opts IndexSearchOpts) *native.PostingFilter {
-	filter, _ := postingFilterExact(opts)
-	return filter
-}
-
-// postingFilterExact is postingFilter that also reports whether the filter selects exactly the hits filterHits keeps, so
-// that no candidate it lets through is dropped afterwards.
+// postingFilterExact returns the filter every hit of opts must match, evaluated on postings: the criteria and the indexed
+// LIKE patterns. A search narrows its candidates with it before it decodes any document, and still applies the criteria
+// to the hits afterwards, so a condition that cannot be pushed down only costs speed. The filter is nil when nothing can be
+// pushed down, and exact reports whether it selects exactly the hits filterHits keeps, so that no candidate it lets through
+// is dropped afterwards.
 func postingFilterExact(opts IndexSearchOpts) (filter *native.PostingFilter, exact bool) {
 	var parts []*native.PostingFilter
 	exact = true
@@ -769,17 +768,34 @@ func postingFilterExact(opts IndexSearchOpts) (filter *native.PostingFilter, exa
 	}
 }
 
+// pushdown is the filtering of one limited search that is evaluated on postings, built once for the search: the filter, whether
+// it selects exactly what the hit-level filter would, and the options that hit-level filter still has to apply. The postings
+// apply the indexed LIKE patterns exactly, so the residual options drop them: expanding a pattern again over the hits would
+// spend the query's shared pattern budget a second time, and a pattern that fits the budget once could then fail.
+type pushdown struct {
+	filter   *native.PostingFilter
+	residual IndexSearchOpts
+	exact    bool
+}
+
+func newPushdown(opts IndexSearchOpts) pushdown {
+	filter, exact := postingFilterExact(opts)
+	residual := opts
+	residual.PatternRequests = nil
+	return pushdown{filter: filter, residual: residual, exact: exact}
+}
+
 // unorderedLimitedHits returns the first opts.Limit candidates of the subject that the criteria keep and that no newer
 // segment shadows, in the order the candidates are listed. It lists only a prefix of the candidates, decoding no more
 // documents than that, and asks for a larger prefix while the filters leave too few: a search that needs a few rows
 // neither reads nor charges the rest. The prefix grows geometrically, so the documents decoded stay proportional to the
 // limit, and to the candidates only when the filters leave almost none.
-func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts, pd pushdown,
+) ([]native.QueryHit, error) {
 	request := subjectRequest(subject, opts.TimeRange)
-	filter, exact := postingFilterExact(opts)
 	known := make(map[string]bool)
 	fetch := opts.Limit
-	if !exact {
+	if !pd.exact {
 		// The hit-level filter drops an unknown share of the candidates the postings leave: start with a chunk that tells
 		// that share apart from none.
 		fetch = opts.Limit * firstFilteredChunkFactor
@@ -788,11 +804,11 @@ func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject st
 		if fetch > math.MaxInt32/nextFetchGrowth {
 			fetch = 0 // too large a prefix to ask for: every candidate
 		}
-		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, filter, fetch)
+		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, pd.filter, fetch)
 		if err != nil {
 			return nil, err
 		}
-		candidates, err := filterHits(ctx, view, listed, opts)
+		candidates, err := filterHits(ctx, view, listed, pd.residual)
 		if err != nil {
 			return nil, err
 		}
@@ -860,7 +876,7 @@ type hitRanker struct {
 
 // newHitRanker returns the ranker of the order of opts over the candidates of one term-set request: the _timestamp trie
 // for a time order with a time range, and the sort ladder of the index rule's field for an index order.
-func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts IndexSearchOpts) (hitRanker, error) {
+func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts IndexSearchOpts, pd pushdown) (hitRanker, error) {
 	desc := opts.Order.Sort == modelv1.Sort_SORT_DESC
 	timeRange := candidates.Scope.TimeRange
 	if opts.Order.Type == index.OrderByTypeTime {
@@ -873,7 +889,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 		}}
 		if timeRange != nil {
 			ranker.top = func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
-				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Filter: postingFilter(opts), Limit: fetch, Desc: desc})
+				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Filter: pd.filter, Limit: fetch, Desc: desc})
 			}
 		}
 		return ranker, nil
@@ -889,7 +905,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 			return plan, nil
 		}
 		var planErr error
-		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Filter: postingFilter(opts), Field: field, Desc: desc})
+		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Filter: pd.filter, Field: field, Desc: desc})
 		return plan, planErr
 	}
 	return hitRanker{
@@ -923,16 +939,17 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 // and that no newer segment shadows. It asks the native index for the best-ranked candidates in growing chunks (a
 // descent that decodes only about the chunk), filters each chunk, and stops at Limit survivors or when the index has no
 // more. Past topFetchCap, or when the index cannot rank, it ranks the whole filtered universe instead.
-func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts, pd pushdown,
+) ([]native.QueryHit, error) {
 	// The whole-universe fallback lists only the candidates the posting filters keep, not every document of the subject.
 	universe := func(ctx context.Context) ([]native.QueryHit, error) {
 		if subject == "" {
 			return nil, nil
 		}
-		hits, _, err := view.MatchTermsSetPrefixFiltered(ctx, subjectRequest(subject, opts.TimeRange), postingFilter(opts), 0)
+		hits, _, err := view.MatchTermsSetPrefixFiltered(ctx, subjectRequest(subject, opts.TimeRange), pd.filter, 0)
 		return hits, err
 	}
-	return rankedPrefix(ctx, view, subjectRequest(subject, opts.TimeRange), universe, opts, opts.Limit, opts.IsShadowed)
+	return rankedPrefix(ctx, view, subjectRequest(subject, opts.TimeRange), universe, opts, pd, opts.Limit, opts.IsShadowed)
 }
 
 // limitedSeriesOrder reports that search serves a series search ordered by an index rule with a limit of series: the
@@ -948,7 +965,7 @@ func limitedSeriesOrder(series []*pbv1.Series, subject string, opts IndexSearchO
 // know. The caller merges the lists of several segments; a segment's first Limit series are enough for that
 // because the merge stops where a truncated list ends (see measure.searchSeriesListLimited): everything before that point
 // is exact whatever the lists beyond their limits hold.
-func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv1.Series, opts IndexSearchOpts,
+func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv1.Series, opts IndexSearchOpts, pd pushdown,
 ) (hits []native.QueryHit, more bool, err error) {
 	request, _, err := seriesRequest(series, opts.TimeRange)
 	if err != nil {
@@ -956,10 +973,10 @@ func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv
 	}
 	// The whole-universe fallback lists only the series the posting filter keeps.
 	universe := func(ctx context.Context) ([]native.QueryHit, error) {
-		listed, _, listErr := view.MatchTermsSetPrefixFiltered(ctx, request, postingFilter(opts), 0)
+		listed, _, listErr := view.MatchTermsSetPrefixFiltered(ctx, request, pd.filter, 0)
 		return listed, listErr
 	}
-	hits, err = rankedPrefix(ctx, view, request, universe, opts, opts.Limit+1, nil)
+	hits, err = rankedPrefix(ctx, view, request, universe, opts, pd, opts.Limit+1, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -973,10 +990,10 @@ func limitedSeriesHits(ctx context.Context, view *native.ReadView, series []*pbv
 // patterns keep and isShadowed (when not nil) does not drop, or all of them when there are fewer. universe lists every
 // candidate, for the fallback that ranks the whole filtered universe.
 func rankedPrefix(ctx context.Context, view *native.ReadView, request native.TermSetRequest,
-	universe func(context.Context) ([]native.QueryHit, error), opts IndexSearchOpts, want int,
+	universe func(context.Context) ([]native.QueryHit, error), opts IndexSearchOpts, pd pushdown, want int,
 	isShadowed func(context.Context, [][]byte) (map[string]struct{}, error),
 ) ([]native.QueryHit, error) {
-	ranker, err := newHitRanker(view, request, opts)
+	ranker, err := newHitRanker(view, request, opts, pd)
 	if err != nil {
 		return nil, err
 	}
@@ -996,7 +1013,7 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 			if universeErr != nil {
 				return nil, false, universeErr
 			}
-			kept, filterErr := filterHits(ctx, view, all, opts)
+			kept, filterErr := filterHits(ctx, view, all, pd.residual)
 			if filterErr != nil {
 				return nil, false, filterErr
 			}
@@ -1010,7 +1027,7 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 	}
 	shadowed := make(map[string]bool)
 	fetch := want
-	if _, exact := postingFilterExact(opts); !exact {
+	if !pd.exact {
 		// The hit-level filter drops an unknown share of the ranked candidates the postings leave: start with a chunk that
 		// tells that share apart from none.
 		fetch = want * firstFilteredChunkFactor
@@ -1027,7 +1044,7 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 		}
 		candidates := top
 		if !filtered {
-			if candidates, rankErr = filterHits(ctx, view, top, opts); rankErr != nil {
+			if candidates, rankErr = filterHits(ctx, view, top, pd.residual); rankErr != nil {
 				return nil, rankErr
 			}
 			if candidates, rankErr = ranker.order(ctx, candidates); rankErr != nil {

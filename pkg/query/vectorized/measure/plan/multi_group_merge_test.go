@@ -152,7 +152,7 @@ func TestMultiGroupMerge_MaterializesRowsOnce(t *testing.T) {
 	serializedBefore := measure.SerializedRowCount()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
 		var group *GroupBatches
 		if dispatchErr == nil {
@@ -210,7 +210,7 @@ func mgDispatchAll(t *testing.T, merge *MultiGroupMerge, groups []*mgBatchEC, sc
 	t.Helper()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
 		var group *GroupBatches
 		if dispatchErr == nil {

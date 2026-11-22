@@ -251,39 +251,3 @@ func TestTopTimeHitsSkipsDeletedAtTheBestRanks(t *testing.T) {
 		require.NoError(t, view.Close())
 	}
 }
-
-// MatchTermsSetPrefix lists at most the limit, takes a subset of what MatchTermsSet lists, reports whether it left
-// candidates out, and lists everything for a non-positive limit.
-func TestMatchTermsSetPrefix(t *testing.T) {
-	const span = int64(24 * 60 * 60 * 1e9)
-	rng := rand.New(rand.NewSource(9)) //nolint:gosec // deterministic test data
-	batches := randomTopTimeBatches(rng, 3, 1000, span, true)
-	for _, persisted := range []bool{false, true} {
-		fixture := newTopTimeFixture(t, persisted, batches)
-		view, err := fixture.owner.Acquire(context.Background())
-		require.NoError(t, err)
-		timeRange := &TimeRange{Lower: topTimeBase - 1, Upper: topTimeBase + span + 1, IncludesLower: true, IncludesUpper: true}
-		request := topTimeRequestFor("ok", timeRange, 1, false).Candidates
-		everything, err := view.MatchTermsSet(context.Background(), request)
-		require.NoError(t, err)
-		require.NotEmpty(t, everything)
-		known := make(map[string]struct{}, len(everything))
-		for i := range everything {
-			known[fmt.Sprintf("%d/%d", everything[i].Segment, everything[i].DocumentNumber)] = struct{}{}
-		}
-		for _, limit := range []int{1, 7, 1000, len(everything) - 1, len(everything), len(everything) + 1} {
-			hits, truncated, prefixErr := view.MatchTermsSetPrefix(context.Background(), request, limit)
-			require.NoError(t, prefixErr)
-			require.Len(t, hits, min(limit, len(everything)), "limit=%d", limit)
-			require.Equal(t, limit < len(everything), truncated, "limit=%d", limit)
-			for i := range hits {
-				require.Contains(t, known, fmt.Sprintf("%d/%d", hits[i].Segment, hits[i].DocumentNumber))
-			}
-		}
-		hits, truncated, prefixErr := view.MatchTermsSetPrefix(context.Background(), request, 0)
-		require.NoError(t, prefixErr)
-		require.Len(t, hits, len(everything))
-		require.False(t, truncated)
-		require.NoError(t, view.Close())
-	}
-}
