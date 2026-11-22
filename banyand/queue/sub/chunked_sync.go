@@ -59,11 +59,13 @@ type chunkBuffer struct {
 }
 
 type syncSession struct {
-	startTime      time.Time
-	metadata       *clusterv1.SyncMetadata
-	partsProgress  map[int]*partProgress
-	partCtx        *queue.ChunkedSyncPartContext
-	chunkBuffer    *chunkBuffer
+	startTime     time.Time
+	metadata      *clusterv1.SyncMetadata
+	partsProgress map[int]*partProgress
+	partCtx       *queue.ChunkedSyncPartContext
+	chunkBuffer   *chunkBuffer
+	// pending holds the parts the session sealed; only its completion introduces them.
+	pending        *queue.PendingParts
 	sessionID      string
 	errorMsg       string
 	totalReceived  uint64
@@ -90,6 +92,9 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 			if closeErr := currentSession.partCtx.Close(); closeErr != nil {
 				s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close session partCtx")
 			}
+		}
+		if discardErr := currentSession.pending.Discard(); discardErr != nil {
+			s.log.Error().Err(discardErr).Str("session_id", currentSession.sessionID).Msg("failed to discard the sealed parts of the session")
 		}
 	}()
 
@@ -169,6 +174,7 @@ func (s *server) startOrSwitchSession(sessionID string, req *clusterv1.SyncPartR
 		startTime:      time.Now(),
 		chunksReceived: 0,
 		partsProgress:  make(map[int]*partProgress),
+		pending:        &queue.PendingParts{},
 	}
 	if s.metrics != nil {
 		op, grp, sn, sr, st := s.resolveSessionLabels(newSession)
@@ -192,20 +198,14 @@ func (s *server) cleanupPreviousSession(previousSession *syncSession) {
 		previousSession.completed = true
 	}
 
-	if previousSession.partCtx == nil {
-		return
-	}
-	if previousSession.partCtx.Handler != nil {
-		if finishErr := previousSession.partCtx.Handler.FinishSync(); finishErr != nil {
-			if s.metrics != nil {
-				op, grp, sn, sr, st := s.resolveSessionLabels(previousSession)
-				s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
-			}
-			s.log.Error().Err(finishErr).Str("session_id", previousSession.sessionID).Msg("failed to finish sync for previous session")
+	// A session replaced before its completion is abandoned: none of its parts is introduced.
+	if previousSession.partCtx != nil {
+		if closeErr := previousSession.partCtx.Close(); closeErr != nil {
+			s.log.Error().Err(closeErr).Str("session_id", previousSession.sessionID).Msg("failed to close previous session partCtx")
 		}
 	}
-	if closeErr := previousSession.partCtx.Close(); closeErr != nil {
-		s.log.Error().Err(closeErr).Str("session_id", previousSession.sessionID).Msg("failed to close previous session partCtx")
+	if discardErr := previousSession.pending.Discard(); discardErr != nil {
+		s.log.Error().Err(discardErr).Str("session_id", previousSession.sessionID).Msg("failed to discard the sealed parts of the previous session")
 	}
 }
 
@@ -361,7 +361,7 @@ func (s *server) processExpectedChunk(stream clusterv1.ChunkedSyncService_SyncPa
 
 	for partIndex, partInfo := range req.PartsInfo {
 		var switchErr error
-		if session.partCtx, switchErr = queue.SwitchPart(stream.Context(), session.partCtx, session.metadata, partInfo, handler); switchErr != nil {
+		if session.partCtx, switchErr = queue.SwitchPart(stream.Context(), session.partCtx, session.pending, session.metadata, partInfo, handler); switchErr != nil {
 			return switchErr
 		}
 
@@ -498,7 +498,7 @@ func (s *server) processPart(session *syncSession, req *clusterv1.SyncPartReques
 }
 
 func (s *server) handleCompletion(stream clusterv1.ChunkedSyncService_SyncPartServer, session *syncSession, req *clusterv1.SyncPartRequest) error {
-	if finishErr := queue.FinishPart(session.partCtx); finishErr != nil {
+	if finishErr := session.pending.Commit(session.partCtx); finishErr != nil {
 		if s.metrics != nil {
 			op, grp, sn, sr, st := s.resolveSessionLabels(session)
 			s.metrics.totalErr.Inc(1, op, grp, sn, sr, st, "finish_sync_err")
