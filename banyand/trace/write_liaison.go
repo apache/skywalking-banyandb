@@ -38,6 +38,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -46,11 +48,12 @@ type writeQueueCallback struct {
 	schemaRepo          *schemaRepo
 	tire2Client         queue.Client
 	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
 func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client,
-	pm protector.Memory,
+	pm protector.Memory, dropped meter.Counter,
 ) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
@@ -61,6 +64,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		tire2Client:         tire2Client,
 		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -84,7 +88,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 ) (map[string]*tracesInQueue, error) {
 	stm, ok := w.schemaRepo.loadTrace(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find trace definition: %s", metadata)
+		return nil, errTraceNotFound(w.schemaRepo, metadata)
 	}
 	specMap := buildSpecMap(spec)
 	idx, err := getTagIndex(stm, stm.schema.TimestampTagName, specMap)
@@ -93,7 +97,7 @@ func (w *writeQueueCallback) handle(dst map[string]*tracesInQueue, writeEvent *t
 	}
 	t := writeEvent.Request.Tags[idx].GetTimestamp().AsTime().Local()
 	if err = timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 	eq, err := w.prepareElementsInQueue(dst, metadata)
@@ -115,7 +119,7 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*tracesInQueu
 	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load queue for group %s: %w", gn, err))
 	}
 
 	eq, ok := dst[gn]
@@ -170,6 +174,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -188,10 +193,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			writeEvent = &tracev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("trace: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("trace: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -204,6 +211,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr),
+				fmt.Errorf("trace %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
