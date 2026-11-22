@@ -203,6 +203,9 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 	return result, nil
 }
 
+// maxPreallocatedHits bounds the room a listing reserves up front for the hits it expects.
+const maxPreallocatedHits = 1 << 10
+
 // MatchTermsSetPrefix is MatchTermsSet that lists at most limit candidates: it takes the first documents of each segment
 // in document order and decodes only those, so a caller that needs a few of the candidates neither reads nor charges the
 // rest. truncated reports that candidates were left out, so the caller can ask for more. A non-positive limit lists every
@@ -233,7 +236,8 @@ func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request Term
 	if filterErr != nil {
 		return nil, false, filterErr
 	}
-	result := make([]QueryHit, 0, max(limit, 0))
+	// The limit is how many hits at most, not how many the filter leaves: do not reserve room for all of them up front.
+	result := make([]QueryHit, 0, min(max(limit, 0), maxPreallocatedHits))
 	var totalCandidates uint64
 	for segmentIndex, current := range v.root.segments {
 		if err = ctx.Err(); err != nil {

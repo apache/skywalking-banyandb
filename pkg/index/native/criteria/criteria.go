@@ -254,42 +254,56 @@ func subtractHits(universe, excluded []native.QueryHit) []native.QueryHit {
 // a condition that is left out (an invalid one, or one under an OR next to a condition that is left out) only costs speed,
 // never correctness. It returns nil when nothing can be pushed down, which matches every candidate.
 func PostingFilterOf(criteria *modelv1.Criteria, fields FieldResolver) *native.PostingFilter {
-	if criteria == nil || fields == nil {
-		return nil
+	filter, _ := PostingFilterExact(criteria, fields)
+	return filter
+}
+
+// PostingFilterExact is PostingFilterOf that also reports whether the filter selects exactly what Filter selects, so a
+// caller can tell how many of the candidates the filter leaves still fall to the hit-level filter.
+func PostingFilterExact(criteria *modelv1.Criteria, fields FieldResolver) (filter *native.PostingFilter, exact bool) {
+	if criteria == nil {
+		return nil, true
+	}
+	if fields == nil {
+		return nil, false
 	}
 	switch expression := criteria.GetExp().(type) {
 	case *modelv1.Criteria_Condition:
-		return conditionPostingFilter(expression.Condition, fields)
+		if filter = conditionPostingFilter(expression.Condition, fields); filter == nil {
+			return nil, false
+		}
+		return filter, true
 	case *modelv1.Criteria_Le:
 		if expression.Le == nil {
-			return nil
+			return nil, false
 		}
 		if expression.Le.Left == nil {
-			return PostingFilterOf(expression.Le.Right, fields)
+			return PostingFilterExact(expression.Le.Right, fields)
 		}
 		if expression.Le.Right == nil {
-			return PostingFilterOf(expression.Le.Left, fields)
+			return PostingFilterExact(expression.Le.Left, fields)
 		}
-		left, right := PostingFilterOf(expression.Le.Left, fields), PostingFilterOf(expression.Le.Right, fields)
+		left, leftExact := PostingFilterExact(expression.Le.Left, fields)
+		right, rightExact := PostingFilterExact(expression.Le.Right, fields)
 		switch expression.Le.Op {
 		case modelv1.LogicalExpression_LOGICAL_OP_AND:
 			// A conjunct that cannot be pushed only leaves more documents than the criteria keeps.
 			switch {
 			case left == nil:
-				return right
+				return right, leftExact && rightExact
 			case right == nil:
-				return left
+				return left, leftExact && rightExact
 			}
-			return native.AllOf(left, right)
+			return native.AllOf(left, right), leftExact && rightExact
 		case modelv1.LogicalExpression_LOGICAL_OP_OR:
 			// A disjunct that cannot be pushed may select any document, so the union cannot be narrowed.
 			if left == nil || right == nil {
-				return nil
+				return nil, false
 			}
-			return native.AnyOf(left, right)
+			return native.AnyOf(left, right), leftExact && rightExact
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // conditionPostingFilter is the posting-level filter of one condition, the one matchCondition evaluates over hits. It

@@ -84,7 +84,7 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 		return nil, filterErr
 	}
 	timeRange := request.Candidates.Scope.TimeRange
-	best := make([]QueryHit, 0, request.Limit)
+	best := make([]QueryHit, 0, min(request.Limit, maxPreallocatedHits))
 	for _, segmentIndex := range v.topTimeSegmentOrder(request.Desc) {
 		if err := ctx.Err(); err != nil {
 			return nil, err

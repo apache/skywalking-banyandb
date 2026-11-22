@@ -186,16 +186,18 @@ func TestSeriesIndex_IndexModeLimitWithSelectiveCriteria(t *testing.T) {
 	require.Less(t, reserved*10, reservedEverything, "an OR reserved %d bytes against %d for listing every candidate", reserved, reservedEverything)
 }
 
-// An index-ordered limit with a selective criteria must also narrow the candidates at posting level: it returns the
-// first rows of the order among the rows the criteria keeps, and reserves a small share of what ranking everything does.
-func TestSeriesIndex_IndexModeOrderedLimitWithSelectiveCriteria(t *testing.T) {
-	const count = 6000
+// ladderValue is the sort value of the i-th document of newLadderIndexModeSegment.
+func ladderValue(i int) int64 { return int64((i * 7919) % 100003) }
+
+// newLadderIndexModeSegment writes an index-mode segment whose documents carry an indexed "bucket" (i%100) and an int sort
+// value with the sort ladder, the way the measure writer writes a scalar int index-rule tag.
+func newLadderIndexModeSegment(t *testing.T, count int) *seriesIndex {
+	t.Helper()
 	dir, fn := setUp(require.New(t))
 	t.Cleanup(fn)
 	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, si.Close()) })
-	valueOf := func(i int) int64 { return int64((i * 7919) % 100003) }
 	var docs index.Documents
 	for i := 0; i < count; i++ {
 		var series pbv1.Series
@@ -206,16 +208,24 @@ func TestSeriesIndex_IndexModeOrderedLimitWithSelectiveCriteria(t *testing.T) {
 		subjectField.Index, subjectField.NoSort = true, true
 		bucket := index.NewStringField(index.FieldKey{TagName: "bucket"}, fmt.Sprintf("t%d", i%100))
 		bucket.Index, bucket.NoSort = true, true
-		sortField := index.NewBytesField(index.FieldKey{IndexRuleID: orderRuleID}, convert.Int64ToBytes(valueOf(i)))
+		sortField := index.NewBytesField(index.FieldKey{IndexRuleID: orderRuleID}, convert.Int64ToBytes(ladderValue(i)))
 		sortField.Store, sortField.Index = true, true
-		sortField.Numeric, sortField.NumericKey = true, valueOf(i)
+		sortField.Numeric, sortField.NumericKey = true, ladderValue(i)
 		docs = append(docs, index.Document{
 			EntityValues: append([]byte(nil), series.Buffer...), Fields: []index.Field{subjectField, bucket, sortField},
 			Timestamp: 1000, Version: 1,
 		})
 	}
 	require.NoError(t, si.Insert(docs))
+	return si
+}
 
+// An index-ordered limit with a selective criteria must also narrow the candidates at posting level: it returns the
+// first rows of the order among the rows the criteria keeps, and reserves a small share of what ranking everything does.
+func TestSeriesIndex_IndexModeOrderedLimitWithSelectiveCriteria(t *testing.T) {
+	const count = 6000
+	si := newLadderIndexModeSegment(t, count)
+	valueOf := ladderValue
 	notShadowed := func(context.Context, [][]byte) (map[string]struct{}, error) { return nil, nil }
 	base := IndexSearchOpts{
 		IndexModeSubject: "idx_measure", TimeRange: limitTestAllTime(), Fields: tagResolver{},
@@ -251,5 +261,53 @@ func TestSeriesIndex_IndexModeOrderedLimitWithSelectiveCriteria(t *testing.T) {
 			require.Equal(t, 7, number%100)
 		}
 		require.Less(t, reserved*10, reservedEverything, "desc=%v reserved %d bytes against %d for ranking every candidate", desc, reserved, reservedEverything)
+	}
+}
+
+// A limit beyond the largest prefix the descent is asked for must not make a search list or rank every candidate: the
+// unordered search grows its prefix without a cap, and an ordered search whose first chunk would pass the cap clamps it
+// instead of skipping the descent. The cap is shrunk so that a small segment shows the cliff.
+func TestSeriesIndex_IndexModeLargeLimitStaysProportionalToTheLimit(t *testing.T) {
+	const count, fetchCap = 40000, 2048
+	defer func(previous int) { topFetchCap = previous }(topFetchCap)
+	topFetchCap = fetchCap
+	si := newLadderIndexModeSegment(t, count)
+	notShadowed := func(context.Context, [][]byte) (map[string]struct{}, error) { return nil, nil }
+	rule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Id: orderRuleID}}
+	for _, tc := range []struct {
+		order *index.OrderBy
+		name  string
+		limit int
+	}{
+		{name: "unordered, limit past the cap", order: nil, limit: 4 * fetchCap},
+		{
+			name:  "ordered, first chunk would pass the cap",
+			order: &index.OrderBy{Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_ASC, Index: rule}, limit: fetchCap / 2,
+		},
+		{
+			name:  "ordered desc, first chunk would pass the cap",
+			order: &index.OrderBy{Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_DESC, Index: rule}, limit: fetchCap / 2,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := IndexSearchOpts{IndexModeSubject: "idx_measure", TimeRange: limitTestAllTime(), Fields: tagResolver{}, Order: tc.order}
+			_, everything := searchReserved(t, si, base)
+			limited := base
+			limited.Limit, limited.IsShadowed = tc.limit, notShadowed
+			services, reserved := searchReserved(t, si, limited)
+			require.Len(t, services, tc.limit)
+			t.Logf("limit %d of %d reserved %d vs %d (%.0f%%)", tc.limit, count, reserved, everything, 100*float64(reserved)/float64(everything))
+			require.Less(t, reserved*10, everything*3, "a limit of %d of %d documents reserved %d bytes against %d for all of them", tc.limit, count, reserved, everything)
+			if tc.order != nil {
+				desc := tc.order.Sort == modelv1.Sort_SORT_DESC
+				for i := 1; i < len(services); i++ {
+					if desc {
+						require.GreaterOrEqual(t, ladderValue(services[i-1]), ladderValue(services[i]), "row %d is out of order", i)
+					} else {
+						require.LessOrEqual(t, ladderValue(services[i-1]), ladderValue(services[i]), "row %d is out of order", i)
+					}
+				}
+			}
+		})
 	}
 }

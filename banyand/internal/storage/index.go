@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -735,10 +736,24 @@ func limitedUnordered(series []*pbv1.Series, subject string, opts IndexSearchOpt
 // patterns. A search narrows its candidates with it before it decodes any document, and still applies filterHits
 // afterwards, so a condition that cannot be pushed down only costs speed. It returns nil when nothing can be pushed down.
 func postingFilter(opts IndexSearchOpts) *native.PostingFilter {
+	filter, _ := postingFilterExact(opts)
+	return filter
+}
+
+// postingFilterExact is postingFilter that also reports whether the filter selects exactly the hits filterHits keeps, so
+// that no candidate it lets through is dropped afterwards.
+func postingFilterExact(opts IndexSearchOpts) (filter *native.PostingFilter, exact bool) {
 	var parts []*native.PostingFilter
-	if opts.Criteria != nil && opts.Fields != nil {
-		if filter := criteria.PostingFilterOf(opts.Criteria, opts.Fields); filter != nil {
-			parts = append(parts, filter)
+	exact = true
+	if opts.Criteria != nil {
+		var criteriaFilter *native.PostingFilter
+		if opts.Fields != nil {
+			criteriaFilter, exact = criteria.PostingFilterExact(opts.Criteria, opts.Fields)
+		} else {
+			exact = false
+		}
+		if criteriaFilter != nil {
+			parts = append(parts, criteriaFilter)
 		}
 	}
 	for i := range opts.PatternRequests {
@@ -746,30 +761,32 @@ func postingFilter(opts IndexSearchOpts) *native.PostingFilter {
 	}
 	switch len(parts) {
 	case 0:
-		return nil
+		return nil, exact
 	case 1:
-		return parts[0]
+		return parts[0], exact
 	default:
-		return native.AllOf(parts...)
+		return native.AllOf(parts...), exact
 	}
 }
 
 // unorderedLimitedHits returns the first opts.Limit candidates of the subject that the criteria keep and that no newer
 // segment shadows, in the order the candidates are listed. It lists only a prefix of the candidates, decoding no more
 // documents than that, and asks for a larger prefix while the filters leave too few: a search that needs a few rows
-// neither reads nor charges the rest. Past topFetchCap it lists every candidate.
+// neither reads nor charges the rest. The prefix grows geometrically, so the documents decoded stay proportional to the
+// limit, and to the candidates only when the filters leave almost none.
 func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
 	request := subjectRequest(subject, opts.TimeRange)
-	filter := postingFilter(opts)
+	filter, exact := postingFilterExact(opts)
 	known := make(map[string]bool)
 	fetch := opts.Limit
-	if opts.Criteria != nil || len(opts.PatternRequests) > 0 {
-		// A criteria drops an unknown share of the candidates: start with a chunk that tells that share apart from none.
+	if !exact {
+		// The hit-level filter drops an unknown share of the candidates the postings leave: start with a chunk that tells
+		// that share apart from none.
 		fetch = opts.Limit * firstFilteredChunkFactor
 	}
 	for {
-		if fetch > topFetchCap {
-			fetch = 0 // every candidate
+		if fetch > math.MaxInt32/nextFetchGrowth {
+			fetch = 0 // too large a prefix to ask for: every candidate
 		}
 		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, filter, fetch)
 		if err != nil {
@@ -802,10 +819,14 @@ func orderLimitedHits(ctx context.Context, hits []native.QueryHit, opts IndexSea
 	return hits, nil, sortField, err
 }
 
-// topFetchCap bounds how many ranked candidates the descent may be asked for before the search gives up on it
-// and ranks the whole filtered universe instead: past it, the criteria or the shadowing drop so many rows that
-// reading more of the index costs about as much as reading everything.
-const topFetchCap = 1 << 15
+// topFetchCap bounds how many ranked candidates the descent may be asked for before the search gives up on it and ranks the
+// whole filtered universe instead: past it, the criteria or the shadowing drop so many rows that reading more of the index
+// costs about as much as reading everything. A page this large already costs more than a megabyte of result rows, so a
+// descent of this size is no more than the page it serves. It is a variable so that tests can shrink it.
+var topFetchCap = 1 << 20
+
+// nextFetchGrowth is the least factor a chunk grows by when too few of its candidates survive the filters.
+const nextFetchGrowth = 4
 
 // firstFilteredChunkFactor scales the first chunk of a search whose candidates a criteria, a pattern or shadowing filters.
 const firstFilteredChunkFactor = 16
@@ -820,7 +841,7 @@ const fallbackShare = 16
 // candidates to rank, plus a quarter.
 func nextFetch(fetch, want, survivors int) int {
 	estimate := want * fetch / max(survivors, 1)
-	return max(fetch*4, estimate+estimate/4)
+	return max(fetch*nextFetchGrowth, estimate+estimate/4)
 }
 
 // hitRanker is how a limited search ranks its candidates: top asks the index for the first fetch candidates in order
@@ -989,9 +1010,15 @@ func rankedPrefix(ctx context.Context, view *native.ReadView, request native.Ter
 	}
 	shadowed := make(map[string]bool)
 	fetch := want
-	if opts.Criteria != nil || len(opts.PatternRequests) > 0 || isShadowed != nil {
-		// A filter drops an unknown share of the ranked candidates: start with a chunk that tells that share apart from none.
+	if _, exact := postingFilterExact(opts); !exact {
+		// The hit-level filter drops an unknown share of the ranked candidates the postings leave: start with a chunk that
+		// tells that share apart from none.
 		fetch = want * firstFilteredChunkFactor
+	}
+	// Shadowing alone asks for no margin: it drops few rows, the first segment drops none, and the chunk grows if it falls short.
+	if want <= topFetchCap {
+		// Not past the largest chunk the descent is asked for, or a large page would skip the descent altogether.
+		fetch = min(fetch, topFetchCap)
 	}
 	for {
 		top, exhausted, rankErr := rank(fetch)
