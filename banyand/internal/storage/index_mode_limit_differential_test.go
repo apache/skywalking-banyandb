@@ -18,6 +18,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/rand"
@@ -111,4 +112,112 @@ func TestSeriesIndex_LimitedSearchMatchesFullSearchOnRandomCriteria(t *testing.T
 			}
 		})
 	}
+}
+
+// The classical limit cases, enumerated: a result of no document, of some and of all of them, cut at a limit of one, one less
+// than the result, exactly the result, one more and far more, for each order. The boundaries are where a prefix listing, a
+// growing chunk and the truncation flag go wrong, and a random limit seldom lands on them.
+func TestSeriesIndex_LimitBoundariesOnCanonicalCriteria(t *testing.T) {
+	const count = 400 // 100 buckets of 4 documents
+	si := newLadderIndexModeSegment(t, count)
+	notShadowed := func(context.Context, [][]byte) (map[string]struct{}, error) { return nil, nil }
+	rule := &databasev1.IndexRule{Metadata: &commonv1.Metadata{Id: orderRuleID}}
+	str := func(value string) *modelv1.TagValue {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: value}}}
+	}
+	list := func(values ...string) *modelv1.TagValue {
+		return &modelv1.TagValue{Value: &modelv1.TagValue_StrArray{StrArray: &modelv1.StrArray{Value: values}}}
+	}
+	join := func(op modelv1.LogicalExpression_LogicalOp, left, right *modelv1.Criteria) *modelv1.Criteria {
+		return &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{Op: op, Left: left, Right: right}}}
+	}
+	for _, criteria := range []struct {
+		c    *modelv1.Criteria
+		name string
+		rows int
+	}{
+		{name: "no criteria: every document", c: nil, rows: count},
+		{name: "a value no document has: none", c: bucketCondition(modelv1.Condition_BINARY_OP_EQ, str("zz")), rows: 0},
+		{name: "a negation of that value: every document", c: bucketCondition(modelv1.Condition_BINARY_OP_NE, str("zz")), rows: count},
+		{name: "one bucket", c: bucketCondition(modelv1.Condition_BINARY_OP_EQ, str("t7")), rows: 4},
+		{name: "three buckets", c: bucketCondition(modelv1.Condition_BINARY_OP_IN, list("t1", "t2", "t3")), rows: 12},
+		{name: "everything but three buckets", c: bucketCondition(modelv1.Condition_BINARY_OP_NOT_IN, list("t1", "t2", "t3")), rows: count - 12},
+		{
+			name: "two buckets joined by OR",
+			c: join(modelv1.LogicalExpression_LOGICAL_OP_OR,
+				bucketCondition(modelv1.Condition_BINARY_OP_EQ, str("t7")), bucketCondition(modelv1.Condition_BINARY_OP_EQ, str("t8"))),
+			rows: 8,
+		},
+		{
+			name: "two bounds that meet at one bucket",
+			c: join(modelv1.LogicalExpression_LOGICAL_OP_AND,
+				bucketCondition(modelv1.Condition_BINARY_OP_GE, str("t5")), bucketCondition(modelv1.Condition_BINARY_OP_LE, str("t5"))),
+			rows: 4,
+		},
+		{
+			name: "two bounds with nothing between them",
+			c: join(modelv1.LogicalExpression_LOGICAL_OP_AND,
+				bucketCondition(modelv1.Condition_BINARY_OP_GE, str("t9")), bucketCondition(modelv1.Condition_BINARY_OP_LE, str("t1"))),
+			rows: 0,
+		},
+	} {
+		for orderName, order := range map[string]*index.OrderBy{
+			"unordered":        nil,
+			"index ascending":  {Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_ASC, Index: rule},
+			"index descending": {Type: index.OrderByTypeIndex, Sort: modelv1.Sort_SORT_DESC, Index: rule},
+		} {
+			t.Run(criteria.name+"/"+orderName, func(t *testing.T) {
+				base := IndexSearchOpts{IndexModeSubject: "idx_measure", TimeRange: limitTestAllTime(), Fields: tagResolver{}, Order: order, Criteria: criteria.c}
+				full, _ := searchReserved(t, si, base)
+				require.Len(t, full, criteria.rows, "the criteria must select the documents the case says it does")
+				// A newer segment that holds every even document shadows them: the rows the search may return are the odd ones,
+				// and a chunk that held shadowed rows falls short and has to grow, which a search without shadowing never does.
+				var unshadowed []int
+				for _, service := range full {
+					if service%2 == 1 {
+						unshadowed = append(unshadowed, service)
+					}
+				}
+				for _, shadowing := range []struct {
+					shadow func(context.Context, [][]byte) (map[string]struct{}, error)
+					name   string
+					want   []int
+				}{
+					{name: "no shadowing", shadow: notShadowed, want: full},
+					{name: "even documents shadowed", shadow: shadowEvenServices, want: unshadowed},
+				} {
+					for _, limit := range []int{1, len(shadowing.want) - 1, len(shadowing.want), len(shadowing.want) + 1, 10 * count} {
+						if limit < 1 {
+							continue
+						}
+						limited := base
+						limited.Limit, limited.IsShadowed = limit, shadowing.shadow
+						got, _ := searchReserved(t, si, limited)
+						require.Len(t, got, min(limit, len(shadowing.want)), "%s, limit %d", shadowing.name, limit)
+						if order == nil {
+							require.Subset(t, shadowing.want, got, "%s, limit %d", shadowing.name, limit)
+							continue
+						}
+						require.Equal(t, shadowing.want[:len(got)], got, "%s, limit %d: the first rows of the unlimited order", shadowing.name, limit)
+					}
+				}
+			})
+		}
+	}
+}
+
+// shadowEvenServices is the check a newer segment answers for the documents whose service number is even: the identifier of a
+// document holds the service as "svc-" and five digits.
+func shadowEvenServices(_ context.Context, identifiers [][]byte) (map[string]struct{}, error) {
+	shadowed := make(map[string]struct{})
+	for _, identifier := range identifiers {
+		at := bytes.Index(identifier, []byte("svc-"))
+		if at < 0 || at+9 > len(identifier) {
+			continue
+		}
+		if (identifier[at+8]-'0')%2 == 0 {
+			shadowed[string(identifier)] = struct{}{}
+		}
+	}
+	return shadowed, nil
 }

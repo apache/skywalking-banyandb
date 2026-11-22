@@ -290,45 +290,62 @@ type vouchingResolver struct {
 
 func (r vouchingResolver) SingleTerm(tagName string) bool { return r.single[tagName] }
 
+// differentialUniverse is the request that selects every document of a differential view, and the hits it selects.
+var differentialUniverse = native.TermSetRequest{Field: "kind", Terms: [][]byte{[]byte("doc")}, Mode: native.MatchAnyTerm}
+
+// checkCriteria runs one criteria against the view with the resolver and returns what broke, or "" when nothing did, with the
+// number of documents the criteria selects according to the oracle. It checks the promises of the posting filter: that
+// Filter means what the criteria says, that the posting filter selects a superset of Filter, exactly Filter when it reports
+// itself exact, and that Filter over what it leaves gives Filter's answer.
+func checkCriteria(t *testing.T, view *native.ReadView, docTerms map[string]map[string][]string, all []native.QueryHit,
+	resolver FieldResolver, c *modelv1.Criteria, label string,
+) (violation string, matched int) {
+	t.Helper()
+	want, filterErr := Filter(context.Background(), view, all, c, resolver)
+	require.NoError(t, filterErr, "the criteria must be one the hit-level filter accepts: %s", label)
+	filter, exact := PostingFilterExact(c, resolver)
+	narrowed, truncated, listErr := view.MatchTermsSetPrefixFiltered(context.Background(), differentialUniverse, filter, 0)
+	require.NoError(t, listErr, label)
+	require.False(t, truncated, label)
+	keptByFilter, afterErr := Filter(context.Background(), view, narrowed, c, resolver)
+	require.NoError(t, afterErr, label)
+	var oracleIDs []string
+	for _, hit := range all {
+		if holds(t, c, docTerms[string(hit.Identifier)]) {
+			oracleIDs = append(oracleIDs, string(hit.Identifier))
+		}
+	}
+	if differs := symmetricDifference(oracleIDs, ids(want)); len(differs) > 0 {
+		return fmt.Sprintf("%s\n  Filter and the oracle disagree on %v: the criteria does not mean what it says", label, differs), len(oracleIDs)
+	}
+	wantIDs, narrowedIDs := ids(want), ids(narrowed)
+	if missing := missingFrom(wantIDs, narrowedIDs); len(missing) > 0 {
+		return fmt.Sprintf("%s\n  the posting filter dropped %v, which Filter keeps (it must select a superset)", label, missing), len(oracleIDs)
+	}
+	if exact && len(narrowedIDs) != len(wantIDs) {
+		return fmt.Sprintf("%s\n  the filter reports itself exact but selects %d documents and Filter selects %d", label, len(narrowedIDs), len(wantIDs)), len(oracleIDs)
+	}
+	if extra := missingFrom(ids(keptByFilter), wantIDs); len(extra) > 0 || len(keptByFilter) != len(want) {
+		return fmt.Sprintf("%s\n  Filter over the narrowed hits keeps %d documents and Filter over all of them keeps %d", label, len(keptByFilter), len(want)), len(oracleIDs)
+	}
+	return "", len(oracleIDs)
+}
+
 // findDifferentialViolation runs rounds random criteria against the view with the resolver and returns the first criteria for
-// which the posting filter breaks a promise, with what broke, or "" when none does.
+// which the posting filter breaks a promise, with what broke, or "" when none does. A failure names the seed and the round, so
+// that the criteria it found can be added to canonicalRegressions.
 func findDifferentialViolation(t *testing.T, view *native.ReadView, docTerms map[string]map[string][]string, resolver FieldResolver,
 	seed int64, rounds int,
 ) string {
 	t.Helper()
 	rng := rand.New(rand.NewSource(seed)) //nolint:gosec // deterministic test data
-	request := native.TermSetRequest{Field: "kind", Terms: [][]byte{[]byte("doc")}, Mode: native.MatchAnyTerm}
-	all, err := view.MatchTermsSet(context.Background(), request)
+	all, err := view.MatchTermsSet(context.Background(), differentialUniverse)
 	require.NoError(t, err)
 	for round := 0; round < rounds; round++ {
 		c := randomCriteria(rng, 3)
-		label := fmt.Sprintf("round %d: %s", round, describeCriteria(c))
-		want, filterErr := Filter(context.Background(), view, all, c, resolver)
-		require.NoError(t, filterErr, "the generator must only build criteria the hit-level filter accepts: %s", label)
-		filter, exact := PostingFilterExact(c, resolver)
-		narrowed, truncated, listErr := view.MatchTermsSetPrefixFiltered(context.Background(), request, filter, 0)
-		require.NoError(t, listErr, label)
-		require.False(t, truncated, label)
-		keptByFilter, afterErr := Filter(context.Background(), view, narrowed, c, resolver)
-		require.NoError(t, afterErr, label)
-		var oracleIDs []string
-		for _, hit := range all {
-			if holds(t, c, docTerms[string(hit.Identifier)]) {
-				oracleIDs = append(oracleIDs, string(hit.Identifier))
-			}
-		}
-		if differs := symmetricDifference(oracleIDs, ids(want)); len(differs) > 0 {
-			return fmt.Sprintf("%s\n  Filter and the oracle disagree on %v: the criteria does not mean what it says", label, differs)
-		}
-		wantIDs, narrowedIDs := ids(want), ids(narrowed)
-		if missing := missingFrom(wantIDs, narrowedIDs); len(missing) > 0 {
-			return fmt.Sprintf("%s\n  the posting filter dropped %v, which Filter keeps (it must select a superset)", label, missing)
-		}
-		if exact && len(narrowedIDs) != len(wantIDs) {
-			return fmt.Sprintf("%s\n  the filter reports itself exact but selects %d documents and Filter selects %d", label, len(narrowedIDs), len(wantIDs))
-		}
-		if extra := missingFrom(ids(keptByFilter), wantIDs); len(extra) > 0 || len(keptByFilter) != len(want) {
-			return fmt.Sprintf("%s\n  Filter over the narrowed hits keeps %d documents and Filter over all of them keeps %d", label, len(keptByFilter), len(want))
+		label := fmt.Sprintf("seed %d round %d: %s", seed, round, describeCriteria(c))
+		if violation, _ := checkCriteria(t, view, docTerms, all, resolver, c, label); violation != "" {
+			return violation + "\n  (add this criteria to canonicalRegressions so it stays covered)"
 		}
 	}
 	return ""
