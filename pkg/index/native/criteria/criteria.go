@@ -247,3 +247,91 @@ func subtractHits(universe, excluded []native.QueryHit) []native.QueryHit {
 	}
 	return result
 }
+
+// ConjunctiveTermSets returns the exact term sets that every hit of criteria must match: the EQ, IN, HAVING and MATCH
+// conditions joined to the root only by AND. A caller intersects them with its candidates at posting level, before it
+// decodes any document, and still applies Filter afterwards, so a condition that is left out here (a range, a negation,
+// anything under an OR, a tag the resolver does not index, an invalid condition) only costs speed, never correctness.
+func ConjunctiveTermSets(criteria *modelv1.Criteria, fields FieldResolver) []native.TermSetRequest {
+	if criteria == nil || fields == nil {
+		return nil
+	}
+	switch expression := criteria.GetExp().(type) {
+	case *modelv1.Criteria_Condition:
+		if request, ok := conditionTermSet(expression.Condition, fields); ok {
+			return []native.TermSetRequest{request}
+		}
+	case *modelv1.Criteria_Le:
+		if expression.Le == nil || expression.Le.Op != modelv1.LogicalExpression_LOGICAL_OP_AND {
+			return nil
+		}
+		return append(ConjunctiveTermSets(expression.Le.Left, fields), ConjunctiveTermSets(expression.Le.Right, fields)...)
+	}
+	return nil
+}
+
+// conditionTermSet is the term set a positive exact condition selects, the same one matchCondition filters with.
+func conditionTermSet(condition *modelv1.Condition, fields FieldResolver) (native.TermSetRequest, bool) {
+	if condition == nil || condition.Value == nil || condition.Value.Value == nil {
+		return native.TermSetRequest{}, false
+	}
+	switch condition.Op {
+	case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_IN, modelv1.Condition_BINARY_OP_HAVING,
+		modelv1.Condition_BINARY_OP_MATCH:
+	default:
+		return native.TermSetRequest{}, false
+	}
+	if condition.Op == modelv1.Condition_BINARY_OP_MATCH {
+		if _, ok := condition.Value.Value.(*modelv1.TagValue_Str); !ok {
+			return native.TermSetRequest{}, false
+		}
+	}
+	if condition.Op == modelv1.Condition_BINARY_OP_IN {
+		switch condition.Value.Value.(type) {
+		case *modelv1.TagValue_StrArray, *modelv1.TagValue_IntArray:
+		default:
+			return native.TermSetRequest{}, false
+		}
+	}
+	expr, err := logical.ParseExpr(condition)
+	if err != nil {
+		return native.TermSetRequest{}, false
+	}
+	field, analyzer, ok := fields.Field(condition.Name)
+	if !ok {
+		return native.TermSetRequest{}, false
+	}
+	values := expr.Bytes()
+	switch condition.Op {
+	case modelv1.Condition_BINARY_OP_EQ:
+		if len(values) != 1 {
+			return native.TermSetRequest{}, false
+		}
+		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAnyTerm}, true
+	case modelv1.Condition_BINARY_OP_IN:
+		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAnyTerm}, true
+	case modelv1.Condition_BINARY_OP_HAVING:
+		return native.TermSetRequest{Field: field, Terms: values, Mode: native.MatchAllTerms}, true
+	default: // MATCH
+		if len(values) != 1 {
+			return native.TermSetRequest{}, false
+		}
+		requestAnalyzer := condition.MatchOption.GetAnalyzer()
+		if requestAnalyzer == "" {
+			requestAnalyzer = analyzer
+		}
+		terms, analyzeErr := nativeanalysis.Analyze(requestAnalyzer, values[0])
+		if analyzeErr != nil || len(terms) == 0 {
+			return native.TermSetRequest{}, false
+		}
+		analyzed := make([][]byte, 0, len(terms))
+		for _, term := range terms {
+			analyzed = append(analyzed, term.Value)
+		}
+		mode := native.MatchAnyTerm
+		if condition.MatchOption.GetOperator() == modelv1.Condition_MatchOption_OPERATOR_AND {
+			mode = native.MatchAllTerms
+		}
+		return native.TermSetRequest{Field: field, Terms: analyzed, Mode: mode}, true
+	}
+}

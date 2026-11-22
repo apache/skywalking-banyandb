@@ -620,12 +620,16 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		TimeRange:            mqo.TimeRange,
 	}
 	seriesFilter := make(map[common.SeriesID]struct{})
-	limited := mqo.Limit > 0 && mqo.Order != nil
+	// A limit without an order accepts any rows, so the search stops at the first rows nothing shadows instead of
+	// reading, and charging, every matching document.
+	limited := mqo.Limit > 0
 	// Only a time order ranks by the rows' timestamps, which is what lets a segment's time range prune it; an index
 	// order ranks by a tag value that a segment's time range says nothing about.
-	timeLimited := limited && mqo.Order.Type == index.OrderByTypeTime
+	timeLimited := limited && mqo.Order != nil && mqo.Order.Type == index.OrderByTypeTime
 	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
 	var kept []int64 // timestamps of the rows the limited searches kept, to prune older segments
+	unordered := limited && mqo.Order == nil
+	unorderedRows := 0 // rows the unordered limited searches kept so far
 	for i := range segments {
 		if timeLimited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
 			continue
@@ -657,6 +661,14 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 			kept = append(kept, sr.Timestamps...)
 		}
 		r.segResults.results = append(r.segResults.results, sr)
+		if unordered && sr.LimitApplied {
+			unorderedRows += len(sr.SeriesList)
+			if unorderedRows >= mqo.Limit {
+				// Any rows serve an unordered limit and every row so far is unshadowed, so the older segments, which
+				// can only add rows, need not be searched.
+				break
+			}
+		}
 	}
 	if len(r.segResults.results) < 1 {
 		return nilResult, nil

@@ -484,6 +484,35 @@ func orderFieldName(order *index.OrderBy) (string, error) {
 	}
 }
 
+// foundHits is what step 1 and 2 of search selected, and which limited strategy selected it.
+type foundHits struct {
+	hits             []native.QueryHit
+	moreSeries       bool
+	limited          bool // an ordered index-mode search that stopped at the limit
+	seriesLimited    bool // a series search ordered by an index rule that stopped at the limit
+	unorderedLimited bool // an index-mode search with no order that stopped at the limit
+}
+
+// searchCandidates selects the hits of a search: only as many as the limit needs when a limited strategy applies, every
+// candidate the criteria keep otherwise.
+func searchCandidates(ctx context.Context, view *native.ReadView, series []*pbv1.Series, subject string, opts IndexSearchOpts,
+) (found foundHits, err error) {
+	found.limited = limitedOrder(series, subject, opts)
+	found.seriesLimited = limitedSeriesOrder(series, subject, opts)
+	found.unorderedLimited = limitedUnordered(series, subject, opts)
+	switch {
+	case found.unorderedLimited:
+		found.hits, err = unorderedLimitedHits(ctx, view, subject, opts)
+	case found.limited:
+		found.hits, err = limitedOrderHits(ctx, view, subject, opts)
+	case found.seriesLimited:
+		found.hits, found.moreSeries, err = limitedSeriesHits(ctx, view, series, opts)
+	default:
+		found.hits, err = candidateHits(ctx, view, series, subject, opts)
+	}
+	return found, err
+}
+
 // search is the shared engine-call sequence behind Search, SearchWithoutSeries
 // and the legacy-named filter helper Lookup uses (NIDX-03 §6.2):
 //
@@ -530,20 +559,12 @@ func (s *seriesIndex) search(ctx context.Context, series []*pbv1.Series, subject
 		err = multierr.Append(err, view.Close())
 	}()
 
-	limited := limitedOrder(series, subject, opts)
-	seriesLimited := limitedSeriesOrder(series, subject, opts)
-	var hits []native.QueryHit
-	switch {
-	case limited:
-		hits, err = limitedOrderHits(ctx, view, subject, opts)
-	case seriesLimited:
-		hits, sd.MoreSeries, err = limitedSeriesHits(ctx, view, series, opts)
-	default:
-		hits, err = candidateHits(ctx, view, series, subject, opts)
-	}
+	found, err := searchCandidates(ctx, view, series, subject, opts)
 	if err != nil {
 		return SeriesData{}, nil, err
 	}
+	hits, limited, seriesLimited := found.hits, found.limited, found.seriesLimited
+	sd.MoreSeries, sd.LimitApplied = found.moreSeries, found.unorderedLimited
 
 	// sorted selects SortHits/ProjectSortValue for an index order
 	// (opts.Order.Index != nil), and for a time order on an index-mode search.
@@ -703,6 +724,60 @@ func limitedOrder(series []*pbv1.Series, subject string, opts IndexSearchOpts) b
 	}
 }
 
+// limitedUnordered reports that search serves an index-mode search with a limit, no order and a way to tell which series
+// a newer segment already returned: any rows serve, so it returns the first Limit that nothing shadows, and projects
+// only those.
+func limitedUnordered(series []*pbv1.Series, subject string, opts IndexSearchOpts) bool {
+	return len(series) == 0 && subject != "" && opts.Limit > 0 && opts.IsShadowed != nil && opts.Order == nil
+}
+
+// postingFilters returns the term sets every hit of opts must match: the indexed LIKE patterns and the exact conditions
+// the criteria joins by AND. A search intersects them with its candidates at posting level, before it decodes any
+// document, and still applies filterHits afterwards, so they only make a selective filter cheap.
+func postingFilters(opts IndexSearchOpts) []native.TermSetRequest {
+	var filters []native.TermSetRequest
+	if opts.Criteria != nil && opts.Fields != nil {
+		filters = criteria.ConjunctiveTermSets(opts.Criteria, opts.Fields)
+	}
+	return append(filters, opts.PatternRequests...)
+}
+
+// unorderedLimitedHits returns the first opts.Limit candidates of the subject that the criteria keep and that no newer
+// segment shadows, in the order the candidates are listed. It lists only a prefix of the candidates, decoding no more
+// documents than that, and asks for a larger prefix while the filters leave too few: a search that needs a few rows
+// neither reads nor charges the rest. Past topFetchCap it lists every candidate.
+func unorderedLimitedHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+	request := subjectRequest(subject, opts.TimeRange)
+	filters := postingFilters(opts)
+	known := make(map[string]bool)
+	fetch := opts.Limit
+	if opts.Criteria != nil || len(opts.PatternRequests) > 0 {
+		// A criteria drops an unknown share of the candidates: start with a chunk that tells that share apart from none.
+		fetch = opts.Limit * firstFilteredChunkFactor
+	}
+	for {
+		if fetch > topFetchCap {
+			fetch = 0 // every candidate
+		}
+		listed, truncated, err := view.MatchTermsSetPrefixFiltered(ctx, request, filters, fetch)
+		if err != nil {
+			return nil, err
+		}
+		candidates, err := filterHits(ctx, view, listed, opts)
+		if err != nil {
+			return nil, err
+		}
+		survivors, err := dropShadowed(ctx, candidates, known, opts.IsShadowed)
+		if err != nil {
+			return nil, err
+		}
+		if len(survivors) >= opts.Limit || !truncated {
+			return survivors[:min(opts.Limit, len(survivors))], nil
+		}
+		fetch = nextFetch(fetch, opts.Limit, len(survivors))
+	}
+}
+
 // orderLimitedHits is step 3 of search for a limited search. A time order returns the hits in storage order with the
 // indexes that put the projected rows back in time order. An index order keeps the rank order the search produced and
 // returns the field its sort values are read from.
@@ -765,7 +840,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 		}}
 		if timeRange != nil {
 			ranker.top = func(ctx context.Context, fetch int) ([]native.QueryHit, error) {
-				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Limit: fetch, Desc: desc})
+				return view.TopTimeHits(ctx, native.TopTimeRequest{Candidates: candidates, Filters: postingFilters(opts), Limit: fetch, Desc: desc})
 			}
 		}
 		return ranker, nil
@@ -781,7 +856,7 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 			return plan, nil
 		}
 		var planErr error
-		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Field: field, Desc: desc})
+		plan, planErr = view.NewTopFieldPlan(ctx, native.TopFieldRequest{Candidates: candidates, Filters: postingFilters(opts), Field: field, Desc: desc})
 		return plan, planErr
 	}
 	return hitRanker{
@@ -816,8 +891,13 @@ func newHitRanker(view *native.ReadView, candidates native.TermSetRequest, opts 
 // descent that decodes only about the chunk), filters each chunk, and stops at Limit survivors or when the index has no
 // more. Past topFetchCap, or when the index cannot rank, it ranks the whole filtered universe instead.
 func limitedOrderHits(ctx context.Context, view *native.ReadView, subject string, opts IndexSearchOpts) ([]native.QueryHit, error) {
+	// The whole-universe fallback lists only the candidates the posting filters keep, not every document of the subject.
 	universe := func(ctx context.Context) ([]native.QueryHit, error) {
-		return subjectUniverse(ctx, view, subject, opts.TimeRange)
+		if subject == "" {
+			return nil, nil
+		}
+		hits, _, err := view.MatchTermsSetPrefixFiltered(ctx, subjectRequest(subject, opts.TimeRange), postingFilters(opts), 0)
+		return hits, err
 	}
 	return rankedPrefix(ctx, view, subjectRequest(subject, opts.TimeRange), universe, opts, opts.Limit, opts.IsShadowed)
 }

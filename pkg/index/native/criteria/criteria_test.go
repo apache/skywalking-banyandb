@@ -291,3 +291,64 @@ func TestFilterInvalidCriteriaType(t *testing.T) {
 	_, err := Filter(context.Background(), view, universe(t, view), &modelv1.Criteria{}, identityResolver{})
 	require.ErrorIs(t, err, logical.ErrInvalidCriteriaType)
 }
+
+func andOf(left, right *modelv1.Criteria) *modelv1.Criteria {
+	return &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{Op: modelv1.LogicalExpression_LOGICAL_OP_AND, Left: left, Right: right}}}
+}
+
+func orOf(left, right *modelv1.Criteria) *modelv1.Criteria {
+	return &modelv1.Criteria{Exp: &modelv1.Criteria_Le{Le: &modelv1.LogicalExpression{Op: modelv1.LogicalExpression_LOGICAL_OP_OR, Left: left, Right: right}}}
+}
+
+func TestConjunctiveTermSetsKeepsOnlyAndConnectedExactConditions(t *testing.T) {
+	eq := condition("name", modelv1.Condition_BINARY_OP_EQ, strValue("bob"))
+	in := condition("name", modelv1.Condition_BINARY_OP_IN, strArrayValue("bob", "carol"))
+	ne := condition("name", modelv1.Condition_BINARY_OP_NE, strValue("bob"))
+	age := condition("age", modelv1.Condition_BINARY_OP_GT, intValue(3))
+	unresolved := condition("unresolvable", modelv1.Condition_BINARY_OP_EQ, strValue("x"))
+	for _, tc := range []struct {
+		criteria *modelv1.Criteria
+		name     string
+		want     int
+	}{
+		{name: "nil", criteria: nil, want: 0},
+		{name: "eq", criteria: eq, want: 1},
+		{name: "in", criteria: in, want: 1},
+		{name: "ne is not exact", criteria: ne, want: 0},
+		{name: "range is not exact", criteria: age, want: 0},
+		{name: "unindexed tag", criteria: unresolved, want: 0},
+		{name: "and of two", criteria: andOf(eq, in), want: 2},
+		{name: "and keeps the exact side", criteria: andOf(eq, age), want: 1},
+		{name: "nested and", criteria: andOf(andOf(eq, in), eq), want: 3},
+		{name: "or keeps nothing", criteria: orOf(eq, in), want: 0},
+		{name: "or under and", criteria: andOf(eq, orOf(in, eq)), want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Len(t, ConjunctiveTermSets(tc.criteria, identityResolver{}), tc.want)
+		})
+	}
+}
+
+// Narrowing the universe by the conjunctive term sets must never drop a hit the whole criteria keeps.
+func TestConjunctiveTermSetsAreImpliedByTheCriteria(t *testing.T) {
+	view, closeFn := newCriteriaTestView(t)
+	defer closeFn()
+	eq := condition("name", modelv1.Condition_BINARY_OP_EQ, strValue("bob"))
+	in := condition("name", modelv1.Condition_BINARY_OP_IN, strArrayValue("bob", "carol"))
+	ne := condition("name", modelv1.Condition_BINARY_OP_NE, strValue("bob"))
+	age := condition("age", modelv1.Condition_BINARY_OP_GT, intValue(3))
+	for name, c := range map[string]*modelv1.Criteria{
+		"eq": eq, "in": in, "and": andOf(in, ne), "and range": andOf(in, age), "or": orOf(eq, ne), "nested": andOf(orOf(eq, in), andOf(in, age)),
+	} {
+		want, err := Filter(context.Background(), view, universe(t, view), c, identityResolver{})
+		require.NoError(t, err, name)
+		narrowed := universe(t, view)
+		for _, set := range ConjunctiveTermSets(c, identityResolver{}) {
+			narrowed, err = view.FilterTermsSet(context.Background(), narrowed, set)
+			require.NoError(t, err, name)
+		}
+		got, err := Filter(context.Background(), view, narrowed, c, identityResolver{})
+		require.NoError(t, err, name)
+		require.ElementsMatch(t, ids(want), ids(got), name)
+	}
+}

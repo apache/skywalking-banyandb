@@ -18,6 +18,7 @@
 package index
 
 import (
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -154,5 +155,39 @@ func TestField_Marshal_Unmarshal(t *testing.T) {
 			assert.Equal(t, tt.field.Store, unmarshaled.Store)
 			assert.Equal(t, tt.field.Index, unmarshaled.Index)
 		})
+	}
+}
+
+// The sort ladder of a field is built from its numeric key, so the key must survive the wire: the liaison builds the index
+// documents of an index-mode measure and ships them to the data node.
+func TestField_Marshal_Unmarshal_KeepsTheNumericKey(t *testing.T) {
+	for _, key := range []int64{0, 1, -1, 42, -42, 1 << 40, -(1 << 40), math.MaxInt64, math.MinInt64} {
+		field := NewBytesField(FieldKey{TagName: "ping", IndexRuleID: 7}, []byte("v"))
+		field.Index, field.Store = true, true
+		field.Numeric, field.NumericKey = true, key
+		doc := Document{EntityValues: []byte("e"), Timestamp: 5, Version: 1, Fields: []Field{field}}
+		data, err := Documents{doc}.Marshal()
+		require.NoError(t, err)
+		var decoded Documents
+		require.NoError(t, decoded.Unmarshal(data))
+		require.Len(t, decoded, 1)
+		require.Len(t, decoded[0].Fields, 1)
+		got := decoded[0].Fields[0]
+		require.True(t, got.Numeric, "key %d", key)
+		require.Equal(t, key, got.NumericKey)
+		require.True(t, got.Index)
+		require.True(t, got.Store)
+		require.False(t, got.NoSort)
+	}
+	plain := NewBytesField(FieldKey{TagName: "name"}, []byte("v"))
+	plain.Index = true
+	data, err := Documents{{EntityValues: []byte("e"), Fields: []Field{plain, plain}}}.Marshal()
+	require.NoError(t, err)
+	var decoded Documents
+	require.NoError(t, decoded.Unmarshal(data))
+	require.Len(t, decoded[0].Fields, 2)
+	for _, got := range decoded[0].Fields {
+		require.False(t, got.Numeric)
+		require.Zero(t, got.NumericKey)
 	}
 }

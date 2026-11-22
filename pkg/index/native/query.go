@@ -203,6 +203,97 @@ func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([
 	return result, nil
 }
 
+// MatchTermsSetPrefix is MatchTermsSet that lists at most limit candidates: it takes the first documents of each segment
+// in document order and decodes only those, so a caller that needs a few of the candidates neither reads nor charges the
+// rest. truncated reports that candidates were left out, so the caller can ask for more. A non-positive limit lists every
+// candidate and never truncates.
+func (v *ReadView) MatchTermsSetPrefix(ctx context.Context, request TermSetRequest, limit int) (hits []QueryHit, truncated bool, err error) {
+	return v.MatchTermsSetPrefixFiltered(ctx, request, nil, limit)
+}
+
+// MatchTermsSetPrefixFiltered is MatchTermsSetPrefix over the candidates that every filter also matches. The filters
+// intersect with the candidates at posting level, before any document is decoded, so a selective filter lists and charges
+// only the documents it keeps instead of every candidate. A filter is a term set like the one FilterTermsSet takes: it
+// must not carry a time range.
+func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request TermSetRequest, filters []TermSetRequest, limit int,
+) (hits []QueryHit, truncated bool, err error) {
+	if err = v.check(ctx); err != nil {
+		return nil, false, err
+	}
+	if termSetRequestEmpty(request) {
+		return nil, false, nil
+	}
+	if err = validateTermSetRequest(request); err != nil {
+		return nil, false, err
+	}
+	patterns, patternErr := compileTermPatterns(ctx, request, nil)
+	if patternErr != nil {
+		return nil, false, patternErr
+	}
+	for i := range filters {
+		if termSetRequestEmpty(filters[i]) {
+			// A filter that selects nothing leaves no candidate.
+			return nil, false, nil
+		}
+	}
+	filterPatterns, filterErr := compileTopTimeFilters(ctx, filters)
+	if filterErr != nil {
+		return nil, false, filterErr
+	}
+	result := make([]QueryHit, 0, max(limit, 0))
+	var totalCandidates uint64
+	for segmentIndex, current := range v.root.segments {
+		if err = ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		segment, ok := current.(*memorySegment)
+		if !ok {
+			return nil, false, fmt.Errorf("match terms segment %d has type %T", segmentIndex, current)
+		}
+		candidates, candidatesErr := exactCandidates(ctx, segment, request, patterns)
+		if candidatesErr != nil {
+			return nil, false, candidatesErr
+		}
+		if candidates, candidatesErr = narrowByFilters(ctx, segment, candidates, filters, filterPatterns); candidatesErr != nil {
+			return nil, false, candidatesErr
+		}
+		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
+		if narrowErr != nil {
+			return nil, false, narrowErr
+		}
+		if skip || narrowed == nil || narrowed.IsEmpty() {
+			continue
+		}
+		// Counted after narrowing, as MatchTermsSet does: a document the range excludes was never a candidate.
+		totalCandidates += narrowed.GetCardinality()
+		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
+			return nil, false, ErrQueryLimit
+		}
+		if limit > 0 {
+			remaining := limit - len(result)
+			if remaining <= 0 {
+				return result, true, nil
+			}
+			if narrowed.GetCardinality() > uint64(remaining) {
+				first := roaringpkg.New()
+				for iterator := narrowed.Iterator(); iterator.HasNext() && first.GetCardinality() < uint64(remaining); {
+					first.Add(iterator.Next())
+				}
+				narrowed = first
+				truncated = true
+			}
+		}
+		segmentHits, projectErr := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
+		if projectErr != nil {
+			return nil, false, projectErr
+		}
+		if result, err = appendQueryHits(ctx, result, segmentHits); err != nil {
+			return nil, false, err
+		}
+	}
+	return result, truncated, nil
+}
+
 // termSetRequestEmpty reports a request with no literal terms and no pattern
 // to expand, which every term-set entry point treats as a no-op match.
 func termSetRequestEmpty(request TermSetRequest) bool {
