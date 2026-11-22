@@ -213,8 +213,14 @@ func (s *nativePropertyStore) query(ctx context.Context, request *propertyv1.Que
 
 func queryHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
 	var err error
-	if order == nil && limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
+	unsortedLimited := (order == nil || order.TagName == "") && limit > 0
+	if unsortedLimited {
+		// Every revision and tombstone of an entity is a hit of its own, and the API layer keeps only the newest
+		// revision of an entity and drops the entity when that revision is a tombstone. Cutting the raw hits at the
+		// limit would let old revisions and tombstones fill the page: an entity set with 150 of 200 deleted returned
+		// an empty page for LIMIT 1. Keep the newest hit of each entity, then read hits until limit live entities
+		// are found.
+		hits = newestHitPerEntity(hits)
 	}
 	if order != nil && order.TagName != "" {
 		hits, err = view.SortHits(ctx, hits, native.SortRequest{
@@ -228,6 +234,7 @@ func queryHits(ctx context.Context, view *native.ReadView, hits []native.QueryHi
 		}
 	}
 	result := make([]*queryProperty, 0, len(hits))
+	live := 0 // live entities read so far, for an unsorted limited query
 	for _, hit := range hits {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
@@ -238,6 +245,12 @@ func queryHits(ctx context.Context, view *native.ReadView, hits []native.QueryHi
 				return nil, projectErr
 			}
 			result = append(result, property)
+			if unsortedLimited && property.deleteTime == 0 {
+				live++
+				if live >= limit {
+					break
+				}
+			}
 			continue
 		}
 		projected, projectErr := view.ProjectHit(ctx, hit, sourceField, deleteField)
@@ -265,6 +278,32 @@ func queryHits(ctx context.Context, view *native.ReadView, hits []native.QueryHi
 		result = append(result, property)
 	}
 	return result, nil
+}
+
+// newestHitPerEntity keeps the hit with the highest revision of each entity, in the order those hits first appear. A
+// hit's identifier is the entity followed by "/" and its revision, which is also the hit's timestamp.
+func newestHitPerEntity(hits []native.QueryHit) []native.QueryHit {
+	newest := make(map[string]int, len(hits))
+	kept := make([]native.QueryHit, 0, len(hits))
+	for i := range hits {
+		identifier := hits[i].Identifier
+		cut := bytes.LastIndexByte(identifier, '/')
+		if cut < 0 {
+			// Not an entity/revision identifier: nothing to reconcile it against.
+			kept = append(kept, hits[i])
+			continue
+		}
+		entity := string(identifier[:cut])
+		if at, seen := newest[entity]; seen {
+			if hits[i].Timestamp > kept[at].Timestamp {
+				kept[at] = hits[i]
+			}
+			continue
+		}
+		newest[entity] = len(kept)
+		kept = append(kept, hits[i])
+	}
+	return kept
 }
 
 // entityRevisions reads, from one view, the newest stored revision of the entity request selects

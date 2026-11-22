@@ -55,6 +55,34 @@ func TestAnalyzeDistributed_AllowsGroupByTopWithoutAgg(t *testing.T) {
 	}
 }
 
+// A window past uint32 must not wrap the limit a data node is asked for: LIMIT 4294967295 OFFSET 1 once asked for 0 rows.
+func TestAnalyzeDistributed_NodeWindowSaturates(t *testing.T) {
+	for _, tc := range []struct {
+		limit, offset, want uint32
+	}{
+		{limit: math.MaxUint32, offset: 1, want: math.MaxUint32},
+		{limit: math.MaxUint32, offset: math.MaxUint32, want: math.MaxUint32},
+		{limit: math.MaxUint32 - 3, offset: 3, want: math.MaxUint32},
+		{limit: 7, offset: 3, want: 10},
+	} {
+		req := &measurev1.QueryRequest{
+			Name: "demo", Groups: []string{defaultName}, TagProjection: projTagProj(),
+			FieldProjection: &measurev1.QueryRequest_FieldProjection{Names: []string{fieldValue}},
+			Limit:           tc.limit, Offset: tc.offset,
+		}
+		p, analyzeErr := AnalyzeDistributed(req, []*databasev1.Measure{testMeasureSchema()}, nil, vmeasure.VectorizedConfig{BatchSize: 4, QueryMemoryMiB: 1})
+		if analyzeErr != nil {
+			t.Fatalf("limit=%d offset=%d: %v", tc.limit, tc.offset, analyzeErr)
+		}
+		if got := p.nodeTemplate.GetLimit(); got != tc.want {
+			t.Fatalf("limit=%d offset=%d: node limit got %d, want %d", tc.limit, tc.offset, got, tc.want)
+		}
+		if p.nodeTemplate.GetOffset() != 0 {
+			t.Fatalf("node offset got %d, want 0", p.nodeTemplate.GetOffset())
+		}
+	}
+}
+
 func TestAnalyzeDistributed_AllowsSupportedNonAggRows(t *testing.T) {
 	req := &measurev1.QueryRequest{
 		Name:            "demo",
