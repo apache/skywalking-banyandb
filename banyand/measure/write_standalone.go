@@ -20,6 +20,7 @@ package measure
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
@@ -37,8 +38,10 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -48,10 +51,13 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
+	dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -60,6 +66,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -133,14 +140,14 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 
 	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 	dpg, ok := dst[gn]
 	if !ok {
@@ -165,7 +172,7 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 	}
 	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
+		return nil, common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find measure definition: %s", metadata))
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
@@ -458,6 +465,10 @@ func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *p
 
 // decodeWriteEvent returns the write request an event carries and whether it skips Top-N
 // aggregation, which only a data import's in-process write does.
+// errInvalidEventType is the error decodeWriteEvent returns for an event of a type a measure
+// write does not take.
+var errInvalidEventType = errors.New("invalid event data type")
+
 func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) {
 	switch e := event.(type) {
 	case *measurev1.InternalWriteRequest:
@@ -471,7 +482,7 @@ func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) 
 		}
 		return writeEvent, false, nil
 	default:
-		return nil, false, fmt.Errorf("invalid event data type %T", event)
+		return nil, false, fmt.Errorf("%w %T", errInvalidEventType, event)
 	}
 }
 
@@ -479,6 +490,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -492,7 +504,11 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		writeEvent, skipTopN, err := decodeWriteEvent(events[i])
 		if err != nil {
 			w.l.Error().Err(err).Msg("cannot decode write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("measure: cannot decode write event: %w", err))
+			reason := common.DropReasonDecode
+			if errors.Is(err, errInvalidEventType) {
+				reason = common.DropReasonInvalidType
+			}
+			w.drops.SkipRow(ctx, i, "", reason, fmt.Errorf("measure: cannot decode write event: %w", err))
 			continue
 		}
 		req := writeEvent.Request
@@ -505,7 +521,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec, skipTopN)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
-			common.RecordRowFailure(ctx, i, fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
