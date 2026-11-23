@@ -110,6 +110,10 @@ type queryOptions struct {
 	traceIDs       []string
 	model.TraceQueryOptions
 	QueryMemoryMiB int
+	// maxTraces is the most traces a query by trace ID may return (the request's offset plus limit), counted among the traces
+	// that exist: the IDs are not cut to it before they are looked up, and the scan stops once it has found that many traces
+	// (see scanVectorizedTraceIDs). Zero means no cap.
+	maxTraces int
 }
 
 func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.TraceQueryResult, error) {
@@ -170,6 +174,7 @@ func (t *trace) Query(ctx context.Context, tqo model.TraceQueryOptions) (model.T
 		traceIDs:          tqo.TraceIDs,
 		schemaTagTypes:    schemaTagTypes,
 		QueryMemoryMiB:    t.vectorized.QueryMemoryMiB,
+		maxTraces:         tqo.MaxTraceSize,
 	}
 
 	// resolveSeriesEntities runs an O(series-cardinality) wildcard series-index lookup
