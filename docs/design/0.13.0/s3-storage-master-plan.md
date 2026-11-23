@@ -58,17 +58,19 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
 │                                                                      ┘
 └── S3 Cloud TSDB (s3://<bucket>/<prefix>/<catalog>/<group>/) ─────────┐
      └── seg-<suffix>/                                                 │
-          ├── metadata.json                                            │
+          ├── metadata                                                 │
           ├── sidx/<epoch>.snp                                         ├} [PERMANENT CLOUD]
           └── shard-<shard_id>/                                        │
                ├── manifests/<epoch>.snp                               │
                └── parts/<part_id>/ ───────────────────────────────────┐
-                    ├── meta.bin                                       │
-                    ├── timestamps.bin                                 │
-                    ├── tag_metadata.bin                               │
-                    ├── tag_values.bin                                 ├} [CACHED LOCALLY ON DEMAND]
-                    ├── fv.bin                                         │
-                    ├── bloom-0                                        │
+                    ├── metadata.json           (part summary)         │
+                    ├── meta.bin                (block offsets)        │
+                    ├── primary.bin             (primary keys)         │
+                    ├── tag.type                (tag types)            ├} [CACHED LOCALLY ON DEMAND]
+                    ├── timestamps.bin          [MEASURE/STREAM]       │
+                    ├── fv.bin                  [MEASURE values]       │
+                    ├── spans.bin               [TRACE spans]          │
+                    └── traceID.filter          [TRACE bloom filter]   │
                     └── (Range-GET block slices in FileCache) ──────────┘
 ```
 
@@ -205,7 +207,24 @@ The agent streams sealed parts to the remote bucket under `s3://<bucket>/<prefix
 - **Encapsulated Dual Strategy in `s3FS.Upload()`**:
   - **Lightweight Components (< 16 MB)**: Handled transparently by the driver via single `PutObject` calls (e.g. `meta.bin`, `bloom-0`).
   - **Heavy Column Blocks (≥ 16 MB)**: Handled transparently by the driver via AWS SDK v2 `manager.Uploader` in 8 MB chunks streamed concurrently with bounded memory buffers (`PartSize: 8MB`, `Concurrency: 4-8`).
-- **File-Level Local Checkpointing (`cloud_offload_progress.json`)**: Checkpoints uploaded immutable files (`meta.bin`, `timestamps.bin`, `fv.bin`) locally on NVMe strictly for crash resumption, decoupling the checkpoint from raw in-flight S3 MPU chunk state.
+- **File-Level Local Checkpointing (`cloud_offload_progress.json`)**: Checkpoints uploaded immutable files locally on NVMe strictly for crash resumption, decoupling the checkpoint from raw in-flight S3 MPU chunk state. Written atomically via temp-file rename (`.tmp` $\to$ `.json`):
+  ```json
+  {
+    "group": "sw_metric",
+    "segment": "seg-20260601",
+    "shard_id": 0,
+    "epoch": 2,
+    "first_timestamp": 1741764000000,
+    "last_timestamp": 1741850399000,
+    "total_records": 1050,
+    "status": "UPLOADING",
+    "current": "parts/0001/timestamps.bin",
+    "upnext": "parts/0001/fv.bin",
+    "completed_files": [
+      "parts/0001/meta.bin"
+    ]
+  }
+  ```
 
 #### Step 4: Configurable Crash Recovery Switch (`--lifecycle-resume-mode`)
 When the agent starts, it checks for an existing `cloud_offload_progress.json`. To prevent unattended background pods from hanging on interactive prompts, recovery behavior is governed by a 3-way switch:
@@ -221,26 +240,30 @@ Formal durability verification is established through a 3-phase CRC32C checksum 
    - **Byte-Length Match**: Remote `ContentLength` matches the local part component byte size exactly.
    - **Checksum Match**: Remote `ChecksumCRC32C` matches `localCRC32C` identically.
 
-Only after **100% of the parts** in the shard pass their checksum verification does the agent upload the shard snapshot manifest:
-`s3://.../shard-<shard_id>/manifests/<epoch>.snp`
-
-Once `<epoch>.snp` is uploaded and verified:
-- **Remote Schema Sync**: The agent syncs the latest group schema (`schema.json`) to S3 if not already present or if the local schema has evolved, guaranteeing remote segments are never left without their corresponding schema definitions.
-- The segment is atomically visible to query readers.
-- Local NVMe parts are safely pruned (`os.RemoveAll`).
-- `cloud_offload_progress.json` is deleted from disk.
+Only after **100% of the parts** in the shard pass their checksum verification does the agent commit the snapshot:
+1. **Pre-Manifest Schema Sync**: The agent verifies that the immutable schema snapshot (`schemas/rev-<revision>.json`) is durable in S3 **before** publishing the manifest, eliminating any crash window with un-decodable data.
+2. **Atomic Manifest Publication**: The agent commits `s3://.../shard-<shard_id>/manifests/<epoch>.snp` (embedding `schema_revision: <revision>`) via an atomic conditional write (`If-None-Match: "*"`).
+3. The segment is atomically visible to query readers.
+4. Local NVMe parts are safely pruned (`os.RemoveAll`).
+5. `cloud_offload_progress.json` is deleted from disk.
 
 #### Replica Ownership, Fencing & Pruning Policy
 
 In multi-replica cluster deployments (`replicas > 0`):
 1. **Designated Upload Owner**:
    - The primary node assigned by BanyanDB's node registry (`nodes[0]` from `nodeRegistry.Locate(group, name, shardID, 0)`) is the sole upload owner for that shard-segment. Secondary replicas remain idle during offloading.
-2. **Failover & Epoch Fencing**:
-   - If the primary node fails mid-upload, BanyanDB promotes a secondary replica to primary.
-   - The promoted replica uploads with an incremented manifest epoch (`<epoch+1>.snp`).
-   - If a stale, partitioned primary node attempts to finish uploading later, it detects a newer epoch in S3 and aborts immediately, preventing stale overwrites.
-3. **Follower Coverage Verification & Local Pruning**:
-   - Secondary replicas verify that S3 contains the durable `<epoch>.snp` manifest via a zero-cost `Stat` check before pruning local files.
+2. **Atomic Failover Fencing (`If-None-Match: "*"`)**:
+   - Shard snapshot manifests use zero-padded monotonic sequence naming (e.g. `manifests/0000000000000002.snp`).
+   - The upload owner commits the manifest using an atomic conditional write:
+     `s3.PutObject(..., IfNoneMatch: "*")`
+   - **Stale Owner Rejection**: If the primary freezes and a promoted replica commits `0000000000000002.snp`, any delayed attempt by the old primary to commit that epoch is **atomically rejected by S3 with `412 Precondition Failed`**. The stale node aborts immediately, preventing split-brain overwrites.
+3. **Reader Manifest Discovery (Highest Epoch Wins)**:
+   - Query readers list `manifests/` under the shard prefix and deterministically select the lexicographically highest `.snp` file as the authoritative snapshot.
+4. **Follower Coverage Verification & Safe Local Pruning**:
+   - Secondary replicas do **not** prune local files on bare `Stat` existence.
+   - The secondary replica inspects the committed S3 manifest's data boundary (`first_timestamp`, `last_timestamp`, and `total_records`):
+     - **Safe to Prune**: If S3 covers the replica's time window and `remote total_records >= local total_records`, the replica safely prunes its local NVMe files.
+     - **Divergence Block**: If S3 has fewer records or a narrower time window than the replica holds locally, **local pruning is blocked**, preventing data loss from un-synced replica writes.
    - **Configurable Pruning Toggle**: Adhering to Principle 2, pruning is governed by `--lifecycle-prune-local-replicas=true` (Default: `true` to reclaim NVMe disk). Operators can set this to `false` to retain local replica copies on disk alongside S3 for local fallback.
 
 ### 3. Backlog Observability & Backpressure Policy
@@ -252,9 +275,9 @@ To prevent un-uploaded segments from exhausting local disk during remote storage
 #### 1. Defining Slow S3 Uploads & Macro/Micro Observability Warnings
 
 ##### Micro-Level Warnings (Socket & Request Layer)
-These detect immediate network or provider degradation at the individual transfer level:
+These emit log warnings for possible network or provider degradation at the individual transfer level:
 1. **Low-Speed Tripwire (`http_low_speed_limit`)**:
-   - If average transfer throughput drops below `2 MB/s` for a sustained window of `30 seconds`, the HTTP context is cancelled, the hanging socket is terminated, and the file upload retries.
+   - If average transfer throughput drops below `2 MB/s` for a sustained window of `30 seconds`, the agent emits a structured log warning.
 2. **Rate Throttling Spikes (`503 SlowDown` / `429 Too Many Requests`)**:
    - If >5% of HTTP PUT requests are throttled over a 1-minute window, the remote endpoint is flagged as rate-limited, activating AWS SDK v2 full-jitter exponential backoff and reducing concurrent upload streams.
 
@@ -289,7 +312,8 @@ Because local segments are strictly retained until full remote manifest commit (
 | **Agent Crash Mid-Upload** | Incomplete segment in S3; orphaned MPU chunks. | Governed by `--lifecycle-resume-mode=auto|restart|halt-and-alert`. In `auto` mode, the agent aborts dangling MPU sessions via `AbortMultipartUpload` and resumes only missing parts without re-uploading completed ones. |
 | **Crash Before `.snp` Manifest Upload** | Unreferenced parts resting in S3. | **Zero reader corruption**: Readers resolve active parts strictly via `.snp`. A background garbage collection sweep identifies and deletes prefixes lacking a valid `.snp` sentinel. |
 | **S3 503 SlowDown / Rate Limiting** | Migration pipeline stalls under S3 request throttling. | Client utilizes AWS SDK v2 full-jitter exponential backoff `(full jitter: randomized sleep between 0 and exponential ceiling to prevent thundering herds)`. |
-| **Prolonged Remote Storage Outage / Slowdown** | Uncommitted segments pile up on local disk, risking disk exhaustion. | Strict FIFO offload with low-speed socket tripwire (2 MB/s for 30s); pauses local compaction at <20% disk to eliminate 2× scratch spike; throttles ingestion at <5% disk to prevent node panics. |
+| **Prolonged Remote Storage Outage / Slowdown** | Uncommitted segments pile up on local disk, risking disk exhaustion. | Strict FIFO offload with low-speed log warning (2 MB/s for 30s); pauses local compaction at <20% disk to eliminate 2× scratch spike; throttles ingestion at <5% disk to prevent node panics. |
+| **Zombie Primary Resumes After Failover** | Stale primary wakes up after promotion and attempts to commit. | S3 atomically rejects the upload with `412 Precondition Failed` via `If-None-Match: "*"`. Stale node detects conflict, aborts, and purges local scratch files with zero corruption to the active snapshot. Covered by dedicated failure unit/E2E test. |
 | **Local Disk Exhaustion During Pre-Compaction** | Machine runs out of scratch space before uploading. | Pre-compaction streams with bounded memory (128–256 MB buffer ceiling) or writes to a dedicated scratch volume (`--lifecycle-scratch-dir`) monitored by low-watermark safety checks. |
 | **Schema Deletion During Migration (Orphan Rows)** | Schema removed while segment is queued for S3 upload. | Native orphan handling routes deleted measure/stream rows to the local orphan archive (`--migration-orphan-policy=archive`), allowing remaining valid columnar parts to upload cleanly. |
 
@@ -379,10 +403,10 @@ Data nodes never download multi-gigabyte segment archives to answer queries:
 - Readers issue byte-aligned HTTP requests (`s3.GetObjectInput{Range: "bytes=1048576-2097151"}`) to stream only the specific columnar slices (`timestamps.bin`, `fv.bin`) required by the query projection and time filters.
 - Eliminates local disk staging overhead and bounds in-flight memory to active query block sizes.
 
-#### Step 2: Bloom Filter Query Pruning (Network Bandwidth Shield)
+#### Step 2: Native Filter Query Pruning (Network Bandwidth Shield)
 For specific ID lookups (e.g. `trace_id = "abcd-1234"` or entity ID queries):
-- The query engine fetches the small `bloom-0` filter file first.
-- If the Bloom filter test returns negative, the part is completely bypassed over the wire.
+- The query engine fetches the small native filter file first (e.g. `traceID.filter` for traces, or secondary index filters).
+- If the filter test returns negative, the part is completely bypassed over the wire.
 - Prevents downloading hundreds of megabytes of columnar payloads for parts that do not contain the target series.
 
 #### Bounded In-Memory & Local Disk Caching
@@ -391,8 +415,8 @@ All cache pools provide production-ready defaults and are fully configurable via
 
 ##### 1. Partitioned In-Memory Cache (RAM)
 To prevent heavy Bloom filters from evicting critical metadata, memory is split into two isolated LRU pools:
-- **Metadata Pool (`meta.bin`, `.snp`)**: Default `128MB` (`--s3-cache-meta-max-memory=128MB`). Eviction: Isolated LRU.
-- **Bloom Filter Pool (`bloom-0`)**: Default `512MB` (`--s3-cache-bloom-max-memory=512MB`). Eviction: Isolated LRU. Bloom filters never evict metadata.
+- **Metadata Pool (`meta.bin`, `.snp`, `metadata.json`)**: Default `128MB` (`--s3-cache-meta-max-memory=128MB`). Eviction: Isolated LRU.
+- **Filter Pool (`traceID.filter`, secondary index filters)**: Default `512MB` (`--s3-cache-bloom-max-memory=512MB`). Eviction: Isolated LRU. Filters never evict metadata.
 - *Default Total RAM Footprint*: ~640 MB. Fully configurable.
 
 ##### 2. Local Disk Cache (NVMe)
@@ -431,14 +455,14 @@ The Remote S3 Compactor is the **out-of-band maintenance engine** responsible fo
 
 #### Step 1: Data-Blind Merge Planning
 The compactor plans merges without downloading raw columnar data:
-- Downloads only lightweight part `metadata.json` / `meta.bin` files (<1 KB) to memory.
+- Downloads only lightweight part `metadata.json` summary files (<1 KB) to memory to inspect timestamps, row counts, and block boundaries. (Binary block descriptors `meta.bin` are accessed only during merge execution).
 - Evaluates BanyanDB's native size-tiered merge ratio math (`mergePolicy.getPartsToMerge`) to select candidates for consolidation.
 
 #### Step 2: K-Way Merge Sort via Local Scratch Buffer
 Once candidate parts are selected:
 - The compactor streams selected parts using bounded RAM buffers (4 MB–8 MB) or a dedicated local scratch volume (`--compactor-scratch-dir=/tmp/banyandb-scratch`).
 - Executes a K-way sorted merge, grouping columnar data into a new consolidated part (`part-<new_id>`).
-- Regenerates and serializes a unified `bloom-0` filter for the output part.
+- Regenerates native filters: serializes `traceID.filter` for Trace parts, and merges `primary.bin` alongside columnar files for Measure and Stream parts.
 
 #### Step 3: Compaction Priority Scoring & Scheduling
 The compactor schedules work dynamically based on fragmentation severity:
@@ -576,16 +600,21 @@ The Remote Schema Mirroring & Disaster Recovery subsystem guarantees that S3 rem
 
 ### 2. How the Design Actually Works
 
-#### 1. Remote Schema Snapshot (`schema.json`)
-The source of truth in disaster scenarios is `s3://<bucket>/<prefix>/<catalog>/<group>/schema.json`.
+#### 1. Immutable Remote Schema Snapshots (`schemas/rev-<revision>.json`)
+The source of truth in disaster scenarios is the set of immutable versioned schemas under:
+`s3://<bucket>/<prefix>/<catalog>/<group>/schemas/rev-<revision>.json`
 
+- **Versioned Immutability**: Schemas are stored as write-once revision files. Delayed old writers cannot overwrite newer schemas because each revision carries a unique monotonic revision number.
+- **Manifest Binding**: Each shard snapshot manifest (`.snp`) explicitly embeds its required `"schema_revision": <revision>`, ensuring readers always decode parts using the exact schema revision that produced them.
+- **Latest Pointer**: An authoritative `schemas/latest.json` pointer references the newest active revision, updated conditionally with `If-None-Match` to reject stale updates.
 - **When it is written**:
   1. **At Schema Creation/Update**: Triggered whenever an operator applies changes via `bydbctl`.
-  2. **At Segment Upload Completion**: As the final step of offloading a segment (alongside the `.snp` manifest), the offload agent verifies and syncs `schema.json` to S3. This guarantees that every segment committed to remote storage always has a corresponding schema snapshot in the bucket.
-- **Payload**: Contains the full native Protobuf definitions:
-  - `commonv1.Group`: Resource options, segment interval, TTL, and lifecycle stage rules.
-  - `databasev1.Measure` / `databasev1.Stream`: Tag families, field types, and compression codecs.
-  - `databasev1.IndexRule`: Inverted index configurations.
+  2. **Pre-Manifest Sync**: The offload agent confirms `schemas/rev-<revision>.json` is durable in S3 before committing each segment's `.snp` manifest.
+- **Payload**: Contains the complete native Protobuf dependency set:
+  - `commonv1.Group`: Base namespaces, segment interval, TTL, and lifecycle stages.
+  - `databasev1.IndexRule`: Secondary and inverted index configurations.
+  - `databasev1.Measure` / `databasev1.Stream` / `databasev1.Trace`: Columnar tag families, fields, and codecs across all three catalogs.
+  - `databasev1.IndexRuleBinding`: Ties index rules to target subjects.
 
 #### 2. The Disaster Recovery Workflow (Total Loss Scenario)
 When local infrastructure is destroyed and a fresh cluster is booted with a blank local metadata store:
@@ -598,12 +627,15 @@ When local infrastructure is destroyed and a fresh cluster is booted with a blan
      --target=<bucket> \
      --prefix=<prefix>
    ```
-2. **Catalog Discovery & Registration**:
-   - `bydbctl` traverses the bucket prefix and fetches each `schema.json`.
-   - It re-registers all groups, measures, and streams into the new cluster's native `banyand/metadata` registry.
+2. **Dependency-Ordered Catalog Restoration**:
+   `bydbctl` imports metadata into the new native `banyand/metadata` registry in strict dependency order:
+   - **Step 1: Groups (`commonv1.Group`)** $\to$ Registers namespaces first.
+   - **Step 2: Index Rules (`databasev1.IndexRule`)** $\to$ Defines index specs before bindings.
+   - **Step 3: Resources (`Measure`, `Stream`, `Trace`)** $\to$ Registers all data schemas.
+   - **Step 4: Index Rule Bindings (`databasev1.IndexRuleBinding`)** $\to$ Binds rules to subjects.
 3. **Remote Segment Discovery**:
    - The query engine scans shard snapshot manifests (`manifests/<epoch>.snp`) in S3.
-   - Historical queries against cold stages become operational immediately via HTTP Range-GETs without downloading or re-ingesting raw data.
+   - Historical queries across measures, streams, and traces become operational immediately via HTTP Range-GETs without downloading or re-ingesting raw data.
 
 ### 3. Theoretical Failures & Edge Cases
 
@@ -614,7 +646,7 @@ When local infrastructure is destroyed and a fresh cluster is booted with a blan
 | **Corrupted `schema.json` in S3** | JSON payload fails protobuf deserialization during recovery. | Writes to S3 enforce CRC32C checksums. Versioned backups (`schema_<epoch>.json`) can be retained alongside `schema.json` for rollback. |
 
 ### 4. Conclusion
-Subsystem 7 eliminates external metadata dependencies during catastrophic failures. By persisting self-describing `schema.json` snapshots alongside segment data in S3 and providing a single-command restore flow via `bydbctl`, BanyanDB guarantees zero data or metadata loss even after total hardware destruction.
+Subsystem 7 eliminates external metadata dependencies during catastrophic failures. By persisting self-describing immutable schema snapshots alongside segment data in S3 and providing a single-command restore flow via `bydbctl`, BanyanDB guarantees zero data or metadata loss **for all offloaded lifecycle stages** after total hardware destruction (active hot-tier data remaining on local nodes continues to be protected by native local replica policies).
 
 ---
 
@@ -653,7 +685,7 @@ A dedicated automated E2E test suite running against MinIO is developed simultan
 1. **Workload Isolation**: Verify cold historical S3 scans do not degrade concurrent hot writes and dashboard query p99 latency by $>10\%$.
 2. **Prolonged Outage & Disk Pressure**: Simulate sustained S3 unavailability to verify multi-tier backpressure (compaction pause, ingestion throttling) prevents local disk exhaustion.
 3. **Replica Ownership & Failover**: Validate single-writer upload via `NodeRegistry.Locate()` and epoch fencing during replica failovers.
-4. **Disaster Recovery**: Verify end-to-end cluster restoration and queryability from S3 after total loss of local data nodes and the native metadata registry.
+4. **Disaster Recovery**: Verify end-to-end cluster restoration and queryability from S3 after total loss of local data nodes and the native metadata registry, asserting query correctness across Measure, Stream, and Trace catalogs with active IndexRuleBindings.
 5. **Cache Exhaustion**: Saturate In-Memory and Local Disk caches to verify isolated LRU eviction under memory pressure with zero OOM panics.
 
 ---
