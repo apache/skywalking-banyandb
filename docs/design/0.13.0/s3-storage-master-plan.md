@@ -35,6 +35,7 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
 > 1. *"It should be cost efficient"*
 > 2. *"It should be highly configurable with best defualt configration"*
 > 3. *"should be industry standard mechanism, can als be inspired if 1 and 2 condition is not satisfied."*
+> 4. *"Keep warnings as few and only the necessary ones as possible"*
 
 ### Key Architectural Decisions (Executive Summary / TL;DR)
 1. **Native Metadata Architecture**: All group schemas, retention TTLs, and stage definitions are managed 100% within BanyanDB’s native schema repository (`banyand/metadata`) and node-local configurations with zero external dependencies.
@@ -210,7 +211,7 @@ The agent streams sealed parts to the remote bucket under `s3://<bucket>/<prefix
 When the agent starts, it checks for an existing `cloud_offload_progress.json`. To prevent unattended background pods from hanging on interactive prompts, recovery behavior is governed by a 3-way switch:
 - **`auto` (Default)**: Inspects checkpointed part files. For files marked completed, verifies remote presence via `Stat(ctx, path)` (byte size and checksum match). Uncompleted or interrupted file uploads are restarted cleanly from byte 0 via `fs.Upload()`, while dangling S3 MPU sessions are reaped by the background MPU garbage collector.
 - **`restart`**: Aborts active migrations, deletes any staged uncommitted part files under that segment prefix, clears `cloud_offload_progress.json`, and restarts migration of the segment fresh from Part 1.
-- **`halt-and-alert`**: Freezes migration on the impacted group, increments Prometheus error metrics, and alerts the operator for manual verification via `bydbctl`.
+- **`halt-and-alert`**: Freezes migration on the impacted group, increments the error meter (`pkg/meter`), and alerts the operator for manual verification via `bydbctl`.
 
 #### Step 5: Part Checksum Verification & Safe Local Pruning
 Formal durability verification is established through a 3-phase CRC32C checksum lifecycle:
@@ -224,21 +225,75 @@ Only after **100% of the parts** in the shard pass their checksum verification d
 `s3://.../shard-<shard_id>/manifests/<epoch>.snp`
 
 Once `<epoch>.snp` is uploaded and verified:
+- **Remote Schema Sync**: The agent syncs the latest group schema (`schema.json`) to S3 if not already present or if the local schema has evolved, guaranteeing remote segments are never left without their corresponding schema definitions.
 - The segment is atomically visible to query readers.
 - Local NVMe parts are safely pruned (`os.RemoveAll`).
 - `cloud_offload_progress.json` is deleted from disk.
 
-### 3. Theoretical Failures & Edge Cases
+#### Replica Ownership, Fencing & Pruning Policy
+
+In multi-replica cluster deployments (`replicas > 0`):
+1. **Designated Upload Owner**:
+   - The primary node assigned by BanyanDB's node registry (`nodes[0]` from `nodeRegistry.Locate(group, name, shardID, 0)`) is the sole upload owner for that shard-segment. Secondary replicas remain idle during offloading.
+2. **Failover & Epoch Fencing**:
+   - If the primary node fails mid-upload, BanyanDB promotes a secondary replica to primary.
+   - The promoted replica uploads with an incremented manifest epoch (`<epoch+1>.snp`).
+   - If a stale, partitioned primary node attempts to finish uploading later, it detects a newer epoch in S3 and aborts immediately, preventing stale overwrites.
+3. **Follower Coverage Verification & Local Pruning**:
+   - Secondary replicas verify that S3 contains the durable `<epoch>.snp` manifest via a zero-cost `Stat` check before pruning local files.
+   - **Configurable Pruning Toggle**: Adhering to Principle 2, pruning is governed by `--lifecycle-prune-local-replicas=true` (Default: `true` to reclaim NVMe disk). Operators can set this to `false` to retain local replica copies on disk alongside S3 for local fallback.
+
+### 3. Backlog Observability & Backpressure Policy
+
+To prevent un-uploaded segments from exhausting local disk during remote storage stalls, network degradations, or outages, the agent pairs real-time degraded-upload detection with strict multi-tier backpressure policies.
+
+> **Operational Principle (Minimal, High-Signal Alerting)**: Warnings and alarms are kept minimal and strictly restricted to actionable failure thresholds. Transient background retries remain silent to eliminate alert fatigue and log spam; warnings surface only when sustained degradation directly threatens system stability.
+
+#### 1. Defining Slow S3 Uploads & Macro/Micro Observability Warnings
+
+##### Micro-Level Warnings (Socket & Request Layer)
+These detect immediate network or provider degradation at the individual transfer level:
+1. **Low-Speed Tripwire (`http_low_speed_limit`)**:
+   - If average transfer throughput drops below `2 MB/s` for a sustained window of `30 seconds`, the HTTP context is cancelled, the hanging socket is terminated, and the file upload retries.
+2. **Rate Throttling Spikes (`503 SlowDown` / `429 Too Many Requests`)**:
+   - If >5% of HTTP PUT requests are throttled over a 1-minute window, the remote endpoint is flagged as rate-limited, activating AWS SDK v2 full-jitter exponential backoff and reducing concurrent upload streams.
+
+##### Macro-Level Warning (Pipeline & SLA Layer)
+This detects systemic failure where remote offloading falls behind local data generation:
+1. **Segment Duration SLA Breach**:
+   - Triggered when:
+     $$\text{Segment Upload Duration} > \text{Segment Interval}$$
+   - *Severity*: **Critical**. If uploading a 1-day segment takes longer than 1 day, the upload drain rate is mathematically slower than the local generation rate, and backlog accumulation is guaranteed. The agent increments `banyandb_lifecycle_upload_sla_breach_total` and fires a critical cluster alert.
+
+#### 2. Upload Backlog Observability
+Adhering to Principle 4, observability is kept lean and noise-free. The offloader instruments native meters via `pkg/meter` (Gauges and Counters) alongside structured JSON logs:
+- `lifecycle_pending_upload_bytes`: Gauge tracking total byte volume of sealed local segments awaiting S3 upload.
+- `lifecycle_oldest_pending_segment_seconds`: Gauge tracking elapsed seconds since the oldest uncommitted segment was sealed.
+- `storage_local_disk_free_bytes`: Gauge tracking real-time remaining storage capacity on the local data volume.
+- `lifecycle_upload_sla_breach_total`: Counter tracking critical SLA breach events.
+
+#### 3. Multi-Tier Backpressure Rules
+Because local segments are strictly retained until full remote manifest commit (`<epoch>.snp`), prolonged S3 outages trigger automatic system-wide self-protection:
+
+1. **Local Compactor (High Watermark: <20% Free Disk)**:
+   - When local free disk space drops below `20%`, background local LSM compactions are **immediately paused**.
+   - *Rationale*: Merging files temporarily requires up to 2× scratch space ($A + B + C$ alive simultaneously). Pausing compaction eliminates this temporary space spike.
+2. **Ingestion (Emergency Watermark: <5% Free Disk)**:
+   - When free disk space drops below `5%`, the ingest gateway triggers backpressure (rate-limiting or temporarily rejecting incoming write batches with `RESOURCE_EXHAUSTED`).
+   - *Rationale*: Prevents unhandled OS `ENOSPC` (No space left on device) crashes that corrupt write-ahead logs and active MemTables.
+
+### 4. Theoretical Failures & Edge Cases
 
 | Failure Mode / Edge Case | System Impact | Mitigation & Recovery |
 | :--- | :--- | :--- |
 | **Agent Crash Mid-Upload** | Incomplete segment in S3; orphaned MPU chunks. | Governed by `--lifecycle-resume-mode=auto|restart|halt-and-alert`. In `auto` mode, the agent aborts dangling MPU sessions via `AbortMultipartUpload` and resumes only missing parts without re-uploading completed ones. |
 | **Crash Before `.snp` Manifest Upload** | Unreferenced parts resting in S3. | **Zero reader corruption**: Readers resolve active parts strictly via `.snp`. A background garbage collection sweep identifies and deletes prefixes lacking a valid `.snp` sentinel. |
 | **S3 503 SlowDown / Rate Limiting** | Migration pipeline stalls under S3 request throttling. | Client utilizes AWS SDK v2 full-jitter exponential backoff `(full jitter: randomized sleep between 0 and exponential ceiling to prevent thundering herds)`. |
+| **Prolonged Remote Storage Outage / Slowdown** | Uncommitted segments pile up on local disk, risking disk exhaustion. | Strict FIFO offload with low-speed socket tripwire (2 MB/s for 30s); pauses local compaction at <20% disk to eliminate 2× scratch spike; throttles ingestion at <5% disk to prevent node panics. |
 | **Local Disk Exhaustion During Pre-Compaction** | Machine runs out of scratch space before uploading. | Pre-compaction streams with bounded memory (128–256 MB buffer ceiling) or writes to a dedicated scratch volume (`--lifecycle-scratch-dir`) monitored by low-watermark safety checks. |
 | **Schema Deletion During Migration (Orphan Rows)** | Schema removed while segment is queued for S3 upload. | Native orphan handling routes deleted measure/stream rows to the local orphan archive (`--migration-orphan-policy=archive`), allowing remaining valid columnar parts to upload cleanly. |
 
-### 4. Conclusion
+### 5. Conclusion
 The Agent for Cloud Offloading provides a linear, crash-resilient ingress path into object storage. Governed by strict design principles, it couples pre-upload compaction with a 3-way configurable recovery switch (`auto`, `restart`, `halt-and-alert`), atomic `.snp` commits, and hardware-accelerated CRC32C part checksum verification, ensuring local NVMe blocks are only reclaimed after remote cloud durability is 100% verified.
 
 ---
@@ -284,7 +339,7 @@ lifecycle \
 
 ##### Mode C: `halt-and-alert` (Strict Manual Inspection)
 1. **Circuit Breaker**: Freezes offloading for the affected group to prevent race conditions or cascading failures. Other non-impacted groups continue operating normally.
-2. **Telemetry & Observability**: Increments Prometheus metric `banyandb_lifecycle_interrupted_session_total{group="..."}` and logs a structured error with exact resume tokens.
+2. **Telemetry & Observability**: Increments native error meter `lifecycle_interrupted_session_total` (`pkg/meter`) and logs a structured error with exact resume tokens.
 3. **Manual Operator Release**: Waits for an operator to resolve the session manually via `bydbctl` or by clearing the checkpoint file:
    ```bash
    bydbctl lifecycle resume --group=sw_metric --segment=seg-20260601 --mode=auto
@@ -330,11 +385,21 @@ For specific ID lookups (e.g. `trace_id = "abcd-1234"` or entity ID queries):
 - If the Bloom filter test returns negative, the part is completely bypassed over the wire.
 - Prevents downloading hundreds of megabytes of columnar payloads for parts that do not contain the target series.
 
-#### Step 3: Rebuildable Two-Tier LRU Cache (`FileCache`)
-To provide sub-millisecond response times for frequently accessed historical telemetry:
-- **Tier 1 (L1 RAM Cache)**: Keeps series index snapshots (`sidx/<epoch>.snp`), part descriptors (`meta.bin`), and active shard manifests (`manifests/<epoch>.snp`) pinned in memory for instant lookups.
-- **Tier 2 (L2 NVMe Block Cache)**: Bounded local NVMe directory (`--s3-cache-dir=/data/s3-cache`, size-capped via `--s3-cache-max-size=50GB`) caching 1 MB–4 MB columnar blocks on demand.
-- **100% Ephemeral Semantics**: The cache holds zero authoritative state. A cache miss or evicted block is transparently refetched from S3 via Range-GET on demand.
+#### Bounded In-Memory & Local Disk Caching
+
+All cache pools provide production-ready defaults and are fully configurable via node CLI flags and configuration files, allowing operators to easily scale budgets up or down based on host resources:
+
+##### 1. Partitioned In-Memory Cache (RAM)
+To prevent heavy Bloom filters from evicting critical metadata, memory is split into two isolated LRU pools:
+- **Metadata Pool (`meta.bin`, `.snp`)**: Default `128MB` (`--s3-cache-meta-max-memory=128MB`). Eviction: Isolated LRU.
+- **Bloom Filter Pool (`bloom-0`)**: Default `512MB` (`--s3-cache-bloom-max-memory=512MB`). Eviction: Isolated LRU. Bloom filters never evict metadata.
+- *Default Total RAM Footprint*: ~640 MB. Fully configurable.
+
+##### 2. Local Disk Cache (NVMe)
+- **Data Block Cache**: Default `10GB` (`--s3-cache-disk-max-size=10GB`, dir: `--s3-cache-dir=/data/s3-cache`). Caches 1 MB–4 MB columnar slices on demand. Eviction: Block-level LRU. 100% ephemeral. Fully configurable.
+
+##### 3. Read Concurrency Limit
+- `--s3-max-concurrent-readers=32` (Default: 32). Concurrency semaphore preventing heavy queries from exhausting network sockets or CPU. Fully configurable.
 
 #### Step 4: Cache Invalidation on Remote Compactions (Zero RPC Overhead)
 When the background cloud compactor consolidates parts:
@@ -486,6 +551,12 @@ To handle S3 `503 SlowDown` throttling during high-throughput migration bursts:
 $$\text{Sleep} = \text{random}(0, \min(\text{MaxBackoff}, \text{Base} \times 2^{\text{attempt}}))$$
 - Full jitter prevents synchronized thundering herd retries across data nodes.
 
+#### Progressive Backend Compatibility
+
+To support private clouds and hybrid environments alongside AWS S3, the driver provides standard compatibility flags (`--s3-endpoint` and `--s3-use-path-style=true`).
+
+Backend-specific compatibility and quirks (AWS S3, MinIO, Ceph, Cloudflare R2) mature iteratively during subsystem implementation, with MinIO serving as the baseline target in CI.
+
 ### 3. Theoretical Failures & Edge Cases
 
 | Failure Mode / Edge Case | System Impact | Mitigation & Recovery |
@@ -495,6 +566,55 @@ $$\text{Sleep} = \text{random}(0, \min(\text{MaxBackoff}, \text{Base} \times 2^{
 
 ### 4. Conclusion
 Subsystem 6 establishes a resilient, production-hardened network layer for all cloud operations in BanyanDB, ensuring maximum throughput, zero connection leaks, and seamless compatibility across AWS S3, MinIO, and Ceph.
+
+---
+
+## Subsystem 7: Remote Schema Mirroring & Disaster Recovery (`banyand/metadata`, `bydbctl`)
+
+### 1. Introduction
+The Remote Schema Mirroring & Disaster Recovery subsystem guarantees that S3 remains 100% self-describing and recoverable if an entire cluster (all data nodes and native metadata stores) is lost. By mirroring group and resource schemas directly to S3 alongside telemetry segments, a brand-new, empty BanyanDB cluster can reconstruct its native `banyand/metadata` catalog from S3 and immediately resume serving historical queries.
+
+### 2. How the Design Actually Works
+
+#### 1. Remote Schema Snapshot (`schema.json`)
+The source of truth in disaster scenarios is `s3://<bucket>/<prefix>/<catalog>/<group>/schema.json`.
+
+- **When it is written**:
+  1. **At Schema Creation/Update**: Triggered whenever an operator applies changes via `bydbctl`.
+  2. **At Segment Upload Completion**: As the final step of offloading a segment (alongside the `.snp` manifest), the offload agent verifies and syncs `schema.json` to S3. This guarantees that every segment committed to remote storage always has a corresponding schema snapshot in the bucket.
+- **Payload**: Contains the full native Protobuf definitions:
+  - `commonv1.Group`: Resource options, segment interval, TTL, and lifecycle stage rules.
+  - `databasev1.Measure` / `databasev1.Stream`: Tag families, field types, and compression codecs.
+  - `databasev1.IndexRule`: Inverted index configurations.
+
+#### 2. The Disaster Recovery Workflow (Total Loss Scenario)
+When local infrastructure is destroyed and a fresh cluster is booted with a blank local metadata store:
+
+1. **Bootstrap Command**:
+   The operator points `bydbctl` to the surviving S3 bucket:
+   ```bash
+   bydbctl restore from-remote \
+     --provider=s3 \
+     --target=<bucket> \
+     --prefix=<prefix>
+   ```
+2. **Catalog Discovery & Registration**:
+   - `bydbctl` traverses the bucket prefix and fetches each `schema.json`.
+   - It re-registers all groups, measures, and streams into the new cluster's native `banyand/metadata` registry.
+3. **Remote Segment Discovery**:
+   - The query engine scans shard snapshot manifests (`manifests/<epoch>.snp`) in S3.
+   - Historical queries against cold stages become operational immediately via HTTP Range-GETs without downloading or re-ingesting raw data.
+
+### 3. Theoretical Failures & Edge Cases
+
+| Failure Mode / Edge Case | System Impact | Mitigation & Recovery |
+| :--- | :--- | :--- |
+| **Schema Update During Network Outage** | Schema saved locally in `banyand/metadata` but failed to mirror to S3. | The offloader checks `schema.json` upon completing segment upload. If the remote schema hash differs from the local schema, it uploads the latest `schema.json` alongside the `.snp` manifest. |
+| **Concurrent Schema Modifications** | Race condition between multiple operators. | Schema updates in S3 use atomic PUTs. In disaster recovery, `bydbctl` loads the latest committed `schema.json`. |
+| **Corrupted `schema.json` in S3** | JSON payload fails protobuf deserialization during recovery. | Writes to S3 enforce CRC32C checksums. Versioned backups (`schema_<epoch>.json`) can be retained alongside `schema.json` for rollback. |
+
+### 4. Conclusion
+Subsystem 7 eliminates external metadata dependencies during catastrophic failures. By persisting self-describing `schema.json` snapshots alongside segment data in S3 and providing a single-command restore flow via `bydbctl`, BanyanDB guarantees zero data or metadata loss even after total hardware destruction.
 
 ---
 
@@ -509,6 +629,7 @@ Subsystem 6 establishes a resilient, production-hardened network layer for all c
 | **Cluster Metadata** | Native metadata schema repository (`banyand/metadata`), node discovery, group catalog tracking. | Protobuf extensions (`RemoteStorage` sub-message on `LifecycleStage`), `cloud_groups_index.json` local index. |
 | **Remote Driver (`pkg/fs/remote/aws`)** | Basic `s3FS` with single `PutObject`, AWS default config. | Encapsulated dual-strategy `s3FS.Upload()` (`manager.Uploader`), `StatFS` (`s3.HeadObject`), `RangeReaderFS` (`s3.GetObjectInput{Range}`), `Endpoint` & `UsePathStyle` config for MinIO/Ceph. |
 | **Backup Subsystem (`banyand/backup`)** | Snapshot exporter using `remote.FS.Upload()`, 5 GiB S3 cap. | Transparently inherits encapsulated multipart upload (zero 5 GiB cap), custom S3 endpoints, and `Stat()` archive verification. |
+| **Disaster Recovery (`banyand/metadata`, `bydbctl`)** | Manual cluster re-creation, node-local metadata. | Automated remote schema mirroring (`schema.json`), `bydbctl restore from-remote` zero-state bootstrap from S3. |
 
 ---
 
@@ -521,9 +642,24 @@ Subsystem 6 establishes a resilient, production-hardened network layer for all c
 | **Compactor crash mid-merge** | Staged merged part in S3; local scratch files. | Zero corruption: Active `.snp` still references old parts. New compactor clears scratch disk and deletes unreferenced parts. |
 | **S3 503 SlowDown / Throttling** | Request latency spike. | S3 client applies exponential backoff with full jitter (AWS SDK v2 standard) with pooled HTTP/2 transports. |
 | **Local Cache Corruption** | Cache read checksum failure. | Evict corrupt block from cache index; transparently fall back to S3 Range-GET and re-populate block cache. |
+| **Total Loss (Nodes + Metadata Dead)** | Cluster destroyed; only S3 storage survives. | Run `bydbctl restore from-remote` to re-import `schema.json` into fresh native `banyand/metadata` and query remote segments immediately. |
+
+---
+
+## E2E Test Suite (In-Progress)
+
+A dedicated automated E2E test suite running against MinIO is developed simultaneously alongside subsystem implementation to validate failure boundaries, tune thresholds, and confirm production defaults:
+
+1. **Workload Isolation**: Verify cold historical S3 scans do not degrade concurrent hot writes and dashboard query p99 latency by $>10\%$.
+2. **Prolonged Outage & Disk Pressure**: Simulate sustained S3 unavailability to verify multi-tier backpressure (compaction pause, ingestion throttling) prevents local disk exhaustion.
+3. **Replica Ownership & Failover**: Validate single-writer upload via `NodeRegistry.Locate()` and epoch fencing during replica failovers.
+4. **Disaster Recovery**: Verify end-to-end cluster restoration and queryability from S3 after total loss of local data nodes and the native metadata registry.
+5. **Cache Exhaustion**: Saturate In-Memory and Local Disk caches to verify isolated LRU eviction under memory pressure with zero OOM panics.
 
 ---
 
 ## Master Plan Summary
 
 This proposal establishes S3 as an immutable, pluggable storage tier for BanyanDB, operating strictly on defined lifecycle stages without external consensus daemons. All metadata and stage definitions remain 100% within BanyanDB's native schema repository (`banyand/metadata`) and node-local configurations, ensuring zero credential leaks, seamless query Range-GET execution, and resilient crash recovery across all cloud operations.
+
+All default values in this proposal are experimental and subject to change in the future based on E2E tests and community feedback.
