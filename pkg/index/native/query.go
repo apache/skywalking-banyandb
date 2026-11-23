@@ -230,6 +230,11 @@ func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request Term
 		if result, err = appendQueryHits(ctx, result, segmentHits); err != nil {
 			return nil, false, err
 		}
+		// A cut segment filled the limit and left candidates out, so the prefix is complete and the answer known: do not
+		// evaluate the remaining segments, which would spend the query's memory and pattern budget for nothing.
+		if truncated {
+			return result, true, nil
+		}
 	}
 	return result, truncated, nil
 }

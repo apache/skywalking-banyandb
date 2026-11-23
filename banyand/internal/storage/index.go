@@ -770,8 +770,9 @@ func postingFilterExact(opts IndexSearchOpts) (filter *native.PostingFilter, exa
 
 // pushdown is the filtering of one limited search that is evaluated on postings, built once for the search: the filter, whether
 // it selects exactly what the hit-level filter would, and the options that hit-level filter still has to apply. The postings
-// apply the indexed LIKE patterns exactly, so the residual options drop them: expanding a pattern again over the hits would
-// spend the query's shared pattern budget a second time, and a pattern that fits the budget once could then fail.
+// apply the indexed LIKE patterns exactly, so the residual options drop them, and the criteria too when the filter is
+// exact: expanding a pattern again over the hits would spend the query's shared pattern budget a second time, and a pattern
+// that fits the budget once could then fail.
 type pushdown struct {
 	filter   *native.PostingFilter
 	residual IndexSearchOpts
@@ -782,6 +783,11 @@ func newPushdown(opts IndexSearchOpts) pushdown {
 	filter, exact := postingFilterExact(opts)
 	residual := opts
 	residual.PatternRequests = nil
+	if exact {
+		// The postings already select exactly what the criteria keeps: applying it to the hits again would expand its
+		// ranges over the dictionary a second time, for every chunk, to drop nothing.
+		residual.Criteria = nil
+	}
 	return pushdown{filter: filter, residual: residual, exact: exact}
 }
 

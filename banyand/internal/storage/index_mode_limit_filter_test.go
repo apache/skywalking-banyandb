@@ -306,3 +306,23 @@ func TestSeriesIndex_LimitedSearchSpendsThePatternBudgetOnce(t *testing.T) {
 		})
 	}
 }
+
+// When the posting filter selects exactly what the criteria keeps, the hit-level filter has nothing left to do: applying the
+// criteria to the hits again would expand its ranges over the dictionary a second time, for every chunk. When the filter is
+// not exact, the criteria stays in the residual, so a condition that cannot be pushed down is still applied.
+func TestNewPushdownDropsTheCriteriaOnlyWhenTheFilterIsExact(t *testing.T) {
+	criteria := strCondition("bucket", modelv1.Condition_BINARY_OP_EQ, "t1")
+	exact := newPushdown(IndexSearchOpts{Criteria: criteria, Fields: tagResolver{}})
+	require.True(t, exact.exact)
+	require.NotNil(t, exact.filter)
+	require.Nil(t, exact.residual.Criteria)
+
+	inexact := newPushdown(IndexSearchOpts{Criteria: criteria})
+	require.False(t, inexact.exact, "without a field resolver nothing is pushed down")
+	require.Nil(t, inexact.filter)
+	require.Same(t, criteria, inexact.residual.Criteria)
+
+	none := newPushdown(IndexSearchOpts{})
+	require.True(t, none.exact)
+	require.Nil(t, none.residual.Criteria)
+}

@@ -459,3 +459,30 @@ func TestIntersectRangesTakesTheTightestBounds(t *testing.T) {
 	require.False(t, tight.IncludesUpper, "equal upper bounds are inclusive only when both are")
 	require.Equal(t, uint64(10), tight.MaxTerms)
 }
+
+// Once a segment fills the limit and leaves candidates out, the prefix is complete: the segments after it must not be
+// evaluated, or their candidates would spend the query's budget (here the candidate cap) for an answer already known.
+func TestMatchTermsSetPrefixFilteredStopsAfterTheSegmentThatFillsTheLimit(t *testing.T) {
+	const span = int64(24 * 60 * 60 * 1e9)
+	rng := rand.New(rand.NewSource(17)) //nolint:gosec // deterministic test data
+	batches := randomTopTimeBatches(rng, 3, 1000, span, true)
+	for _, persisted := range []bool{false, true} {
+		fixture := newTopTimeFixture(t, persisted, batches)
+		view, err := fixture.owner.Acquire(context.Background())
+		require.NoError(t, err)
+		timeRange := &TimeRange{Lower: topTimeBase - 1, Upper: topTimeBase + span + 1, IncludesLower: true, IncludesUpper: true}
+		request := topTimeRequestFor("ok", timeRange, 1, false).Candidates
+		everything, err := view.MatchTermsSet(context.Background(), request)
+		require.NoError(t, err)
+		require.Greater(t, len(everything), 2)
+		// Each of the three segments holds about a third of the candidates, so the cap admits the first and not the second.
+		request.MaxCandidates = uint64(len(everything) / 2)
+		_, _, err = view.MatchTermsSetPrefixFiltered(context.Background(), request, nil, 0)
+		require.ErrorIs(t, err, ErrQueryLimit, "listing every candidate counts them all against the cap")
+		hits, truncated, err := view.MatchTermsSetPrefixFiltered(context.Background(), request, nil, 1)
+		require.NoError(t, err, "the first segment fills the limit, so the later segments are not counted")
+		require.Len(t, hits, 1)
+		require.True(t, truncated)
+		require.NoError(t, view.Close())
+	}
+}
