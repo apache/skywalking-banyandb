@@ -18,6 +18,7 @@ must be added there when it is introduced. When a milestone ships, its directory
 - [Measure QL: remaining gaps and order of work](0.12.0/measure-ql-gaps/README.md)
 - [Aggregating measures and materialized views](0.12.0/measure-aggregation-mv/README.md)
 - [Streaming API: progressive queries and acknowledged write streams](0.12.0/streaming-api/README.md)
+- [Document Index: a first-class document model](0.12.0/document-index/README.md)
 
 The native inverted-index replacement design shipped and its legacy engine
 dependency has since been fully removed; see
