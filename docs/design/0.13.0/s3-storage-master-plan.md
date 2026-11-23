@@ -606,7 +606,7 @@ The source of truth in disaster scenarios is the set of immutable versioned sche
 
 - **Versioned Immutability**: Schemas are stored as write-once revision files. Delayed old writers cannot overwrite newer schemas because each revision carries a unique monotonic revision number.
 - **Manifest Binding**: Each shard snapshot manifest (`.snp`) explicitly embeds its required `"schema_revision": <revision>`, ensuring readers always decode parts using the exact schema revision that produced them.
-- **Latest Pointer**: An authoritative `schemas/latest.json` pointer references the newest active revision, updated conditionally with `If-None-Match` to reject stale updates.
+- **Latest Pointer (CAS with `If-Match`)**: An authoritative `schemas/latest.json` pointer references the newest active revision. Initial creation uses `If-None-Match: "*"`. Subsequent revision updates use **`If-Match: <current_etag>`** (Compare-And-Swap), checking that the incoming revision strictly increases (`revision_new > revision_current`) and re-reading/reconciling on conflict, preventing stale overwrites.
 - **When it is written**:
   1. **At Schema Creation/Update**: Triggered whenever an operator applies changes via `bydbctl`.
   2. **Pre-Manifest Sync**: The offload agent confirms `schemas/rev-<revision>.json` is durable in S3 before committing each segment's `.snp` manifest.
@@ -641,9 +641,9 @@ When local infrastructure is destroyed and a fresh cluster is booted with a blan
 
 | Failure Mode / Edge Case | System Impact | Mitigation & Recovery |
 | :--- | :--- | :--- |
-| **Schema Update During Network Outage** | Schema saved locally in `banyand/metadata` but failed to mirror to S3. | The offloader checks `schema.json` upon completing segment upload. If the remote schema hash differs from the local schema, it uploads the latest `schema.json` alongside the `.snp` manifest. |
-| **Concurrent Schema Modifications** | Race condition between multiple operators. | Schema updates in S3 use atomic PUTs. In disaster recovery, `bydbctl` loads the latest committed `schema.json`. |
-| **Corrupted `schema.json` in S3** | JSON payload fails protobuf deserialization during recovery. | Writes to S3 enforce CRC32C checksums. Versioned backups (`schema_<epoch>.json`) can be retained alongside `schema.json` for rollback. |
+| **Schema Update During Network Outage** | Schema saved locally in `banyand/metadata` but failed to mirror to S3. | The offloader checks `schemas/rev-<revision>.json` before segment manifest publication, uploading the immutable revision file if missing. |
+| **Concurrent Schema Modifications** | Race condition between multiple operators. | Immutable revision files (`schemas/rev-<revision>.json`) are write-once (`If-None-Match: "*"`). The `schemas/latest.json` pointer advances via CAS (`If-Match: <etag>`), rejecting stale lower revisions and re-reading on conflict. |
+| **Corrupted Schema in S3** | JSON payload fails protobuf deserialization during recovery. | Writes to S3 enforce CRC32C checksums. Revisions are immutable; if `latest.json` is corrupted, recovery falls back to the highest valid `schemas/rev-<revision>.json`. |
 
 ### 4. Conclusion
 Subsystem 7 eliminates external metadata dependencies during catastrophic failures. By persisting self-describing immutable schema snapshots alongside segment data in S3 and providing a single-command restore flow via `bydbctl`, BanyanDB guarantees zero data or metadata loss **for all offloaded lifecycle stages** after total hardware destruction (active hot-tier data remaining on local nodes continues to be protected by native local replica policies).
@@ -661,7 +661,7 @@ Subsystem 7 eliminates external metadata dependencies during catastrophic failur
 | **Cluster Metadata** | Native metadata schema repository (`banyand/metadata`), node discovery, group catalog tracking. | Protobuf extensions (`RemoteStorage` sub-message on `LifecycleStage`), `cloud_groups_index.json` local index. |
 | **Remote Driver (`pkg/fs/remote/aws`)** | Basic `s3FS` with single `PutObject`, AWS default config. | Encapsulated dual-strategy `s3FS.Upload()` (`manager.Uploader`), `StatFS` (`s3.HeadObject`), `RangeReaderFS` (`s3.GetObjectInput{Range}`), `Endpoint` & `UsePathStyle` config for MinIO/Ceph. |
 | **Backup Subsystem (`banyand/backup`)** | Snapshot exporter using `remote.FS.Upload()`, 5 GiB S3 cap. | Transparently inherits encapsulated multipart upload (zero 5 GiB cap), custom S3 endpoints, and `Stat()` archive verification. |
-| **Disaster Recovery (`banyand/metadata`, `bydbctl`)** | Manual cluster re-creation, node-local metadata. | Automated remote schema mirroring (`schema.json`), `bydbctl restore from-remote` zero-state bootstrap from S3. |
+| **Disaster Recovery (`banyand/metadata`, `bydbctl`)** | Manual cluster re-creation, node-local metadata. | Automated remote schema mirroring (`schemas/rev-<rev>.json` + CAS `latest.json`), `bydbctl restore from-remote` zero-state bootstrap from S3. |
 
 ---
 
@@ -674,7 +674,7 @@ Subsystem 7 eliminates external metadata dependencies during catastrophic failur
 | **Compactor crash mid-merge** | Staged merged part in S3; local scratch files. | Zero corruption: Active `.snp` still references old parts. New compactor clears scratch disk and deletes unreferenced parts. |
 | **S3 503 SlowDown / Throttling** | Request latency spike. | S3 client applies exponential backoff with full jitter (AWS SDK v2 standard) with pooled HTTP/2 transports. |
 | **Local Cache Corruption** | Cache read checksum failure. | Evict corrupt block from cache index; transparently fall back to S3 Range-GET and re-populate block cache. |
-| **Total Loss (Nodes + Metadata Dead)** | Cluster destroyed; only S3 storage survives. | Run `bydbctl restore from-remote` to re-import `schema.json` into fresh native `banyand/metadata` and query remote segments immediately. |
+| **Total Loss (Nodes + Metadata Dead)** | Cluster destroyed; only S3 storage survives. | Run `bydbctl restore from-remote` to re-import immutable schemas (`schemas/rev-<rev>.json`) into fresh native `banyand/metadata` and query remote segments immediately. |
 
 ---
 
