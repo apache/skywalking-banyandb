@@ -63,12 +63,11 @@ BPF2GO_VERSION := v0.21.0
 BUILD_PLATFORM := linux/amd64
 
 # Debian base image, digest-pinned. A digest freezes the OS image but not the
-# contents of the apt repository, so DEBIAN_SNAPSHOT below is what freezes the
-# packages installed into it. These two cannot be derived from a URL the way a
-# tarball checksum can, which is why they are recorded here.
+# contents of the apt repository; the few apt packages (make, git, curl, ...) only
+# drive the build and track the current archive. The digest cannot be derived from
+# a URL the way a tarball checksum can, which is why it is recorded here.
 DEBIAN_DISTRO := bookworm
 DEBIAN_IMAGE := debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
-DEBIAN_SNAPSHOT := 20250929T000000Z
 
 # Fixed timestamp for anything the environment stamps. Archive member
 # normalization is NOT implemented yet; see the design §10.1.

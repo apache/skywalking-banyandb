@@ -17,17 +17,7 @@
  * under the License.
  */
 
-// PipelinesPage.tsx — the generic Pipelines section overview (/pipelines).
-// Ported from .handoff-import/banyandb/project/pipelines.jsx (window-global
-// JSX -> ES module TSX).
-//
-// The handoff drives the overview off a `PIPELINE_TYPES` registry so adding a
-// future pipeline type (e.g. tail-sampling) means appending one entry rather
-// than touching this page. v1 has exactly one type — TopN — so this port
-// keeps that registry shape (see PIPELINE_TYPES below) but resolves it
-// directly against the live registry (listGroups + listTopNAggregations)
-// instead of a mock `groups` prop; a second type can plug in the same way
-// the handoff's comment describes, without changing this file's structure.
+// Overview of the live TopN and trace sampling pipeline registries.
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
@@ -35,8 +25,9 @@ import { useQuery } from '@tanstack/react-query';
 
 import type { TopNAggregationSchema } from 'canopy-shared';
 import { apiDataSource } from '../data/api.js';
-import { IconPipelines, IconTopN, IconArrowRight, IconGroup } from '../components/icons.js';
+import { IconPipelines, IconTopN, IconSampling, IconArrowRight, IconGroup } from '../components/icons.js';
 import { RankBadge } from '../pipelines/topn-shared.js';
+import { SamplingStatus } from '../pipelines/SamplingPages.js';
 
 interface PipelineItem {
   readonly name: string;
@@ -106,10 +97,33 @@ function useTopNPipelineType(): PipelineTypeEntry {
   };
 }
 
+function useSamplingPipelineType(): PipelineTypeEntry {
+  const { data } = useQuery({ queryKey: ['groups'], queryFn: () => apiDataSource.listGroups() });
+  const items = useMemo<PipelineItem[]>(() => (data?.groups ?? [])
+    .filter((group) => group.catalog === 'CATALOG_TRACE' && group.pipeline)
+    .map((group) => ({
+      name: group.name,
+      group: group.name,
+      path: `/pipelines/sampling/${encodeURIComponent(group.name)}`,
+      meta: <SamplingStatus pipeline={group.pipeline} />,
+    })), [data]);
+
+  return {
+    key: 'sampling',
+    label: 'Sampling',
+    icon: IconSampling,
+    noun: 'pipeline',
+    nounPlural: 'pipelines',
+    desc: 'Controls trace retention with sampler chains during merge, finalize, and lifecycle stage transitions.',
+    items,
+  };
+}
+
 export function PipelinesPage() {
   const navigate = useNavigate();
   const topn = useTopNPipelineType();
-  const byType = useMemo(() => [topn], [topn]);
+  const sampling = useSamplingPipelineType();
+  const byType = useMemo(() => [topn, sampling], [topn, sampling]);
 
   const all = useMemo(() => byType.flatMap((pt) => pt.items.map((it) => ({ pt, it }))), [byType]);
   const total = all.length;
@@ -120,14 +134,14 @@ export function PipelinesPage() {
     <div className="page-body">
       <header className="page-head">
         <h1 className="page-title">Pipelines</h1>
-        <p className="page-meta">Continuous processing that maintains derived results over stored data.</p>
+        <p className="page-meta">Continuous processing for derived results and trace retention.</p>
       </header>
 
       <div className="pipe-intro">
         <p className="pipe-lead">
-          Pipelines run continuously over stored data to maintain derived results — computed as data arrives,
-          so they are ready at query time instead of being computed on demand. Each pipeline type produces a
-          different kind of derived result.
+          Pipelines process stored data to maintain derived results and control trace retention.
+          TopN maintains ranked counters for queries, while sampling selects traces to retain during
+          storage events and lifecycle transitions.
         </p>
       </div>
 

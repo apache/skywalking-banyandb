@@ -51,7 +51,7 @@ func shapeBreakMeasureGroup(name string) *commonv1.Group {
 
 // shapeBreakMeasureSpec returns a Measure with entity=[svc] and both svc/host tags defined,
 // so that an update changing entity to [svc, host] passes validate.Measure but fails
-// validateMeasureUpdate (entity changed).
+// validate.MeasureUpdate (entity changed).
 func shapeBreakMeasureSpec(group, name string) *databasev1.Measure {
 	return &databasev1.Measure{
 		Metadata: &commonv1.Metadata{Name: name, Group: group},

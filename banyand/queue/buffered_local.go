@@ -27,8 +27,15 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 )
 
+// ErrNoNodeLocated is the delivery failure of a batch that no node was located
+// for: the locate failed, or it returned no node. Its cause, if any, is
+// wrapped with it.
+var ErrNoNodeLocated = errors.New("no node located for the batch")
+
 type localDelivery struct {
-	client  Client
+	client Client
+	// node is nil on the local pipeline, which has a single destination.
+	node    func() (string, error)
 	topic   bus.Topic
 	timeout time.Duration
 }
@@ -41,10 +48,29 @@ func NewLocalDelivery(client Client, topic bus.Topic, timeout time.Duration) Del
 	return &localDelivery{client: client, topic: topic, timeout: timeout}
 }
 
+// NewNodeDelivery returns the same Delivery for a client that reaches other
+// nodes: each batch goes to the node that node returns when the batch is
+// delivered. A failed locate is retryable, because nothing was published;
+// once a batch is published, its outcome is final.
+func NewNodeDelivery(client Client, topic bus.Topic, node func() (string, error), timeout time.Duration) Delivery {
+	return &localDelivery{client: client, topic: topic, node: node, timeout: timeout}
+}
+
 func (l *localDelivery) Deliver(ctx context.Context, batch []any) error {
+	var target string
+	if l.node != nil {
+		located, err := l.node()
+		if err != nil {
+			return Retryable(fmt.Errorf("%w: %w", ErrNoNodeLocated, err))
+		}
+		if located == "" {
+			return Retryable(ErrNoNodeLocated)
+		}
+		target = located
+	}
 	messages := make([]bus.Message, 0, len(batch))
 	for _, data := range batch {
-		messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), "", data))
+		messages = append(messages, bus.NewBatchMessageWithNode(bus.MessageID(time.Now().UnixNano()), target, data))
 	}
 	publisher := l.client.NewBatchPublisher(l.timeout)
 	pubCtx, cancel := context.WithTimeout(ctx, l.timeout)
@@ -61,6 +87,12 @@ func (l *localDelivery) Deliver(ctx context.Context, batch []any) error {
 		// payload of an unhealthy listener while returning the reason here. So
 		// discarding it means a refused batch is counted as delivered.
 		err = rejection(nodeErrs)
+	}
+	if err == nil && l.node != nil && pubCtx.Err() != nil {
+		// A remote publisher ends a stream that outlives its timeout without
+		// an error of its own, so the deadline is the only report there is.
+		// The local pipeline does not honor it, so there it reports nothing.
+		err = fmt.Errorf("%s did not answer within %s: %w", target, l.timeout, pubCtx.Err())
 	}
 	if errors.Is(err, bus.ErrTopicNotExist) {
 		return Retryable(err)

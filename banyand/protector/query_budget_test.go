@@ -21,7 +21,9 @@ import (
 	"testing"
 
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	querypkg "github.com/apache/skywalking-banyandb/pkg/query"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 )
 
@@ -439,11 +441,82 @@ func TestQueryFailureCarriesResourceExhaustedStatus(t *testing.T) {
 	if exhausted.Status() != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
 		t.Fatalf("status %v", exhausted.Status())
 	}
+	for _, limit := range []error{vectorized.ErrMemoryBudgetExceeded, native.ErrQueryLimit} {
+		if got := QueryFailure(fmt.Errorf("scan: %w", limit), "execute plan: %v", limit).Status(); got != modelv1.Status_STATUS_RESOURCE_EXHAUSTED {
+			t.Fatalf("%v: status %v, want RESOURCE_EXHAUSTED", limit, got)
+		}
+	}
 	failure := QueryFailure(errors.New("boom"), "execute %s: %v", "plan", "boom")
 	if failure.Status() != modelv1.Status_STATUS_INTERNAL_ERROR {
 		t.Fatalf("an ordinary failure must stay an internal error, got %v", failure.Status())
 	}
 	if want := "code: STATUS_INTERNAL_ERROR, msg: execute plan: boom"; failure.Error() != want {
 		t.Fatalf("message: %q, want %q", failure.Error(), want)
+	}
+}
+
+func TestExhaustionNamesTheAllowanceThatRanOut(t *testing.T) {
+	b := NewQueryBudget(&Nop{})
+	_, release, err := b.AdmitMeasureContext(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	reservation := &QueryReservation{owner: b, assigned: 1 << 20, refs: 1, incremental: true}
+	if chargeErr := reservation.Charge(600 << 10); chargeErr != nil {
+		t.Fatal(chargeErr)
+	}
+	chargeErr := reservation.Charge(600 << 10)
+	if !errors.Is(chargeErr, ErrQueryResourceExhausted) {
+		t.Fatalf("want ErrQueryResourceExhausted, got %v", chargeErr)
+	}
+	exhausted, ok := ExhaustionReason(chargeErr)
+	if !ok || exhausted.Reason != ReasonPerQueryLimit || exhausted.Limit != 1<<20 || exhausted.Used != 600<<10 || exhausted.Requested != 600<<10 {
+		t.Fatalf("want a per-query limit failure with its figures, got %+v", exhausted)
+	}
+	if reservation.Peak() != 600<<10 {
+		t.Fatalf("peak = %d, want %d", reservation.Peak(), 600<<10)
+	}
+	reservation.Refund(600 << 10)
+	if chargeErr = reservation.Charge(100 << 10); chargeErr != nil || reservation.Peak() != 600<<10 {
+		t.Fatalf("peak must keep the high-water mark after a refund; err %v, peak %d", chargeErr, reservation.Peak())
+	}
+	pool := b.poolLimit()
+	_, poolErr := b.Reserve(context.Background(), b.MaxQuery())
+	if poolErr != nil {
+		t.Fatal(poolErr)
+	}
+	for b.Reserved()+b.MaxQuery() <= pool {
+		if _, err = b.Reserve(context.Background(), b.MaxQuery()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = b.Reserve(context.Background(), b.MaxQuery())
+	if exhausted, ok = ExhaustionReason(err); !ok || exhausted.Reason != ReasonSharedPool {
+		t.Fatalf("want a shared pool failure, got %v", err)
+	}
+}
+
+func TestExhaustedErrorNamesTheUnitOfItsFigures(t *testing.T) {
+	for _, tt := range []struct {
+		err  *ExhaustedError
+		want string
+	}{
+		{
+			err:  &ExhaustedError{Reason: ReasonPerQueryLimit, Limit: 1 << 20, Used: 600 << 10, Requested: 600 << 10},
+			want: "query memory pool exhausted: per_query_limit (limit 1048576 bytes, used 614400, requested 614400)",
+		},
+		{
+			err:  &ExhaustedError{Reason: ReasonResultWindow, Limit: queryAbsoluteWindow, Used: queryAbsoluteWindow, Requested: 1},
+			want: "query memory pool exhausted: result_window (limit 100000 results, used 100000, requested 1)",
+		},
+		{
+			err:  &ExhaustedError{Reason: ReasonReleased, Requested: 4096},
+			want: "query memory pool exhausted: released (requested 4096 bytes)",
+		},
+	} {
+		if got := tt.err.Error(); got != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.err.Reason, got, tt.want)
+		}
 	}
 }

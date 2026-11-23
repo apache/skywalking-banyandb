@@ -59,6 +59,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/bydbql"
 	fslib "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/node"
 	"github.com/apache/skywalking-banyandb/pkg/panicdiag"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	banyandbpath "github.com/apache/skywalking-banyandb/pkg/path"
@@ -95,6 +96,11 @@ type NodeRegistries struct {
 	MeasureLiaisonNodeRegistry NodeRegistry
 	PropertyNodeRegistry       NodeRegistry
 	TraceLiaisonNodeRegistry   NodeRegistry
+	// The data node selectors place the shards the liaison's write queues sync to the data
+	// nodes; a data import places its rows with them too. Nil on a standalone server.
+	StreamDataNodeSelector  node.Selector
+	MeasureDataNodeSelector node.Selector
+	TraceDataNodeSelector   node.Selector
 }
 
 type server struct {
@@ -113,6 +119,7 @@ type server struct {
 	barrierSVC    *barrierService
 	nodeStatusSVC *property.NodeSchemaStatusServer
 	exportSVC     *exportService
+	importSVC     *importService
 	*streamRegistryServer
 	measureSVC *measureService
 	bydbQLSVC  *bydbQLService
@@ -168,6 +175,9 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		resourceOpts: make(map[string]*commonv1.ResourceOpts),
 		inflight:     make(map[string]*groupInflight),
 	}
+	// The trace write path and the import share one write session config, so the import retries
+	// a busy data node with the same bounds as a trace write.
+	writeConfig := &writeSessionConfig{}
 	er := &entityRepo{entitiesMap: make(map[identity]partition.Locator), measureMap: make(map[identity]*databasev1.Measure)}
 	streamSVC := &streamService{
 		discoveryService: newDiscoveryService(schema.KindStream, schemaRegistry, nr.StreamLiaisonNodeRegistry, gr),
@@ -181,6 +191,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		pipeline:         tir1Client,
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
+		protector:        protectorService,
 	}
 	traceSVC := &traceService{
 		discoveryService: newDiscoveryService(schema.KindTrace, schemaRegistry, nr.TraceLiaisonNodeRegistry, gr),
@@ -188,6 +199,7 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		broadcaster:      broadcaster,
 		queryBudget:      protector.QueryBudgetFor(protectorService),
 		protector:        protectorService,
+		writeConfig:      writeConfig,
 	}
 	propertyService := &propertyServer{
 		schemaRegistry:   schemaRegistry,
@@ -307,6 +319,31 @@ func NewServer(_ context.Context, tir1Client, tir2Client, broadcaster queue.Clie
 		)
 	}
 	s.exportSVC = newExportService(tir2Client, routeProviders["tire2"], selfName, logger.GetLogger("liaison-export"))
+	s.importSVC = newImportService(importDeps{
+		groups: func(ctx context.Context, name string) (*commonv1.Group, error) {
+			return schemaRegistry.GroupRegistry().GetGroup(ctx, name)
+		},
+		listGroups: func(ctx context.Context) ([]*commonv1.Group, error) {
+			return schemaRegistry.GroupRegistry().ListGroup(ctx)
+		},
+		dataNodes: map[commonv1.Catalog]NodeRegistry{
+			commonv1.Catalog_CATALOG_STREAM:   selectorRegistry(nr.StreamDataNodeSelector),
+			commonv1.Catalog_CATALOG_MEASURE:  selectorRegistry(nr.MeasureDataNodeSelector),
+			commonv1.Catalog_CATALOG_TRACE:    selectorRegistry(nr.TraceDataNodeSelector),
+			commonv1.Catalog_CATALOG_PROPERTY: nr.PropertyNodeRegistry,
+		},
+		properties: func(ctx context.Context, md *commonv1.Metadata) (*databasev1.Property, error) {
+			return schemaRegistry.PropertyRegistry().GetProperty(ctx, md)
+		},
+		selfNode:    selfName,
+		tire2:       tir2Client,
+		routeTable:  routeProviders["tire2"],
+		groupRepo:   gr,
+		streams:     streamSVC.discoveryService,
+		measures:    measureSVC.discoveryService,
+		traces:      traceSVC.discoveryService,
+		writeConfig: writeConfig,
+	}, logger.GetLogger("liaison-import"))
 	s.accessLogRecorders = []accessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer}
 	s.queryAccessLogRecorders = []queryAccessLogRecorder{streamSVC, measureSVC, traceSVC, s.propertyServer, bydbQLSVC}
 
@@ -694,6 +731,7 @@ func (s *server) registerServices(grpcServer *grpclib.Server) {
 	databasev1.RegisterClusterStateServiceServer(grpcServer, s)
 	databasev1.RegisterNodeQueryServiceServer(grpcServer, s)
 	transferv1.RegisterExportServiceServer(grpcServer, s.exportSVC)
+	transferv1.RegisterImportServiceServer(grpcServer, s.importSVC)
 	if s.barrierSVC != nil {
 		schemav1.RegisterSchemaBarrierServiceServer(grpcServer, s.barrierSVC)
 	}

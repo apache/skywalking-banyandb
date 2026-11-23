@@ -65,7 +65,7 @@ here.
 | license-eye | `version.mk` `LICENSE_EYE_VERSION` | stored |
 | Build platform | `version.mk` `BUILD_PLATFORM` | stored, not overridable |
 | Debian base image | `version.mk` `DEBIAN_IMAGE` | digest |
-| Debian package index | `version.mk` `DEBIAN_SNAPSHOT` | snapshot date |
+| Debian packages (make, git, curl, ...) | the base image's apt sources | not pinned; build tooling only |
 | Go / Node tarballs | the vendor's published checksum, fetched at build time | nothing to maintain |
 | Resource limits | `dockerize.mk` defaults | overridable per run |
 

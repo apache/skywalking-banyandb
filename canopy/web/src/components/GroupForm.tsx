@@ -349,6 +349,7 @@ export function GroupForm({ mode, initialName, initialCatalog, onClose, onDelete
         group: {
           metadata: { name: initialName! },
           catalog: editGroup?.catalog,
+          ...(editGroup?.pipeline !== undefined ? { pipeline: editGroup.pipeline } : {}),
           resourceOpts: isPropertyCatalog
             ? { shardNum: Number(shardNum), replicas: replicasNum }
             : {

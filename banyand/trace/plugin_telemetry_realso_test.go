@@ -123,7 +123,8 @@ func TestPluginTelemetry_RealSO_MetricsAndLogging(t *testing.T) {
 	require.NoError(t, structErr, "structpb.NewStruct for plugin config must succeed")
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: pluginName,
@@ -402,7 +403,8 @@ func makeFaultyCfg(soName, pluginName string, faults map[string]any) *commonv1.T
 		panic("makeFaultyCfg: structpb.NewStruct failed: " + structErr.Error())
 	}
 	return &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: pluginName,
@@ -586,7 +588,8 @@ func makeSamplerCfg(soName, pluginName string, logEvery float64) *commonv1.Trace
 		panic("makeSamplerCfg: structpb.NewStruct failed: " + structErr.Error())
 	}
 	return &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: pluginName,
@@ -702,7 +705,8 @@ func TestPluginTelemetry_RealSO_MalformedConfigFailOpen(t *testing.T) {
 	require.NoError(t, badStructErr, "structpb.NewStruct for bad config must succeed (structpb always accepts string values)")
 
 	badCfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: pluginName,

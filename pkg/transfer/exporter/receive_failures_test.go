@@ -30,6 +30,7 @@ import (
 	"time"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
@@ -233,7 +234,7 @@ func TestRunExport_FileVerificationFailuresLeaveOnlyTheTmp(t *testing.T) {
 			})
 			opts, log := exportOptions(t, f)
 			err := runExport(t, f, opts)
-			requireExit(t, err, ExitRuntime, tc.expect(sent))
+			requireExit(t, err, exitcode.ExitRuntime, tc.expect(sent))
 			requireNotRenamed(t, opts, measureFilePath, sent.content)
 			requireKept(t, f, log)
 		})
@@ -294,8 +295,8 @@ func TestRunExport_RejectsMoreUnsafePaths(t *testing.T) {
 			f.exportScript = tamper(func(ff *fakeFile) { ff.path = tc.path })
 			opts, log := exportOptions(t, f)
 			err := runExport(t, f, opts)
-			requireExit(t, err, ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": ")
-			requireExit(t, err, ExitRuntime, tc.expect)
+			requireExit(t, err, exitcode.ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": ")
+			requireExit(t, err, exitcode.ExitRuntime, tc.expect)
 			requireKept(t, f, log)
 			if files := finalNodeFiles(t, opts); len(files) != 0 {
 				t.Fatalf("nothing may be written for %q: %v", tc.path, files)
@@ -323,7 +324,7 @@ func TestRunExport_RejectsAFileOfAnUnrequestedShard(t *testing.T) {
 		ff.path = "measure/sw_metric/seg-20260930/shard-5-00001.csv"
 	})
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime,
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime,
 		"node "+nodeA+" unit "+measureUnitLabel+": file measure/sw_metric/seg-20260930/shard-5-00001.csv is of shard 5, which the unit did not ask for")
 	requireNotRenamed(t, opts, "measure/sw_metric/seg-20260930/shard-5-00001.csv", nil)
 	requireKept(t, f, log)
@@ -491,7 +492,7 @@ func TestRunExport_FrameOrderViolations(t *testing.T) {
 			sent := measureFileOf(f)
 			f.exportScript = rawFrames(tc.end, func(file fakeFile) []*transferv1.ExportResponse { return tc.build(file) })
 			opts, log := exportOptions(t, f)
-			requireExit(t, runExport(t, f, opts), ExitRuntime, tc.expect)
+			requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, tc.expect)
 			requireKept(t, f, log)
 			if tc.wantTmp != nil {
 				requireNotRenamed(t, opts, measureFilePath, tc.wantTmp(sent))
@@ -510,8 +511,7 @@ func TestRunExport_FrameOrderViolations(t *testing.T) {
 	}
 }
 
-// The stream ending after a finished file but before unit_finished fails the unit; the
-// finished file was verified and stays.
+// A snapshot holding another number of parts than the session plan counted fails the unit.
 func TestRunExport_PartCountDifferentFromThePlanFails(t *testing.T) {
 	f := exportFake()
 	onlyNodeA(f)
@@ -520,9 +520,11 @@ func TestRunExport_PartCountDifferentFromThePlanFails(t *testing.T) {
 	})
 	opts, _ := exportOptions(t, f)
 	err := runExport(t, f, opts)
-	requireExit(t, err, ExitRuntime, fmt.Sprintf("node %s unit %s: the snapshot holds 0 parts, the session plan counted 1", nodeA, measureUnitLabel))
+	requireExit(t, err, exitcode.ExitRuntime, fmt.Sprintf("node %s unit %s: the snapshot holds 0 parts, the session plan counted 1", nodeA, measureUnitLabel))
 }
 
+// The stream ending after a finished file but before unit_finished fails the unit; the
+// finished file was verified and stays.
 func TestRunExport_StreamEndsAfterAFinishedFile(t *testing.T) {
 	f := exportFake()
 	onlyNodeA(f)
@@ -530,7 +532,7 @@ func TestRunExport_StreamEndsAfterAFinishedFile(t *testing.T) {
 		return append([]*transferv1.ExportResponse{wireUnitStarted()}, wireFile(file)...)
 	})
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": the stream ended before unit_finished")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": the stream ended before unit_finished")
 	requireKept(t, f, log)
 	if _, err := os.Stat(filepath.Join(opts.Output, manifest.FileName)); !os.IsNotExist(err) {
 		t.Fatal("a failed export writes no manifest")
@@ -547,7 +549,7 @@ func TestRunExport_FrameAfterTheLastUnit(t *testing.T) {
 		return append(frames, wireUnitFinished(), wireUnitStarted())
 	})
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "node "+nodeA+": unexpected *v1.ExportResponse_UnitStarted frame after the last unit")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "node "+nodeA+": unexpected *v1.ExportResponse_UnitStarted frame after the last unit")
 	requireKept(t, f, log)
 	if _, err := os.Stat(filepath.Join(opts.Output, manifest.FileName)); !os.IsNotExist(err) {
 		t.Fatal("a failed export writes no manifest")
@@ -566,7 +568,7 @@ func TestRunExport_IdleTimeoutFiresMidFile(t *testing.T) {
 	opts, log := exportOptions(t, f)
 	opts.NodeIdleTimeout = 200 * time.Millisecond
 	start := time.Now()
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "node "+nodeA+" sent nothing for 200ms (--node-idle-timeout)")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "node "+nodeA+" sent nothing for 200ms (--node-idle-timeout)")
 	if elapsed := time.Since(start); elapsed > 10*time.Second {
 		t.Fatalf("the idle timeout fired after %s", elapsed)
 	}
@@ -622,7 +624,7 @@ func TestRunExport_ExistingFinalPathIsKept(t *testing.T) {
 	})
 	opts, log := exportOptions(t, f)
 	final := nodeAFile(opts, measureFilePath)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": "+final+" already exists")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "node "+nodeA+" unit "+measureUnitLabel+": "+final+" already exists")
 	requireKept(t, f, log)
 	body, err := os.ReadFile(final)
 	if err != nil || strings.Contains(string(body), "overwrite") || !strings.HasPrefix(string(body), "_name,v\n") {

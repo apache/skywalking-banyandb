@@ -129,7 +129,7 @@ func newTimestampScanBenchmarkFixture(b *testing.B, rows int, reopen, conservati
 	snapshot.DecRef()
 
 	if reopen {
-		flushIntroduction, flushErr := instance.Flush(map[uint64]struct{}{1: {}})
+		flushIntroduction, flushErr := instance.Flush(nil, map[uint64]struct{}{1: {}})
 		if flushErr != nil {
 			b.Fatalf("flush benchmark part: %v", flushErr)
 		}

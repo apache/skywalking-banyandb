@@ -178,6 +178,90 @@ var _ = ginkgo.Describe("Property repair gossip", func() {
 		})
 	})
 
+	ginkgo.It("gossip two data nodes with same version and only client deleted", func() {
+		startingEachTest(&nodes, ctrl, &testCase{
+			groups: []group{
+				{name: testGroup1, shardCount: 2, replicasCount: 1},
+			},
+			nodes: []node{
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true}}, treeBuilt: true},
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+			},
+			propagation: func(nodes []*nodeContext) error {
+				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+			},
+			result: func(original []node) []node {
+				// the tombstone wins over the live document with the same version
+				original[1].properties[0].deleted = true
+				return original
+			},
+		})
+	})
+
+	ginkgo.It("gossip two data nodes with same version and only server deleted", func() {
+		startingEachTest(&nodes, ctrl, &testCase{
+			groups: []group{
+				{name: testGroup1, shardCount: 2, replicasCount: 1},
+			},
+			nodes: []node{
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2}}, treeBuilt: true},
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true}}, treeBuilt: true},
+			},
+			propagation: func(nodes []*nodeContext) error {
+				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+			},
+			result: func(original []node) []node {
+				// the tombstone wins over the live document with the same version
+				original[0].properties[0].deleted = true
+				return original
+			},
+		})
+	})
+
+	ginkgo.It("gossip two data nodes with same version both deleted and client holds the larger deleteTime", func() {
+		smaller := time.Now().Add(-2 * time.Minute).UnixNano()
+		larger := time.Now().Add(-time.Minute).UnixNano()
+		startingEachTest(&nodes, ctrl, &testCase{
+			groups: []group{
+				{name: testGroup1, shardCount: 2, replicasCount: 1},
+			},
+			nodes: []node{
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true, deleteTime: larger}}, treeBuilt: true},
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true, deleteTime: smaller}}, treeBuilt: true},
+			},
+			propagation: func(nodes []*nodeContext) error {
+				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+			},
+			result: func(original []node) []node {
+				// the smaller deleteTime wins between tombstones with the same version
+				original[0].properties[0].deleteTime = smaller
+				return original
+			},
+		})
+	})
+
+	ginkgo.It("gossip two data nodes with same version both deleted and client holds the smaller deleteTime", func() {
+		smaller := time.Now().Add(-2 * time.Minute).UnixNano()
+		larger := time.Now().Add(-time.Minute).UnixNano()
+		startingEachTest(&nodes, ctrl, &testCase{
+			groups: []group{
+				{name: testGroup1, shardCount: 2, replicasCount: 1},
+			},
+			nodes: []node{
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true, deleteTime: smaller}}, treeBuilt: true},
+				{properties: []property{{group: testGroup1, shard: 0, id: "1", version: 2, deleted: true, deleteTime: larger}}, treeBuilt: true},
+			},
+			propagation: func(nodes []*nodeContext) error {
+				return nodes[0].messenger.Propagation([]string{nodes[0].nodeID, nodes[1].nodeID}, testGroup1, 0)
+			},
+			result: func(original []node) []node {
+				// the smaller deleteTime wins between tombstones with the same version
+				original[1].properties[0].deleteTime = smaller
+				return original
+			},
+		})
+	})
+
 	ginkgo.It("gossip two data nodes with client missing but server exist", func() {
 		startingEachTest(&nodes, ctrl, &testCase{
 			groups: []group{
@@ -518,12 +602,17 @@ func applyPropertyUpdate(db *database, p property) {
 		},
 		Id: p.id,
 	}
+	err = s.update(context.Background(), GetPropertyID(update), update)
+	gomega.Expect(err).NotTo(gomega.HaveOccurred())
+	if p.deleteTime > 0 {
+		_, _, err = s.repair(context.Background(), GetPropertyID(update), update, p.deleteTime)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		return
+	}
 	if p.deleted {
 		err = s.delete(context.Background(), [][]byte{GetPropertyID(update)})
-	} else {
-		err = s.update(context.Background(), GetPropertyID(update), update)
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	}
-	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 }
 
 func queryPropertyWithVerify(db *database, p property) {
@@ -550,7 +639,11 @@ func queryPropertyWithVerify(db *database, p property) {
 		if latestData == nil {
 			return nil
 		}
-		return &property{group: p.group, shard: p.shard, id: p.id, version: latestData.timestamp, deleted: latestData.deleteTime > 0}
+		result := &property{group: p.group, shard: p.shard, id: p.id, version: latestData.timestamp, deleted: latestData.deleteTime > 0}
+		if p.deleteTime != 0 {
+			result.deleteTime = latestData.deleteTime
+		}
+		return result
 	}, flags.EventuallyTimeout).Should(gomega.Equal(&p))
 }
 
@@ -572,8 +665,10 @@ type property struct {
 	group   string
 	id      string
 	version int64
-	shard   int32
-	deleted bool
+	// deleteTime pins the tombstone's delete time when non-zero; it implies deleted.
+	deleteTime int64
+	shard      int32
+	deleted    bool
 }
 
 type nodeContext struct {

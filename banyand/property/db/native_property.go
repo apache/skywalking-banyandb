@@ -160,22 +160,59 @@ func encodeNativePropertyDocument(document index.Document) (native.Document, err
 	return result, nil
 }
 
-func (s *nativePropertyStore) query(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+// The query memory charged per matched hit and per projected result, beyond the bytes of its
+// _source (and sort value).
+const (
+	nativeHitChargeBytes    = 64
+	nativeResultChargeBytes = 128
+)
+
+// withMatchedHits acquires a read view, matches request against it and charges the query
+// memory of the hits, then calls fn with the view and the hits; the view is closed after fn.
+func (s *nativePropertyStore) withMatchedHits(ctx context.Context, request *propertyv1.QueryRequest,
+	fn func(view *native.ReadView, hits []native.QueryHit) error,
+) error {
 	if request == nil {
-		return nil, errors.New("property query is nil")
+		return errors.New("property query is nil")
 	}
 	view, err := s.owner.Acquire(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer view.Close()
 	hits, err := s.matchRequest(ctx, view, request)
 	if err != nil {
+		return err
+	}
+	if err = query.Charge(ctx, uint64(len(hits))*nativeHitChargeBytes); err != nil {
+		return err
+	}
+	return fn(view, hits)
+}
+
+// projectHit projects the _source and the deletion marker of an unsorted hit and charges the
+// query memory of the result.
+func projectHit(ctx context.Context, view *native.ReadView, hit native.QueryHit) (*queryProperty, error) {
+	projected, err := view.ProjectHit(ctx, hit, sourceField, deleteField)
+	if err != nil {
 		return nil, err
 	}
-	if chargeErr := query.Charge(ctx, uint64(len(hits))*64); chargeErr != nil {
-		return nil, chargeErr
+	if err = query.ChargeResult(ctx, uint64(len(firstProjectedValue(projected, sourceField)))+nativeResultChargeBytes); err != nil {
+		return nil, err
 	}
+	return propertyFromNativeProjection(projected, nil, false)
+}
+
+func (s *nativePropertyStore) query(ctx context.Context, request *propertyv1.QueryRequest, order *propertyv1.QueryOrder, limit int) (result []*queryProperty, err error) {
+	err = s.withMatchedHits(ctx, request, func(view *native.ReadView, hits []native.QueryHit) error {
+		result, err = queryHits(ctx, view, hits, order, limit)
+		return err
+	})
+	return result, err
+}
+
+func queryHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit, order *propertyv1.QueryOrder, limit int) ([]*queryProperty, error) {
+	var err error
 	if order == nil && limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
@@ -192,46 +229,98 @@ func (s *nativePropertyStore) query(ctx context.Context, request *propertyv1.Que
 	}
 	result := make([]*queryProperty, 0, len(hits))
 	for _, hit := range hits {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if order == nil || order.TagName == "" {
+			property, projectErr := projectHit(ctx, view, hit)
+			if projectErr != nil {
+				return nil, projectErr
+			}
+			result = append(result, property)
+			continue
 		}
 		projected, projectErr := view.ProjectHit(ctx, hit, sourceField, deleteField)
 		if projectErr != nil {
 			return nil, projectErr
 		}
-		if order != nil && order.TagName != "" {
-			sortValue, missing, sortErr := view.ProjectSortValue(ctx, hit, propertyTagField(order.TagName))
-			projectErr = sortErr
-			if projectErr != nil {
-				return nil, projectErr
-			}
-			if missing {
-				if order.Sort == modelv1.Sort_SORT_DESC {
-					sortValue = nativeMissingSortValueDesc
-				} else {
-					sortValue = nativeMissingSortValue
-				}
-			}
-			if err := query.ChargeResult(ctx, uint64(len(firstProjectedValue(projected, sourceField)))+uint64(len(sortValue))+128); err != nil {
-				return nil, err
-			}
-			property, propertyErr := propertyFromNativeProjection(projected, sortValue, missing)
-			if propertyErr != nil {
-				return nil, propertyErr
-			}
-			result = append(result, property)
-			continue
+		sortValue, missing, sortErr := view.ProjectSortValue(ctx, hit, propertyTagField(order.TagName))
+		if sortErr != nil {
+			return nil, sortErr
 		}
-		if err := query.ChargeResult(ctx, uint64(len(firstProjectedValue(projected, sourceField)))+128); err != nil {
-			return nil, err
+		if missing {
+			if order.Sort == modelv1.Sort_SORT_DESC {
+				sortValue = nativeMissingSortValueDesc
+			} else {
+				sortValue = nativeMissingSortValue
+			}
 		}
-		property, propertyErr := propertyFromNativeProjection(projected, nil, false)
+		if chargeErr := query.ChargeResult(ctx, uint64(len(firstProjectedValue(projected, sourceField)))+uint64(len(sortValue))+nativeResultChargeBytes); chargeErr != nil {
+			return nil, chargeErr
+		}
+		property, propertyErr := propertyFromNativeProjection(projected, sortValue, missing)
 		if propertyErr != nil {
 			return nil, propertyErr
 		}
 		result = append(result, property)
 	}
 	return result, nil
+}
+
+// entityRevisions reads, from one view, the newest stored revision of the entity request selects
+// and every live (not deleted) revision. It applies no limit: matchRequest visits every revision,
+// and only the deletion marker is projected for each hit, so the _source of a tombstone that is
+// not the newest revision is never read. newest is nil when the entity has no stored revision; a
+// live newest revision is also in live.
+func (s *nativePropertyStore) entityRevisions(ctx context.Context, request *propertyv1.QueryRequest) (newest *queryProperty, live []*queryProperty, err error) {
+	err = s.withMatchedHits(ctx, request, func(view *native.ReadView, hits []native.QueryHit) error {
+		newest, live, err = revisionsOfHits(ctx, view, hits)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return newest, live, nil
+}
+
+func revisionsOfHits(ctx context.Context, view *native.ReadView, hits []native.QueryHit) (newest *queryProperty, live []*queryProperty, err error) {
+	if len(hits) == 0 {
+		return nil, nil, nil
+	}
+	newestIndex := 0
+	for i := range hits {
+		if hits[i].Timestamp > hits[newestIndex].Timestamp {
+			newestIndex = i
+		}
+	}
+	for i, hit := range hits {
+		if err = ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if i == newestIndex {
+			if newest, err = projectHit(ctx, view, hit); err != nil {
+				return nil, nil, err
+			}
+			if newest.deleteTime <= 0 {
+				live = append(live, newest)
+			}
+			continue
+		}
+		marker, projectErr := view.ProjectHit(ctx, hit, deleteField)
+		if projectErr != nil {
+			return nil, nil, projectErr
+		}
+		// A malformed marker falls through to projectHit, which reports it as corrupt.
+		if deleted := marker.Fields[deleteField]; len(deleted) > 0 && len(deleted[0]) == 8 && convert.BytesToInt64(deleted[0]) > 0 {
+			continue
+		}
+		property, projectErr := projectHit(ctx, view, hit)
+		if projectErr != nil {
+			return nil, nil, projectErr
+		}
+		live = append(live, property)
+	}
+	return newest, live, nil
 }
 
 func firstProjectedValue(projected native.ProjectedHit, field string) []byte {

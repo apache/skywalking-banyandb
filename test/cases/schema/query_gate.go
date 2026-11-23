@@ -191,20 +191,11 @@ var _ = g.Describe("Schema query gate", func() {
 		gm.Expect(awaitErr).ShouldNot(gm.HaveOccurred())
 
 		g.By("Sending a query with the current ModRevision R1 (matching cache)")
-		// AwaitApplied confirms the stream resource key is present in every data
-		// node's schema cache, but not that the group's TSDB shard has finished
-		// opening: a data node can apply the stream resource event before its
-		// group event, and until the shard is open it fails the query plan with
-		// "group not found" (surfaced as a gRPC error). The gate verdict itself is
-		// deterministic once the cache matches R1, so poll past this orthogonal
-		// storage-init race, then assert the per-group status.
-		var st modelv1.Status
-		gm.Eventually(func() error {
-			var queryErr error
-			st, queryErr = sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
-			return queryErr
-		}, flags.EventuallyTimeout, 500*time.Millisecond).ShouldNot(gm.HaveOccurred())
-		gm.Expect(st).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
+		// AwaitApplied can complete before the query gate's schema view and storage
+		// are ready. Retry both RPC errors and non-success statuses until they converge.
+		gm.Eventually(func() (modelv1.Status, error) {
+			return sendStreamQuery(ctx, clients.StreamWriteClient, groupName, streamName, r1)
+		}, flags.EventuallyTimeout, 500*time.Millisecond).Should(gm.Equal(modelv1.Status_STATUS_SUCCEED),
 			"query with group ModRevision equal to cache must pass the gate with STATUS_SUCCEED")
 
 		_, _ = clients.GroupClient.Delete(ctx, &databasev1.GroupRegistryServiceDeleteRequest{Group: groupName})

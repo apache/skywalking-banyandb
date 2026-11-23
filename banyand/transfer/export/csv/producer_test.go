@@ -19,8 +19,6 @@ package csv
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,7 +35,10 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
 // recordingRun returns a unit run whose frames are recorded.
@@ -177,7 +178,7 @@ func TestMeasureCSV_EmptyUnit(t *testing.T) {
 	require.Empty(t, run.finish(false), "a unit without shards has nothing to export")
 
 	segDir := t.TempDir()
-	require.NoError(t, os.Mkdir(filepath.Join(segDir, shardDirPrefix+"0"), 0o700))
+	require.NoError(t, os.Mkdir(filepath.Join(segDir, nativefmt.ShardDir(0)), 0o700))
 	run, sent = recordingRun(repo)
 	unit.ShardIds = []uint32{0}
 	err := produceMeasureCSV(run, unit, segDir, nil)
@@ -249,39 +250,16 @@ func TestMultiTagRuleWarnings(t *testing.T) {
 	}}, multiTagRuleWarnings([]*databasev1.Measure{m}, rules, bindings))
 }
 
-func TestReadError(t *testing.T) {
-	require.NoError(t, readError("x", nil))
-	require.Equal(t, codes.FailedPrecondition, status.Code(readError("x", fmt.Errorf("open: %w", fs.ErrNotExist))))
-	require.Equal(t, codes.Canceled, status.Code(readError("x", context.Canceled)))
-	require.Equal(t, codes.Unavailable, status.Code(readError("x", status.Error(codes.Unavailable, "gone"))))
-	require.Equal(t, codes.Internal, status.Code(readError("x", errors.New("boom"))))
-}
-
 func TestReadOnlyFSReportsMissingDirectory(t *testing.T) {
 	rofs := newReadOnlyFS()
 	require.NotPanics(t, func() { rofs.ReadDir(filepath.Join(t.TempDir(), "gone")) })
 	require.ErrorIs(t, rofs.err, fs.ErrNotExist)
 }
 
-func TestLimiters(t *testing.T) {
-	require.Nil(t, newByteLimiter(0))
-	require.Nil(t, newRowLimiter(0))
-	require.Equal(t, 1, newByteLimiter(1).Burst(), "one second's worth")
-	require.Equal(t, 4*chunkSize, newByteLimiter(4*chunkSize).Burst())
-	require.Equal(t, 1, newRowLimiter(1).Burst())
-	// A chunk always fits the burst: a rate below chunkSize sends one second's worth at a time.
-	require.Equal(t, chunkSize, chunkLimit(nil))
-	require.Equal(t, 1, chunkLimit(newByteLimiter(1)))
-	require.Equal(t, 64<<10, chunkLimit(newByteLimiter(64<<10)))
-	require.Equal(t, chunkSize, chunkLimit(newByteLimiter(4*chunkSize)))
-	require.NoError(t, waitN(context.Background(), newByteLimiter(1), chunkLimit(newByteLimiter(1))))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	require.Equal(t, codes.Canceled, status.Code(waitN(ctx, newRowLimiter(1), 1)))
-
+func TestRowWait(t *testing.T) {
 	// A full row bucket does not wait; an empty one at 1 row/s waits about a second.
-	rows := newRowLimiter(1)
+	rows := snapshot.NewBucket(1)
 	require.Zero(t, rowWait(rows))
-	require.NoError(t, waitN(context.Background(), rows, 1))
+	require.NoError(t, ratelimit.Wait(context.Background(), rows, 1))
 	require.InDelta(t, time.Second, rowWait(rows), float64(100*time.Millisecond))
 }

@@ -31,8 +31,10 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 // entityColumn binds one entity tag of a resource to its layout column.
@@ -140,18 +142,18 @@ func produceStreamCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string)
 	// The series index only backs EntityValues for parts without smeta.bin.
 	resolver, err := dump.NewIndexResolver(segDir, dump.DefaultIndexCacheSize, nil)
 	if err != nil {
-		return readError("open the series index of "+segDir, err)
+		return snapshot.ReadError("open the series index of "+segDir, err)
 	}
 	defer resolver.Close()
 	fixed := fixedColumns(layout)
 	for i, shard := range unit.GetShardIds() {
 		fw := run.newWriter(layout, shardPrefix(unit, shard), shard, uint32(i), false, revisions)
-		shardDir := filepath.Join(segDir, fmt.Sprintf("%s%d", shardDirPrefix, shard))
+		shardDir := filepath.Join(segDir, nativefmt.ShardDir(shard))
 		if err = writeStreamShard(run, fw, shardDir, resolver, layout, fixed, resources); err != nil {
 			return err
 		}
 		if err = fw.close(); err != nil {
-			return readError("finish "+shardDir, err)
+			return snapshot.ReadError("finish "+shardDir, err)
 		}
 	}
 	return nil
@@ -160,9 +162,9 @@ func produceStreamCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string)
 func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *dump.IndexResolver, layout *csvfmt.Layout,
 	fixed map[csvfmt.ColumnKind]int, resources map[string]*streamResource,
 ) error {
-	partIDs, err := SessionPartIDs(shardDir)
+	partIDs, err := snapshot.SessionPartIDs(shardDir)
 	if err != nil {
-		return readError("list parts of "+shardDir, err)
+		return snapshot.ReadError("list parts of "+shardDir, err)
 	}
 	cells := layout.NewRow()
 	var series seriesDecoder
@@ -174,7 +176,7 @@ func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *d
 			openErr = rofs.err
 		}
 		if openErr != nil {
-			return readError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
 		}
 		part.SetIndexResolver(resolver)
 		part.SetReuseBuffers(true)
@@ -198,14 +200,14 @@ func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *d
 			if err = fw.writeRow(subject, cells); err != nil {
 				_ = it.Close()
 				_ = part.Close()
-				return readError("write "+subject+" row", err)
+				return snapshot.ReadError("write "+subject+" row", err)
 			}
 		}
 		err = it.Err()
 		_ = it.Close()
 		_ = part.Close()
 		if err != nil {
-			return readError(fmt.Sprintf("read part %016x of %s", id, shardDir), err)
+			return snapshot.ReadError(fmt.Sprintf("read part %016x of %s", id, shardDir), err)
 		}
 	}
 	return nil

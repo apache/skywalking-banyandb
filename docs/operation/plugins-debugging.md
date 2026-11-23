@@ -25,11 +25,11 @@ For migration sampling, see [Lifecycle migration](#lifecycle-migration) below.
    real, existing directory. Both are data-node flags; a liaison node never
    hosts plugins, so pointing plugins at a liaison silently does nothing.
 2. **Is the pipeline enabled for this group?** The group's `TracePipelineConfig.enabled`
-   must be `true`. Also check `enabled_events`: an empty `enabled_events`
-   defaults the in-merge filter (`PIPELINE_EVENT_MERGE`) **on**, but does
-   **not** default segment finalization (`PIPELINE_EVENT_FINALIZE`) on — if
-   you expected finalization-time retention and didn't list it explicitly, it
-   never runs.
+   must be `true`. Also check `enabled_events`: MERGE and FINALIZE must each
+   be selected explicitly. An empty or omitted list disables both data-node
+   passes; stage sampling remains independent. Existing configurations that
+   relied on the former implicit MERGE default must add `PIPELINE_EVENT_MERGE`
+   before upgrading. Older nodes still apply that default during a rolling upgrade.
 3. **Were any samplers actually installed for this group?** Check the
    `sampler_active_count{group}` gauge. Zero means no sampler chain was ever
    built for this group — reconcile either never ran (config not applied) or

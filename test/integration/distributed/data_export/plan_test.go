@@ -48,12 +48,9 @@ import (
 	test_stream "github.com/apache/skywalking-banyandb/pkg/test/stream"
 	test_trace "github.com/apache/skywalking-banyandb/pkg/test/trace"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
-	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
-	casespropertydata "github.com/apache/skywalking-banyandb/test/cases/property/data"
-	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	casestracedata "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
 
 var (
@@ -68,20 +65,10 @@ var (
 	closeDataNodes []func()
 	conn           *grpc.ClientConn
 	// The base times the suite wrote its data with (test/cases/<catalog>/data), every write
-	// spaced by writeInterval.
+	// spaced by transfertest.WriteInterval.
 	streamBase  time.Time
 	measureBase time.Time
 	traceBase   time.Time
-)
-
-const writeInterval = 500 * time.Millisecond
-
-// The suite writes measureRows points into service_cpm_minute and topNSourcePoints into
-// topNSourceMeasure, the source measure of a Top-N aggregation of sw_metric.
-const (
-	measureRows       = 6
-	topNSourceMeasure = "service_instance_cpm_minute"
-	topNSourcePoints  = 6
 )
 
 var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
@@ -101,7 +88,7 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 		dataAddrs = append(dataAddrs, addr)
 		dataDirs = append(dataDirs, dir)
 		closeDataNodes = append(closeDataNodes, closeFn)
-		nodeNames = append(nodeNames, currentNodeName(addr))
+		nodeNames = append(nodeNames, transfertest.CurrentNodeName(addr))
 	}
 	ginkgo.By("Loading schema via property")
 	setup.PreloadSchemaViaProperty(config, test_stream.PreloadSchema, test_measure.PreloadSchema, test_trace.PreloadSchema, test_property.PreloadSchema)
@@ -120,19 +107,8 @@ var _ = ginkgo.SynchronizedBeforeSuite(func() []byte {
 	conn, err = grpchelper.Conn(liaisonAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
 	ginkgo.By("Writing stream, measure, trace and property data")
-	streamBase = timestamp.NowMilli()
-	casesstreamdata.Write(conn, "sw", streamBase, writeInterval)
-	ns := timestamp.NowMilli().UnixNano()
-	measureBase = time.Unix(0, ns-ns%int64(time.Minute))
-	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", measureBase, writeInterval)
-	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", measureBase, writeInterval)
-	// A minute apart, the points of a Top-N aggregation's source measure span several windows,
-	// so the liaison's Top-N processor closes all but the last and writes their _top_n_result rows.
-	casesmeasuredata.Write(conn, topNSourceMeasure, "sw_metric", topNSourceMeasure+"_data.json", measureBase, time.Minute)
-	traceBase = timestamp.NowMilli()
-	casestracedata.Write(conn, "sw", traceBase, writeInterval)
-	casespropertydata.Write(conn, "sw1")
-	transfertest.WriteTombstone(conn)
+	d := transfertest.WriteSuiteData(conn)
+	streamBase, measureBase, traceBase = d.StreamBase, d.MeasureBase, d.TraceBase
 	return []byte(liaisonAddr)
 }, func(_ []byte) {})
 
@@ -150,15 +126,6 @@ func dialDataNode(addr string) *grpc.ClientConn {
 	c, err := grpchelper.Conn(addr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
 	return c
-}
-
-// currentNodeName asks a data node for the node id the liaison registers it under.
-func currentNodeName(addr string) string {
-	c := dialDataNode(addr)
-	defer func() { gomega.Expect(c.Close()).To(gomega.Succeed()) }()
-	cur, err := databasev1.NewNodeQueryServiceClient(c).GetCurrentNode(context.Background(), &databasev1.GetCurrentNodeRequest{})
-	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
-	return cur.GetNode().GetMetadata().GetName()
 }
 
 // heartbeat runs ACTION_HEARTBEAT and returns the error text every data node answers with,
@@ -239,28 +206,13 @@ func catalogParts(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, g
 	return parts
 }
 
-// propertyDocs sums the documents of one property group across every node's units.
-func propertyDocs(frames []*transferv1.PlanResponse, group string) uint64 {
-	var docs uint64
-	for _, f := range transfertest.UnitFrames(frames) {
-		for _, u := range f.GetUnits() {
-			if p := u.GetProperty(); p != nil && p.GetGroup() == group {
-				for _, sh := range p.GetShards() {
-					docs += sh.GetDocCount()
-				}
-			}
-		}
-	}
-	return docs
-}
-
 // expectEveryCatalogInventoried asserts that the frames list the data the suite wrote in each
 // of the four catalogs.
 func expectEveryCatalogInventoried(frames []*transferv1.PlanResponse) {
 	gomega.ExpectWithOffset(1, catalogParts(frames, commonv1.Catalog_CATALOG_STREAM, "default")).To(gomega.BeNumerically(">", 0), "stream")
 	gomega.ExpectWithOffset(1, catalogParts(frames, commonv1.Catalog_CATALOG_MEASURE, "sw_metric")).To(gomega.BeNumerically(">", 0), "measure")
 	gomega.ExpectWithOffset(1, catalogParts(frames, commonv1.Catalog_CATALOG_TRACE, "test-trace-group")).To(gomega.BeNumerically(">", 0), "trace")
-	gomega.ExpectWithOffset(1, propertyDocs(frames, "sw")).To(gomega.BeNumerically(">", 0), "property")
+	gomega.ExpectWithOffset(1, transfertest.PropertyDocs(frames, "sw")).To(gomega.BeNumerically(">", 0), "property")
 }
 
 func totalRows(frames []*transferv1.PlanResponse) uint64 {
@@ -285,7 +237,7 @@ func defaultShardSources(frames []*transferv1.PlanResponse) map[string]map[strin
 				continue
 			}
 			for _, sh := range u.GetSegment().GetShards() {
-				key := "stream/default/" + exporter.NormalizeStage(f.GetStage()) + "/" + u.GetSegment().GetUnit().GetSegmentSuffix() +
+				key := "stream/default/" + transfer.NormalizeStage(f.GetStage()) + "/" + u.GetSegment().GetUnit().GetSegmentSuffix() +
 					"/shard-" + strconv.FormatUint(uint64(sh.GetShardId()), 10)
 				if out[key] == nil {
 					out[key] = map[string]uint64{}
@@ -354,7 +306,7 @@ func planServiceSpecs() {
 		want := defaultShardSources(frames)
 		gomega.Expect(want).NotTo(gomega.BeEmpty())
 		summary := transfertest.Summary(frames)
-		rep := exporter.BuildReport(&exporter.ClusterInfo{}, &exporter.PlanResult{
+		rep := exporter.BuildReport(&cluster.Info{}, &cluster.PlanResult{
 			Frames:           transfertest.UnitFrames(frames),
 			AnsweredNodes:    summary.GetAnsweredNodes(),
 			UnreachableNodes: summary.GetUnreachableNodes(),

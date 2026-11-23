@@ -73,9 +73,15 @@ message RegisterAgentResponse {
   string agent_id = 4;
 }
 
+// StreamMetricsRequest carries one agent's reply to a metrics request. A reply
+// too large for one gRPC message is split into several requests: every chunk
+// but the last sets has_more, and the proxy merges them before using the reply.
+// A sender that never sets has_more sends each reply as a single message.
 message StreamMetricsRequest {
   repeated Metric metrics = 1;
   google.protobuf.Timestamp timestamp = 2;
+  // has_more is true when further chunks of the same reply follow.
+  bool has_more = 3;
 }
 
 // MetricType represents the Prometheus metric type.

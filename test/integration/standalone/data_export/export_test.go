@@ -19,6 +19,7 @@ package data_export_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,8 +36,10 @@ import (
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
@@ -45,24 +48,7 @@ func streamRows() uint64 {
 	frames := transfertest.MustPlan(conn, &transferv1.PlanRequest{Selectors: []*transferv1.Selector{
 		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{transfertest.StreamGroup}},
 	}})
-	return groupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
-}
-
-// groupRows sums the total_count of the shards of one catalog and group in a plan.
-func groupRows(frames []*transferv1.PlanResponse, catalog commonv1.Catalog, group string) uint64 {
-	var n uint64
-	for _, f := range transfertest.UnitFrames(frames) {
-		for _, u := range f.GetUnits() {
-			seg := u.GetSegment()
-			if seg.GetUnit().GetCatalog() != catalog || seg.GetUnit().GetGroup() != group {
-				continue
-			}
-			for _, sh := range seg.GetShards() {
-				n += sh.GetTotalCount()
-			}
-		}
-	}
-	return n
+	return transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
 }
 
 // expectNoSession asserts that the process holds no export session and no snapshot.
@@ -73,10 +59,35 @@ func expectNoSession() {
 	}
 }
 
+// waitForFlushedData waits until every catalog of the suite data is on disk, where an export
+// session snapshot can see it.
+func waitForFlushedData() {
+	ginkgo.By("Waiting for every catalog to be flushed")
+	gomega.Eventually(func(g gomega.Gomega) {
+		frames, planErr := transfertest.Plan(conn, &transferv1.PlanRequest{})
+		g.Expect(planErr).NotTo(gomega.HaveOccurred())
+		g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.BeNumerically(">", 0))
+		g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).To(gomega.BeNumerically(">", 0))
+		// The written points and at least one _top_n_result row the Top-N processor wrote.
+		g.Expect(transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
+			To(gomega.BeNumerically(">", transfertest.MeasureRows+transfertest.TopNSourcePoints), "Top-N results")
+		g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.BeNumerically(">", 0))
+		g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
+		prop := propertyUnit(frames, transfertest.PropertyGroup)
+		g.Expect(prop).NotTo(gomega.BeNil())
+		var docs uint64
+		for _, sh := range prop.GetShards() {
+			docs += sh.GetDocCount()
+		}
+		// The property index commits on its own schedule: wait for the live property and the tombstone.
+		g.Expect(docs).To(gomega.BeNumerically(">=", 2))
+	}, flags.EventuallyTimeout, time.Second).Should(gomega.Succeed())
+}
+
 var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, func() {
 	var self string
 	suiteData := func() transfertest.SuiteData {
-		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: writeInterval}
+		return transfertest.SuiteData{StreamBase: streamBase, MeasureBase: measureBase, TraceBase: traceBase, Interval: transfertest.WriteInterval}
 	}
 	allOnOneNode := func(string) bool { return true }
 
@@ -84,26 +95,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		cur, err := databasev1.NewNodeQueryServiceClient(conn).GetCurrentNode(context.Background(), &databasev1.GetCurrentNodeRequest{})
 		gomega.Expect(err).NotTo(gomega.HaveOccurred())
 		self = cur.GetNode().GetMetadata().GetName()
-		ginkgo.By("Waiting for every catalog to be flushed")
-		gomega.Eventually(func(g gomega.Gomega) {
-			frames, planErr := transfertest.Plan(conn, &transferv1.PlanRequest{})
-			g.Expect(planErr).NotTo(gomega.HaveOccurred())
-			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)).To(gomega.BeNumerically(">", 0))
-			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).To(gomega.BeNumerically(">", 0))
-			// The written points and at least one _top_n_result row the Top-N processor wrote.
-			g.Expect(groupRows(frames, commonv1.Catalog_CATALOG_MEASURE, transfertest.MeasureGroup)).
-				To(gomega.BeNumerically(">", measureRows+topNSourcePoints), "Top-N results")
-			g.Expect(shardsWithParts(frames, commonv1.Catalog_CATALOG_TRACE, transfertest.TraceGroup)).To(gomega.BeNumerically(">", 0))
-			g.Expect(transfertest.IndexModeDocs(frames, transfertest.IndexModeGroup)).To(gomega.BeNumerically(">=", 3), "index-mode rows")
-			prop := propertyUnit(frames, transfertest.PropertyGroup)
-			g.Expect(prop).NotTo(gomega.BeNil())
-			var docs uint64
-			for _, sh := range prop.GetShards() {
-				docs += sh.GetDocCount()
-			}
-			// The property index commits on its own schedule: wait for the live property and the tombstone.
-			g.Expect(docs).To(gomega.BeNumerically(">=", 2))
-		}, flags.EventuallyTimeout, time.Second).Should(gomega.Succeed())
+		waitForFlushedData()
 		expectNoSession()
 	})
 
@@ -163,7 +155,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		out := ginkgo.GinkgoT().TempDir()
 		gomega.Expect(os.WriteFile(filepath.Join(out, "leftover"), []byte("x"), 0o600)).To(gomega.Succeed())
 		run := transfertest.RunExport(context.Background(), grpcAddr, transfertest.DefaultExportOptions(out), nil)
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitUsage), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), run.Log)
 		expectNoSession()
 	})
 
@@ -177,7 +169,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 				return
 			}
 			wrote = true
-			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), writeInterval)
+			casesstreamdata.Write(conn, transfertest.StreamName, timestamp.NowMilli(), transfertest.WriteInterval)
 			gomega.Eventually(streamRows, flags.EventuallyTimeout, time.Second).Should(gomega.BeNumerically(">", before),
 				"the late rows reach the live parts while the export runs")
 		})
@@ -212,7 +204,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		gomega.Expect(holder).NotTo(gomega.BeEmpty())
 
 		refused := transfertest.RunExport(context.Background(), grpcAddr, transfertest.DefaultExportOptions(filepath.Join(ginkgo.GinkgoT().TempDir(), "second")), nil)
-		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exporter.ExitPreflight), refused.Log)
+		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exitcode.ExitPreflight), refused.Log)
 		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring(holder))
 		expectSingleSession(holder)
 
@@ -226,7 +218,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 
 		var first transfertest.ExportRun
 		gomega.Eventually(firstDone, flags.EventuallyTimeout).Should(gomega.Receive(&first))
-		gomega.Expect(first.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), first.Log)
+		gomega.Expect(first.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), first.Log)
 		gomega.Expect(first.SessionID()).To(gomega.Equal(holder))
 		transfertest.ExpectAbortedOutput(firstOut)
 		expectNoSession()
@@ -244,7 +236,7 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 				once.Do(func() { time.AfterFunc(2*time.Second, cancel) })
 			}
 		})
-		gomega.Expect(run.ExitCode()).To(gomega.Equal(exporter.ExitRuntime), run.Log)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), run.Log)
 		id := run.SessionID()
 		gomega.Expect(id).NotTo(gomega.BeEmpty())
 		gomega.Expect(run.Log).To(gomega.ContainSubstring("bydbctl data release-session --id " + id))
@@ -254,6 +246,84 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		}
 		transfertest.ExpectAbortedOutput(out)
 		gomega.Expect(transfertest.Release(conn, id)).To(gomega.BeEmpty())
+		expectNoSession()
+	})
+})
+
+var _ = ginkgo.Describe("Native export on a standalone process", ginkgo.Ordered, func() {
+	var self string
+
+	ginkgo.BeforeAll(func() {
+		cur, err := databasev1.NewNodeQueryServiceClient(conn).GetCurrentNode(context.Background(), &databasev1.GetCurrentNodeRequest{})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		self = cur.GetNode().GetMetadata().GetName()
+		waitForFlushedData()
+		expectNoSession()
+	})
+
+	for _, maxFileSize := range []uint64{0, bnc.MinFileSize} {
+		ginkgo.It(fmt.Sprintf("packs the session snapshot of every catalog into verified containers (max file size %d)", maxFileSize), func() {
+			out := filepath.Join(ginkgo.GinkgoT().TempDir(), "export")
+			opts := transfertest.DefaultNativeExportOptions(out)
+			opts.MaxFileSize = maxFileSize
+			run := transfertest.RunExport(context.Background(), grpcAddr, opts, nil)
+			gomega.Expect(run.Err).NotTo(gomega.HaveOccurred(), run.Log)
+			expectNoSession()
+
+			a := transfertest.ReadNativeArtifact(out)
+			gomega.Expect(a.Manifest.Source.Nodes).To(gomega.HaveLen(1))
+			gomega.Expect(a.Manifest.Source.Nodes[0].ID).To(gomega.Equal(self))
+			gomega.Expect(a.Manifest.Warnings).To(gomega.BeEmpty())
+			nodeDir := "nodes/" + manifest.NodeDir(self) + "/"
+			catalogs := map[string]bool{}
+			for _, u := range a.Manifest.Units {
+				catalogs[u.Catalog] = true
+				gomega.Expect(u.Sources).To(gomega.HaveLen(1))
+				src := u.Sources[0]
+				if u.Catalog == "PROPERTY" {
+					gomega.Expect(src.Shards).NotTo(gomega.BeEmpty())
+					continue
+				}
+				gomega.Expect(u.SegmentVersion).NotTo(gomega.BeEmpty(), "%s/%s", u.Group, u.Segment)
+				segPrefix := nodeDir + strings.ToLower(u.Catalog) + "/" + u.Group + "/seg-" + u.Segment
+				gomega.Expect(a.Plain).To(gomega.ContainElement(segPrefix + "/" + nativefmt.SegmentMetaFile))
+				for _, sh := range src.Shards {
+					set := a.Open(fmt.Sprintf("%s/shard-%d", segPrefix, sh.Shard))
+					var ids, want []uint64
+					for _, g := range set.Shard().Parts {
+						ids = append(ids, g.PartID)
+					}
+					var total uint64
+					for _, p := range sh.Parts {
+						want = append(want, p.ID)
+						total += p.TotalCount
+					}
+					gomega.Expect(set.Close()).To(gomega.Succeed())
+					gomega.Expect(ids).To(gomega.ConsistOf(want), "the container holds exactly the parts of the plan")
+					gomega.Expect(sh.TotalCount).To(gomega.Equal(total))
+				}
+			}
+			gomega.Expect(catalogs).To(gomega.HaveKey("STREAM"))
+			gomega.Expect(catalogs).To(gomega.HaveKey("MEASURE"))
+			gomega.Expect(catalogs).To(gomega.HaveKey("TRACE"))
+			gomega.Expect(catalogs).To(gomega.HaveKey("PROPERTY"))
+			for prefix, vols := range a.Containers {
+				for _, v := range vols {
+					info, statErr := os.Stat(filepath.Join(out, filepath.FromSlash(v)))
+					gomega.Expect(statErr).NotTo(gomega.HaveOccurred())
+					if maxFileSize > 0 {
+						gomega.Expect(uint64(info.Size())).To(gomega.BeNumerically("<=", maxFileSize), prefix)
+					}
+				}
+			}
+		})
+	}
+
+	ginkgo.It("refuses a compressed native export before connecting", func() {
+		opts := transfertest.DefaultNativeExportOptions(filepath.Join(ginkgo.GinkgoT().TempDir(), "export"))
+		opts.Compress = transferv1.Compress_COMPRESS_GZIP
+		run := transfertest.RunExport(context.Background(), grpcAddr, opts, nil)
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), run.Log)
 		expectNoSession()
 	})
 })

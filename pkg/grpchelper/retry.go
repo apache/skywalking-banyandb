@@ -21,6 +21,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"math/big"
+	"slices"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -150,15 +151,24 @@ func IsTransientError(err error) bool {
 	return false
 }
 
+// failoverCodes are the gRPC codes of an error that fails a node over. codes.Canceled with
+// "client connection is closing" indicates the gRPC connection to the node was closed (node
+// failure or keepalive timeout), not a client-side cancellation.
+var failoverCodes = []codes.Code{codes.Unavailable, codes.DeadlineExceeded, codes.Canceled}
+
+// FailoverCodes returns the gRPC codes of an error that fails a node over, as IsFailoverError
+// tells them.
+func FailoverCodes() []codes.Code {
+	return slices.Clone(failoverCodes)
+}
+
 // IsFailoverError checks if the error indicates the node should be failed over.
 func IsFailoverError(err error) bool {
 	code, ok := statusCodeFromError(err)
 	if !ok {
 		return false
 	}
-	// codes.Canceled with "client connection is closing" indicates the gRPC connection
-	// to the node was closed (node failure or keepalive timeout), not a client-side cancellation.
-	return code == codes.Unavailable || code == codes.DeadlineExceeded || code == codes.Canceled
+	return slices.Contains(failoverCodes, code)
 }
 
 // IsInternalError checks if the error is an internal server error.

@@ -18,15 +18,37 @@
 package stream
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/apache/skywalking-banyandb/banyand/protector"
+	"github.com/apache/skywalking-banyandb/pkg/test"
 )
+
+// console holds what the package's tests print to stderr.
+var console *test.CapturedStderr
 
 // TestMain pins the host memory to "unreadable", so the query budget keeps its fixed 64 MiB fallback pool (8 MiB per
 // query) and the budget tests exercise the same limits on every machine instead of a pool sized from its memory.
+//
+// It also replaces os.Stderr once, before any test runs. zerolog's console
+// writer reads os.Stderr on every write, so replacing it while a goroutine an
+// earlier test started still logs is a data race; here nothing logs yet. A
+// test that asserts on the console reads the part printed since it began.
+// When a test fails, what was printed is written to the real stderr.
 func TestMain(m *testing.M) {
 	protector.SetHostMemoryForTest(0)
-	os.Exit(m.Run())
+	stderr := os.Stderr
+	var err error
+	console, err = test.CaptureStderr()
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		os.Exit(1)
+	}
+	code := m.Run()
+	if code != 0 {
+		_, _ = stderr.WriteString(console.String())
+	}
+	os.Exit(code)
 }

@@ -18,8 +18,8 @@
 package plan
 
 import (
+	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -56,7 +56,7 @@ type patternCaptureCluster struct {
 	fakeCluster
 }
 
-func (c *patternCaptureCluster) Broadcast(_ time.Duration, topic bus.Topic, message bus.Message) ([]bus.Future, error) {
+func (c *patternCaptureCluster) Scatter(_ context.Context, topic bus.Topic, message bus.Message, _ bus.ScatterOptions) ([]bus.NodeStream, error) {
 	c.topic = topic
 	c.message = message
 	c.messages = append(c.messages, message)
@@ -70,24 +70,24 @@ func TestPatternDistributedRequestEnvelopeAndIdentity(t *testing.T) {
 	cluster := &patternCaptureCluster{}
 	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 1<<20)
 	tracker := vectorized.QueryMemoryTracker(ctx, 0)
-	_, release, err := plan.broadcastRequest(ctx, cluster, req)
+	topic, message, release, err := plan.scanMessage(ctx, cluster, req)
 	defer release()
 	require.NoError(t, err)
 	require.Positive(t, tracker.Used())
 	release()
 	require.Zero(t, tracker.Used())
-	require.Equal(t, data.TopicInternalMeasurePatternQuery, cluster.topic)
-	require.Equal(t, req.Request.Groups[0], cluster.message.Group())
-	decoded, got, err := vmeasure.DecodeMeasurePatternRequest(cluster.message.Data().([]byte))
+	require.Equal(t, data.TopicInternalMeasurePatternQuery, topic)
+	require.Equal(t, req.Request.Groups[0], message.Group())
+	decoded, got, err := vmeasure.DecodeMeasurePatternRequest(message.Data().([]byte))
 	require.NoError(t, err)
 	require.True(t, proto.Equal(req, decoded))
 	require.Equal(t, patterns, got)
 	plan.patterns = nil
-	_, release, err = plan.broadcastRequest(ctx, cluster, req)
+	topic, message, release, err = plan.scanMessage(ctx, cluster, req)
 	defer release()
 	require.NoError(t, err)
-	require.Equal(t, data.TopicInternalMeasureQuery, cluster.topic)
-	require.Same(t, req, cluster.message.Data())
+	require.Equal(t, data.TopicInternalMeasureQuery, topic)
+	require.Same(t, req, message.Data())
 }
 
 func TestPatternDistributedRequestBudgetAndCleanup(t *testing.T) {
@@ -98,14 +98,14 @@ func TestPatternDistributedRequestBudgetAndCleanup(t *testing.T) {
 	}
 	cluster := &patternCaptureCluster{}
 	ctx := vectorized.WithQueryMemoryTracker(t.Context(), 1)
-	_, release, err := plan.broadcastRequest(ctx, cluster, req)
+	_, _, release, err := plan.scanMessage(ctx, cluster, req)
 	require.ErrorIs(t, err, vectorized.ErrMemoryBudgetExceeded, "memory admission precedes encoding and validation")
 	release()
 	require.Zero(t, vectorized.QueryMemoryTracker(ctx, 0).Used())
 	require.Empty(t, cluster.messages)
 
 	ctx = vectorized.WithQueryMemoryTracker(t.Context(), 1<<20)
-	_, release, err = plan.broadcastRequest(ctx, cluster, req)
+	_, _, release, err = plan.scanMessage(ctx, cluster, req)
 	require.ErrorIs(t, err, native.ErrInvalidQuery)
 	tracker := vectorized.QueryMemoryTracker(ctx, 0)
 	require.Positive(t, tracker.Used())

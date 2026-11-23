@@ -18,26 +18,14 @@
 package exporter
 
 import (
-	"context"
 	"fmt"
 	"slices"
 
-	"google.golang.org/grpc"
-
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
-	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 )
-
-// FetchGroups lists every group through the liaison's registry service.
-func FetchGroups(ctx context.Context, conn *grpc.ClientConn) ([]*commonv1.Group, error) {
-	resp, err := databasev1.NewGroupRegistryServiceClient(conn).List(ctx, &databasev1.GroupRegistryServiceListRequest{})
-	if err != nil {
-		return nil, Exit(ExitCodeFor(err), "list groups: %w", err)
-	}
-	return resp.GetGroup(), nil
-}
 
 // ValidateSelectors checks that every group a selector names exists in the schema and
 // belongs to the selected catalog, so a typo fails before anything is planned.
@@ -62,7 +50,7 @@ func ValidateSelectors(groups []*commonv1.Group, selectors []*transferv1.Selecto
 
 // StageNames returns the lifecycle stage names a group declares, plus the default tier.
 func StageNames(g *commonv1.Group) []string {
-	names := []string{DefaultStageName}
+	names := []string{transfer.DefaultStageName}
 	for _, st := range g.GetResourceOpts().GetStages() {
 		names = append(names, st.GetName())
 	}
@@ -72,16 +60,16 @@ func StageNames(g *commonv1.Group) []string {
 // StageWarnings reports every (node, group, stage) a Plan frame carries whose stage the
 // group schema does not declare: the node holds data the current lifecycle config does
 // not describe, which the operator should know before exporting.
-func StageWarnings(groups []*commonv1.Group, result *PlanResult) []string {
+func StageWarnings(groups []*commonv1.Group, result *cluster.PlanResult) []string {
 	declared := make(map[string][]string, len(groups))
 	for _, g := range groups {
 		declared[g.GetMetadata().GetName()] = StageNames(g)
 	}
 	var warnings []string
 	for _, f := range result.Frames {
-		stage := f.GetStage() // RunPlan already normalized it
+		stage := f.GetStage() // cluster.RunPlan already normalized it
 		for _, u := range f.GetUnits() {
-			group := unitGroup(u)
+			group := cluster.UnitGroup(u)
 			stages, ok := declared[group]
 			if !ok {
 				warnings = append(warnings, fmt.Sprintf("node %s reports group %q which is not in the schema", f.GetNodeId(), group))
@@ -92,5 +80,5 @@ func StageWarnings(groups []*commonv1.Group, result *PlanResult) []string {
 			}
 		}
 	}
-	return uniqueSorted(warnings)
+	return transfer.UniqueSorted(warnings)
 }

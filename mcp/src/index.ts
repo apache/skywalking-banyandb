@@ -15,8 +15,6 @@
  * limitations under the License.
  */
 
-import dotenv from 'dotenv';
-
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { BanyanDBClient } from './client/index.js';
 import { BANYANDB_ADDRESS, MCP_AUTH_TOKEN, MCP_HOST, TRANSPORT } from './config.js';
@@ -24,13 +22,14 @@ import { isLoopbackHost, startHttpServer } from './server/http.js';
 import { createMcpServer } from './server/mcp.js';
 import { log, setupGlobalErrorHandlers } from './utils/logger.js';
 
-dotenv.config({ quiet: true });
 setupGlobalErrorHandlers();
 
 async function main() {
   const banyandbClient = new BanyanDBClient(BANYANDB_ADDRESS);
 
-  log.info('Using built-in BydbQL prompt generation with natural language support and BanyanDB schema hints. Use the list_groups_schemas tool to discover available resources and guide your queries.');
+  log.info(
+    'Using built-in BydbQL prompt generation with natural language support and BanyanDB schema hints. Use the list_groups_schemas tool to discover available resources and guide your queries.',
+  );
 
   if (TRANSPORT === 'http') {
     if (!isLoopbackHost(MCP_HOST) && !MCP_AUTH_TOKEN) {

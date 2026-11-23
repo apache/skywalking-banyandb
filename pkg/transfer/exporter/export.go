@@ -36,8 +36,14 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/output"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
@@ -56,27 +62,27 @@ type Env struct {
 	// Confirm asks the operator a yes/no question and reports a yes; nil when nobody can
 	// answer, and then a cluster held by another session refuses the export.
 	Confirm  func(ctx context.Context, question string) bool
-	Cluster  *ClusterInfo
-	Liaisons *Liaisons
-	// Groups is the full group list from FetchGroups; RunExport picks the selected ones.
+	Cluster  *cluster.Info
+	Liaisons *cluster.Liaisons
+	// Groups is the full group list from cluster.FetchGroups; RunExport picks the selected ones.
 	Groups []*commonv1.Group
 }
 
 // CheckOutputDir accepts an output directory that does not exist or is empty. Anything else
-// is refused: this step has no resume, and a fresh export must not mix with leftovers.
+// is refused, so an export never mixes with what an earlier run left behind.
 func CheckOutputDir(dir string) error {
 	if dir == "" {
-		return Exit(ExitUsage, "no output directory: give --output or export.output in plan.yaml")
+		return exitcode.Exit(exitcode.ExitUsage, "no output directory: give --output or export.output in plan.yaml")
 	}
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return Exit(ExitUsage, "output directory %s: %w", dir, err)
+		return exitcode.Exit(exitcode.ExitUsage, "output directory %s: %w", dir, err)
 	}
 	if len(entries) > 0 {
-		return Exit(ExitUsage, "output directory %s is not empty; give a new or empty directory", dir)
+		return exitcode.Exit(exitcode.ExitUsage, "output directory %s is not empty; give a new or empty directory", dir)
 	}
 	return nil
 }
@@ -102,25 +108,25 @@ func SelectedGroups(groups []*commonv1.Group, selectors []*transferv1.Selector) 
 // RunExport performs a real export: schema, session, one Export
 // stream per node, manifest, release. Schema, Plan and Sessions go through the primary
 // liaison, the node streams are spread over every liaison. Once the session exists any
-// failure keeps it and tells the operator how to release it; the error is an ExitError
+// failure keeps it and tells the operator how to release it; the error is an exitcode.ExitError
 // (exit 3 unless the cause carries its own code).
 func RunExport(ctx context.Context, env Env, opts config.Export) error {
-	if opts.Format != transferv1.Format_FORMAT_CSV {
-		return Exit(ExitUsage, "native export format is not implemented yet")
+	if err := CheckFormat(&opts); err != nil {
+		return err
 	}
 	if opts.SchemaOnly && !opts.IncludeSchema {
-		return Exit(ExitUsage, "a schema-only export needs the schema; it cannot be combined with --include-schema=false")
+		return exitcode.Exit(exitcode.ExitUsage, "a schema-only export needs the schema; it cannot be combined with --include-schema=false")
 	}
 	start := time.Now()
-	prog := newProgress(env.Out, env.Terminal)
+	prog := output.NewProgress(env.Out, env.Terminal, "node(s) exporting")
 	// Workers and the heartbeat watcher print concurrently; every Fprintf is one Write, and
 	// it goes through the progress so that it never tears the live lines.
-	env.Log = prog.wrap(env.Log)
+	env.Log = prog.Wrap(env.Log)
 	if err := CheckOutputDir(opts.Output); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(opts.Output, 0o700); err != nil {
-		return Exit(ExitUsage, "create output directory: %w", err)
+		return exitcode.Exit(exitcode.ExitUsage, "create output directory: %w", err)
 	}
 	conn := env.Liaisons.Primary()
 	groups := SelectedGroups(env.Groups, opts.Selectors)
@@ -130,15 +136,15 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		if schema, err = schemasync.Export(ctx, conn, groups, opts.Output); err != nil {
 			// Leave the output directory empty again, so the same command can run next.
 			_ = os.RemoveAll(filepath.Join(opts.Output, schemasync.Dir))
-			return Exit(ExitCodeFor(err), "export schema: %w", err)
+			return exitcode.Exit(exitcode.For(err), "export schema: %w", err)
 		}
-		prog.printf("schema of %d group(s) written to %s", len(groups), filepath.Join(opts.Output, schemasync.Dir))
+		prog.Printf("schema of %d group(s) written to %s", len(groups), filepath.Join(opts.Output, schemasync.Dir))
 	}
-	m := baseManifest(opts.Compress, groups, schema)
+	m := baseManifest(opts.Format, opts.Compress, groups, schema)
 	if opts.SchemaOnly {
 		m.SchemaOnly = true
 		if err := manifest.Write(filepath.Join(opts.Output, manifest.FileName), m); err != nil {
-			return Exit(ExitRuntime, "write manifest: %w", err)
+			return exitcode.Exit(exitcode.ExitRuntime, "write manifest: %w", err)
 		}
 		fmt.Fprintf(env.Out, "schema-only export written to %s\n", opts.Output)
 		return nil
@@ -146,7 +152,7 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 
 	sessOpts := SessionOptions{
 		Preempt:   opts.Preempt,
-		OnCreated: func(id string) { prog.printf("export session %s created", id) },
+		OnCreated: func(id string) { prog.Printf("export session %s created", id) },
 	}
 	if env.Confirm != nil {
 		sessOpts.Confirm = func(occupants string) bool {
@@ -161,7 +167,7 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		_ = os.RemoveAll(filepath.Join(opts.Output, schemasync.Dir))
 		if ctx.Err() != nil {
 			// Interrupted, at the takeover question included: no session was created.
-			return Exit(ExitRuntime, "export interrupted before its session was created: %w", context.Cause(ctx))
+			return exitcode.Exit(exitcode.ExitRuntime, "export interrupted before its session was created: %w", context.Cause(ctx))
 		}
 		return err
 	}
@@ -172,11 +178,11 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 	elapsed, err := exportSession(ctx, env, prog, opts, schema, sess, plan, m)
 	if err != nil {
 		fmt.Fprintf(env.Log, "export session %s kept; release it with: bydbctl data release-session --id %s\n", sess.ID, sess.ID)
-		var exitErr *ExitError
+		var exitErr *exitcode.ExitError
 		if errors.As(err, &exitErr) {
 			return err
 		}
-		return Exit(ExitRuntime, "%w", err)
+		return exitcode.Exit(exitcode.ExitRuntime, "%w", err)
 	}
 	releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionsCallTimeout)
 	defer cancel()
@@ -193,7 +199,7 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		fmt.Fprintf(env.Log, "release it with: bydbctl data release-session --id %s\n", sess.ID)
 	}
 	if err = renderSummary(env.Out, opts.Output, m, elapsed, time.Since(start)); err != nil {
-		return Exit(ExitRuntime, "render summary: %w", err)
+		return exitcode.Exit(exitcode.ExitRuntime, "render summary: %w", err)
 	}
 	return nil
 }
@@ -201,8 +207,8 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 // exportSession runs the per-node workers under the heartbeat and writes the manifest. The
 // nodes, in id order, are dealt round robin over the liaisons. It returns the time the units
 // took, keyed by elapsedKey.
-func exportSession(ctx context.Context, env Env, prog *progress, opts config.Export, schema *schemasync.Result,
-	sess *Session, plan *PlanResult, m *manifest.Manifest,
+func exportSession(ctx context.Context, env Env, prog *output.Progress, opts config.Export, schema *schemasync.Result,
+	sess *Session, plan *cluster.PlanResult, m *manifest.Manifest,
 ) (map[string]time.Duration, error) {
 	jobs, err := buildJobs(plan)
 	if err != nil {
@@ -217,32 +223,32 @@ func exportSession(ctx context.Context, env Env, prog *progress, opts config.Exp
 	run.Go(runCtx, "export-heartbeat-watch", l, func(ctx context.Context) {
 		select {
 		case lostErr := <-lost:
-			cancelRun(Exit(ExitRuntime, "%w", lostErr))
+			cancelRun(exitcode.Exit(exitcode.ExitRuntime, "%w", lostErr))
 		case <-ctx.Done():
 		}
 	})
 
 	parallelism, _ := config.ClampParallelism(max(opts.Parallelism, 1), len(jobs))
-	prog.printf("exporting %d node(s), parallelism %d, via %d liaison(s)", len(jobs), parallelism, len(env.Liaisons.All))
+	prog.Printf("exporting %d node(s), parallelism %d, via %d liaison(s)", len(jobs), parallelism, len(env.Liaisons.All))
 	init := &transferv1.ExportRequest_Init{
 		SessionId:             sess.ID,
 		Format:                opts.Format,
 		Compress:              opts.Compress,
 		MaxFileSize:           opts.MaxFileSize,
-		RateLimit:             rateLimitProto(opts.NodeRateLimit, opts.NodeRowRateLimit),
+		RateLimit:             ratelimit.Proto(opts.NodeRateLimit, opts.NodeRowRateLimit),
 		CsvAnnotations:        opts.CSVAnnotations,
-		LiaisonBytesPerSecond: perSecond(opts.LiaisonRateLimit),
+		LiaisonBytesPerSecond: ratelimit.PerSecond(opts.LiaisonRateLimit),
 	}
 	if rl := init.GetRateLimit(); rl.GetBytesPerSecond() > 0 || rl.GetRowsPerSecond() > 0 || init.GetLiaisonBytesPerSecond() > 0 {
-		prog.printf("rate limits: node %d bytes/s, %d rows/s; liaison %d bytes/s per liaison (0 = unlimited)",
+		prog.Printf("rate limits: node %d bytes/s, %d rows/s; liaison %d bytes/s per liaison (0 = unlimited)",
 			rl.GetBytesPerSecond(), rl.GetRowsPerSecond(), init.GetLiaisonBytesPerSecond())
 	}
 	ids := make([]string, 0, len(jobs))
 	for _, job := range jobs {
 		ids = append(ids, job.nodeID)
 	}
-	prog.setNodes(ids)
-	prog.start(runCtx)
+	width := nodeWidth(ids)
+	prog.Start(runCtx)
 	g, gctx := errgroup.WithContext(runCtx)
 	g.SetLimit(parallelism)
 	for i, job := range jobs {
@@ -258,14 +264,14 @@ func exportSession(ctx context.Context, env Env, prog *progress, opts config.Exp
 			idleFor:  opts.NodeIdleTimeout,
 		}
 		g.Go(func() error {
-			w.progress = prog.node(job.nodeID, len(job.units))
+			w.progress = newNodeProgress(prog, job.nodeID, len(job.units), width, init.GetFormat() != transferv1.Format_FORMAT_NATIVE)
 			runErr := w.run(gctx)
 			w.progress.finish(runErr == nil)
 			return runErr
 		})
 	}
 	err = g.Wait()
-	prog.close()
+	prog.Close()
 	if cause := context.Cause(runCtx); cause != nil && ctx.Err() == nil && !errors.Is(cause, context.Canceled) {
 		err = cause // the heartbeat lost the session; the workers only saw the cancellation
 	}
@@ -294,7 +300,9 @@ func exportSession(ctx context.Context, env Env, prog *progress, opts config.Exp
 
 // buildJobs folds the Plan frames into one job per node, each unit kept as the node
 // reported it, and derives each node's directory, refusing two nodes that map to one.
-func buildJobs(plan *PlanResult) ([]*nodeJob, error) {
+// cluster.CollectPlanFrames has already merged the pieces of a segment inventory split
+// across Plan frames, so each unit is kept as reported.
+func buildJobs(plan *cluster.PlanResult) ([]*nodeJob, error) {
 	byNode := map[string]*nodeJob{}
 	for _, f := range plan.Frames {
 		job, ok := byNode[f.GetNodeId()]
@@ -302,10 +310,11 @@ func buildJobs(plan *PlanResult) ([]*nodeJob, error) {
 			job = &nodeJob{nodeID: f.GetNodeId(), dir: manifest.NodeDir(f.GetNodeId())}
 			byNode[f.GetNodeId()] = job
 		}
+		stage := transfer.NormalizeStage(f.GetStage())
 		for _, inv := range f.GetUnits() {
-			u := &plannedUnit{stage: NormalizeStage(f.GetStage()), segment: inv.GetSegment(), property: inv.GetProperty()}
+			u := &plannedUnit{stage: stage, segment: inv.GetSegment(), property: inv.GetProperty()}
 			if u.segment == nil && u.property == nil {
-				return nil, Exit(ExitRuntime, "plan: node %s reported a unit of no kind", f.GetNodeId())
+				return nil, exitcode.Exit(exitcode.ExitRuntime, "plan: node %s reported a unit of no kind", f.GetNodeId())
 			}
 			job.units = append(job.units, u)
 		}
@@ -314,7 +323,7 @@ func buildJobs(plan *PlanResult) ([]*nodeJob, error) {
 	dirs := map[string]string{}
 	for _, job := range byNode {
 		if other, dup := dirs[job.dir]; dup {
-			return nil, Exit(ExitRuntime, "node ids %s and %s map to the same directory %s", other, job.nodeID, job.dir)
+			return nil, exitcode.Exit(exitcode.ExitRuntime, "node ids %s and %s map to the same directory %s", other, job.nodeID, job.dir)
 		}
 		dirs[job.dir] = job.nodeID
 		jobs = append(jobs, job)
@@ -323,21 +332,54 @@ func buildJobs(plan *PlanResult) ([]*nodeJob, error) {
 	return jobs, nil
 }
 
-// catalogLabel is the manifest spelling of a catalog: STREAM, MEASURE, TRACE, PROPERTY.
+// catalogLabel is the manifest spelling of a catalog (STREAM, MEASURE, TRACE, PROPERTY): the
+// upper-cased selector name that the importer parses back with transfer.CatalogByName.
 func catalogLabel(c commonv1.Catalog) string {
-	return strings.TrimPrefix(c.String(), "CATALOG_")
+	return strings.ToUpper(transfer.CatalogName(c))
 }
 
 // schemaSkippedWarning is the manifest warning of an export without the schema.
 const schemaSkippedWarning = "the schema was not exported (--include-schema=false), so groups[].indexMode is unknown and recorded as false"
 
+// CheckFormat checks the settings a format takes: a native artifact is never compressed, so an
+// unspecified compression becomes none and gzip is refused, and its volume limit must leave
+// room for a container. Any format but csv and native is refused.
+func CheckFormat(opts *config.Export) error {
+	switch opts.Format {
+	case transferv1.Format_FORMAT_CSV:
+		return nil
+	case transferv1.Format_FORMAT_NATIVE:
+	default:
+		return exitcode.Exit(exitcode.ExitUsage, "unsupported artifact format %s", opts.Format)
+	}
+	switch opts.Compress {
+	case transferv1.Compress_COMPRESS_UNSPECIFIED:
+		opts.Compress = transferv1.Compress_COMPRESS_NONE
+	case transferv1.Compress_COMPRESS_NONE:
+	default:
+		return exitcode.Exit(exitcode.ExitUsage, "a native export is not compressed: its column files already are; use --compress none")
+	}
+	if bnc.CheckFileSize(opts.MaxFileSize) != nil {
+		return exitcode.Exit(exitcode.ExitUsage, "a native export needs --max-file-size 0 or at least %d bytes, got %d", bnc.MinFileSize, opts.MaxFileSize)
+	}
+	return nil
+}
+
+// formatLabel is the manifest spelling of an artifact format: csv or native.
+func formatLabel(f transferv1.Format) string {
+	if f == transferv1.Format_FORMAT_NATIVE {
+		return manifest.FormatNative
+	}
+	return manifest.FormatCSV
+}
+
 // baseManifest is the manifest without units and nodes: format, schema files and groups. The
 // groups come from the group list; their index mode from the exported measures, or it is
 // unknown when schema is nil, which a manifest warning says.
-func baseManifest(compress transferv1.Compress, groups []*commonv1.Group, schema *schemasync.Result) *manifest.Manifest {
+func baseManifest(format transferv1.Format, compress transferv1.Compress, groups []*commonv1.Group, schema *schemasync.Result) *manifest.Manifest {
 	m := &manifest.Manifest{
 		ArtifactVersion: manifest.ArtifactVersion,
-		Format:          "csv",
+		Format:          formatLabel(format),
 		Compress:        compressLabel(compress),
 		ExportedAt:      time.Now().UTC().Format(time.RFC3339),
 		SchemaFiles:     []manifest.File{},
@@ -361,8 +403,8 @@ func baseManifest(compress transferv1.Compress, groups []*commonv1.Group, schema
 		}
 		ro := g.GetResourceOpts()
 		mg.Stages = append(mg.Stages, manifest.Stage{
-			Name: DefaultStageName, ShardNum: ro.GetShardNum(), Replicas: ro.GetReplicas(),
-			SegmentInterval: intervalLabel(ro.GetSegmentInterval()), TTL: intervalLabel(ro.GetTtl()),
+			Name: transfer.DefaultStageName, ShardNum: ro.GetShardNum(), Replicas: ro.GetReplicas(),
+			SegmentInterval: output.IntervalLabel(ro.GetSegmentInterval()), TTL: output.IntervalLabel(ro.GetTtl()),
 		})
 		for _, st := range ro.GetStages() {
 			mg.Stages = append(mg.Stages, stageOf(st))
@@ -377,40 +419,29 @@ func baseManifest(compress transferv1.Compress, groups []*commonv1.Group, schema
 func stageOf(st *commonv1.LifecycleStage) manifest.Stage {
 	return manifest.Stage{
 		Name: st.GetName(), ShardNum: st.GetShardNum(), Replicas: st.GetReplicas(),
-		SegmentInterval: intervalLabel(st.GetSegmentInterval()), TTL: intervalLabel(st.GetTtl()),
+		SegmentInterval: output.IntervalLabel(st.GetSegmentInterval()), TTL: output.IntervalLabel(st.GetTtl()),
 	}
 }
 
-// compressLabel is the manifest spelling of a compression; RunExport has already resolved
-// UNSPECIFIED to the csv default gzip, and it is labeled that way here too.
+// compressLabel is the manifest spelling of a compression. The option default is gzip and
+// CheckFormat turns an unspecified native compression into none; an UNSPECIFIED left here is
+// labeled gzip.
 func compressLabel(c transferv1.Compress) string {
 	if c == transferv1.Compress_COMPRESS_NONE {
-		return "none"
+		return manifest.CompressNone
 	}
-	return "gzip"
-}
-
-// intervalLabel renders an interval rule as "7d" or "1h"; "" when unset.
-func intervalLabel(r *commonv1.IntervalRule) string {
-	switch r.GetUnit() {
-	case commonv1.IntervalRule_UNIT_DAY:
-		return fmt.Sprintf("%dd", r.GetNum())
-	case commonv1.IntervalRule_UNIT_HOUR:
-		return fmt.Sprintf("%dh", r.GetNum())
-	default:
-		return ""
-	}
+	return manifest.CompressGzip
 }
 
 // fillManifest adds the source nodes, the units and the unit warnings. Segment
 // units are keyed by (catalog, group, stage, segment) with one source per node. A property
 // unit's key degrades to (catalog, group): every node's shards of the group land in one unit,
 // whose stage is the stage of its first source (jobs are in node order). Shards come from the
-// Plan statistics, their totalCount and rowCounts from the exported files.
-func fillManifest(m *manifest.Manifest, cluster *ClusterInfo, jobs []*nodeJob) {
+// Plan statistics; unitSource says where their totalCount and rowCounts come from.
+func fillManifest(m *manifest.Manifest, info *cluster.Info, jobs []*nodeJob) {
 	tz := map[string]string{}
-	if cluster != nil {
-		for _, n := range cluster.DataNodes {
+	if info != nil {
+		for _, n := range info.DataNodes {
 			tz[n.GetMetadata().GetName()] = n.GetTzName()
 		}
 	}
@@ -430,10 +461,13 @@ func fillManifest(m *manifest.Manifest, cluster *ClusterInfo, jobs []*nodeJob) {
 				}
 				units[key] = mu
 			}
-			src := unitSource(job.nodeID, u)
+			src := unitSource(job.nodeID, u, m.Format == manifest.FormatNative)
 			for _, sh := range src.Shards {
-				mergeRange(&mu.MinTimestamp, &mu.MaxTimestamp, sh.MinTimestamp, sh.MaxTimestamp)
+				transfer.MergeRange(&mu.MinTimestamp, &mu.MaxTimestamp, sh.MinTimestamp, sh.MaxTimestamp)
 			}
+			// The rows of an index-mode group's series index; 0 for every other unit.
+			sl := u.segment.GetSegmentLevel()
+			transfer.MergeRange(&mu.MinTimestamp, &mu.MaxTimestamp, sl.GetMinTimestamp(), sl.GetMaxTimestamp())
 			mu.Sources = append(mu.Sources, src)
 			for _, w := range u.warnings {
 				m.Warnings = append(m.Warnings, fmt.Sprintf("node %s unit %s: %s", job.nodeID, u.label(), w))
@@ -450,8 +484,12 @@ func fillManifest(m *manifest.Manifest, cluster *ClusterInfo, jobs []*nodeJob) {
 	})
 }
 
-// unitSource is one node's contribution to a unit.
-func unitSource(nodeID string, u *plannedUnit) manifest.UnitSource {
+// unitSource is one node's contribution to a unit. The row counts of a CSV unit come from its
+// files; a native file counts no rows, so a native unit takes them from the Plan statistics:
+// a shard's total count is its Plan aggregate, a property shard's its document count, and
+// the segment-level count that of an index-mode series index. The last two are document
+// counts, upper bounds of the rows.
+func unitSource(nodeID string, u *plannedUnit, native bool) manifest.UnitSource {
 	src := manifest.UnitSource{Node: nodeID, Shards: []manifest.Shard{}}
 	shards := map[uint32]*manifest.Shard{}
 	shard := func(id uint32) *manifest.Shard {
@@ -469,10 +507,19 @@ func unitSource(nodeID string, u *plannedUnit) manifest.UnitSource {
 		for _, p := range st.GetParts() {
 			s.Parts = append(s.Parts, manifest.Part{ID: p.GetId(), MinTimestamp: p.GetMinTimestamp(), MaxTimestamp: p.GetMaxTimestamp(), TotalCount: p.GetTotalCount()})
 		}
+		if native {
+			s.TotalCount = st.GetTotalCount()
+		}
+	}
+	if native {
+		src.TotalCount = u.segment.GetSegmentLevel().GetDocCount()
 	}
 	for _, st := range u.property.GetShards() {
 		s := shard(st.GetShardId())
 		s.DocCount = st.GetDocCount()
+		if native {
+			s.TotalCount = st.GetDocCount()
+		}
 		s.EstimatedCompressedBytes, s.EstimatedUncompressedBytes = st.GetEstimatedBytes(), st.GetEstimatedBytes()
 	}
 	for _, f := range u.files {

@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/schema/topnschema"
 )
 
 // ValueType is the cell encoding type of a column.
@@ -128,7 +129,7 @@ type resourceDecl struct {
 
 // TopNResultMeasure is the internal measure that stores pre-aggregated Top-N results. It is
 // exported like any other measure; its binary field carries an engine-internal encoding.
-const TopNResultMeasure = "_top_n_result"
+const TopNResultMeasure = topnschema.Name
 
 var (
 	nameColumn      = Column{Header: "_name", Kind: KindName, Type: ValueString}

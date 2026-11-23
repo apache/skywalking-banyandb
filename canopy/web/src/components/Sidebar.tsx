@@ -26,8 +26,8 @@ import { useAuth } from '../auth/AuthContext.js';
 import { canopyPath } from '../runtime-config.js';
 import { apiDataSource } from '../data/api.js';
 import {
-  IconHome, IconMetadata, IconMeasures, IconStreams, IconTraces,
-  IconProperties, IconPipelines, IconQuery, IconChevron, IconCollapse, IconSignOut,
+  IconHome, IconMonitor, IconMetadata, IconMeasures, IconStreams, IconTraces,
+  IconProperties, IconPipelines, IconSampling, IconQuery, IconChevron, IconCollapse, IconSignOut,
   IconShield, IconViewer, IconIndex, IconGroup, IconTopN,
 } from './icons.js';
 
@@ -474,6 +474,21 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
           </div>
         </div>
 
+        {/* Monitor */}
+        <div className="nav-node">
+          <div className="nav-rowline">
+            <button
+              className={'nav-row lvl-0' + (active === '/monitor' ? ' is-active' : '')}
+              style={{ paddingLeft: 12 }}
+              onClick={() => navigate('/monitor')}
+              title="Monitor"
+            >
+              <span className="nav-ico"><IconMonitor /></span>
+              <span className="nav-label">Monitor</span>
+            </button>
+          </div>
+        </div>
+
         {/* Metadata */}
         <div className="nav-node">
           <div className="nav-rowline">
@@ -598,6 +613,11 @@ export function Sidebar({ collapsed, onToggleCollapse }: SidebarProps) {
                   <span className="nav-ico"><IconTopN size={16} /></span>
                   <span className="nav-label">TopN</span>
                   <span className="nav-count">{topNCount}</span>
+                </button>
+                <button className={'nav-row lvl-1' + (active.startsWith('/pipelines/sampling') ? ' is-active' : '')}
+                  style={{ paddingLeft: 28 }} onClick={() => navigate('/pipelines/sampling')} title="Sampling">
+                  <span className="nav-ico"><IconSampling size={16} /></span><span className="nav-label">Sampling</span>
+                  <span className="nav-count">{traceGroups.filter((group) => group.pipeline).length}</span>
                 </button>
               </div>
             </div>

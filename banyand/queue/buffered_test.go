@@ -794,3 +794,116 @@ func TestLocalDeliveryReportsWhatTheDestinationDid(t *testing.T) {
 		})
 	}
 }
+
+// TestNodeDeliveryReportsWhatTheNodeDid covers delivery to a located node:
+// every message carries the node, and once the batch is published its outcome
+// is final, whatever the node did with it.
+func TestNodeDeliveryReportsWhatTheNodeDid(t *testing.T) {
+	refusal := common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "disk usage is too high")
+	final := func(t *testing.T, err error) {
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrRetryable)
+	}
+	for name, tc := range map[string]struct {
+		publishErr error
+		nodeErr    map[string]*common.Error
+		check      func(t *testing.T, err error)
+		stall      bool
+	}{
+		"delivered":     {check: func(t *testing.T, err error) { assert.NoError(t, err) }},
+		"publish fails": {publishErr: errors.New("failed to get client for node liaison-1"), check: final},
+		"refused in the map": {
+			nodeErr: map[string]*common.Error{"liaison-1": refusal},
+			check: func(t *testing.T, err error) {
+				final(t, err)
+				assert.ErrorIs(t, err, refusal)
+			},
+		},
+		"no answer in time": {
+			stall: true,
+			check: func(t *testing.T, err error) {
+				final(t, err)
+				assert.ErrorIs(t, err, context.DeadlineExceeded)
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			client, publisher := NewMockClient(ctrl), NewMockBatchPublisher(ctrl)
+			timeout := time.Second
+			if tc.stall {
+				timeout = 20 * time.Millisecond
+			}
+			client.EXPECT().NewBatchPublisher(timeout).Return(publisher)
+			publisher.EXPECT().Publish(gomock.Any(), testTopic, gomock.Len(2)).DoAndReturn(
+				func(ctx context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+					for _, m := range messages {
+						assert.Equal(t, "liaison-1", m.Node())
+					}
+					if tc.stall {
+						<-ctx.Done()
+					}
+					return nil, tc.publishErr
+				})
+			publisher.EXPECT().Close().Return(tc.nodeErr, nil)
+			d := NewNodeDelivery(client, testTopic, func() (string, error) { return "liaison-1", nil }, timeout)
+			tc.check(t, d.Deliver(context.Background(), []any{"a", "b"}))
+		})
+	}
+}
+
+// TestNodeDeliveryRetriesAFailedLocate covers a failed locate: it is
+// retryable, is ErrNoNodeLocated, keeps its cause, and publishes nothing.
+func TestNodeDeliveryRetriesAFailedLocate(t *testing.T) {
+	cause := errors.New("no nodes available")
+	client := NewMockClient(gomock.NewController(t))
+	for name, locate := range map[string]func() (string, error){
+		"locate failed":  func() (string, error) { return "", cause },
+		"no node to use": func() (string, error) { return "", nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := NewNodeDelivery(client, testTopic, locate, time.Second).Deliver(context.Background(), []any{"a"})
+			assert.ErrorIs(t, err, ErrRetryable)
+			assert.ErrorIs(t, err, ErrNoNodeLocated)
+		})
+	}
+	err := NewNodeDelivery(client, testTopic, func() (string, error) { return "", cause }, time.Second).
+		Deliver(context.Background(), []any{"a"})
+	assert.ErrorIs(t, err, cause)
+}
+
+// TestBatchGoesToTheNodeLocatedWhenItIsDelivered follows a failed locate
+// through the publisher, as on a liaison that has not discovered a node yet:
+// the batch is held, and goes to the node located on the next attempt.
+func TestBatchGoesToTheNodeLocatedWhenItIsDelivered(t *testing.T) {
+	cfg := testConfig()
+	cfg.BatchCount = 1
+	cfg.FlushInterval = 10 * time.Millisecond
+	p := NewBufferedPublisher(context.Background(), cfg)
+	ctrl := gomock.NewController(t)
+	client := NewMockClient(ctrl)
+	publisher := NewMockBatchPublisher(ctrl)
+	var node string
+	client.EXPECT().NewBatchPublisher(time.Second).Return(publisher)
+	publisher.EXPECT().Publish(gomock.Any(), testTopic, gomock.Len(1)).DoAndReturn(
+		func(_ context.Context, _ bus.Topic, messages ...bus.Message) (bus.Future, error) {
+			node = messages[0].Node()
+			return nil, nil
+		})
+	publisher.EXPECT().Close().Return(nil, nil)
+	located := []string{"", "liaison-2"}
+	attempt := 0
+	p.Start(NewNodeDelivery(client, testTopic, func() (string, error) {
+		n := located[min(attempt, len(located)-1)]
+		attempt++
+		return n, nil
+	}, time.Second))
+	req := newTracked("event", 10)
+	offerAll(t, p, req)
+	require.Eventually(t, req.settled, 3*time.Second, time.Millisecond)
+	p.Close()
+	outcomes, _ := req.state()
+	assert.True(t, outcomes[0].Delivered, "the batch was not delivered: %+v", outcomes[0])
+	assert.Equal(t, "liaison-2", node)
+	assert.Equal(t, 2, attempt)
+}

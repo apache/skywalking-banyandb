@@ -31,15 +31,20 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
-func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client) bus.MessageListener {
+func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client,
+	pm protector.Memory, dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -48,6 +53,8 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		tire2Client:         tire2Client,
+		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -55,10 +62,15 @@ type writeQueueCallback struct {
 	tire2Client         queue.Client
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
+	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
 func (w *writeQueueCallback) CheckHealth() *common.Error {
+	if w.pm != nil && w.pm.State() == protector.StateHigh {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "memory pressure is high, the batch is not written")
+	}
 	if w.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-retention-high-watermark\" is 0")
 	}
@@ -74,6 +86,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -92,10 +105,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			writeEvent = &measurev1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("measure: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("measure: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -108,6 +123,8 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr),
+				fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -179,14 +196,14 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 
 	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 	dpg, ok := dst[gn]
 	if !ok {
@@ -208,7 +225,7 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 	}
 	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
+		return nil, common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find measure definition: %s", metadata))
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
@@ -237,6 +254,6 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil
 }

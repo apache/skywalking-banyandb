@@ -162,9 +162,10 @@ func (uis *unresolvedTraceTagFilter) Analyze(s logical.Schema) (logical.Plan, er
 	if uis.criteria != nil {
 		spanIDFilter := buildSpanIDFilter(uis.criteria, uis.spanIDTagName)
 		if len(traceIDs) > 0 || tagFilter != logical.DummyFilter || spanIDFilter != nil {
-			// A residual filter may reject the first offset+limit candidates.
-			// Keep pagination above it instead of truncating the storage scan.
-			scan.hasPostFilter = tagFilter != logical.DummyFilter || spanIDFilter != nil
+			// SIDX cannot evaluate span IDs, and applies tag filters only for ordered queries
+			// without explicit trace IDs. Record both so Limit does not truncate before the post-filter.
+			scan.hasSpanIDFilter = spanIDFilter != nil
+			scan.hasTagFilter = tagFilter != logical.DummyFilter
 			// create filter with a projected view
 			plan = newTraceTagFilter(s.ProjTags(ctx.projTagsRefs...), plan, tagFilter, spanIDFilter)
 		}

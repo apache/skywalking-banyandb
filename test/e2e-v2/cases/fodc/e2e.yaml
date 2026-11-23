@@ -117,6 +117,8 @@ verify:
     #    positive in the checker -- a class of bug unit tests cannot surface.
     - query: bash test/e2e-v2/cases/fodc/check-schema-consistency.sh
       expected: expected/schema-consistency.yml
+    - query: bash test/e2e-v2/cases/fodc/check-native-logs.sh
+      expected: expected/native-logs.yml
 
 cleanup:
   on: always

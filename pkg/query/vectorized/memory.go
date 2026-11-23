@@ -35,7 +35,11 @@ var ErrMemoryBudgetExceeded = errors.New("memory budget exceeded")
 // leaves used unchanged. Release shrinks used. Used reads the current value.
 type MemoryTracker struct {
 	charge func(uint64) error
+	// refund hands released bytes back to the lease the charges went to; it is set only for queries
+	// that account for live memory (see WithLiveLeaseAccounting).
+	refund func(uint64)
 	used   atomic.Int64
+	peak   atomic.Int64
 	limit  int64
 }
 
@@ -70,6 +74,12 @@ func (m *MemoryTracker) Reserve(bytes int64) error {
 					return err
 				}
 			}
+			for {
+				peak := m.peak.Load()
+				if next <= peak || m.peak.CompareAndSwap(peak, next) {
+					break
+				}
+			}
 			recordMemoryReservation(bytes)
 			return nil
 		}
@@ -86,8 +96,17 @@ func (m *MemoryTracker) Release(bytes int64) {
 		return
 	}
 	m.used.Add(-bytes)
+	if m.refund != nil {
+		m.refund(uint64(bytes))
+	}
 	recordMemoryRelease(bytes)
 }
+
+// Peak returns the most bytes the tracker has held at once.
+func (m *MemoryTracker) Peak() int64 { return m.peak.Load() }
+
+// Limit returns the byte limit of the tracker.
+func (m *MemoryTracker) Limit() int64 { return m.limit }
 
 // Used returns the current outstanding reservation.
 func (m *MemoryTracker) Used() int64 {
@@ -109,10 +128,23 @@ func WithQueryMemoryTracker(ctx context.Context, limit int64) context.Context {
 	return context.WithValue(ctx, memoryTrackerContextKey{}, newQueryMemoryTracker(ctx, limit))
 }
 
+type liveLeaseAccountingKey struct{}
+
+// WithLiveLeaseAccounting makes the query tracker created under ctx hand released bytes back to the query lease,
+// so the lease tracks what the query holds right now instead of everything it ever reserved. A streaming scan
+// needs it: it reserves and releases memory for every block it reads, and a result of any size must run inside
+// the lease. Queries that collect their whole result keep the default, where charges only accumulate.
+func WithLiveLeaseAccounting(ctx context.Context) context.Context {
+	return context.WithValue(ctx, liveLeaseAccountingKey{}, true)
+}
+
 func newQueryMemoryTracker(ctx context.Context, limit int64) *MemoryTracker {
 	tracker := NewMemoryTracker(limit)
 	lease, admitted := query.BudgetLeaseFromContext(ctx)
 	if admitted {
+		if live, _ := ctx.Value(liveLeaseAccountingKey{}).(bool); live {
+			tracker.refund = lease.Refund
+		}
 		tracker.charge = func(bytes uint64) error {
 			if err := ctx.Err(); err != nil {
 				return err

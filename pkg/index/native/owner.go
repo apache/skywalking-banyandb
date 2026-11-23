@@ -73,13 +73,20 @@ type Term struct {
 
 // Field is an opaque native field. Product schema and analyzer types stay
 // outside this package; callers provide encoded names, values, and terms.
+//
+// A Field with Ladder, Index and Sort set also writes a companion ladder field named Name+LadderFieldSuffix that holds the
+// prefix-coded terms of LadderKey at every precision level, which lets ReadView.TopFieldHits and SortCursor find the first
+// documents in sort order without reading every candidate. LadderKey must be order-preserving: a smaller key must belong to
+// a value that sorts before the value of a larger key. Only scalar values may set Ladder.
 type Field struct {
-	Name  string
-	Value []byte
-	Terms []Term
-	Store bool
-	Index bool
-	Sort  bool
+	Name      string
+	Value     []byte
+	Terms     []Term
+	LadderKey int64
+	Store     bool
+	Index     bool
+	Sort      bool
+	Ladder    bool
 }
 
 // Document is one physical document admitted to a native segment.
@@ -490,7 +497,7 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 		owner.persistQ = queue
 		persistenceContext, persistenceCancel := context.WithCancel(context.Background())
 		owner.persistenceCancel = persistenceCancel
-		owner.persistenceTask = run.Go(persistenceContext, "native.owner.persistence", nil, func(ctx context.Context) {
+		owner.persistenceTask = run.GoOrDie(persistenceContext, "native.owner.persistence", nil, func(ctx context.Context) {
 			owner.runPersistence(ctx, queue)
 		})
 		if options.Path != "" && options.CompactionThreshold >= 0 {
@@ -503,7 +510,7 @@ func NewOwner(options OwnerOptions) (*Owner, error) {
 			owner.maintenanceGCWake = make(chan struct{}, 1)
 			maintenanceContext, cancel := context.WithCancel(context.Background())
 			owner.maintenanceCancel = cancel
-			owner.maintenanceTask = run.Go(maintenanceContext, "native.owner.compaction", nil, owner.runMaintenance)
+			owner.maintenanceTask = run.GoOrDie(maintenanceContext, "native.owner.compaction", nil, owner.runMaintenance)
 		}
 	}
 	return owner, nil
@@ -616,7 +623,7 @@ func loadPersistedRoot(path string) (*publishedRoot, error) {
 		handle := &segmentHandle{
 			reader: segmentReader, count: segmentMetadata.DocumentCount, id: segmentMetadata.ID,
 			size: segmentMetadata.Size, timeMin: segmentMetadata.TimeMin, timeMax: segmentMetadata.TimeMax,
-			hasTime: segmentMetadata.TimeMin != 0 || segmentMetadata.TimeMax != 0,
+			hasTime: nativeice.HasTime(segmentMetadata.TimeMin, segmentMetadata.TimeMax),
 		}
 		fields, fieldsErr := segmentReader.Fields()
 		if fieldsErr != nil {
@@ -2164,6 +2171,10 @@ func newMemorySegment(documents []Document, segmentID uint64, identifierDocValue
 				Name: field.Name, Value: bytes.Clone(field.Value), Terms: terms,
 				Store: field.Store, Index: field.Index, Sort: field.Sort,
 			})
+			if field.Ladder && field.Index && field.Sort {
+				indexedFieldSet[field.Name+LadderFieldSuffix] = struct{}{}
+				nativeDocument.Fields = append(nativeDocument.Fields, ladderEncodeField(field))
+			}
 		}
 		if document.Timestamp != 0 {
 			encodedTimestamp := uint64(document.Timestamp)
@@ -2240,7 +2251,7 @@ func newSegmentFromPayload(payload []byte, segmentID uint64) (rootSegment, error
 		reader: reader, payload: payload, count: reader.DocumentCount(),
 		id: segmentID, size: uint64(len(payload)), persisted: atomic.Bool{},
 		timeMin: uint64(timeMin), timeMax: uint64(timeMax),
-		hasTime: timeMin != 0 || timeMax != 0,
+		hasTime: nativeice.HasTime(uint64(timeMin), uint64(timeMax)),
 	}
 	handle.refs.Store(1)
 	if fields, fieldsErr := reader.Fields(); fieldsErr == nil {
@@ -2267,7 +2278,7 @@ func newSegmentFromFile(path string, metadata nativeice.SnapshotSegment, segment
 	handle := &segmentHandle{
 		reader: reader, sourcePath: path, staged: true, count: metadata.DocumentCount, id: segmentID,
 		size: metadata.Size, timeMin: uint64(timeMin), timeMax: uint64(timeMax),
-		hasTime: timeMin != 0 || timeMax != 0, indexedFields: fields,
+		hasTime: nativeice.HasTime(uint64(timeMin), uint64(timeMax)), indexedFields: fields,
 	}
 	handle.refs.Store(1)
 	// Best effort, see newMemorySegment. The external-receive caller opens
@@ -2855,7 +2866,10 @@ func cloneDocument(document Document) Document {
 	clone := Document{Identifier: bytes.Clone(document.Identifier), Timestamp: document.Timestamp}
 	clone.Fields = make([]Field, len(document.Fields))
 	for fieldIndex, field := range document.Fields {
-		clone.Fields[fieldIndex] = Field{Name: field.Name, Value: bytes.Clone(field.Value), Store: field.Store, Index: field.Index, Sort: field.Sort}
+		clone.Fields[fieldIndex] = Field{
+			Name: field.Name, Value: bytes.Clone(field.Value), Store: field.Store, Index: field.Index, Sort: field.Sort,
+			Ladder: field.Ladder, LadderKey: field.LadderKey,
+		}
 		if field.Terms != nil {
 			clone.Fields[fieldIndex].Terms = make([]Term, len(field.Terms))
 			for termIndex, term := range field.Terms {

@@ -81,8 +81,9 @@ type SIDX interface {
 	Stats(ctx context.Context) (*Stats, error)
 	// Close gracefully shuts down the SIDX instance, ensuring all data is persisted.
 	Close() error
-	// Flush flushes the SIDX instance to disk.
-	Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
+	// Flush flushes the SIDX instance to disk. It stops with ErrFlushInterrupted once closeCh is closed, having
+	// released the parts it wrote; the caller removes their directories.
+	Flush(closeCh <-chan struct{}, partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error)
 	// Merge merges the specified parts into a new part. keep is an optional
 	// opaque per-element predicate: when non-nil, an element is retained only if
 	// keep(data) returns true; nil means retain everything (the lossless bulk

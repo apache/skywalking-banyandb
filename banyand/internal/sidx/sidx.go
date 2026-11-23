@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -131,8 +132,11 @@ func (s *sidx) Stats(_ context.Context) (*Stats, error) {
 	return stats, nil
 }
 
+// ErrFlushInterrupted reports that Flush stopped because its close channel was closed.
+var ErrFlushInterrupted = errors.New("sidx flush interrupted")
+
 // Flush implements Flusher interface.
-func (s *sidx) Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error) {
+func (s *sidx) Flush(closeCh <-chan struct{}, partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, error) {
 	// Get current memory parts that need flushing
 	snap := s.currentSnapshot()
 	if snap == nil {
@@ -154,6 +158,13 @@ func (s *sidx) Flush(partIDsToFlush map[uint64]struct{}) (*FlusherIntroduction, 
 		}
 		if !pw.isMemPart() {
 			logger.Panicf("sidx part %d is not a memory part", pw.ID())
+		}
+		select {
+		case <-closeCh:
+			flushIntro.ReleaseFlushedParts()
+			flushIntro.Release()
+			return nil, ErrFlushInterrupted
+		default:
 		}
 		partPath := partPath(s.root, pw.ID())
 		pw.mp.mustFlush(s.fileSystem, partPath)

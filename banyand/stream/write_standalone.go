@@ -37,7 +37,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -45,10 +47,13 @@ type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
 	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
+	dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -57,6 +62,7 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -80,7 +86,7 @@ func (w *writeCallback) handle(dst map[string]*elementsInGroup, writeEvent *stre
 ) (map[string]*elementsInGroup, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 	eg, err := w.prepareElementsInGroup(dst, metadata, ts)
@@ -102,7 +108,7 @@ func (w *writeCallback) prepareElementsInGroup(dst map[string]*elementsInGroup, 
 	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 
 	eg, ok := dst[gn]
@@ -192,7 +198,7 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 	stm, ok := schemaRepo.loadStream(metadata)
 	if !ok {
-		return fmt.Errorf("cannot find stream definition: %s", metadata)
+		return common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find stream definition: %s", metadata))
 	}
 
 	fLen := len(req.Element.GetTagFamilies())
@@ -298,7 +304,9 @@ func processElements(schemaRepo *schemaRepo, elements *elements, writeEvent *str
 
 // log returns the logger for one write. A native log write carries its own
 // logger in ctx, so what this write path logs about it reaches the console
-// and never native storage, where it would be written and logged again.
+// and never native storage, where it would be written and logged again. A
+// write from another process carries no such mark: what is logged about one
+// event of the log group goes through logger.ForGroup.
 func (w *writeCallback) log(ctx context.Context) *logger.Logger {
 	return logger.FetchOrDefault(ctx, "stream", w.l)
 }
@@ -307,6 +315,7 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.log(ctx).Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -325,10 +334,12 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.log(ctx).Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("stream: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.log(ctx).Warn().Msg("invalid event data type")
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("stream: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -340,7 +351,8 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.log(ctx).Error().Err(handleErr).Msg("cannot handle write event")
+			logger.ForGroup(w.log(ctx), metadata.GetGroup(), "stream").Error().Err(handleErr).Msg("cannot handle write event")
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -355,13 +367,17 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				index := es.tsTable.Index()
 				// The raw elements are stored above; finish index admission even
 				// if the request has been canceled since.
-				if err := index.WriteContext(context.WithoutCancel(ctx), es.docs); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write element index")
+				// A refused batch admits none of its documents, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return index.WriteContext(context.WithoutCancel(ctx), es.docs) }); err != nil {
+					logger.ForGroup(w.log(ctx), groupName, "stream").Error().Err(err).Msg("cannot write element index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write element index: %w", groupName, err))
 				}
 			}
 			if len(es.seriesDocs.docs) > 0 {
-				if err := es.segment.IndexDB().Insert(es.seriesDocs.docs); err != nil {
-					w.log(ctx).Error().Err(err).Msg("cannot write series index")
+				// Inserting a series that exists is a no-op, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return es.segment.IndexDB().Insert(es.seriesDocs.docs) }); err != nil {
+					logger.ForGroup(w.log(ctx), groupName, "stream").Error().Err(err).Msg("cannot write series index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("stream group %s: cannot write series index: %w", groupName, err))
 				}
 			}
 		}
@@ -462,6 +478,7 @@ func appendField(dest []index.Field, fieldKey index.FieldKey, tagType databasev1
 		}
 		f := index.NewIntField(fieldKey, v.Value)
 		f.NoSort = noSort
+		f.MarkNumericTag(tagType, tagVal)
 		dest = append(dest, f)
 	case databasev1.TagType_TAG_TYPE_STRING:
 		v := tagVal.GetStr()

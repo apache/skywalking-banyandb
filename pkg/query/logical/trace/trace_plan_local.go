@@ -58,7 +58,8 @@ type localScan struct {
 	minVal            int64
 	maxVal            int64
 	groupIndex        int
-	hasPostFilter     bool
+	hasSpanIDFilter   bool
+	hasTagFilter      bool
 }
 
 func (i *localScan) Close() {
@@ -67,8 +68,10 @@ func (i *localScan) Close() {
 	}
 }
 
+// Limit caps the scan at maxVal traces unless a post-filter could reject candidates.
+// It relies on Sort being pushed down first: SIDX applies the tag filter only with an order and no explicit trace IDs.
 func (i *localScan) Limit(maxVal int) {
-	if !i.hasPostFilter {
+	if !i.hasSpanIDFilter && (!i.hasTagFilter || (len(i.traceIDs) == 0 && i.order != nil)) {
 		i.maxTraceSize = maxVal
 	}
 }

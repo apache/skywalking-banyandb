@@ -41,11 +41,6 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
 	transfertest "github.com/apache/skywalking-banyandb/pkg/test/transfer"
-	"github.com/apache/skywalking-banyandb/pkg/timestamp"
-	casesmeasuredata "github.com/apache/skywalking-banyandb/test/cases/measure/data"
-	casespropertydata "github.com/apache/skywalking-banyandb/test/cases/property/data"
-	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
-	casestracedata "github.com/apache/skywalking-banyandb/test/cases/trace/data"
 )
 
 const (
@@ -59,20 +54,10 @@ var (
 	conn     *grpc.ClientConn
 	stopFunc func()
 	// The base times the suite wrote its data with (test/cases/<catalog>/data), every write
-	// spaced by writeInterval.
+	// spaced by transfertest.WriteInterval.
 	streamBase  time.Time
 	measureBase time.Time
 	traceBase   time.Time
-)
-
-const writeInterval = 500 * time.Millisecond
-
-// The suite writes measureRows points into service_cpm_minute and topNSourcePoints into
-// topNSourceMeasure, the source measure of a Top-N aggregation of sw_metric.
-const (
-	measureRows       = 6
-	topNSourceMeasure = "service_instance_cpm_minute"
-	topNSourcePoints  = 6
 )
 
 var _ = ginkgo.BeforeSuite(func() {
@@ -94,19 +79,8 @@ var _ = ginkgo.BeforeSuite(func() {
 	}
 	conn, err = grpchelper.Conn(grpcAddr, 10*time.Second, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())
-	streamBase = timestamp.NowMilli()
-	casesstreamdata.Write(conn, "sw", streamBase, writeInterval)
-	ns := timestamp.NowMilli().UnixNano()
-	measureBase = time.Unix(0, ns-ns%int64(time.Minute))
-	casesmeasuredata.Write(conn, "service_cpm_minute", "sw_metric", "service_cpm_minute_data.json", measureBase, writeInterval)
-	casesmeasuredata.Write(conn, "service_traffic", "index_mode", "service_traffic_data.json", measureBase, writeInterval)
-	// A minute apart, the points of a Top-N aggregation's source measure span several windows,
-	// so the Top-N processor closes all but the last and writes their _top_n_result rows.
-	casesmeasuredata.Write(conn, topNSourceMeasure, "sw_metric", topNSourceMeasure+"_data.json", measureBase, time.Minute)
-	traceBase = timestamp.NowMilli()
-	casestracedata.Write(conn, "sw", traceBase, writeInterval)
-	casespropertydata.Write(conn, "sw1")
-	transfertest.WriteTombstone(conn)
+	d := transfertest.WriteSuiteData(conn)
+	streamBase, measureBase, traceBase = d.StreamBase, d.MeasureBase, d.TraceBase
 })
 
 var _ = ginkgo.AfterSuite(func() {

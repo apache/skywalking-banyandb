@@ -28,6 +28,17 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
 )
 
+// logMemStats writes the runtime heap figures to the Ginkgo output, which is printed when a spec fails. HeapInuse is
+// counted in whole spans, so the other figures show whether a failing run grew by one more span or by real data.
+func logMemStats(label string) {
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	GinkgoWriter.Printf("memstats[%s]: HeapInuse=%d HeapAlloc=%d HeapSys=%d HeapIdle=%d HeapReleased=%d HeapObjects=%d "+
+		"StackInuse=%d NumGC=%d NextGC=%d GOMAXPROCS=%d NumCPU=%d\n",
+		label, ms.HeapInuse, ms.HeapAlloc, ms.HeapSys, ms.HeapIdle, ms.HeapReleased, ms.HeapObjects,
+		ms.StackInuse, ms.NumGC, ms.NextGC, runtime.GOMAXPROCS(0), runtime.NumCPU())
+}
+
 // getConstantRawMetrics returns a constant set of rawMetrics for testing.
 func getConstantRawMetrics() []metrics.RawMetric {
 	return []metrics.RawMetric{
@@ -434,6 +445,7 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 
 		GinkgoWriter.Printf("Baseline heap inuse size: %d bytes, Capacity size: %d bytes\n",
 			baselineHeapInuseSize, capacitySize)
+		logMemStats("baseline")
 
 		// Step 3: Get constant rawMetrics
 		rawMetrics := getConstantRawMetrics()
@@ -444,6 +456,7 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 		for i := 0; i < numUpdates; i++ {
 			updateErr := fr.Update(rawMetrics)
 			Expect(updateErr).NotTo(HaveOccurred(), "Update should succeed")
+			GinkgoWriter.Printf("update %d: heap inuse grew by %d bytes since baseline\n", i+1, fr.HeapInuseSize()-baselineHeapInuseSize)
 		}
 
 		// Step 5: Verify datasource has metrics
@@ -463,6 +476,7 @@ var _ = Describe("Test Case 4: Capacity Size and Heap Inuse Size", func() {
 
 		GinkgoWriter.Printf("Heap inuse size after data: %d bytes, Memory used: %d bytes, Capacity size: %d bytes\n",
 			heapInuseSizeAfterData, actualMemoryUsed, capacitySize)
+		logMemStats("after data")
 
 		// Step 7: Verify that memory usage is within reasonable bounds relative to capacity
 		// Allow some tolerance for overhead (maps, mutexes, etc.) - should be within 50% of capacity

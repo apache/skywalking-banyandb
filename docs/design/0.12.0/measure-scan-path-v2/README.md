@@ -100,7 +100,10 @@ New metrics, per group, under `banyandb_measure_query_*`: `total_scan_windows`,
 `total_scan_windows_overlapped`, `total_scan_segments_fast`, `total_scan_segments_overlap`,
 `total_scan_merge_rows`, `total_scan_merge_cursors`, `scan_merge_peak_live_cursors`,
 `scan_prefetch_depth`, `scan_decode_queue_wait_seconds`, `total_scan_reservations_waiting` and
-`total_scan_reservations_failed`.
+`total_scan_reservations_failed`. A later change adds `total_scan_reservation_rejections` (labelled by `reason`:
+the allowance that ran out), `query_budget_peak_ratio` (per scan, the most the query lease held over its limit),
+`scan_decode_seconds`, `total_scan_slices` and `total_scan_sliced_units`. The per-query view of the same
+measurements is the `scan-storage` trace span (docs/operation/observability/tracing.md).
 
 ### 2.2 Deviations from the proposal
 
@@ -115,6 +118,15 @@ New metrics, per group, under `banyandb_measure_query_*`: `total_scan_windows`,
 | "Retire `copyToBatch`" | Not retired; see the previous row. |
 | Frame, numeric and string refactor as steps 1-2 | Shipped as part of the batch-v2 core, not as a separate step. |
 | A cheap overlap counter read on a real cluster before optimizing | The counters shipped; reading them on a real cluster has not happened. |
+
+A later change fits the scan's memory reservations to what blocks hold. It departs from three
+[batch-v2 goals](../measure-batch-v2/README.md#4-goals-and-non-goals) on purpose:
+
+| Batch-v2 goal | As built, and why |
+|---|---|
+| Decode each stored value at most once | A time-ordered merge whose cursors would exceed the query's whole allowance is cut into consecutive time slices, and a block is decoded once per slice it overlaps, at most 64 times (`maxMergeSlices`). A block cannot be decoded in part, so this is the only way such a merge (many series over blocks much wider than the window, as after a merge) runs instead of failing with `query memory pool exhausted`. A merge that fits is not sliced; `total_scan_slices` and the span's `slices` tag show the extra decodes. Known limit: every slice's cursor clones are made up front and charged to the query's allowance until released, so a merge whose clones do not fit fails with RESOURCE_EXHAUSTED instead of being sliced; cloning each slice only when the scan reaches it would lift this. |
+| Copy a value only when it must outlive the cursor | A cursor that keeps under half its block copies its values into a buffer of their own (compaction), so the rest of the decoded block can be freed instead of staying live as long as the cursor. |
+| Exact memory accounting | A cursor is reserved before its decode for the rows its block metadata puts in the query range, assuming they are spread evenly over the block's time span, instead of for the whole block. After the decode the reservation is lowered, never raised, to what the cursor keeps; a compacted cursor is charged the bytes it measured, and any other cursor at least the capacity of the decoder backing it views. Raising would mean a refusal in the middle of a decode. Rows bunched inside the window can therefore keep more than the reservation; the 6x decode-expansion term usually covers it, and a traced query shows it as `budget_retained_bytes` above `budget_estimate_kept_bytes`. Known limit, measured on four days of real SkyWalking data (about 63M rows in merged parts): the estimate fell short in about one of every 2,000 to 5,000 block and window pairs, never in a 15-minute window, by at most about 27 KB per cursor, mostly where a small block's kept rows cross the compaction threshold; no rebuilt worst case retained more than its reservation. An overrun of several times the reservation needs a dense burst inside a wide, sparse block with a projection far wider per row than the block stores, which only a crafted block showed. |
 
 ### 2.3 Measured results
 

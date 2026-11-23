@@ -53,7 +53,7 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 	if !d.disableRetention {
 		rt = newRetentionTask(d, options.TTL)
 	}
-	run.Go(ctx, "storage-rotation", d.logger, func(taskCtx context.Context) {
+	run.GoOrDie(ctx, "storage-rotation", d.logger, func(taskCtx context.Context) {
 		var idleCheckTicker *time.Ticker
 		var idleCheckC <-chan time.Time
 
@@ -92,19 +92,17 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 						rt.run(taskCtx, t, d.logger)
 					}
 					func() {
-						ss, err := d.segmentController.segments(taskCtx, true) // Ensure segments are open
-						if err != nil {
-							d.logger.Error().Err(err).Msg("failed to get segments")
-							return
-						}
+						// Do not reopen idle-closed segments: this scan only resets the cache of open
+						// ones and reads the latest segment's end. Reopening here undid the idle
+						// reclaimer every tick (lastAccessed stays stale) and held the controller lock
+						// across the reopen I/O, stalling writers. Take no references either: a
+						// segment unpinned at snapshot time could be acquired by a reader before the
+						// release, and the release would then drop that reader's reference.
+						// resetIndex locks the segment itself and skips closed ones.
+						ss := d.segmentController.copySegments()
 						if len(ss) == 0 {
 							return
 						}
-						defer func() {
-							for i := 0; i < len(ss); i++ {
-								ss[i].DecRef()
-							}
-						}()
 						for i := range ss {
 							if ss[i].End.UnixNano() < ts {
 								ss[i].resetIndex()
@@ -121,7 +119,7 @@ func (d *database[T, O]) startRotationTask(ctx context.Context) error {
 						defer d.incTotalRotationFinished(1)
 						start := options.SegmentInterval.NextTime(t)
 						d.logger.Info().Time("segment_start", start).Time("event_time", t).Msg("create new segment")
-						_, err = d.segmentController.create(taskCtx, start)
+						_, err := d.segmentController.create(taskCtx, start)
 						if err != nil {
 							d.logger.Error().Err(err).Msgf("failed to create new segment.")
 							d.incTotalRotationErr(1)

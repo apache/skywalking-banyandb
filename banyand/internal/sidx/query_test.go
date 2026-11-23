@@ -889,7 +889,7 @@ func TestSIDX_StreamingQuery_EdgeCases(t *testing.T) {
 		waitForIntroducerLoop()
 
 		raw := idx.(*sidx)
-		flushIntro, err := raw.Flush(map[uint64]struct{}{diskPartID: {}})
+		flushIntro, err := raw.Flush(nil, map[uint64]struct{}{diskPartID: {}})
 		require.NoError(t, err)
 		require.NotNil(t, flushIntro)
 		raw.IntroduceFlushed(flushIntro)

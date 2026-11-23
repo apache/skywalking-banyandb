@@ -250,7 +250,7 @@ func (p *bufferedPublisher) Start(d Delivery) {
 		return
 	}
 	p.started = true
-	run.Go(p.ctx, p.cfg.Name, p.cfg.Logger, func(context.Context) {
+	run.GoOrDie(p.ctx, p.cfg.Name, p.cfg.Logger, func(context.Context) {
 		defer close(p.stopped)
 		p.consume(d)
 	})

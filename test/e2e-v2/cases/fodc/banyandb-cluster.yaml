@@ -100,6 +100,9 @@ spec:
             - data
             - --node-discovery-mode=file
             - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+            # Keeps the native log schema for the FODC agents and proxy, and
+            # collects nothing of its own.
+            - --logging-native-receiver-enabled
           ports:
             - { name: grpc, containerPort: 17912 }
             - { name: http, containerPort: 17913 }
@@ -139,6 +142,9 @@ spec:
             - --heartbeat-interval=5s
             - --pod-name=$(POD_NAME)
             - --lifecycle-port=17912
+            # Its own logs, to the data node's cluster server beside it.
+            - --logging-native-enabled
+            - --logging-native-addr=127.0.0.1:17912
           env:
             - name: POD_NAME
               valueFrom:
@@ -184,6 +190,7 @@ spec:
             - liaison
             - --node-discovery-mode=file
             - --node-discovery-file-path=/etc/banyandb/nodes.yaml
+            - --logging-native-receiver-enabled
           ports:
             - { name: grpc, containerPort: 17912 }
             - { name: http, containerPort: 17913 }
@@ -224,6 +231,12 @@ spec:
             - --pod-name=$(POD_NAME)
             - --lifecycle-port=18912
             - --schema-registry-port=17912
+            # Its own logs, through the liaison's public write API. The route
+            # is set, not taken from the node role: the role is not known
+            # while the liaison is still starting.
+            - --logging-native-enabled
+            - --logging-native-addr=127.0.0.1:17912
+            - --logging-native-route=public
           env:
             - name: POD_NAME
               valueFrom:

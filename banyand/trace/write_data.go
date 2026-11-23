@@ -34,6 +34,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
 type syncPartContext struct {
@@ -56,6 +57,11 @@ type syncPartContext struct {
 
 func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	if ctx.PartType != PartTypeCore {
+		// The part type names a directory under sidx/; a sender must not reach outside it.
+		// An empty name or "." is refused too: it would point at sidx/ itself.
+		if !nativefmt.ValidName(ctx.PartType) {
+			return fmt.Errorf("invalid secondary index part type %q", ctx.PartType)
+		}
 		// Allocate partID on first call so SIDX parts use the same ID as the core part.
 		if s.partID == 0 {
 			s.partID = atomic.AddUint64(&s.tsTable.curPartID, 1)
@@ -169,9 +175,8 @@ type syncSeriesContext struct {
 	memWaitTimeout time.Duration
 }
 
-func (s *syncSeriesContext) NewPartType(_ *queue.ChunkedSyncPartContext) error {
-	logger.Panicf("new part type is not supported for trace")
-	return nil
+func (s *syncSeriesContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
+	return fmt.Errorf("the trace series index does not support part type %q", ctx.PartType)
 }
 
 func (s *syncSeriesContext) FinishSync() error {

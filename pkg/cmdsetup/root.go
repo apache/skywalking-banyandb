@@ -86,6 +86,7 @@ BanyanDB, as an observability database, aims to ingest, analyze and store Metric
 	// Registered on the persistent set rather than a group's, because the sink
 	// has to be configured before the command tree hands control to the group.
 	logger.RegisterNativeFlags(cmd.PersistentFlags(), &logging.Native)
+	logger.RegisterNativeReceiverFlag(cmd.PersistentFlags(), &logging.Native)
 	nativeLoggingConfig = &logging.Native
 	// One sink for the process. NewRoot builds every role's command, so a sink
 	// created per role would be attached several times over and the logger

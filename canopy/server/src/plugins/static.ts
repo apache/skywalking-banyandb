@@ -91,6 +91,7 @@ export async function registerStatic(app: FastifyInstance, config: Config): Prom
       path.startsWith('/api/') ||
       path.startsWith('/auth/') ||
       path.startsWith('/monitoring/') ||
+      path.startsWith('/monitor/') ||
       path === '/healthz'
     ) {
       // Let these fall through to 404 naturally (they have real route handlers)

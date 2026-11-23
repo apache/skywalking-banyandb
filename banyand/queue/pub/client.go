@@ -19,6 +19,7 @@ package pub
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -186,21 +187,24 @@ func (p *pub) failover(ctx context.Context, node string, ce *common.Error, topic
 	p.connMgr.FailoverNode(node)
 }
 
+// checkWritable health-checks the topic's service on node n. A node is writable when the check
+// passes; whether a handler is registered for the topic does not matter, the handler, when
+// there is one, is only told the node left and came back. A node that is not writable always
+// comes with a non-nil error describing why.
 func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (bool, *common.Error) {
-	h, ok := p.handlers[topic]
-	if !ok {
-		return false, nil
-	}
 	c, ok := p.connMgr.GetClient(n)
 	if !ok {
-		return false, nil
+		return false, common.NewErrorWithStatus(modelv1.Status_STATUS_INTERNAL_ERROR, fmt.Sprintf("no client for node %s", n))
 	}
 	topicStr := topic.String()
 	err := p.checkServiceHealth(ctx, topicStr, c.conn)
 	if err == nil {
 		return true, nil
 	}
-	h.OnDelete(c.md)
+	h, hasHandler := p.handlers[topic]
+	if hasHandler {
+		h.OnDelete(c.md)
+	}
 	if !p.closer.AddRunning() {
 		return false, err
 	}
@@ -250,7 +254,9 @@ func (p *pub) checkWritable(ctx context.Context, n string, topic bus.Topic) (boo
 				if errInternal == nil {
 					// Record success for circuit breaker
 					p.connMgr.RecordSuccess(probeName)
-					h.OnAddOrUpdate(nodeCur.md)
+					if hasHandler {
+						h.OnAddOrUpdate(nodeCur.md)
+					}
 					return
 				}
 				p.log.Warn().Str("topic", probeTopic).Err(errInternal).Str("node", probeName).Dur("backoff", backoff).Msg("data node can not ingest data")

@@ -359,7 +359,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	run.Go(context.Background(), "queue.sub.grpc-server", s.log, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "queue.sub.grpc-server", s.log, func(_ context.Context) {
 		lis, err := net.Listen("tcp", s.addr)
 		if err != nil {
 			s.log.Error().Err(err).Msg("Failed to listen")
@@ -373,7 +373,7 @@ func (s *server) Serve() run.StopNotify {
 		}
 		wg.Done()
 	})
-	run.Go(context.Background(), "queue.sub.healthz-http", s.log, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "queue.sub.healthz-http", s.log, func(_ context.Context) {
 		s.log.Info().Str("listenAddr", s.httpAddr).Msg("Start healthz http server")
 		err := s.httpSrv.ListenAndServe()
 		if err != http.ErrServerClosed {

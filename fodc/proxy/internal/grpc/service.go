@@ -31,6 +31,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	fodcv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/fodc/v1"
@@ -42,6 +43,10 @@ import (
 	"github.com/apache/skywalking-banyandb/fodc/proxy/internal/registry"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
+
+// maxPendingMetricsBytes bounds the chunks of one metrics reply the proxy holds while it
+// waits for the reply's last chunk. A variable so tests can lower it.
+var maxPendingMetricsBytes = 256 << 20
 
 // agentConnection represents a connection to an agent.
 type agentConnection struct {
@@ -648,6 +653,15 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 	}
 	s.connectionsMu.Unlock()
 
+	var assembler metricsReplyAssembler
+	defer func() {
+		// The agent does not resend a reply cut off by its stream ending, so answer the
+		// collection waiting for it instead of leaving it to time out.
+		if assembler.bytes > 0 {
+			s.logger.Warn().Str("agent_id", agentID).Msg("Metrics stream ended in the middle of a reply, answering the collection with no metrics")
+			s.deliverMetricsReply(context.WithoutCancel(ctx), agentID, &fodcv1.StreamMetricsRequest{})
+		}
+	}()
 	for {
 		req, recvErr := stream.Recv()
 		if errors.Is(recvErr, io.EOF) {
@@ -677,16 +691,62 @@ func (s *FODCService) StreamMetrics(stream fodcv1.FODCService_StreamMetricsServe
 			conn.updateActivity()
 		}
 
-		agentInfo, getErr := s.registry.GetAgentByID(agentID)
-		if getErr != nil {
-			s.logger.Error().Err(getErr).Str("agent_id", agentID).Msg("Failed to get agent info")
+		reply, dropped := assembler.add(req)
+		if reply == nil {
 			continue
 		}
+		if dropped {
+			s.logger.Warn().Str("agent_id", agentID).Int("limit_bytes", maxPendingMetricsBytes).
+				Msg("Metrics reply exceeds the pending limit, answering the collection with no metrics")
+		}
+		s.deliverMetricsReply(ctx, agentID, reply)
+	}
+}
 
-		if processErr := s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, req); processErr != nil {
-			s.logger.Error().Err(processErr).Str("agent_id", agentID).Msg("Failed to process metrics")
+// deliverMetricsReply hands one whole metrics reply from agentID to the aggregator.
+func (s *FODCService) deliverMetricsReply(ctx context.Context, agentID string, reply *fodcv1.StreamMetricsRequest) {
+	agentInfo, err := s.registry.GetAgentByID(agentID)
+	if err != nil {
+		s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Failed to get agent info")
+		return
+	}
+	if err = s.metricsAggregator.ProcessMetricsFromAgent(ctx, agentID, agentInfo, reply); err != nil {
+		s.logger.Error().Err(err).Str("agent_id", agentID).Msg("Failed to process metrics")
+	}
+}
+
+// metricsReplyAssembler joins the chunks of one metrics reply received on a single stream.
+// It lives with the stream's receive loop, so a stream that ends mid-reply answers the
+// collection with no metrics.
+type metricsReplyAssembler struct {
+	pending []*fodcv1.Metric
+	bytes   int
+}
+
+// add takes one received message. It returns nil while more chunks of the reply are due,
+// and the whole reply once its last chunk arrives. dropped reports a reply that grew past
+// maxPendingMetricsBytes; it is returned without metrics so the waiting collection is still
+// answered. A message without has_more and nothing pending is a whole reply, as an agent
+// that predates chunking always sends.
+func (a *metricsReplyAssembler) add(req *fodcv1.StreamMetricsRequest) (reply *fodcv1.StreamMetricsRequest, dropped bool) {
+	if !req.GetHasMore() && a.bytes == 0 {
+		return req, false
+	}
+	if a.bytes <= maxPendingMetricsBytes {
+		a.bytes += proto.Size(req)
+		if a.bytes > maxPendingMetricsBytes {
+			a.pending = nil
+		} else {
+			a.pending = append(a.pending, req.GetMetrics()...)
 		}
 	}
+	if req.GetHasMore() {
+		return nil, false
+	}
+	reply = &fodcv1.StreamMetricsRequest{Metrics: a.pending, Timestamp: req.GetTimestamp()}
+	dropped = a.bytes > maxPendingMetricsBytes
+	*a = metricsReplyAssembler{}
+	return reply, dropped
 }
 
 // RequestMetrics requests metrics from an agent via the metrics stream.

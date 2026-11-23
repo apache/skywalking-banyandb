@@ -179,7 +179,7 @@ func partialSchema(t *testing.T, body []byte) *vectorized.BatchSchema {
 }
 
 func reduceToSchema(frames [][]byte, target *vectorized.BatchSchema, keyTags []string, fn AggFunc) ([]*vectorized.RecordBatch, error) {
-	got, _, reduceErr := ReduceRawFramesToSchema(frames, target, "default", keyTags, false,
+	got, _, reduceErr := ReduceRawFramesToSchema(frames, target, nil, "default", keyTags, false,
 		[]AggReduceSpec{{OutputName: "value", Func: fn}}, 1024, vectorized.NewMemoryTracker(1<<30))
 	return got, reduceErr
 }
@@ -345,7 +345,7 @@ func TestReduceRawFramesToSchema_ReservesWidenedPartials(t *testing.T) {
 	wide := vectorized.NewBatchSchema(append(cols, narrow.Columns[2:]...))
 	const budget = 64 << 20
 	reduce := func(target *vectorized.BatchSchema, tracker *vectorized.MemoryTracker) error {
-		_, _, reduceErr := ReduceRawFramesToSchema([][]byte{narrowFrame}, target, "default", []string{"svc"}, false,
+		_, _, reduceErr := ReduceRawFramesToSchema([][]byte{narrowFrame}, target, nil, "default", []string{"svc"}, false,
 			[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, tracker)
 		return reduceErr
 	}
@@ -388,4 +388,96 @@ func mapsEqualExact(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestReduceRawFramesToSchema_ScopesReplicaDedupByGroup(t *testing.T) {
+	// The apache/skywalking#14069 provenance oracle: api gets 5 from one
+	// storage group and 18 from another, both on shard 0.
+	schema := evolvedRawSchema(vectorized.ColumnTypeString, 0)
+	fromA := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 5}}, AggSum)
+	fromB := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 18}}, AggSum)
+	sum := func(frames [][]byte, scopes []int64) string {
+		t.Helper()
+		got, _, reduceErr := ReduceRawFramesToSchema(frames, nil, scopes, "default", []string{"svc"}, false,
+			[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, vectorized.NewMemoryTracker(1<<30))
+		if reduceErr != nil {
+			t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
+		}
+		if len(got) != 1 || got[0].Len != 1 {
+			t.Fatalf("want one api row, got %d batches", len(got))
+		}
+		valueIdx := got[0].Schema.FieldColumns[0]
+		return columnStringAt(got[0].Columns[valueIdx], 0)
+	}
+	if got := sum([][]byte{fromA, fromB}, []int64{0, 1}); got != "23" {
+		t.Fatalf("two groups: sum = %s, want 23", got)
+	}
+	// Replicas of either contribution still count once.
+	if got := sum([][]byte{fromA, fromB, fromA, fromB}, []int64{0, 1, 0, 1}); got != "23" {
+		t.Fatalf("with replicas: sum = %s, want 23", got)
+	}
+	// One scope keeps the single-group behavior: same shard and key is a replica.
+	if got := sum([][]byte{fromA, fromA}, nil); got != "5" {
+		t.Fatalf("one group: sum = %s, want 5", got)
+	}
+}
+
+func TestReduceToSchema_RejectsScopesThatDontMatchTheFrames(t *testing.T) {
+	schema := evolvedRawSchema(vectorized.ColumnTypeString)
+	fromA := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 5}}, AggSum)
+	fromB := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 18}}, AggSum)
+	spec := []AggReduceSpec{{OutputName: "value", Func: AggSum}}
+	tracker := vectorized.NewMemoryTracker(1 << 30)
+	// A short or misaligned scopes slice would apply the wrong group's scope, so it must fail loudly.
+	for _, scopes := range [][]int64{{0}, {0, 1, 1}} {
+		if _, _, err := ReduceRawFramesToSchema([][]byte{fromA, fromB}, nil, scopes, "default", []string{"svc"}, false, spec, 1024, tracker); err == nil {
+			t.Fatalf("ReduceRawFramesToSchema with %d scopes for 2 frames: want an error", len(scopes))
+		}
+	}
+	a, decodeErr := frame.Decode(fromA)
+	if decodeErr != nil {
+		t.Fatal(decodeErr)
+	}
+	defer a.ReleaseOwners()
+	if _, _, err := ReducePartialBatchesToSchema([]*vectorized.RecordBatch{a}, nil, []int64{0, 1}, "default", []string{"svc"}, false, spec, 1024, tracker); err == nil {
+		t.Fatal("ReducePartialBatchesToSchema with 2 scopes for 1 partial: want an error")
+	}
+}
+
+func TestPartialReducer_ConsumeScopedKeepsStorageGroupsApart(t *testing.T) {
+	// The streaming reducer takes partials one at a time; the scope must reach the replica dedup per partial.
+	schema := evolvedRawSchema(vectorized.ColumnTypeString, 0)
+	fromA := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 5}}, AggSum)
+	fromB := encodeEvolvedPartial(t, schema, []evolvedRow{{svc: "api", value: 18}}, AggSum)
+	sum := func(scopes []int64) string {
+		t.Helper()
+		reducer := NewPartialReducer(nil, "default", []string{"svc"}, false,
+			[]AggReduceSpec{{OutputName: "value", Func: AggSum}}, 1024, vectorized.NewMemoryTracker(1<<30))
+		defer reducer.Close()
+		for i, body := range [][]byte{fromA, fromB} {
+			partial, decodeErr := frame.Decode(body)
+			if decodeErr != nil {
+				t.Fatal(decodeErr)
+			}
+			consumeErr := reducer.ConsumeScoped(partial, scopes[i])
+			partial.ReleaseOwners()
+			if consumeErr != nil {
+				t.Fatalf("ConsumeScoped: %v", consumeErr)
+			}
+		}
+		got, _, finishErr := reducer.Finish()
+		if finishErr != nil {
+			t.Fatal(finishErr)
+		}
+		if len(got) != 1 || got[0].Len != 1 {
+			t.Fatalf("want one api row, got %d batches", len(got))
+		}
+		return columnStringAt(got[0].Columns[got[0].Schema.FieldColumns[0]], 0)
+	}
+	if got := sum([]int64{0, 1}); got != "23" {
+		t.Fatalf("two groups: sum = %s, want 23", got)
+	}
+	if got := sum([]int64{0, 0}); got != "5" {
+		t.Fatalf("one group: same shard and key is a replica, sum = %s, want 5", got)
+	}
 }

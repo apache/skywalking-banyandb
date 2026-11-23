@@ -114,7 +114,28 @@ type pub struct {
 	nodeCacheMu         sync.RWMutex
 	nativeQueryMu       sync.Mutex
 	tlsEnabled          bool
+	tlsInsecure         bool
 	nativeQueriesClosed bool
+}
+
+// Option configures a client made by NewWithoutMetadata, which registers no
+// flag set to configure it through.
+type Option func(*pub)
+
+// WithClientTLS makes the client dial with TLS. caCertPath verifies the
+// server; empty, the system roots do. insecureSkipVerify skips verifying the
+// server's certificate.
+func WithClientTLS(caCertPath string, insecureSkipVerify bool) Option {
+	return func(p *pub) {
+		p.tlsEnabled = true
+		p.caCertPath = caCertPath
+		p.tlsInsecure = insecureSkipVerify
+	}
+}
+
+// WithLogger names the logger the client and its connections log under.
+func WithLogger(l *logger.Logger) Option {
+	return func(p *pub) { p.log = l }
 }
 
 // nodeInfo caches the resolved role and tier for a remote node.
@@ -303,7 +324,7 @@ func (p *pub) Serve() run.StopNotify {
 		certUpdateCh := p.caCertReloader.GetUpdateChannel()
 		stopCh := p.closer.CloseNotify()
 		if p.closer.AddRunning() {
-			run.Go(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
+			run.GoOrDie(context.Background(), "pub-cert-watcher", p.log, func(_ context.Context) {
 				defer p.closer.Done()
 				for {
 					select {
@@ -586,10 +607,13 @@ func New(metadata metadata.Repo, roles ...databasev1.Role) queue.Client {
 // registered on it. The regular banyandb_queue_pub_* family stays disabled because
 // metadata is nil (PreRun gates it on metadata != nil). Pass nil to leave the
 // migration metrics disabled (e.g. tests, or non-migration clients).
-func NewWithoutMetadata(omr observability.MetricsRegistry) queue.Client {
+func NewWithoutMetadata(omr observability.MetricsRegistry, opts ...Option) queue.Client {
 	p := New(nil, databasev1.Role_ROLE_DATA)
 	pp := p.(*pub)
 	pp.log = logger.GetLogger("queue-client")
+	for _, opt := range opts {
+		opt(pp)
+	}
 	// No HealthCheckInterval here, unlike PreRun: this constructor skips FlagSet, and its
 	// callers (lifecycle migration, tests) are short-lived and do not all reach GracefulStop.
 	// Starting a background prober they never stop would leak a goroutine, and the reactive
@@ -857,7 +881,7 @@ func (p *pub) getClientTransportCredentials() ([]grpc.DialOption, error) {
 	}
 
 	// Fallback to static file reading if reloader is not available
-	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, false, p.caCertPath)
+	opts, err := grpchelper.SecureOptions(nil, p.tlsEnabled, p.tlsInsecure, p.caCertPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load TLS config: %w", err)
 	}
@@ -933,4 +957,13 @@ func (p *pub) NewExportClient(node string) (transferv1.ExportServiceClient, erro
 		return nil, fmt.Errorf("no active client for node %s", node)
 	}
 	return transferv1.NewExportServiceClient(c.conn), nil
+}
+
+// NewChunkedSyncRelayClient implements queue.Client on top of the shared connection pool.
+func (p *pub) NewChunkedSyncRelayClient(node string) (clusterv1.ChunkedSyncServiceClient, error) {
+	c, ok := p.connMgr.GetClient(node)
+	if !ok {
+		return nil, fmt.Errorf("no active client for node %s", node)
+	}
+	return clusterv1.NewChunkedSyncServiceClient(c.conn), nil
 }

@@ -40,14 +40,15 @@ type RateLimitEntry = {
 
 const rateLimitByClient = new Map<string, RateLimitEntry>();
 
-function getAuthorizationToken(req: IncomingMessage): string {
+export function getAuthorizationToken(req: Pick<IncomingMessage, 'headers'>): string {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
     return '';
   }
 
-  const bearerPrefix = 'Bearer ';
-  return authHeader.startsWith(bearerPrefix) ? authHeader.slice(bearerPrefix.length).trim() : '';
+  // The auth scheme name is case-insensitive (RFC 9110 section 11.1), so "bearer" and "BEARER" are valid too.
+  const match = /^Bearer\s+(.+)$/i.exec(authHeader.trim());
+  return match ? match[1].trim() : '';
 }
 
 export function isLoopbackHost(host: string): boolean {

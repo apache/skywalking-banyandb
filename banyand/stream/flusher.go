@@ -40,6 +40,11 @@ func (tst *tsTable) flusherLoop(flushCh chan *flusherIntroduction, mergeCh chan 
 		case e := <-flusherWatcher:
 			flusherWatchers.Add(e)
 		case <-epochWatcher.Watch():
+			// select picks at random among ready cases: once the table is closing, do not start another flush,
+			// whose memory parts a flush abandoned at close may have already written to disk.
+			if tst.flusherClosing() {
+				return
+			}
 			if func() bool {
 				tst.incTotalFlushLoopStarted(1)
 				start := time.Now()
@@ -214,6 +219,13 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 		if pw.mp == nil || pw.mp.partMetadata.TotalCount < 1 {
 			continue
 		}
+		// A flush of a closing table is never introduced: stop early instead of making shutdown wait for it.
+		if tst.flusherClosing() {
+			for _, flushed := range ind.flushed {
+				tst.removeStreamPartOnFailure(flushed)
+			}
+			return
+		}
 		partsCount++
 		partPath := partPath(tst.root, pw.ID())
 		pw.mp.mustFlush(tst.fileSystem, partPath)
@@ -232,8 +244,10 @@ func (tst *tsTable) flush(snapshot *snapshot, flushCh chan *flusherIntroduction)
 	select {
 	case flushCh <- ind:
 	case <-tst.loopCloser.CloseNotify():
+		// The flushed parts will not be introduced: remove them, or their directories stay behind while the
+		// memory parts they came from remain in the snapshot.
 		for _, pw := range ind.flushed {
-			pw.decRef()
+			tst.removeStreamPartOnFailure(pw)
 		}
 		return
 	}
@@ -248,4 +262,14 @@ func (tst *tsTable) persistSnapshot(snapshot *snapshot) {
 	}
 	tst.mustWriteSnapshot(snapshot.epoch, partNames)
 	tst.gc.registerSnapshot(snapshot)
+}
+
+// flusherClosing reports whether the table's loops are closing.
+func (tst *tsTable) flusherClosing() bool {
+	select {
+	case <-tst.loopCloser.CloseNotify():
+		return true
+	default:
+		return false
+	}
 }

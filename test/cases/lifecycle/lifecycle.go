@@ -712,7 +712,7 @@ func crossSegmentTimestamps() (single, left, right time.Time) {
 // registered as `localhost:<port>`. The lifecycle CLI's resolveSelfIdentity
 // matches selfPodHost against the host portion of the registered
 // GrpcAddress, so we set POD_NAME=localhost for the duration of the
-// call (and restore the prior value on exit) so selfPodHostname()
+// call (and restore the prior value on exit) so host.PodName()
 // returns "localhost" and matches the data node. In production this
 // is set by the K8s downward API to the lifecycle pod's actual pod
 // name (e.g. demo-banyandb-data-hot-0); the integration test uses

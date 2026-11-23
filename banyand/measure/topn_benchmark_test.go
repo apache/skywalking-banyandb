@@ -89,7 +89,7 @@ func benchmarkBoundedTopNWrites(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	benchmarkTopNWrites(b, completed, func() {
-		manager.onMeasureWrite(context.Background(), 1, 1, request, measureSchema)
+		manager.onMeasureWrite(context.Background(), 1, request, measureSchema)
 	})
 }
 
@@ -115,7 +115,6 @@ func benchmarkOriginalAsyncTopNWrite(manager *topNProcessorManager, request *mea
 			dpWithEntity := newDataPointWithEntityValues(
 				dp,
 				request.GetEntityValues(),
-				1,
 				1,
 				spec,
 				measureSchema,

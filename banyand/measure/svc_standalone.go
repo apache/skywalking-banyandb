@@ -45,6 +45,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 var (
@@ -193,7 +194,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
 	flagS.StringVar(&s.exportSnapshotDir, "measure-export-snapshot-path", "", storage.ExportSnapshotPathUsage("measure"))
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
-	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", queue.DefaultReceiveMemWaitTimeout,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	s.option.mergePolicy = newDefaultMergePolicy()
 	flagS.IntVar(&s.option.mergePolicy.maxParts, "measure-max-merge-parts", s.option.mergePolicy.maxParts, "the maximum number of parts to merge at once")
@@ -338,7 +339,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.diskMonitor.Start()
 
 	// For now, keep the original write throttling behavior based on high watermark
-	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark))
+	writeListener := setUpWriteCallback(s.l, s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm, observability.NewWriteDropCounter(s.omr, "measure"))
 	// only subscribe metricPipeline for data node
 	if s.metricPipeline != nil {
 		err = s.metricPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
@@ -350,8 +351,13 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
+		return err
+	}
 	// Register chunked sync handler for measure data.
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasurePartSync, setUpChunkedSyncCallback(s.l, s.schemaRepo))
+	// The series index handler receives the segment series index of a native import.
+	s.pipeline.RegisterChunkedSyncHandler(data.TopicMeasureSeriesSync, setUpSyncSeriesCallback(s.l, s.schemaRepo, s.pm, s.option.memWaitTimeout))
 	return s.localPipeline.Subscribe(data.TopicMeasureWrite, writeListener)
 }
 

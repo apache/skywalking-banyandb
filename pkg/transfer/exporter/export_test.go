@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"hash/crc32"
 	"io"
 	"maps"
@@ -39,7 +40,10 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
@@ -157,14 +161,14 @@ func exportOptions(t *testing.T, _ *fakeLiaison) (testOptions, *syncBuffer) {
 // environment of an export through them.
 func envFor(t *testing.T, opts testOptions, fakes ...*fakeLiaison) Env {
 	t.Helper()
-	liaisons := &Liaisons{}
+	liaisons := &cluster.Liaisons{}
 	for _, f := range fakes {
 		addr := serveLiaison(t, f)
-		liaisons.All = append(liaisons.All, &Liaison{Addr: addr, Conn: dial(t, addr)})
+		liaisons.All = append(liaisons.All, &cluster.Liaison{Addr: addr, Conn: dial(t, addr)})
 	}
 	return Env{
 		Log: opts.Log, Out: opts.Out, Terminal: opts.Terminal, Confirm: opts.Confirm, Liaisons: liaisons, Groups: fakes[0].groups,
-		Cluster: &ClusterInfo{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
+		Cluster: &cluster.Info{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
 	}
 }
 
@@ -189,7 +193,7 @@ func shortHeartbeat(t *testing.T, d time.Duration) {
 
 func requireExit(t *testing.T, err error, code int, contains string) {
 	t.Helper()
-	var exitErr *ExitError
+	var exitErr *exitcode.ExitError
 	if !errors.As(err, &exitErr) || exitErr.Code != code || !strings.Contains(err.Error(), contains) {
 		t.Fatalf("want exit %d containing %q, got %v", code, contains, err)
 	}
@@ -372,7 +376,7 @@ func TestRunExport_CRCMismatchIsNotRenamed(t *testing.T) {
 	f.exportScript = tamper(func(ff *fakeFile) { ff.badCRC = true })
 	opts, log := exportOptions(t, f)
 	err := runExport(t, f, opts)
-	requireExit(t, err, ExitRuntime, "is corrupt")
+	requireExit(t, err, exitcode.ExitRuntime, "is corrupt")
 	final := filepath.Join(opts.Output, "nodes", manifest.NodeDir(nodeA), "measure", "sw_metric", "seg-20260930", "shard-0-00001.csv")
 	if _, statErr := os.Stat(final); !os.IsNotExist(statErr) {
 		t.Fatalf("a corrupt file must not be renamed: %v", statErr)
@@ -399,7 +403,7 @@ func TestRunExport_RejectsUnsafePaths(t *testing.T) {
 		onlyNodeA(f)
 		f.exportScript = tamper(func(ff *fakeFile) { ff.path = p })
 		opts, log := exportOptions(t, f)
-		requireExit(t, runExport(t, f, opts), ExitRuntime, "relative path")
+		requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "relative path")
 		requireKept(t, f, log)
 		if _, err := os.Stat(filepath.Join(filepath.Dir(opts.Output), "evil.csv")); !os.IsNotExist(err) {
 			t.Fatalf("%s escaped the output directory", p)
@@ -418,7 +422,7 @@ func TestRunExport_ExistingTargetIsRejected(t *testing.T) {
 		return sendUnit(stream, append(files, files[0]), nil)
 	})
 	opts, _ := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "already exists")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "already exists")
 }
 
 // The layout is built from every resource of the group, so a resource the node does not
@@ -447,7 +451,7 @@ func TestRunExport_LayoutResourceSetMismatchFails(t *testing.T) {
 			onlyNodeA(f)
 			f.exportScript = tamper(func(ff *fakeFile) { ff.revs = tc.revs })
 			opts, log := exportOptions(t, f)
-			requireExit(t, runExport(t, f, opts), ExitRuntime, tc.expect)
+			requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, tc.expect)
 			requireKept(t, f, log)
 		})
 	}
@@ -458,7 +462,7 @@ func TestRunExport_SchemaChangeDuringExportFails(t *testing.T) {
 	onlyNodeA(f)
 	f.exportScript = tamper(func(ff *fakeFile) { ff.revs = map[string]int64{csvfmt.TopNResultMeasure: 9, "service_cpm": 99} })
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "schema of measure sw_metric/service_cpm changed during export")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "schema of measure sw_metric/service_cpm changed during export")
 	requireKept(t, f, log)
 }
 
@@ -471,7 +475,7 @@ func TestRunExport_RefusesANonEmptyOutputDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(opts.Output, "old"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	requireExit(t, runExport(t, f, opts), ExitUsage, "is not empty")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "is not empty")
 	if f.lastPlan() != nil {
 		t.Fatal("nothing may be planned for a non-empty output directory")
 	}
@@ -490,7 +494,7 @@ func TestRunExport_OccupiedClusterExits2(t *testing.T) {
 	f := exportFake()
 	f.listed = listedOn("b0b0")
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitPreflight, "give --preempt to take it over")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitPreflight, "give --preempt to take it over")
 	if !strings.Contains(log.String(), "export session feedfeed created") || strings.Contains(log.String(), "kept") {
 		t.Fatalf("a refused create was rolled back by the liaison; nothing is kept:\n%s", log)
 	}
@@ -522,7 +526,7 @@ func TestRunExport_AsksBeforeTakingOver(t *testing.T) {
 			}
 			continue
 		}
-		requireExit(t, err, ExitPreflight, "left as they are; give --preempt to take them over")
+		requireExit(t, err, exitcode.ExitPreflight, "left as they are; give --preempt to take them over")
 		if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
 			t.Fatalf("a no leaves the output directory empty: %v", checkErr)
 		}
@@ -541,7 +545,7 @@ func TestRunExport_InterruptedAtTheQuestion(t *testing.T) {
 		return false
 	}
 	err := RunExport(ctx, envFor(t, opts, f), opts.Export)
-	requireExit(t, err, ExitRuntime, "export interrupted before its session was created")
+	requireExit(t, err, exitcode.ExitRuntime, "export interrupted before its session was created")
 	if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
 		t.Fatalf("an interrupted export leaves the output directory empty: %v", checkErr)
 	}
@@ -575,7 +579,7 @@ func TestRunExport_HeartbeatLostAborts(t *testing.T) {
 	f.exportScript = blockUntilCanceled
 	opts, log := exportOptions(t, f)
 	shortHeartbeat(t, 20*time.Millisecond)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "export session feedfeed lost")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "export session feedfeed lost")
 	requireKept(t, f, log)
 }
 
@@ -592,7 +596,7 @@ func TestRunExport_FailFastCancelsOtherWorkers(t *testing.T) {
 	}
 	opts, log := exportOptions(t, f)
 	start := time.Now()
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "snapshot unit missing")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "snapshot unit missing")
 	if time.Since(start) > 10*time.Second {
 		t.Fatal("the failure of one node must cancel the others")
 	}
@@ -669,14 +673,14 @@ func TestRunExport_IdleTimeoutFires(t *testing.T) {
 	f.exportScript = bigFile(1, 10, time.Second)
 	opts, log := exportOptions(t, f)
 	opts.NodeIdleTimeout = 200 * time.Millisecond
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "--node-idle-timeout")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "--node-idle-timeout")
 	requireKept(t, f, log)
 }
 
 func TestRunExport_RetriesABusyNode(t *testing.T) {
-	origBase := exportRetryBase
-	exportRetryBase = 10 * time.Millisecond
-	t.Cleanup(func() { exportRetryBase = origBase })
+	origBase := transfer.RetryBase
+	transfer.RetryBase = 10 * time.Millisecond
+	t.Cleanup(func() { transfer.RetryBase = origBase })
 	f := exportFake()
 	onlyNodeA(f)
 	var calls int
@@ -705,7 +709,7 @@ func TestRunExport_RetriesABusyNode(t *testing.T) {
 		return status.Error(codes.ResourceExhausted, "busy (injected)")
 	}
 	opts2, _ := exportOptions(t, f2)
-	requireExit(t, runExport(t, f2, opts2), ExitRuntime, "busy")
+	requireExit(t, runExport(t, f2, opts2), exitcode.ExitRuntime, "busy")
 }
 
 func TestRunExport_SchemaOnly(t *testing.T) {
@@ -727,11 +731,94 @@ func TestRunExport_SchemaOnly(t *testing.T) {
 	}
 }
 
-func TestRunExport_NativeIsNotImplemented(t *testing.T) {
+func TestRunExport_NativeRefusesCompressionAndSmallVolumes(t *testing.T) {
 	f := exportFake()
 	opts, _ := exportOptions(t, f)
 	opts.Format = transferv1.Format_FORMAT_NATIVE
-	requireExit(t, runExport(t, f, opts), ExitUsage, "native export format is not implemented yet")
+	opts.Compress = transferv1.Compress_COMPRESS_GZIP
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "a native export is not compressed")
+
+	opts, _ = exportOptions(t, f)
+	opts.Format = transferv1.Format_FORMAT_NATIVE
+	opts.Compress = transferv1.Compress_COMPRESS_NONE
+	opts.MaxFileSize = 1024
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "a native export needs --max-file-size 0 or at least")
+}
+
+// A native unit skips the schema revision check, keeps the entry count of every volume, lists
+// the metadata file at the segment level and takes the shard total from the Plan aggregate.
+func TestRunExport_NativeUnit(t *testing.T) {
+	f := exportFake()
+	onlyNodeA(f)
+	measure := segmentOf(f.planFrames[0])
+	f.planFrames[0].GetUnits().Units = f.planFrames[0].GetUnits().Units[:1]
+	f.exportScript = scripted(func(_ *fakeLiaison, _ *transferv1.ExportRequest_Init, req *transferv1.ExportRequest, stream transferv1.ExportService_ExportServer) error {
+		u := req.GetSegment()
+		dir := fmt.Sprintf("%s/%s/seg-%s/", transfer.CatalogName(u.GetCatalog()), u.GetGroup(), u.GetSegmentSuffix())
+		send := func(r *transferv1.ExportResponse) error { return stream.Send(r) }
+		started := &transferv1.UnitStarted{TotalShards: 1, TotalParts: 1}
+		if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitStarted{UnitStarted: started}}); err != nil {
+			return err
+		}
+		for i, file := range []struct {
+			path     string
+			content  []byte
+			entries  uint32
+			segLevel bool
+		}{{path: dir + "metadata", content: []byte(`{"version":"1.5.0"}`), segLevel: true}, {path: dir + "shard-0-00001.bnc", content: []byte("volume"), entries: 3}} {
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileStarted{FileStarted: &transferv1.FileStarted{
+				RelativePath: file.path, SegmentLevel: file.segLevel, Seq: uint32(i + 1),
+			}}}); err != nil {
+				return err
+			}
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_Chunk{Chunk: &transferv1.DataChunk{Content: file.content}}}); err != nil {
+				return err
+			}
+			if err := send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_FileFinished{FileFinished: &transferv1.FileFinished{
+				Bytes: uint64(len(file.content)), Crc32: crc32.ChecksumIEEE(file.content), EntryCount: file.entries,
+			}}}); err != nil {
+				return err
+			}
+		}
+		return send(&transferv1.ExportResponse{Frame: &transferv1.ExportResponse_UnitFinished{UnitFinished: &transferv1.UnitFinished{}}})
+	})
+	opts, log := exportOptions(t, f)
+	opts.Selectors = []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_MEASURE}}
+	opts.Format = transferv1.Format_FORMAT_NATIVE
+	opts.Compress = transferv1.Compress_COMPRESS_UNSPECIFIED
+	if err := runExport(t, f, opts); err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	m, err := manifest.Read(filepath.Join(opts.Output, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Format != manifest.FormatNative || m.Compress != "none" || len(m.Units) != 1 || len(m.Units[0].Sources) != 1 {
+		t.Fatalf("manifest = %+v", m)
+	}
+	src := m.Units[0].Sources[0]
+	if len(src.SegmentFiles) != 1 || !strings.HasSuffix(src.SegmentFiles[0].Path, "/metadata") {
+		t.Fatalf("segment files = %+v", src.SegmentFiles)
+	}
+	if len(src.Shards) != 1 || len(src.Shards[0].Files) != 1 || src.Shards[0].Files[0].EntryCount != 3 ||
+		src.Shards[0].TotalCount != measure.GetShards()[0].GetTotalCount() {
+		t.Fatalf("shards = %+v", src.Shards)
+	}
+	checkFile(t, opts.Output, src.SegmentFiles[0])
+	checkFile(t, opts.Output, src.Shards[0].Files[0])
+}
+
+func TestCheckFormat_NativeDefaultsToNoCompression(t *testing.T) {
+	opts := config.Export{Format: transferv1.Format_FORMAT_NATIVE}
+	if err := CheckFormat(&opts); err != nil {
+		t.Fatal(err)
+	}
+	if opts.Compress != transferv1.Compress_COMPRESS_NONE {
+		t.Fatalf("compress = %s", opts.Compress)
+	}
+	if m := baseManifest(opts.Format, opts.Compress, nil, nil); m.Format != "native" || m.Compress != "none" {
+		t.Fatalf("manifest format %q compress %q", m.Format, m.Compress)
+	}
 }
 
 func TestSchemaSync_ListsOnlyTheKindsOfEachCatalog(t *testing.T) {
@@ -791,9 +878,9 @@ func TestSchemaSync_ListsOnlyTheKindsOfEachCatalog(t *testing.T) {
 // A cancellation during the retry back-off reports why the export was canceled, not the
 // busy answer of the attempt before it.
 func TestRunExport_CancelDuringRetryBackoffReportsTheCause(t *testing.T) {
-	origBase := exportRetryBase
-	exportRetryBase = time.Minute
-	t.Cleanup(func() { exportRetryBase = origBase })
+	origBase := transfer.RetryBase
+	transfer.RetryBase = time.Minute
+	t.Cleanup(func() { transfer.RetryBase = origBase })
 	f := exportFake()
 	onlyNodeA(f)
 	f.exportScript = func(*fakeLiaison, *transferv1.ExportRequest_Init, transferv1.ExportService_ExportServer) error {
@@ -843,7 +930,7 @@ func TestRunExport_StreamErrorMidFileLeavesOnlyTheTmp(t *testing.T) {
 		return status.Error(codes.Internal, "part read failed (injected)")
 	})
 	opts, log := exportOptions(t, f)
-	requireExit(t, runExport(t, f, opts), ExitRuntime, "part read failed")
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "part read failed")
 	final := filepath.Join(opts.Output, "nodes", manifest.NodeDir(nodeA), "measure", "sw_metric", "seg-20260930", "shard-0-00001.csv")
 	if _, err := os.Stat(final); !os.IsNotExist(err) {
 		t.Fatalf("an interrupted file must not get its final name: %v", err)
@@ -910,7 +997,7 @@ func TestRunExport_WithoutSchema(t *testing.T) {
 	}
 	opts2, _ := exportOptions(t, f)
 	opts2.IncludeSchema, opts2.SchemaOnly = false, true
-	requireExit(t, runExport(t, exportFake(), opts2), ExitUsage, "--include-schema=false")
+	requireExit(t, runExport(t, exportFake(), opts2), exitcode.ExitUsage, "--include-schema=false")
 }
 
 // The manifest labels an unspecified compression as the csv default gzip.
@@ -1039,7 +1126,7 @@ func TestRunExport_PropertyUnitIgnoresTheStage(t *testing.T) {
 		t.Fatalf("want one property unit, got %+v", props)
 	}
 	p := props[0]
-	if p.Group != "ui" || p.Stage != DefaultStageName || len(p.Sources) != 2 || p.Sources[0].Node != nodeA || p.Sources[1].Node != nodeB ||
+	if p.Group != "ui" || p.Stage != transfer.DefaultStageName || len(p.Sources) != 2 || p.Sources[0].Node != nodeA || p.Sources[1].Node != nodeB ||
 		len(p.Sources[0].Shards) != 2 || len(p.Sources[1].Shards) != 1 || p.Sources[1].Shards[0].DocCount != 3 {
 		t.Fatalf("property unit = %+v", p)
 	}
@@ -1064,7 +1151,7 @@ func TestBaseManifest_StagesRecordTheirOwnOptions(t *testing.T) {
 			{Name: "cold", ShardNum: 1, SegmentInterval: day(5), Ttl: day(365), Replicas: 1},
 		},
 	}}
-	m := baseManifest(transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{g}, &schemasync.Result{})
+	m := baseManifest(transferv1.Format_FORMAT_CSV, transferv1.Compress_COMPRESS_GZIP, []*commonv1.Group{g}, &schemasync.Result{})
 	want := []manifest.Stage{
 		{Name: "hot", ShardNum: 4, SegmentInterval: "1d", TTL: "7d", Replicas: 2},
 		{Name: "warm", ShardNum: 2, SegmentInterval: "3d", TTL: "30d", Replicas: 0},
@@ -1087,7 +1174,7 @@ func TestUnitSource_CountsRowsWhereTheFilesBelong(t *testing.T) {
 		{file: manifest.File{Path: "seg-2"}, segmentLevel: true, rowCounts: map[string]uint64{"m1": 3}},
 		{file: manifest.File{Path: "shard-1"}, shardID: 1, rowCounts: map[string]uint64{"m1": 4}},
 	}}
-	src := unitSource("n", u)
+	src := unitSource("n", u, false)
 	if !maps.Equal(src.RowCounts, map[string]uint64{"m1": 5, "m2": 1}) || src.TotalCount != 6 || len(src.SegmentFiles) != 2 {
 		t.Fatalf("segment-level counts: rowCounts %v totalCount %d files %d", src.RowCounts, src.TotalCount, len(src.SegmentFiles))
 	}
@@ -1096,9 +1183,40 @@ func TestUnitSource_CountsRowsWhereTheFilesBelong(t *testing.T) {
 	}
 }
 
+// A native file counts no rows: shard totals come from the Plan shard aggregate, the segment-level total
+// from the index-mode document count, a property shard's from its document count.
+func TestUnitSource_NativeCountsFromThePlan(t *testing.T) {
+	u := &plannedUnit{segment: &transferv1.SegmentInventory{
+		SegmentLevel: &transferv1.SidxStat{DocCount: 7},
+		Shards: []*transferv1.ShardStat{{ShardId: 1, TotalCount: 15, Parts: []*transferv1.PartStat{
+			{Id: 1, TotalCount: 10}, {Id: 2, TotalCount: 5},
+		}}},
+	}, files: []receivedFile{
+		{file: manifest.File{Path: "seg/metadata"}, segmentLevel: true},
+		{file: manifest.File{Path: "seg/shard-1-00001.bnc", EntryCount: 3}, shardID: 1},
+	}}
+	src := unitSource("n", u, true)
+	if src.TotalCount != 7 || len(src.Shards) != 1 || src.Shards[0].TotalCount != 15 || len(src.Shards[0].Files) != 1 {
+		t.Fatalf("native counts: total %d shards %+v", src.TotalCount, src.Shards)
+	}
+	// The aggregate wins over the sum of the parts: a split shard's pieces are folded into it.
+	merged := unitSource("n", &plannedUnit{segment: &transferv1.SegmentInventory{
+		Shards: []*transferv1.ShardStat{{ShardId: 0, TotalCount: 40, Parts: []*transferv1.PartStat{{Id: 1, TotalCount: 10}}}},
+	}}, true)
+	if len(merged.Shards) != 1 || merged.Shards[0].TotalCount != 40 {
+		t.Fatalf("native shard aggregate: %+v", merged.Shards)
+	}
+	prop := unitSource("n", &plannedUnit{property: &transferv1.PropertyInventory{
+		Shards: []*transferv1.PropertyShardStat{{ShardId: 0, DocCount: 4}},
+	}}, true)
+	if len(prop.Shards) != 1 || prop.Shards[0].TotalCount != 4 {
+		t.Fatalf("native property counts: %+v", prop.Shards)
+	}
+}
+
 // Node ids that differ only in case get one subtree each, told apart by the hash suffix.
 func TestBuildJobs_KeepsSimilarNodeIDsApart(t *testing.T) {
-	plan := &PlanResult{Frames: []*transferv1.UnitFrame{{NodeId: "data-1:17912"}, {NodeId: "Data-1:17912"}}}
+	plan := &cluster.PlanResult{Frames: []*transferv1.UnitFrame{{NodeId: "data-1:17912"}, {NodeId: "Data-1:17912"}}}
 	jobs, err := buildJobs(plan)
 	if err != nil {
 		t.Fatal(err)
@@ -1113,7 +1231,7 @@ func TestStartFile_RefusesAnUnrequestedShard(t *testing.T) {
 	n := &nodeExport{job: &nodeJob{nodeID: nodeA}, root: t.TempDir()}
 	u := &plannedUnit{property: &transferv1.PropertyInventory{Group: "ui", Shards: []*transferv1.PropertyShardStat{{ShardId: 0}}}}
 	_, err := n.startFile(u, &transferv1.FileStarted{RelativePath: "property/ui/shard-3-00001.csv", ShardId: 3})
-	requireExit(t, err, ExitRuntime, "is of shard 3, which the unit did not ask for")
+	requireExit(t, err, exitcode.ExitRuntime, "is of shard 3, which the unit did not ask for")
 }
 
 // The .tmp of a received file is created exclusively: an existing one is never truncated.

@@ -125,7 +125,7 @@ func DistributedAnalyze(criteria *streamv1.QueryRequest, ss []logical.Schema) (l
 	if _, validWindow := query.AddWindow(limitParameter, criteria.GetOffset()); !validWindow {
 		return nil, fmt.Errorf("query limit and offset exceed supported range")
 	}
-	plan = newDistributedLimit(plan, criteria.Offset, limitParameter)
+	// The distributed plan applies the client window before materializing frame rows.
 	return plan.Analyze(s)
 }
 

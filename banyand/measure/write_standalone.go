@@ -20,23 +20,28 @@ package measure
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/proto"
 
 	"github.com/apache/skywalking-banyandb/api/common"
+	"github.com/apache/skywalking-banyandb/api/data"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
+	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
 	"github.com/apache/skywalking-banyandb/pkg/partition"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -45,10 +50,14 @@ var subjectField = index.FieldKey{TagName: index.IndexModeName}
 type writeCallback struct {
 	l                   *logger.Logger
 	schemaRepo          *schemaRepo
+	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
-func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int) bus.MessageListener {
+func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
+	dropped meter.Counter,
+) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -56,10 +65,15 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		l:                   l,
 		schemaRepo:          schemaRepo,
 		maxDiskUsagePercent: maxDiskUsagePercent,
+		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
 func (w *writeCallback) CheckHealth() *common.Error {
+	if w.pm != nil && w.pm.State() == protector.StateHigh {
+		return common.NewErrorWithStatus(modelv1.Status_STATUS_SERVER_BUSY, "memory pressure is high, the batch is not written")
+	}
 	if w.maxDiskUsagePercent < 1 {
 		return common.NewErrorWithStatus(modelv1.Status_STATUS_DISK_FULL, "measure is readonly because \"measure-retention-high-watermark\" is 0")
 	}
@@ -119,20 +133,21 @@ func processDataPoint(dpt *dataPointsInTable, req *measurev1.WriteRequest, write
 	return uint64(series.ID), nil
 }
 
+// handle stores the data point of writeEvent and, unless skipTopN, feeds it into Top-N aggregation.
 func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsInGroup, writeEvent *measurev1.InternalWriteRequest,
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, skipTopN bool,
 ) (map[string]*dataPointsInGroup, error) {
 	req := writeEvent.Request
 	t := req.DataPoint.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 
 	gn := metadata.Group
 	tsdb, err := w.schemaRepo.loadTSDB(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load tsdb for group %s: %w", gn, err))
 	}
 	dpg, ok := dst[gn]
 	if !ok {
@@ -157,7 +172,7 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 	}
 	stm, ok := w.schemaRepo.loadMeasure(metadata)
 	if !ok {
-		return nil, fmt.Errorf("cannot find measure definition: %s", metadata)
+		return nil, common.NewRowDropError(common.DropReasonSchemaNotFound, fmt.Errorf("cannot find measure definition: %s", metadata))
 	}
 	fLen := len(req.DataPoint.GetTagFamilies())
 	if fLen < 1 {
@@ -199,7 +214,9 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 	if err != nil {
 		return nil, err
 	}
-	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.ShardId, writeEvent.EntityValues, req.DataPoint, spec)
+	if !skipTopN {
+		w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
+	}
 	return dst, nil
 }
 
@@ -318,6 +335,7 @@ func handleTagFamily(schema *databasev1.Measure, req *measurev1.WriteRequest,
 					f.Store = true
 					f.Index = true
 					f.NoSort = r.GetNoSort()
+					f.MarkNumericTag(t.Type, tagValue)
 					fields = append(fields, f)
 				} else {
 					for _, val := range encodeTagValue.valueArr {
@@ -391,6 +409,9 @@ func handleIndexMode(schema *databasev1.Measure, req *measurev1.WriteRequest,
 				f.Store = true
 				f.Index = toIndex
 				f.NoSort = r.GetNoSort()
+				if toIndex {
+					f.MarkNumericTag(t.Type, tagValue)
+				}
 				fields = append(fields, f)
 			} else {
 				for _, val := range encodeTagValue.valueArr {
@@ -442,10 +463,34 @@ func appendEntityTagsToIndexFields(fields []index.Field, stm *measure, series *p
 	return fields
 }
 
+// decodeWriteEvent returns the write request an event carries and whether it skips Top-N
+// aggregation, which only a data import's in-process write does.
+// errInvalidEventType is the error decodeWriteEvent returns for an event of a type a measure
+// write does not take.
+var errInvalidEventType = errors.New("invalid event data type")
+
+func decodeWriteEvent(event any) (*measurev1.InternalWriteRequest, bool, error) {
+	switch e := event.(type) {
+	case *measurev1.InternalWriteRequest:
+		return e, false, nil
+	case *data.ImportedMeasureWrite:
+		return e.InternalWriteRequest, true, nil
+	case []byte:
+		writeEvent := &measurev1.InternalWriteRequest{}
+		if err := proto.Unmarshal(e, writeEvent); err != nil {
+			return nil, false, fmt.Errorf("unmarshal event: %w", err)
+		}
+		return writeEvent, false, nil
+	default:
+		return nil, false, fmt.Errorf("%w %T", errInvalidEventType, event)
+	}
+}
+
 func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.Message) {
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -456,18 +501,14 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
 	for i := range events {
-		var writeEvent *measurev1.InternalWriteRequest
-		switch e := events[i].(type) {
-		case *measurev1.InternalWriteRequest:
-			writeEvent = e
-		case []byte:
-			writeEvent = &measurev1.InternalWriteRequest{}
-			if err := proto.Unmarshal(e, writeEvent); err != nil {
-				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
-				continue
+		writeEvent, skipTopN, err := decodeWriteEvent(events[i])
+		if err != nil {
+			w.l.Error().Err(err).Msg("cannot decode write event")
+			reason := common.DropReasonDecode
+			if errors.Is(err, errInvalidEventType) {
+				reason = common.DropReasonInvalidType
 			}
-		default:
-			w.l.Warn().Msg("invalid event data type")
+			w.drops.SkipRow(ctx, i, "", reason, fmt.Errorf("measure: cannot decode write event: %w", err))
 			continue
 		}
 		req := writeEvent.Request
@@ -477,9 +518,10 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		if req != nil && req.GetDataPointSpec() != nil {
 			spec = req.GetDataPointSpec()
 		}
-		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec)
+		newGroups, handleErr := w.handle(ctx, groups, writeEvent, metadata, spec, skipTopN)
 		if handleErr != nil {
 			w.l.Error().Err(handleErr).RawJSON("written", logger.Proto(writeEvent)).Msg("cannot handle write event")
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr), fmt.Errorf("measure %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -495,13 +537,17 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 				releaseDataPoints(dps.dataPoints)
 			}
 			if len(dps.metadataDocs) > 0 {
-				if err := dps.segment.IndexDB().Insert(dps.metadataDocs); err != nil {
+				// Inserting a series that exists is a no-op, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return dps.segment.IndexDB().Insert(dps.metadataDocs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write metadata")
+					common.RecordWriteFailure(ctx, fmt.Errorf("measure group %s: cannot write series metadata: %w", groupName, err))
 				}
 			}
 			if len(dps.indexModeDocs) > 0 {
-				if err := dps.segment.IndexDB().Update(dps.indexModeDocs); err != nil {
+				// Documents are upserted, so the write may be retried.
+				if err := common.RetryWrite(ctx, func() error { return dps.segment.IndexDB().Update(dps.indexModeDocs) }); err != nil {
 					w.l.Error().Err(err).Msg("cannot write index")
+					common.RecordWriteFailure(ctx, fmt.Errorf("measure group %s: cannot write index-mode documents: %w", groupName, err))
 				}
 			}
 		}

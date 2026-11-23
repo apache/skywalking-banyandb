@@ -56,13 +56,13 @@ var _ = BeforeSuite(func() {
 	recoveryDir, recoveryPorts := newSpace(), mustPorts(6)
 	cases.SharedContext = cases.Context{
 		Start: func(extra ...string) (cases.Node, func()) {
-			return start(newSpace(), mustPorts(6), append(append([]string{}, cases.NativeFlags...), extra...)...)
+			return start(newSpace(), mustPorts(6), append(append([]string{}, setup.NativeLogFlags...), extra...)...)
 		},
 		StartDisabled: func(extra ...string) (cases.Node, func()) {
 			return start(newSpace(), mustPorts(6), append(append([]string{}, cases.DisabledFlags...), extra...)...)
 		},
 		Restart: func(extra ...string) (cases.Node, func()) {
-			return start(recoveryDir, recoveryPorts, append(append([]string{}, cases.NativeFlags...), extra...)...)
+			return start(recoveryDir, recoveryPorts, append(append([]string{}, setup.NativeLogFlags...), extra...)...)
 		},
 		Console: console.String,
 	}

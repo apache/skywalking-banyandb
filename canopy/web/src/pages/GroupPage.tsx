@@ -18,10 +18,12 @@
  */
 
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 
 import type { StreamSchema, MeasureSchema, TraceSchema, PropertySchema } from 'canopy-shared';
+import { SamplingStatus } from '../pipelines/SamplingPages.js';
+import { SamplingFormModal } from '../pipelines/SamplingForm.js';
 import { apiDataSource } from '../data/api.js';
 import { useAuth } from '../auth/AuthContext.js';
 import {
@@ -88,6 +90,7 @@ export function GroupPage({
   const { session } = useAuth();
   const isAdmin = session?.role === 'admin';
   const [search, setSearch] = useState('');
+  const [editingSampling, setEditingSampling] = useState(false);
 
   const catalogEntry = CATALOG_MAP[type] ?? CATALOG_MAP['measures'];
   const TypeIcon = TYPE_ICONS[type] ?? IconMeasures;
@@ -247,6 +250,24 @@ export function GroupPage({
           </div>
         )}
       </div>
+
+      {group.catalog === 'CATALOG_TRACE' && (
+        <section className="sampling-header" aria-label="Sampling">
+          <div className="sampling-title">
+            <Link className="crumb crumb-link" to={'/pipelines/sampling/' + encodeURIComponent(groupName)}>Sampling</Link>
+            <SamplingStatus pipeline={group.pipeline} />
+          </div>
+          {isAdmin && (
+            <button className="btn btn-ghost" onClick={() => setEditingSampling(true)}>
+              {group.pipeline ? <IconEdit size={15} /> : <IconPlus size={15} />}
+              {group.pipeline ? 'Edit sampling' : 'Configure sampling'}
+            </button>
+          )}
+        </section>
+      )}
+      {editingSampling && group.catalog === 'CATALOG_TRACE' && isAdmin && (
+        <SamplingFormModal group={group} onClose={() => setEditingSampling(false)} />
+      )}
 
       <div className="res-toolbar">
         <div className="search-box">

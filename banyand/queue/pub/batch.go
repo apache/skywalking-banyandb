@@ -138,6 +138,10 @@ func (p *pub) NewBatchPublisher(timeout time.Duration) queue.BatchPublisher {
 func (bp *batchPublisher) Publish(ctx context.Context, topic bus.Topic, messages ...bus.Message) (bus.Future, error) {
 	if bp.topic == nil {
 		bp.topic = &topic
+		// A caller may carry its own logger in ctx, as a native log write does,
+		// so that what this batch logs about its nodes is not logged again
+		// where that caller's logs go.
+		bp.f.l = logger.FetchOrDefault(ctx, "queue-pub", bp.f.l)
 	}
 	var err error
 	for _, m := range messages {

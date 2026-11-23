@@ -62,18 +62,19 @@ func buildAggInputCountIdx(input *vectorized.BatchSchema, aggs []AggSpec, mode A
 	return idx
 }
 
-// markDedupSeen records (shardID, groupKey) in the replica-dedup map and
-// reports whether the pair was already present. Returns true when the row
+// markDedupSeen records (dedupScope, shardID, groupKey) in the replica-dedup
+// map and reports whether it was already present. Returns true when the row
 // is a replica duplicate that the caller must skip; false when the row is
 // new and has just been recorded. AggModeReduce only — the caller guards
 // the invocation on mode so this helper does not re-check.
 //
-// dedupSeen keys on a length-prefixed (shardID || groupKey) byte string,
-// matching the row path's hashWithShard semantics in
+// dedupSeen keys on a length-prefixed (dedupScope || shardID || groupKey)
+// byte string, matching the row path's hashWithShard semantics in
 // measure_plan_distributed.go: same shard + same group ⇒ duplicate;
 // different shards with the same group are preserved (their keys differ
 // in the shardID prefix and Combine into the same group bucket without
-// being dedup'd).
+// being dedup'd). The scope keeps storage groups apart (SetDedupScope),
+// since each group numbers its shards from 0.
 //
 // When the input schema has no RoleShardID column (shardIDIdx == -1 — a
 // degenerate fixture that pre-dates the storage bridge), dedup falls back
@@ -90,7 +91,8 @@ func (a *BatchAggregation) markDedupSeen(b *vectorized.RecordBatch, rowIdx int, 
 			}
 		}
 	}
-	dedupKey := binary.LittleEndian.AppendUint64(a.dedupScratch[:0], uint64(shardID))
+	dedupKey := binary.LittleEndian.AppendUint64(a.dedupScratch[:0], uint64(a.dedupScope))
+	dedupKey = binary.LittleEndian.AppendUint64(dedupKey, uint64(shardID))
 	dedupKey = append(dedupKey, groupKey...)
 	a.dedupScratch = dedupKey
 	// The map-index conversion does not allocate; own the key only on insert.

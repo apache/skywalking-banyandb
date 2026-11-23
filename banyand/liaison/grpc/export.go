@@ -42,6 +42,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/ratelimit"
 )
 
 // The export timeouts are variables so tests can shorten them.
@@ -84,7 +85,7 @@ type exportService struct {
 	selfNode     func() string
 	newSessionID func() string
 	l            *logger.Logger
-	relayRate    *relayLimiter
+	relayRate    *ratelimit.Relay
 }
 
 // errNoDataNode answers a Plan or Sessions call while the liaison knows no data node yet:
@@ -95,7 +96,7 @@ var errNoDataNode = status.Error(codes.Unavailable, "this liaison has not discov
 // process has no tire2 route table: it is its own only data node, named by selfNode, and its
 // local pipeline serves the ExportService in-process.
 func newExportService(tire2 queue.Client, routeTable route.TableProvider, selfNode func() string, l *logger.Logger) *exportService {
-	return &exportService{tire2: tire2, routeTable: routeTable, selfNode: selfNode, newSessionID: randomSessionID, l: l, relayRate: newRelayLimiter()}
+	return &exportService{tire2: tire2, routeTable: routeTable, selfNode: selfNode, newSessionID: randomSessionID, l: l, relayRate: ratelimit.NewRelay()}
 }
 
 // randomSessionID returns 16 random bytes as lowercase hex, which satisfies the session id
@@ -712,12 +713,8 @@ func (s *exportService) Export(stream transferv1.ExportService_ExportServer) err
 	if !slices.ContainsFunc(s.planNodes(), func(n planNode) bool { return n.name() == target }) {
 		return status.Errorf(codes.NotFound, "data node %q is not registered", target)
 	}
-	peerAddr := "<unknown>"
-	if p, ok := peer.FromContext(stream.Context()); ok && p.Addr != nil {
-		peerAddr = p.Addr.String()
-	}
-	s.l.Info().Str("peer", peerAddr).Str("session", init.GetSessionId()).Str("node", target).Msg("export stream relayed to a data node")
-	defer s.relayRate.open(init.GetLiaisonBytesPerSecond())()
+	s.l.Info().Str("peer", peerAddr(stream.Context())).Str("session", init.GetSessionId()).Str("node", target).Msg("export stream relayed to a data node")
+	defer s.relayRate.Open(init.GetLiaisonBytesPerSecond())()
 
 	client, err := remoteNode{tire2: s.tire2, id: target}.exportClient()
 	if err != nil {
@@ -786,7 +783,7 @@ func (s *exportService) relayChunk(ctx context.Context, stream transferv1.Export
 	frame *transferv1.ExportResponse, chunk *transferv1.DataChunk,
 ) error {
 	content := chunk.GetContent()
-	n, err := s.relayRate.take(ctx, len(content))
+	n, err := s.relayRate.Take(ctx, len(content))
 	if err != nil {
 		return err
 	}
@@ -801,7 +798,7 @@ func (s *exportService) relayChunk(ctx context.Context, stream transferv1.Export
 		if content = content[n:]; len(content) == 0 {
 			return nil
 		}
-		if n, err = s.relayRate.take(ctx, len(content)); err != nil {
+		if n, err = s.relayRate.Take(ctx, len(content)); err != nil {
 			return err
 		}
 	}
@@ -826,4 +823,12 @@ func relayToNode(stream transferv1.ExportService_ExportServer, up transferv1.Exp
 			return err
 		}
 	}
+}
+
+// peerAddr is the address of the client of a stream, for its log lines.
+func peerAddr(ctx context.Context) string {
+	if p, ok := peer.FromContext(ctx); ok && p.Addr != nil {
+		return p.Addr.String()
+	}
+	return "<unknown>"
 }

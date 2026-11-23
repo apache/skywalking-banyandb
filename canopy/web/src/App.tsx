@@ -25,11 +25,13 @@ import { AuthProvider, useAuth } from './auth/AuthContext.js';
 import { LoginPage } from './pages/LoginPage.js';
 import { Shell } from './components/Shell.js';
 import { HomePage } from './pages/HomePage.js';
+import { MonitorPage } from './pages/MonitorPage.js';
 import { TypeOverviewPage } from './pages/TypeOverviewPage.js';
 import { GroupPage } from './pages/GroupPage.js';
 import { ResourceDetailPage } from './pages/ResourceDetailPage.js';
 import { PropertyDetailPage } from './pages/PropertyDetailPage.js';
 import { PipelinesPage } from './pages/PipelinesPage.js';
+import { SamplingList, SamplingDetail } from './pipelines/SamplingPages.js';
 import { TopNList } from './pipelines/TopNList.js';
 import { TopNDetail } from './pipelines/TopNDetail.js';
 import { GroupForm } from './components/GroupForm.js';
@@ -544,6 +546,7 @@ function AppContent() {
     <Shell>
       <Routes>
         <Route path="/" element={<HomePage />} />
+        <Route path="/monitor" element={<MonitorPage />} />
         <Route path="/metadata/:type/:group/Index" element={<MetadataIndexRoute />} />
         <Route path="/metadata/:type/:group/:name" element={<MetadataResourceRoute />} />
         <Route path="/metadata/:type/:group" element={<MetadataGroupRoute />} />
@@ -553,6 +556,8 @@ function AppContent() {
         <Route path="/properties" element={<PropertiesOverviewRoute />} />
         <Route path="/pipelines/topn/:group/:name" element={<TopNDetailRoute />} />
         <Route path="/pipelines/topn" element={<TopNList />} />
+        <Route path="/pipelines/sampling" element={<SamplingList />} />
+        <Route path="/pipelines/sampling/:group" element={<SamplingDetail />} />
         <Route path="/pipelines" element={<PipelinesPage />} />
         <Route path="/query" element={<QueryRoute />} />
         <Route path="*" element={<div className="page-body"><h1 className="page-title">Not found</h1></div>} />

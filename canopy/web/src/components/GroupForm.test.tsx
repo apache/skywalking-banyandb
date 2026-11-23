@@ -18,7 +18,8 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import { apiDataSource } from '../data/api.js';
@@ -84,5 +85,50 @@ describe('GroupForm — edit mode immutable fields', () => {
       { wrapper: makeWrapper() },
     );
     expect(screen.getByRole('button', { name: 'MEASURE' })).toHaveClass('is-on');
+  });
+});
+
+
+describe('GroupForm — sampling pipeline preservation', () => {
+  const pipeline = {
+    enabled: true,
+    enabledEvents: ['PIPELINE_EVENT_MERGE', 'PIPELINE_EVENT_FINALIZE'],
+    mergeGrace: '7200s',
+    finalizeGrace: '300s',
+    schemaNames: ['traces'],
+    schemaNameRegex: 'traces.*',
+    plugins: [{ name: 'hot-sampler', sampler: {
+      path: 'sampling.so', symbol: 'NewSampler', abiVersion: 1,
+      config: { ratio: 0.25, nested: { enabled: true } },
+    } }],
+    stages: [{ stage: 'warm', plugins: [{ name: 'warm-sampler', sampler: {
+      path: 'warm.so', abiVersion: 1, config: { ratio: 0.1 },
+    } }] }],
+  };
+
+  beforeEach(() => {
+    vi.mocked(apiDataSource.updateGroup).mockClear();
+    vi.mocked(apiDataSource.updateGroup).mockResolvedValue(undefined as never);
+  });
+
+  it.each([true, false])('preserves pipeline presence (%s) when editing ordinary storage options', async (hasPipeline) => {
+    const user = userEvent.setup();
+    const group = {
+      ...MOCK_GROUP,
+      catalog: 'CATALOG_TRACE',
+      ...(hasPipeline ? { pipeline } : {}),
+    };
+    vi.mocked(apiDataSource.listGroups).mockResolvedValue({ groups: [group] } as never);
+    render(<GroupForm mode="edit" initialName="mygroup" onClose={vi.fn()} />, { wrapper: makeWrapper() });
+    await waitFor(() => expect(screen.getByRole('dialog')).toHaveAttribute('data-initialized', 'true'));
+    const ttl = screen.getByRole('spinbutton', { name: 'TTL value' });
+    await user.clear(ttl);
+    await user.type(ttl, '14');
+    await user.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(apiDataSource.updateGroup).toHaveBeenCalledOnce());
+    const submitted = vi.mocked(apiDataSource.updateGroup).mock.calls[0][1].group;
+    expect(submitted.resourceOpts.ttl?.num).toBe(14);
+    if (hasPipeline) expect(submitted).toHaveProperty('pipeline', pipeline);
+    else expect(submitted).not.toHaveProperty('pipeline');
   });
 });

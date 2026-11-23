@@ -19,12 +19,14 @@ package grpc
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/apache/skywalking-banyandb/api/common"
@@ -44,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/ql"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
+	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -69,6 +72,8 @@ type measureService struct {
 	l               *logger.Logger
 	metrics         *metrics
 	queryBudget     *protector.QueryBudget
+	protector       protector.Memory
+	writeConfig     *writeSessionConfig
 	writeTimeout    time.Duration
 	maxWaitDuration time.Duration
 }
@@ -93,31 +98,101 @@ func (ms *measureService) activeQueryAccessLog(root string, sampled bool) (err e
 	return nil
 }
 
+// measureResponseSender receives the responses of a measure Write stream.
+type measureResponseSender interface {
+	Send(*measurev1.WriteResponse) error
+}
+
+// measureSessionSender queues responses on a write session instead of writing them to the stream.
+type measureSessionSender struct {
+	session *writeSession
+}
+
+func (t measureSessionSender) Send(resp *measurev1.WriteResponse) error {
+	t.session.Reply(writeReply{metadata: resp.GetMetadata(), id: resp.GetMessageId(), status: resp.GetStatusCode()})
+	return nil
+}
+
+func (ms *measureService) memoryHigh() bool {
+	return ms.protector != nil && ms.protector.State() == protector.StateHigh
+}
+
+type measureRecv struct {
+	req *measurev1.WriteRequest
+	err error
+}
+
 func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) error {
-	ctx := measure.Context()
-	publisher := ms.pipeline.NewBatchPublisher(ms.writeTimeout)
 	ms.metrics.totalStreamStarted.Inc(1, "measure", "write")
 	start := time.Now()
-	var succeedSent []succeedSentMessage
+	var cfg writeSessionConfig
+	if ms.writeConfig != nil {
+		cfg = *ms.writeConfig
+	}
+	session := newWriteSession(measure.Context(), cfg, writeSessionDeps{
+		newPublisher: func() queue.BatchPublisher { return ms.pipeline.NewBatchPublisher(ms.writeTimeout) },
+		send:         func(reply writeReply) error { return ms.sendResponse(measure, reply) },
+		memoryHigh:   ms.memoryHigh,
+		release:      ms.groupRepo.releaseRequest,
+		log:          ms.l,
+		metrics:      ms.metrics,
+		service:      "measure",
+		topic:        data.TopicMeasureWrite,
+	})
+	requestCount := 0
+	err := ms.receiveWrites(measure, session, &requestCount)
+	finishErr := session.Finish()
+	if err == nil {
+		err = finishErr
+	}
+	if dl := ms.l.Debug(); dl.Enabled() {
+		dl.Int("total_requests", requestCount).Msg("completed measure write stream")
+	}
+	ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
+	ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
+	return err
+}
 
-	defer ms.handleWriteCleanup(publisher, &succeedSent, measure, start)
+// receiveWrites reads the client's rows into the session until the client half-closes (nil), the stream breaks,
+// or the session fails. Rows are validated and routed here; their acknowledgement is the session's business.
+func (ms *measureService) receiveWrites(measure measurev1.MeasureService_WriteServer, session *writeSession, requestCount *int) error {
+	ctx := measure.Context()
+	recvCh := make(chan measureRecv)
+	stop := make(chan struct{})
+	defer close(stop)
+	// Recv runs on its own goroutine so that a session failure ends the stream even when the client is idle.
+	run.Go(ctx, "measure-write-recv", ms.l, func(context.Context) {
+		for {
+			req, err := measure.Recv()
+			select {
+			case recvCh <- measureRecv{req: req, err: err}:
+			case <-stop:
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	})
+	sender := measureSessionSender{session: session}
 
 	var metadata *commonv1.Metadata
 	var spec *measurev1.DataPointSpec
 	var specEntityLocator *specLocator
 	var specShardingKeyLocator *specLocator
+	var epoch uint64
 	isFirstRequest := true
-	nodeMetadataSent := make(map[string]bool)
-	nodeSpecSent := make(map[string]bool)
 
 	for {
+		var in measureRecv
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
+		case <-session.Fatal():
+			return session.Err()
+		case in = <-recvCh:
 		}
-
-		writeRequest, err := measure.Recv()
+		writeRequest, err := in.req, in.err
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
@@ -129,39 +204,100 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 		}
 
 		if writeRequest.GetMetadata() != nil {
+			// Clients may repeat the metadata on every message; only a different target starts a new batch.
+			if metadata == nil || !proto.Equal(metadata, writeRequest.GetMetadata()) {
+				epoch++
+			}
 			metadata = writeRequest.GetMetadata()
-			nodeMetadataSent = make(map[string]bool)
 		} else if isFirstRequest {
 			ms.l.Error().Msg("metadata is required for the first request of gRPC stream")
-			ms.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeRequest.GetMessageId(), measure)
+			ms.sendReply(nil, modelv1.Status_STATUS_METADATA_REQUIRED, writeRequest.GetMessageId(), sender)
 			return errors.New("metadata is required for the first request of gRPC stream")
 		}
 		isFirstRequest = false
 		if writeRequest.GetDataPointSpec() != nil {
+			if !proto.Equal(spec, writeRequest.GetDataPointSpec()) {
+				epoch++
+			}
 			spec = writeRequest.GetDataPointSpec()
-			nodeSpecSent = make(map[string]bool)
 			specEntityLocator, specShardingKeyLocator = ms.buildSpecLocators(metadata, spec)
 		}
 
+		*requestCount++
 		ms.metrics.totalStreamMsgReceived.Inc(1, metadata.Group, "measure", "write")
 
 		if acquireErr := ms.groupRepo.acquireRequest(metadata.Group); acquireErr != nil {
-			ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
+			ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), sender)
 			continue
 		}
 
-		if status := ms.validateWriteRequest(writeRequest, metadata, measure); status != modelv1.Status_STATUS_SUCCEED {
+		if ms.validateWriteRequest(writeRequest, metadata, sender) != modelv1.Status_STATUS_SUCCEED {
 			ms.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
 
-		if err := ms.processAndPublishRequest(ctx, writeRequest, metadata, spec,
-			specEntityLocator, specShardingKeyLocator, publisher, &succeedSent, measure, nodeMetadataSent, nodeSpecSent); err != nil {
+		tagValues, shardID, err := ms.navigateWithRetry(writeRequest, metadata, specEntityLocator, specShardingKeyLocator)
+		if err != nil {
+			ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
+			ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), sender)
 			ms.groupRepo.releaseRequest(metadata.Group)
 			continue
 		}
-		ms.groupRepo.releaseRequest(metadata.Group)
+
+		if writeRequest.DataPoint.Version == 0 {
+			if writeRequest.MessageId == 0 {
+				writeRequest.MessageId = uint64(time.Now().UnixNano())
+			}
+			writeRequest.DataPoint.Version = int64(writeRequest.MessageId)
+		}
+
+		if ms.ingestionAccessLog != nil {
+			if errAccessLog := ms.ingestionAccessLog.Write(writeRequest); errAccessLog != nil {
+				ms.l.Error().Err(errAccessLog).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to write access log")
+			}
+		}
+
+		if err = ms.appendRow(session, writeRequest, metadata, spec, shardID, tagValues, epoch); err != nil {
+			ms.groupRepo.releaseRequest(metadata.Group)
+			if !errors.Is(err, errWriteRowRejected) {
+				return err
+			}
+			ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to publish the write request")
+			ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), sender)
+		}
 	}
+}
+
+// appendRow locates the row's node and appends it to that node's open batch. A nil error means the session owns
+// the row and will release its group request when the batch is acknowledged. A rejection that concerns only this
+// row wraps errWriteRowRejected; any other error means the session has failed or the stream is gone.
+func (ms *measureService) appendRow(session *writeSession, writeRequest *measurev1.WriteRequest, metadata *commonv1.Metadata,
+	spec *measurev1.DataPointSpec, shardID common.ShardID, tagValues pbv1.EntityValues, epoch uint64,
+) error {
+	nodeID, err := ms.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), uint32(shardID), 0)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	err = session.Append(nodeID, metadata.GetGroup(), epoch, writeAck{metadata: metadata, id: writeRequest.GetMessageId()},
+		func(first bool) ([]byte, error) {
+			request := &measurev1.WriteRequest{
+				MessageId: writeRequest.GetMessageId(),
+				DataPoint: writeRequest.GetDataPoint(),
+			}
+			if first {
+				request.Metadata = metadata
+				request.DataPointSpec = spec
+			}
+			return proto.Marshal(&measurev1.InternalWriteRequest{
+				Request:      request,
+				ShardId:      uint32(shardID),
+				EntityValues: tagValues[1:].Encode(),
+			})
+		})
+	if errors.Is(err, errWriteRowSerialize) {
+		return fmt.Errorf("%w: %w", errWriteRowRejected, err)
+	}
+	return err
 }
 
 func (ms *measureService) buildSpecLocators(metadata *commonv1.Metadata, spec *measurev1.DataPointSpec) (*specLocator, *specLocator) {
@@ -187,7 +323,7 @@ func (ms *measureService) buildSpecLocators(metadata *commonv1.Metadata, spec *m
 }
 
 func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequest,
-	metadata *commonv1.Metadata, measure measurev1.MeasureService_WriteServer,
+	metadata *commonv1.Metadata, measure measureResponseSender,
 ) modelv1.Status {
 	if errTime := timestamp.CheckPb(writeRequest.DataPoint.Timestamp); errTime != nil {
 		ms.l.Error().Err(errTime).Stringer("written", writeRequest).Msg("the data point time is invalid")
@@ -237,109 +373,25 @@ func (ms *measureService) validateWriteRequest(writeRequest *measurev1.WriteRequ
 	return modelv1.Status_STATUS_SUCCEED
 }
 
-func (ms *measureService) processAndPublishRequest(ctx context.Context, writeRequest *measurev1.WriteRequest,
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec,
+func (ms *measureService) navigateWithRetry(writeRequest *measurev1.WriteRequest, metadata *commonv1.Metadata,
 	specEntityLocator *specLocator, specShardingKeyLocator *specLocator,
-	publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage, measure measurev1.MeasureService_WriteServer,
-	nodeMetadataSent map[string]bool, nodeSpecSent map[string]bool,
-) error {
-	// Retry with backoff when encountering errNotExist
-	var tagValues pbv1.EntityValues
-	var shardID common.ShardID
-	var err error
-
+) (tagValues pbv1.EntityValues, shardID common.ShardID, err error) {
 	if ms.maxWaitDuration > 0 {
 		retryInterval := 10 * time.Millisecond
 		startTime := time.Now()
 		for {
 			tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 			if err == nil || !errors.Is(err, errNotExist) || time.Since(startTime) > ms.maxWaitDuration {
-				break
+				return
 			}
-
-			// Exponential backoff with jitter
 			time.Sleep(retryInterval)
 			retryInterval = time.Duration(float64(retryInterval) * 1.5)
 			if retryInterval > time.Second {
 				retryInterval = time.Second
 			}
 		}
-	} else {
-		tagValues, shardID, err = ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 	}
-
-	if err != nil {
-		ms.l.Error().Err(err).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to navigate to the write target")
-		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return err
-	}
-
-	if writeRequest.DataPoint.Version == 0 {
-		if writeRequest.MessageId == 0 {
-			writeRequest.MessageId = uint64(time.Now().UnixNano())
-		}
-		writeRequest.DataPoint.Version = int64(writeRequest.MessageId)
-	}
-
-	if ms.ingestionAccessLog != nil {
-		if errAccessLog := ms.ingestionAccessLog.Write(writeRequest); errAccessLog != nil {
-			ms.l.Error().Err(errAccessLog).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to write access log")
-		}
-	}
-
-	iwr := &measurev1.InternalWriteRequest{
-		Request:      writeRequest,
-		ShardId:      uint32(shardID),
-		EntityValues: tagValues[1:].Encode(),
-	}
-
-	nodes, err := ms.publishToNodes(ctx, writeRequest, metadata, spec, iwr, publisher, uint32(shardID), measure, nodeMetadataSent, nodeSpecSent)
-	if err != nil {
-		return err
-	}
-
-	*succeedSent = append(*succeedSent, succeedSentMessage{
-		metadata:  metadata,
-		messageID: writeRequest.GetMessageId(),
-		nodes:     nodes,
-	})
-	return nil
-}
-
-func (ms *measureService) publishToNodes(ctx context.Context, writeRequest *measurev1.WriteRequest,
-	metadata *commonv1.Metadata, spec *measurev1.DataPointSpec, iwr *measurev1.InternalWriteRequest,
-	publisher queue.BatchPublisher, shardID uint32, measure measurev1.MeasureService_WriteServer,
-	nodeMetadataSent map[string]bool, nodeSpecSent map[string]bool,
-) ([]string, error) {
-	nodeID, errPickNode := ms.nodeRegistry.Locate(metadata.GetGroup(), metadata.GetName(), shardID, 0)
-	if errPickNode != nil {
-		ms.l.Error().Err(errPickNode).RawJSON("written", logger.Proto(writeRequest)).Msg("failed to pick an available node")
-		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return nil, errPickNode
-	}
-
-	if !nodeMetadataSent[nodeID] {
-		iwr.Request.Metadata = metadata
-		nodeMetadataSent[nodeID] = true
-	}
-	if spec != nil && !nodeSpecSent[nodeID] {
-		iwr.Request.DataPointSpec = spec
-		nodeSpecSent[nodeID] = true
-	}
-
-	message := bus.NewBatchMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), nodeID, metadata.GetGroup(), iwr)
-	_, errWritePub := publisher.Publish(ctx, data.TopicMeasureWrite, message)
-	if errWritePub != nil {
-		ms.l.Error().Err(errWritePub).RawJSON("written", logger.Proto(writeRequest)).Str("nodeID", nodeID).Msg("failed to send a message")
-		var ce *common.Error
-		if errors.As(errWritePub, &ce) {
-			ms.sendReply(metadata, ce.Status(), writeRequest.GetMessageId(), measure)
-			return nil, errWritePub
-		}
-		ms.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeRequest.GetMessageId(), measure)
-		return nil, errWritePub
-	}
-	return []string{nodeID}, nil
+	return ms.navigate(metadata, writeRequest, specEntityLocator, specShardingKeyLocator)
 }
 
 func (ms *measureService) navigate(metadata *commonv1.Metadata, writeRequest *measurev1.WriteRequest,
@@ -349,50 +401,39 @@ func (ms *measureService) navigate(metadata *commonv1.Metadata, writeRequest *me
 	return ms.navigateByLocator(metadata, tagFamilies, specEntityLocator, specShardingKeyLocator)
 }
 
-func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, measure measurev1.MeasureService_WriteServer) {
+func (ms *measureService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, sender measureResponseSender) {
 	if metadata == nil {
 		ms.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
 		return
 	}
-	if status != modelv1.Status_STATUS_SUCCEED {
-		ms.metrics.totalStreamMsgReceivedErr.Inc(1, metadata.Group, "measure", "write")
-	}
-	ms.metrics.totalStreamMsgSent.Inc(1, metadata.Group, "measure", "write")
-	if errResp := measure.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status.String(), MessageId: messageID}); errResp != nil {
+	if errResp := sender.Send(&measurev1.WriteResponse{Metadata: metadata, Status: status.String(), StatusCode: status, MessageId: messageID}); errResp != nil {
 		if dl := ms.l.Debug(); dl.Enabled() {
-			dl.Err(errResp).Msg("failed to send measure write response")
+			dl.Err(errResp).Msg("failed to queue measure write response")
 		}
-		ms.metrics.totalStreamMsgSentErr.Inc(1, metadata.Group, "measure", "write")
 	}
 }
 
-func (ms *measureService) handleWriteCleanup(publisher queue.BatchPublisher, succeedSent *[]succeedSentMessage,
-	measure measurev1.MeasureService_WriteServer, start time.Time,
-) {
-	cee, err := publisher.Close()
-	for _, s := range *succeedSent {
-		code := modelv1.Status_STATUS_SUCCEED
-		if cee != nil {
-			for _, node := range s.nodes {
-				if ce, ok := cee[node]; ok {
-					code = ce.Status()
-					if ce.Status() == modelv1.Status_STATUS_SUCCEED {
-						code = modelv1.Status_STATUS_SUCCEED
-						break
-					}
-				}
-			}
+// sendResponse writes one queued response to the client. It runs on the write session's sender goroutine only.
+func (ms *measureService) sendResponse(measure measurev1.MeasureService_WriteServer, reply writeReply) error {
+	group := reply.metadata.GetGroup()
+	if reply.status != modelv1.Status_STATUS_SUCCEED {
+		ms.metrics.totalStreamMsgReceivedErr.Inc(1, group, "measure", "write")
+	}
+	ms.metrics.totalStreamMsgSent.Inc(1, group, "measure", "write")
+	errResp := measure.Send(&measurev1.WriteResponse{
+		Metadata:     reply.metadata,
+		MessageId:    reply.id,
+		Status:       reply.status.String(),
+		StatusCode:   reply.status,
+		RetryAfterMs: reply.retryAfterMs,
+	})
+	if errResp != nil {
+		if dl := ms.l.Debug(); dl.Enabled() {
+			dl.Err(errResp).Msg("failed to send measure write response")
 		}
-		ms.sendReply(s.metadata, code, s.messageID, measure)
+		ms.metrics.totalStreamMsgSentErr.Inc(1, group, "measure", "write")
 	}
-	if err != nil {
-		ms.l.Error().Err(err).Msg("failed to close the publisher")
-	}
-	if dl := ms.l.Debug(); dl.Enabled() {
-		dl.Int("total_requests", len(*succeedSent)).Msg("completed measure write batch")
-	}
-	ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
-	ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
+	return errResp
 }
 
 var emptyMeasureQueryResponse = &measurev1.QueryResponse{DataPoints: make([]*measurev1.DataPoint, 0)}
@@ -696,10 +737,4 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 
 func (ms *measureService) Close() error {
 	return ms.ingestionAccessLog.Close()
-}
-
-type succeedSentMessage struct {
-	metadata  *commonv1.Metadata
-	nodes     []string
-	messageID uint64
 }

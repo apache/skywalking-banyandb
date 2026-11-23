@@ -182,14 +182,28 @@ func validateGeneration(generation Generation) error {
 		if len(document.Identifier) == 0 {
 			return fmt.Errorf("document %d has no identifier: %w", documentIndex, ErrInvalidGeneration)
 		}
+		// A chunk holds storedDocumentsPerChunk documents and the reader bounds
+		// its decoded length by maxStoredDocumentSize per document, so reject a
+		// document the reader would refuse instead of writing it. Each stored
+		// value is charged a generous 16 bytes of encoding overhead.
+		storedSize := uint64(len(document.Identifier)) + storedValueOverhead
 		for fieldIndex, field := range document.Fields {
 			if field.Name == "" {
 				return fmt.Errorf("document %d field %d has no name: %w", documentIndex, fieldIndex, ErrInvalidGeneration)
 			}
+			if field.Store {
+				storedSize += uint64(len(field.Value)) + storedValueOverhead
+			}
+		}
+		if storedSize > maxStoredDocumentSize {
+			return fmt.Errorf("document %d stores %d bytes, over the %d-byte limit: %w", documentIndex, storedSize, maxStoredDocumentSize, ErrInvalidGeneration)
 		}
 	}
 	return nil
 }
+
+// storedValueOverhead is the encoding overhead charged to each stored value.
+const storedValueOverhead = 16
 
 const (
 	nativeICEOneHitNorm  uint64 = 1

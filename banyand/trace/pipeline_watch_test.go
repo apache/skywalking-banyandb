@@ -188,7 +188,8 @@ func TestReconcilePipeline_PopulatesRegistry(t *testing.T) {
 	require.NoError(t, spErr)
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{Name: "lss", Kind: &commonv1.Plugin_Sampler{Sampler: sp}},
 		},
@@ -217,7 +218,8 @@ func TestReconcilePipeline_GateAllowsDataNode(t *testing.T) {
 	require.NoError(t, spErr)
 
 	pipelineCfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{Name: "lss", Kind: &commonv1.Plugin_Sampler{Sampler: sp}},
 		},
@@ -340,7 +342,8 @@ func TestReconcilePipeline_LoadFailureKeepsPreviousSet(t *testing.T) {
 	sr := makeDataSchemaRepo("/nonexistent-trusted-dir")
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: "missing",
@@ -377,7 +380,8 @@ func TestReconcilePipeline_MergeGrace(t *testing.T) {
 
 	const wantGrace = 45 * time.Second
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{Name: "lss", Kind: &commonv1.Plugin_Sampler{Sampler: sp}},
 		},
@@ -458,7 +462,8 @@ func TestReconcilePipeline_LiaisonDoesNotLoad(t *testing.T) {
 	}
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: "lss",

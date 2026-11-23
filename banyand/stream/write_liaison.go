@@ -37,6 +37,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	"github.com/apache/skywalking-banyandb/pkg/meter"
+	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -45,11 +47,12 @@ type writeQueueCallback struct {
 	schemaRepo          *schemaRepo
 	tire2Client         queue.Client
 	pm                  protector.Memory
+	drops               *common.WriteDrops
 	maxDiskUsagePercent int
 }
 
 func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, tire2Client queue.Client,
-	pm protector.Memory,
+	pm protector.Memory, dropped meter.Counter,
 ) bus.MessageListener {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
@@ -60,6 +63,7 @@ func setUpWriteQueueCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUs
 		maxDiskUsagePercent: maxDiskUsagePercent,
 		tire2Client:         tire2Client,
 		pm:                  pm,
+		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
 }
 
@@ -83,7 +87,7 @@ func (w *writeQueueCallback) handle(dst map[string]*elementsInQueue, writeEvent 
 ) (map[string]*elementsInQueue, error) {
 	t := writeEvent.Request.Element.Timestamp.AsTime().Local()
 	if err := timestamp.Check(t); err != nil {
-		return nil, fmt.Errorf("invalid timestamp: %w", err)
+		return nil, common.NewRowDropError(common.DropReasonInvalidTimestamp, fmt.Errorf("invalid timestamp: %w", err))
 	}
 	ts := t.UnixNano()
 	eq, err := w.prepareElementsInQueue(dst, metadata)
@@ -105,7 +109,7 @@ func (w *writeQueueCallback) prepareElementsInQueue(dst map[string]*elementsInQu
 	gn := metadata.Group
 	queue, err := w.schemaRepo.loadQueue(gn)
 	if err != nil {
-		return nil, fmt.Errorf("cannot load queue for group %s: %w", gn, err)
+		return nil, common.NewRowDropError(common.DropReasonGroupNotFound, fmt.Errorf("cannot load queue for group %s: %w", gn, err))
 	}
 
 	eq, ok := dst[gn]
@@ -159,6 +163,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 	events, ok := message.Data().([]any)
 	if !ok {
 		w.l.Warn().Msg("invalid event data type")
+		w.drops.SkipMessage(ctx, common.DropReasonInvalidType)
 		return
 	}
 	if len(events) < 1 {
@@ -177,10 +182,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			writeEvent = &streamv1.InternalWriteRequest{}
 			if err := proto.Unmarshal(e, writeEvent); err != nil {
 				w.l.Error().Err(err).RawJSON("written", e).Msg("fail to unmarshal event")
+				w.drops.SkipRow(ctx, i, "", common.DropReasonDecode, fmt.Errorf("stream: cannot decode write event: %w", err))
 				continue
 			}
 		default:
 			w.l.Warn().Msg("invalid event data type")
+			w.drops.SkipRow(ctx, i, "", common.DropReasonInvalidType, fmt.Errorf("stream: invalid event data type %T", e))
 			continue
 		}
 		req := writeEvent.Request
@@ -192,7 +199,9 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 		}
 		newGroups, handleErr := w.handle(groups, writeEvent, metadata, spec)
 		if handleErr != nil {
-			w.l.Error().Err(handleErr).Msg("cannot handle write event")
+			logger.ForGroup(w.l, metadata.GetGroup(), "stream").Error().Err(handleErr).Msg("cannot handle write event")
+			w.drops.SkipRow(ctx, i, metadata.GetGroup(), common.ReasonOf(handleErr),
+				fmt.Errorf("stream %s/%s: %w", metadata.GetGroup(), metadata.GetName(), handleErr))
 			continue
 		}
 		groups = newGroups
@@ -207,7 +216,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				var marshalErr error
 				seriesMetadataBytes, marshalErr = es.seriesDocs.docs.Marshal()
 				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
+					logger.ForGroup(w.l, g.name, "stream").Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal series metadata for persistence")
 					// Continue without series metadata, but log the error
 				}
 			}
@@ -218,7 +227,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {
-				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
+				logger.ForGroup(w.l, g.name, "stream").Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
 				continue
 			}
 			// Process series documents independently
@@ -234,12 +243,12 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 					message := bus.NewMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), node, g.name, combinedData)
 					future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamSeriesIndexWrite, message)
 					if publishErr != nil {
-						w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
+						logger.ForGroup(w.l, g.name, "stream").Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish series index to node")
 						continue
 					}
 					_, err := future.Get()
 					if err != nil {
-						w.l.Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
+						logger.ForGroup(w.l, g.name, "stream").Error().Err(err).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish")
 						continue
 					}
 				}
@@ -249,7 +258,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 			if len(es.docs) > 0 {
 				docData, marshalErr := es.docs.Marshal()
 				if marshalErr != nil {
-					w.l.Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal documents")
+					logger.ForGroup(w.l, g.name, "stream").Error().Err(marshalErr).Uint32("shardID", uint32(es.shardID)).Msg("failed to marshal documents")
 				} else {
 					// Encode group name, shardID and prepend to docData
 					combinedData := make([]byte, 0, len(docData)+len(g.name)+4)
@@ -262,12 +271,13 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 						message := bus.NewMessageWithNodeAndGroup(bus.MessageID(time.Now().UnixNano()), node, g.name, combinedData)
 						future, publishErr := w.tire2Client.Publish(ctx, data.TopicStreamLocalIndexWrite, message)
 						if publishErr != nil {
-							w.l.Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
+							logger.ForGroup(w.l, g.name, "stream").Error().Err(publishErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to publish local index to node")
 							continue
 						}
 						_, getErr := future.Get()
 						if getErr != nil {
-							w.l.Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).Msg("failed to get response from publish local index")
+							logger.ForGroup(w.l, g.name, "stream").Error().Err(getErr).Str("node", node).Uint32("shardID", uint32(es.shardID)).
+								Msg("failed to get response from publish local index")
 							continue
 						}
 					}

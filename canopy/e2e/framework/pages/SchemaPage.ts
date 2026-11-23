@@ -165,6 +165,13 @@ export class SchemaPage extends BasePage {
     return dlg;
   }
 
+  async updateGroupTtl(value: number): Promise<void> {
+    const dlg = await this.openEditGroup();
+    await dlg.getByLabel('TTL value', { exact: true }).fill(String(value));
+    await dlg.getByRole('button', { name: 'Save changes', exact: true }).click();
+    await expect(dlg).toBeHidden();
+  }
+
   async deleteGroup(name: string): Promise<void> {
     await this.deleteGroupButton().click();
     const dlg = this.dialog('Delete group');

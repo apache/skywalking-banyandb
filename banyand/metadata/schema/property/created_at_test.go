@@ -103,7 +103,7 @@ func TestValidateMeasureUpdate_EntityChangeFails(t *testing.T) {
 	originalModRev := got.GetMetadata().GetModRevision()
 
 	// Add "endpoint" to the tag family so validate.Measure accepts the new entity,
-	// but validateMeasureUpdate rejects it (entity definition changed).
+	// but validate.MeasureUpdate rejects it (entity definition changed).
 	got.TagFamilies[0].Tags = append(got.TagFamilies[0].Tags, &databasev1.TagSpec{
 		Name: "endpoint",
 		Type: databasev1.TagType_TAG_TYPE_STRING,

@@ -80,18 +80,31 @@ func (p *streamQueryProcessor) RevStream(ctx context.Context, message bus.Messag
 
 func (p *streamQueryProcessor) executeStreamQuery(ctx context.Context, id bus.MessageID, queryCriteria *streamv1.QueryRequest, sink bus.Sink) error {
 	n := time.Now()
-	plan, err := p.buildStreamPlan(queryCriteria)
+	scopedQuery, plan, err := p.buildStreamPlan(queryCriteria)
 	if err != nil {
 		return streamFailure(err)
 	}
-	defer plan.(executor.StreamCloser).Close()
 	var tracer *query.Tracer
 	var span *query.Span
 	if queryCriteria.Trace {
 		tracer, ctx = query.NewTracer(ctx, n.Format(time.RFC3339Nano))
 		span, ctx = tracer.StartSpan(ctx, "data-%s", p.queryService.nodeID)
-		span.Tag(tracelabels.TagPlan, plan.String())
+		if plan != nil {
+			span.Tag(tracelabels.TagPlan, plan.String())
+		}
 	}
+	if plan == nil {
+		// No requested group is available on this node. Answer with an empty response,
+		// so the liaison can still merge the parts other nodes serve.
+		resp := &streamv1.QueryResponse{}
+		if tracer != nil {
+			span.Tag(tracelabels.TagRespCount, "0")
+			span.Stop()
+			resp.Trace = tracer.ToProto()
+		}
+		return sendEmptyStreamResponse(ctx, id, sink, resp)
+	}
+	defer plan.(executor.StreamCloser).Close()
 	limits := bus.ChunkLimitsFrom(ctx)
 	maxRows, maxBytes := int(limits.MaxRows), limits.MaxBytes
 	if maxRows <= 0 {
@@ -101,7 +114,7 @@ func (p *streamQueryProcessor) executeStreamQuery(ctx context.Context, id bus.Me
 		maxBytes = defaultStreamChunkBytes
 	}
 	chunker := &streamChunker{sink: sink, id: id, maxRows: maxRows, maxBytes: maxBytes, hold: tracer != nil}
-	count, runErr := p.streamPlanChunks(ctx, plan, queryCriteria, chunker)
+	count, runErr := p.streamPlanChunks(ctx, plan, scopedQuery, chunker)
 	if runErr == nil {
 		runErr = chunker.finish(ctx, func(last *streamv1.QueryResponse) {
 			if tracer != nil {
@@ -196,6 +209,16 @@ func (p *streamQueryProcessor) streamMergeChunks(ctx context.Context, merge *log
 	default:
 		return 0, fmt.Errorf("unexpected multi-group stream result type %T", d)
 	}
+}
+
+// sendEmptyStreamResponse answers a query whose requested groups are all unavailable on
+// this node with an empty response, so the liaison can still merge the parts the other
+// nodes serve.
+func sendEmptyStreamResponse(ctx context.Context, id bus.MessageID, sink bus.Sink, resp *streamv1.QueryResponse) error {
+	if err := query.ChargeResponse(ctx, resp); err != nil {
+		return streamFailure(fmt.Errorf("query response memory exhausted: %w", err))
+	}
+	return sink.Send(ctx, bus.NewMessage(id, resp))
 }
 
 // streamFailure returns the error a stream scan ends with. A query that ran out of memory

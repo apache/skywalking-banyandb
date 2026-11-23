@@ -123,7 +123,8 @@ func NewPanicPipelineConfig(soPath string, mergeGrace time.Duration) *commonv1.T
 	gm.Expect(structErr).NotTo(gm.HaveOccurred(), "structpb.NewStruct for latencystatussampler panic config")
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: "latencystatussampler-panic",
@@ -155,7 +156,8 @@ func newLatencyStatusConfig(soPath string, thresholdMs int64, mergeGrace time.Du
 	gm.Expect(structErr).NotTo(gm.HaveOccurred(), "structpb.NewStruct for latencystatussampler config")
 
 	cfg := &commonv1.TracePipelineConfig{
-		Enabled: true,
+		Enabled:       true,
+		EnabledEvents: []commonv1.PipelineEvent{commonv1.PipelineEvent_PIPELINE_EVENT_MERGE},
 		Plugins: []*commonv1.Plugin{
 			{
 				Name: "latencystatussampler",

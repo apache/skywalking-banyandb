@@ -36,16 +36,16 @@ import (
 // must retain owners and copy descriptors before another adapter can recycle them. Close is idempotent.
 // Native execution remains eager: this handle does not imply streaming fanout.
 type BatchResult struct {
-	Trace          *commonv1.Trace
-	traceFinalizer func() *commonv1.Trace
-	iteratorSpan   *query.Span
-	tracedIterator *batchTraceIterator
-	receiveRelease func()
 	source         vectorized.PullOperator
 	schema         *vectorized.BatchSchema
+	iteratorSpan   *query.Span
+	tracedIterator *batchTraceIterator
+	traceFinalizer func() *commonv1.Trace
+	Trace          *commonv1.Trace
 	plan           *DistributedPlan
 	request        *measurev1.QueryRequest
 	tracker        *vectorized.MemoryTracker
+	onClose        []func()
 	batchSize      int
 	reserved       int64
 	closed         bool
@@ -104,10 +104,11 @@ func (r *BatchResult) Close() error {
 		r.tracker.Release(r.reserved)
 	}
 	r.reserved = 0
-	if r.receiveRelease != nil {
-		r.receiveRelease()
-		r.receiveRelease = nil
+	// The scans end after the source stops reading them, and before the trace is finalized.
+	for _, closer := range r.onClose {
+		closer()
 	}
+	r.onClose = nil
 	if r.tracedIterator != nil {
 		if !r.tracedIterator.closing {
 			if err != nil {

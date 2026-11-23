@@ -828,12 +828,11 @@ func TestNewDataPointWithEntityValues(t *testing.T) {
 		},
 	}
 
-	result := newDataPointWithEntityValues(dp, entityValues, 123, 456, spec, nil)
+	result := newDataPointWithEntityValues(dp, entityValues, 123, spec, nil)
 	require.NotNil(t, result)
 	require.Equal(t, dp, result.DataPointValue)
 	require.Equal(t, entityValues, result.entityValues)
 	require.Equal(t, uint64(123), result.seriesID)
-	require.Equal(t, uint32(456), result.shardID)
 	require.NotNil(t, result.fieldIndex)
 	require.Equal(t, 0, result.fieldIndex["field1"])
 	require.NotNil(t, result.tagSpec)

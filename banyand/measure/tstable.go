@@ -161,20 +161,19 @@ func (tst *tsTable) startLoopWithConditionalMerge(cur uint64) {
 	syncCh := make(chan *syncIntroduction)
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
-	// Each loop already calls tst.loopCloser.Done via defer, so a panic
-	// captured by run.Go still decrements the closer; lifecycle ordering
-	// for tsTable shutdown is preserved. The syncLoop callgraph reaches
+	// A panic in any loop is logged and reported, then crashes the process (run.GoOrDie): a table
+	// whose loop died would keep taking writes it never introduces, flushes or merges. The syncLoop callgraph reaches
 	// executeSyncWithRetry, which uses its own context internally rather
 	// than threading one through; the recovery ctx is intentionally not
 	// propagated.
 	ctx := context.Background()
-	run.Go(ctx, "measure.tstable.introducer-sync", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.introducer-sync", tst.l, func(_ context.Context) {
 		tst.introducerLoopWithSync(flushCh, mergeCh, syncCh, introducerWatcher, cur+1)
 	})
-	run.Go(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
 		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	})
-	run.Go(ctx, "measure.tstable.syncer", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.syncer", tst.l, func(_ context.Context) {
 		tst.syncLoop(syncCh, flusherWatcher) //nolint:contextcheck
 	})
 }
@@ -255,15 +254,15 @@ func (tst *tsTable) startLoop(cur uint64) {
 	introducerWatcher := make(watcher.Channel, 1)
 	flusherWatcher := make(watcher.Channel, 1)
 	// See startLoopWithConditionalMerge for the rationale on routing
-	// through run.Go.
+	// through run.GoOrDie.
 	ctx := context.Background()
-	run.Go(ctx, "measure.tstable.introducer", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.introducer", tst.l, func(_ context.Context) {
 		tst.introducerLoop(flushCh, mergeCh, introducerWatcher, cur+1)
 	})
-	run.Go(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.flusher", tst.l, func(_ context.Context) {
 		tst.flusherLoop(flushCh, mergeCh, introducerWatcher, flusherWatcher, cur)
 	})
-	run.Go(ctx, "measure.tstable.merger", tst.l, func(_ context.Context) {
+	run.GoOrDie(ctx, "measure.tstable.merger", tst.l, func(_ context.Context) {
 		tst.mergeLoop(mergeCh, flusherWatcher)
 	})
 }

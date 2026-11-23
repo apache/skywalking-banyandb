@@ -159,6 +159,16 @@ type queryMetrics struct {
 	scanDecodeQueueWait     meter.Histogram
 	scanReservationsWaiting meter.Counter
 	scanReservationsFailed  meter.Counter
+	// scanReservationRejections counts the cursors a scan needed and could not reserve, by
+	// the allowance that ran out (the reason label), which total_scan_reservations_failed does not say.
+	scanReservationRejections meter.Counter
+	// queryBudgetPeakRatio is, per scan, the most the query lease held at once over its limit: how
+	// close queries run to being rejected. scanDecodeSeconds is the time of one block decode.
+	queryBudgetPeakRatio meter.Histogram
+	scanDecodeSeconds    meter.Histogram
+	// scanSlices and scanSlicedUnits count time-ordered merges cut into time slices to fit the budget.
+	scanSlices      meter.Counter
+	scanSlicedUnits meter.Counter
 }
 
 func newQueryMetrics(factory observability.Factory) *queryMetrics {
@@ -181,8 +191,15 @@ func newQueryMetrics(factory observability.Factory) *queryMetrics {
 		scanPrefetchDepth:        factory.NewHistogram("scan_prefetch_depth", meter.Buckets{1, 2, 3, 4, 6, 8, 12, 16, 24, 32}),
 		scanDecodeQueueWait: factory.NewHistogram("scan_decode_queue_wait_seconds",
 			meter.Buckets{.0001, .0005, .001, .005, .01, .025, .05, .1, .25, .5, 1}),
-		scanReservationsWaiting: factory.NewCounter("total_scan_reservations_waiting"),
-		scanReservationsFailed:  factory.NewCounter("total_scan_reservations_failed"),
+		scanReservationsWaiting:   factory.NewCounter("total_scan_reservations_waiting"),
+		scanReservationsFailed:    factory.NewCounter("total_scan_reservations_failed"),
+		scanReservationRejections: factory.NewCounter("total_scan_reservation_rejections", "reason"),
+		queryBudgetPeakRatio: factory.NewHistogram("query_budget_peak_ratio",
+			meter.Buckets{.05, .1, .2, .3, .4, .5, .6, .7, .8, .9, 1}),
+		scanDecodeSeconds: factory.NewHistogram("scan_decode_seconds",
+			meter.Buckets{.00005, .0001, .00025, .0005, .001, .0025, .005, .01, .025, .05, .1, .25}),
+		scanSlices:      factory.NewCounter("total_scan_slices"),
+		scanSlicedUnits: factory.NewCounter("total_scan_sliced_units"),
 	}
 }
 

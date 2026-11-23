@@ -55,4 +55,100 @@ docker run --rm apache/skywalking-banyandb:<version>-canopy \
 
 ## Run from source
 
-The [Canopy README](https://github.com/apache/skywalking-banyandb/tree/main/canopy) covers running from a checkout in two shapes: the two-terminal dev setup (SPA dev server on `5173`, BFF on `4000`), and a production build where the BFF alone serves the built SPA on `4000`. Its [`.env.example`](https://github.com/apache/skywalking-banyandb/blob/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.
+The [Canopy README](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/canopy/README.md) covers running from a checkout in two shapes: the two-terminal dev setup (SPA dev server on `5173`, BFF on `4000`), and a production build where the BFF alone serves the built SPA on `4000`. Its [`.env.example`](https://raw.githubusercontent.com/apache/skywalking-banyandb/main/canopy/.env.example) documents every setting: session secret, user file, reverse-proxy base path and metrics monitoring target.
+
+## Sampling pipelines
+
+![Canopy sampling pipeline list](canopy-sampling.png)
+
+Open **Pipelines → Sampling** to manage the optional retention pipeline on an
+existing TRACE group. Each group has at most one pipeline; its identity is the
+group name. **New sampling pipeline** selects a TRACE group without a pipeline. The detail
+page shows its events, grace periods, ordered sampler chain, migration schema targets and
+lifecycle stage rules. **Edit** supports both Form and YAML views.
+
+Enable **MERGE** for sampling during compaction and **FINALIZE** for sampling at
+segment finalization. The configuration model allows these events and lifecycle
+stage rules in any combination: MERGE only, FINALIZE only, stages only, or any
+combination of them.
+Both events use the ordered `pipeline.plugins` chain; stage rules use their own
+chains. Clearing both event checkboxes saves `enabledEvents: []` and leaves stage
+rules active while the pipeline is enabled. With both events off, an enabled
+pipeline must have a stage sampler chain. Otherwise, disable the pipeline. An
+empty or omitted event list does not enable MERGE implicitly.
+
+Existing configurations that relied on the former implicit MERGE default must
+explicitly include `PIPELINE_EVENT_MERGE` to retain merge-time sampling. During a
+rolling upgrade, older data nodes still apply that default; disabling both events
+requires the updated data nodes.
+
+For example, this pipeline configuration enables both
+without installing a sampler (replace `my-traces` with the selected group):
+
+```yaml
+group: my-traces
+pipeline:
+  enabled: true
+  enabledEvents:
+    - PIPELINE_EVENT_MERGE
+    - PIPELINE_EVENT_FINALIZE
+  mergeGrace: 7200s
+  finalizeGrace: 300s
+  plugins: []
+  stages: []
+  schemaNames: []
+  schemaNameRegex: ''
+```
+
+Durations use protobuf JSON notation (seconds with an `s` suffix). An omitted
+`mergeGrace` uses the engine's two-hour default; an omitted `finalizeGrace` uses
+five minutes. **Migration targets** (`schemaNames` and `schemaNameRegex`) apply
+only to source-stage sampling during lifecycle migration; empty selectors target
+all trace schemas in the group. MERGE and FINALIZE apply to all trace schemas
+in the group regardless of these selectors.
+The YAML view contains the selected `group` and its `pipeline` mapping, using
+the camelCase keys shown above. Keep the group name unchanged.
+
+Add samplers in execution order. A sampler references a `.so` basename already
+installed in the server's trusted plugin directory; Canopy does not upload or
+build plugins. Its `config` is a plugin-defined JSON object. For example, a
+`pipeline.plugins` entry may be:
+
+```yaml
+plugins:
+  - name: retention
+    sampler:
+      path: retention.so
+      symbol: NewSampler
+      abiVersion: 1
+      config: {}
+```
+
+Use **Stage rules** to configure an ordered sampler chain for each source stage.
+The lifecycle agent applies it before migrating out of that stage, independently
+of MERGE and FINALIZE. Enter a configured source stage name (for example, `warm`
+for warm → cold), or the source node's `type` label for the implicit initial tier
+(for example, `hot` for hot → warm). The terminal stage has no outgoing migration.
+Install the plugin in the lifecycle agent's trusted plugin directory and enable
+its native plugin host as well as configuring the pipeline.
+
+For stage-only sampling, leave both event checkboxes off and add a stage sampler:
+
+```yaml
+group: my-traces
+pipeline:
+  enabled: true
+  enabledEvents: []
+  stages:
+    - stage: hot
+      plugins:
+        - name: retention
+          sampler:
+            path: retention.so
+            abiVersion: 1
+```
+
+Saving a sampling pipeline preserves the group's storage settings and lifecycle
+stages. Editing the group's TTL or lifecycle stages also preserves its pipeline.
+**Remove** clears only the pipeline configuration; the group and its
+trace schemas remain. Read-only users can inspect pipeline details.

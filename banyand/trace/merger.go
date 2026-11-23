@@ -351,19 +351,19 @@ func (tst *tsTable) mergeLoop(merges chan *mergerIntroduction, flusherNotifier w
 
 	for i := 0; i < fastWorkers; i++ {
 		workersWg.Add(1)
-		run.Go(context.Background(), "trace.merger.fast-lane", tst.l, func(_ context.Context) {
+		run.GoOrDie(context.Background(), "trace.merger.fast-lane", tst.l, func(_ context.Context) {
 			defer workersWg.Done()
 			tst.mergeLaneWorker(fastCh, merges) //nolint:contextcheck
 		})
 	}
 	workersWg.Add(1)
-	run.Go(context.Background(), "trace.merger.slow-lane", tst.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.merger.slow-lane", tst.l, func(_ context.Context) {
 		defer workersWg.Done()
 		tst.mergeLaneWorker(slowCh, merges) //nolint:contextcheck
 	})
 
 	dispatcherWg.Add(1)
-	run.Go(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
+	run.GoOrDie(context.Background(), "trace.merger.dispatcher", tst.l, func(_ context.Context) {
 		defer dispatcherWg.Done()
 		tst.dispatcherLoop(threshold, fastCh, slowCh)
 	})
@@ -1261,6 +1261,11 @@ func (tst *tsTable) mergeParts(fileSystem fs.FileSystem, closeCh <-chan struct{}
 			releaseDroppedTraceIDs(dropped)
 		}
 	}()
+	if err != nil {
+		// Flush closes the writers on success. A merge that stops early must close them too, or their files stay
+		// open and their pooled buffers are never returned.
+		bw.writers.MustClose()
+	}
 	releaseBlockWriter(bw)
 	releaseBlockReader(br)
 	for i := range pii {
@@ -2469,6 +2474,8 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			decoder = nil
 		}
 	}
+	// An early return, such as the merger closing mid-merge, must not strand the decoder it holds.
+	defer releaseDecoder()
 	loadAndRename := func() {
 		br.loadBlockData(getDecoder())
 		renameConflictTags(&br.block.block, conflictTags)

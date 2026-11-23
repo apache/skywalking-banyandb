@@ -38,6 +38,41 @@ BanyanDB can store its own log events in BanyanDB, alongside the measures native
 banyand standalone --logging-native-enabled --logging-native-level=info
 ```
 
+The `standalone`, `data` and `liaison` roles support it. A standalone or data node stores its own events locally. A liaison has no storage, so it writes its events as a stream write: over its liaison client to the write queue of a liaison, which syncs them to the data node of shard 0 of `_monitoring_log`. While no data node can take them, the write queue keeps them on the liaison's disk, as it does every stream write.
+
+### Processes with no storage
+
+`backup`, `lifecycle`, the FODC agent and the FODC proxy support it too. They have no storage engine and no way to create the schema, so each writes to one BanyanDB node, and that node keeps the schema:
+
+| Producer | Writes to | Connection |
+|---|---|---|
+| `backup`, `lifecycle` | the data node they serve, its cluster server | their `--grpc-addr`, `--enable-tls`, `--insecure` and `--cert` |
+| FODC agent beside a data node | that data node's cluster server | `--logging-native-addr`, for example `127.0.0.1:17912`, with `--logging-native-route=cluster`, the default |
+| FODC agent beside a liaison, FODC proxy | a liaison's gRPC port, through the public write API, as any client writes | `--logging-native-addr`, for example `liaison:17912`; the agent beside a liaison also needs `--logging-native-route=public` |
+
+The node they write to needs `--logging-native-receiver-enabled`. It creates the `_monitoring_log` group and stream and keeps checking them, as a node with `--logging-native-enabled` does, but it collects none of its own logs unless `--logging-native-enabled` is set too:
+
+```sh
+banyand data --logging-native-receiver-enabled
+lifecycle --grpc-addr=127.0.0.1:17912 --logging-native-enabled
+fodc-agent --logging-native-enabled --logging-native-addr=127.0.0.1:17912
+```
+
+A row carries the producer's identity: `node_type` is `backup`, `lifecycle`, `fodc-agent` or `fodc-proxy`, and `node_id` is `POD_NAME`, else the host name; the FODC agent uses `--pod-name`. The receiving node applies no level or module filter of its own: each producer filters with its own `--logging-native-*` flags.
+
+The FODC binaries have no other connection to reuse, so they take their own:
+
+| Flag | Default | Meaning |
+|---|---|---|
+| `--logging-native-addr` | – | where to write; needed by `--logging-native-enabled`, which is refused at startup without it |
+| `--logging-native-route` | `cluster` | FODC agent only: `cluster` writes to a data node's cluster server, `public` through a liaison's public write API. A liaison refuses the cluster route, so an agent beside a liaison drops every event as `publish_failed` without `public` |
+| `--logging-native-tls` / `--logging-native-ca-cert` | `false` / – | TLS for that connection only; without a CA file the system roots verify the server |
+| `--logging-native-username` / `--logging-native-password` | – | the credentials sent to a liaison whose authentication is on; the user needs write permission on `_monitoring_log` |
+
+Their counters are where the process serves metrics: `lifecycle` and the FODC agent on their `/metrics`, the FODC proxy on its `/metrics` after the metrics collected from the agents. `backup` serves none: it writes each loss to stderr as it happens, and a summary of what it dropped when it exits.
+
+> A data node without `--logging-native-receiver-enabled` refuses these writes as writes to a missing stream, but its write path reports success to the sender, so `backup`, `lifecycle` and an FODC agent beside a data node count the events as written (apache/skywalking#14158). A liaison reports the missing stream per event, so the FODC proxy and an agent beside a liaison count them as `schema_unavailable`.
+
 Events land in the `_monitoring_log` group as elements of a stream named `log`, queryable through the ordinary stream API:
 
 ```sh
@@ -115,7 +150,7 @@ Because the two destinations have independent thresholds, native can be the more
 
 Note the consequence: an `info` event dropped by the buffer has no copy on stderr. Losses are counted rather than silent, under `banyandb_logging_native_log_dropped_total{reason}`, with `banyandb_logging_native_log_written_total` and the buffer gauges alongside. `banyandb_logging_native_log_buffer_bytes` has a `state` label: `queued` is waiting to be written and `in_flight` is being written, so a stalled write shows as `in_flight` that does not fall. Those counters travel the same transport as the events they count, so keeping `--observability-modes=prometheus` enabled is what makes a loss visible during an outage.
 
-The `reason` label takes one of nine values, so a loss is always attributable to a stage:
+The `reason` label takes one of ten values, so a loss is always attributable to a stage:
 
 | `reason` | Meaning | What to do |
 |---|---|---|
@@ -123,20 +158,21 @@ The `reason` label takes one of nine values, so a loss is always attributable to
 | `memory_pressure` | the memory protector reported high pressure | accept it: on a node short of memory this is the sink yielding, as intended |
 | `oversize_event` | one event exceeded 64KiB | shorten the log line |
 | `encode_failed` | the line was not the JSON the sink expects | a bug; report it with the module name |
-| `publish_failed` | the batch did not reach storage | look at the write path — the whole batch is lost, never re-queued |
+| `publish_failed` | the batch did not reach storage, or on a liaison the write queue; for a process with no storage, the node refused it, did not answer in time, or refused its credentials | look at the write path — the whole batch is lost, never re-queued |
 | `schema_unavailable` | the group or stream could not be created yet | usually transient at startup; retried every 10s |
 | `schema_incompatible` | a `log` stream exists with a shape this version cannot write | drop and recreate the `_monitoring_log` group; retrying will not fix it. The error is logged once |
-| `destination_unready` | the local write path still had no subscriber after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start |
+| `destination_unready` | the local write path still had no subscriber, or a process with no storage had no connection to its node, after 10 retries, one per flush interval | expected only at startup; if it persists, the stream service did not start, or the producer cannot reach its node |
+| `locate_failed` | a liaison found no liaison to write `_monitoring_log` to after 10 retries, one per flush interval | expected only at startup; if it persists, check that the liaison sees itself in its liaison route table |
 | `shutdown_deadline` | still buffered, or in a stuck write, when the drain deadline passed, or logged after shutdown began | expected on a busy node during shutdown |
 
 Logging caused by storing native logs is never stored, or one stored line could produce the next. That logging still reaches the console. Two modules are reserved for it, and `--logging-native-exclude-modules` cannot remove them:
 
-- `NATIVE-LOG` is the native log service. While the write path handles a native write, it logs as a child of `NATIVE-LOG`, for example `NATIVE-LOG.STREAM`. The same write path logs as before for every other write, so ordinary `STREAM` and `STORAGE` logs are collected.
+- `NATIVE-LOG` is the native log service. While the write path handles a native write, it logs as a child of `NATIVE-LOG`, for example `NATIVE-LOG.STREAM`. The same write path logs as before for every other write, so ordinary `STREAM` and `STORAGE` logs are collected. A liaison's client logs about a native log batch as `NATIVE-LOG.QUEUE-PUB`, and the liaison's write queue and a data node's write path log about the `_monitoring_log` events they received as children of `NATIVE-LOG` too. A process with no storage logs about its connection to its node as `NATIVE-LOG.CLIENT`.
 - `_MONITORING_LOG` is the log group's own storage. A storage logger is named after its group, so its segments, shards, flushes and merges log under it.
 
 A blank entry in `--logging-native-exclude-modules` is ignored.
 
-An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback -- and it never blocks the caller: at its bound the newest event is dropped and counted, so a burst keeps the head that explains it.
+An event logged without a level is stored with the level `none`, because the level is half the series key and an empty one cannot be queried. Such an event arrives with no severity at all — a library writing through a standard `log.Logger` produces one — so it is admitted as an informational event and obeys `--logging-native-level` like any other. The buffer is bounded and in-memory only -- no queue files, no write-ahead log, no disk fallback; on a liaison, the write queue past it is the normal stream path -- and it never blocks the caller: at its bound the newest event is dropped and counted, so a burst keeps the head that explains it.
 
 `restore` and `migration` do not offer these flags at all. Both run when the data tier is unavailable, and a tool that runs while the database is down cannot log into it.
 

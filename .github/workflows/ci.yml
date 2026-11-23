@@ -44,7 +44,7 @@ jobs:
     needs: [prepare]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-tags: true
       - name: Setup build environment
@@ -64,7 +64,7 @@ jobs:
           # bad trade.
           setup-qemu: 'false'
       - name: Cache Tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache-tool
         with:
           path: bin
@@ -119,7 +119,7 @@ jobs:
     needs: [prepare]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Setup build environment
         uses: ./.github/actions/setup-build-env
         with:
@@ -127,7 +127,7 @@ jobs:
           setup-node: 'false'
           setup-docker: 'false'
       - name: Cache Tools
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: bin
           key: ${{ runner.os }}-${{ runner.arch }}-vuln-tool-${{ hashFiles('scripts/build/version.mk', 'go.mod') }}
@@ -141,7 +141,7 @@ jobs:
       should_run: ${{ steps.filter.outputs.should_run }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Detect changed files for FODC E2E
@@ -178,7 +178,7 @@ jobs:
       should_run: ${{ steps.filter.outputs.should_run }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Detect changed files for trace pipeline E2E

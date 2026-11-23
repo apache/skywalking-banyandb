@@ -23,7 +23,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/pkg/errors"
 
@@ -111,7 +110,7 @@ func (s *liaison) FlagSet() *run.FlagSet {
 	flagS.StringVar(&s.root, "measure-root-path", "/tmp", "the root path of measure")
 	flagS.StringVar(&s.dataPath, "measure-data-path", "", "the data directory path of measure. If not set, <measure-root-path>/measure/data will be used")
 	flagS.DurationVar(&s.option.flushTimeout, "measure-flush-timeout", defaultFlushTimeout, "the memory data timeout of measure")
-	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+	flagS.DurationVar(&s.option.memWaitTimeout, "measure-lifecycle-receive-mem-wait-timeout", queue.DefaultReceiveMemWaitTimeout,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 	flagS.DurationVar(&s.option.syncInterval, "measure-sync-interval", defaultSyncInterval, "the periodic sync interval for measure data")
 	flagS.IntVar(&s.maxDiskUsagePercent, "measure-max-disk-usage-percent", 95, "the maximum disk usage percentage allowed")
@@ -200,7 +199,7 @@ func (s *liaison) PreRun(ctx context.Context) error {
 	topNResultPipeline := queue.Local()
 	measureDataNodeRegistry := grpc.NewClusterNodeRegistry(data.TopicMeasurePartSync, s.option.tire2Client, s.dataNodeSelector)
 	s.schemaRepo = newLiaisonSchemaRepo(s.dataPath, s, measureDataNodeRegistry, topNResultPipeline, val.(common.Node).NodeID)
-	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client)
+	writeListener := setUpWriteQueueCallback(s.l, s.schemaRepo, s.maxDiskUsagePercent, s.option.tire2Client, s.pm, observability.NewWriteDropCounter(s.omr, "measure"))
 	if err := s.pipeline.Subscribe(data.TopicMeasureWrite, writeListener); err != nil {
 		return err
 	}

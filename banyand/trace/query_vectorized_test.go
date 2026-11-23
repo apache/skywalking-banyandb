@@ -31,6 +31,7 @@ import (
 	snapshotpkg "github.com/apache/skywalking-banyandb/banyand/internal/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vtrace "github.com/apache/skywalking-banyandb/pkg/query/vectorized/trace"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
@@ -147,6 +148,7 @@ func TestMaterializeBudgetHardStop(t *testing.T) {
 	results, err := assembleVectorizedTraceResults(ctx, batchForAssembly, allTagProjections.Names, qo.schemaTagTypes, 1)
 	require.Nil(t, results, "a budget-limited query must not expose partially decoded traces")
 	require.ErrorIs(t, err, errVectorizedTraceQueryMemoryBudgetExceeded)
+	require.ErrorIs(t, err, vectorized.ErrMemoryBudgetExceeded, "the cap must be reported as RESOURCE_EXHAUSTED")
 	require.Nil(t, batchForAssembly.cursors, "the budget error must release every remaining cursor")
 }
 

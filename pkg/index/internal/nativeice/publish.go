@@ -193,6 +193,13 @@ func PublishSnapshot(path string, snapshotID uint64, segments []SnapshotSegmentP
 	if validationErr != nil {
 		return validationErr
 	}
+	// A manifest the reader refuses to load would be skipped for an older
+	// snapshot, silently dropping this one, so reject it before any segment is
+	// staged. Its size follows from the segments, so no fixed cap can be derived.
+	manifest := encodeNativeSnapshotSegments(prepared)
+	if manifestSize := int64(len(manifest)); manifestSize > manifestSizeLimit {
+		return fmt.Errorf("publish snapshot %d: %d-byte manifest over the %d-byte limit: %w", snapshotID, manifestSize, manifestSizeLimit, errManifestTooLarge)
+	}
 	if mkdirErr := segmentFileSystem.MkdirAll(path, 0o755); mkdirErr != nil {
 		return fmt.Errorf("create index directory %q: %w", path, mkdirErr)
 	}
@@ -236,7 +243,6 @@ func PublishSnapshot(path string, snapshotID uint64, segments []SnapshotSegmentP
 			}
 		}
 	}
-	manifest := encodeNativeSnapshotSegments(prepared)
 	manifestLinked, publishErr := publishNativeICEFileTracked(path, nativeICEFileName(snapshotID, ".snp"), manifest)
 	if publishErr != nil {
 		if manifestLinked {

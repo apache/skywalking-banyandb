@@ -19,6 +19,7 @@ package property
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
@@ -31,6 +32,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
+
+// errNoRepairableGroup means no property group has more than one copy, so there is nothing to repair.
+var errNoRepairableGroup = errors.New("no groups found with enough copies for repair")
 
 type repairScheduler struct {
 	metadata        metadata.Repo
@@ -48,6 +52,10 @@ func newRepairScheduler(ctx context.Context, l *logger.Logger, cronExp string, m
 		cronExp, func(context.Context, time.Time, *logger.Logger) bool {
 			l.Debug().Msgf("starting background repair gossip")
 			group, shardNum, nodes, gossipErr := r.doRepairGossip(ctx)
+			if errors.Is(gossipErr, errNoRepairableGroup) {
+				l.Info().Msg("background repair gossip skipped: no property group has more than one copy")
+				return true
+			}
 			if gossipErr != nil {
 				l.Err(gossipErr).Msg("failed to repair gossip")
 				return true
@@ -97,7 +105,7 @@ func (r *repairScheduler) randomSelectGroup(ctx context.Context) (*commonv1.Grou
 	}
 
 	if len(groups) == 0 {
-		return nil, 0, fmt.Errorf("no groups found with enough copies for repair")
+		return nil, 0, errNoRepairableGroup
 	}
 	// #nosec G404 -- not security-critical, just for random selection
 	group := groups[rand.Int64()%int64(len(groups))]

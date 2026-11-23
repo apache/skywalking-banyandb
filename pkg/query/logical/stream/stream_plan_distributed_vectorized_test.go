@@ -18,6 +18,7 @@
 package stream
 
 import (
+	"context"
 	"encoding/hex"
 	"testing"
 	"time"
@@ -29,7 +30,6 @@ import (
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
-	"github.com/apache/skywalking-banyandb/pkg/iter/sort"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vstream "github.com/apache/skywalking-banyandb/pkg/query/vectorized/stream"
@@ -76,38 +76,33 @@ func protoResponseForRows(rows []nodeRow) *streamv1.QueryResponse {
 	return &streamv1.QueryResponse{Elements: elements}
 }
 
-// runLiaisonMerge reproduces distributedPlan.Execute's post-broadcast merge over
-// a set of pre-decoded node responses: decode each (proto or []byte frame) via
-// decodeNodeElements, k-way merge by time, first-seen dedup by ElementId, then the
-// distributedLimit offset:offset+limit slice. It is the exact production merge
-// stack minus the Broadcaster.
+// runLiaisonMerge reproduces distributedPlan.Execute's post-broadcast row merge over a set of
+// pre-decoded node responses: decode each (proto or []byte frame) chunk, materialize the frame
+// batches only for the final window after k-way merge and deduplication.
 func runLiaisonMerge(t *testing.T, plan *distributedPlan, nodeResponses []any, offset, limit uint32) []*streamv1.Element {
 	t.Helper()
-	var see []sort.Iterator[*comparableElement]
+	plan.offset, plan.limit = offset, limit
+	nodes := make([]nodeStreamResult, 0, len(nodeResponses))
+	var frameBatches []*vectorized.RecordBatch
 	for _, d := range nodeResponses {
-		elements, _, decErr := plan.decodeNodeElements(d)
-		require.NoError(t, decErr)
-		see = append(see, newSortableElements(elements, plan.sortByTime, plan.sortTagSpec))
-	}
-	iter := sort.NewItemIter(see, plan.desc)
-	var merged []*streamv1.Element
-	seen := make(map[string]bool)
-	for iter.Next() {
-		element := iter.Val().Element
-		if !seen[element.ElementId] {
-			seen[element.ElementId] = true
-			merged = append(merged, element)
+		var node nodeStreamResult
+		require.NoError(t, plan.decodeNodeChunk(d, &node))
+		node.responded = true
+		for _, chunk := range node.chunks {
+			if chunk.batch != nil {
+				frameBatches = append(frameBatches, chunk.batch)
+			}
 		}
+		nodes = append(nodes, node)
 	}
-	start := int(offset)
-	if start > len(merged) {
-		return []*streamv1.Element{}
-	}
-	end := start + int(limit)
-	if end > len(merged) {
-		end = len(merged)
-	}
-	return merged[start:end]
+	defer func() {
+		for _, batch := range frameBatches {
+			batch.ReleaseOwners()
+		}
+	}()
+	merged, mergeErr := plan.mergeRowReplies(context.Background(), nodes, nil)
+	require.NoError(t, mergeErr)
+	return merged
 }
 
 func elementIDSeq(elements []*streamv1.Element) []string {
@@ -118,15 +113,13 @@ func elementIDSeq(elements []*streamv1.Element) []string {
 	return out
 }
 
-// TestLiaisonMerge_MixedProtoAndFrame_MatchesAllProto is the M6 liaison
-// decode+merge unit test. Three data nodes each present a set of rows; one node's
-// body is a native columnar frame ([]byte), the others are proto responses. The
-// merged/deduped/limited result (with offset>0 and cross-node duplicate
-// ElementIDs) MUST be identical to feeding the equivalent all-proto bodies.
+// TestLiaisonMerge_MixedProtoAndFrame_MatchesAllProto checks the mixed-reply
+// fallback: three nodes present rows, one as a native columnar frame and two as
+// proto responses. The merged, de-duplicated and windowed result (with offset>0
+// and a cross-node duplicate ElementID) must be identical to feeding the
+// equivalent all-proto bodies.
 //
-// This is a UNIT-level test of the liaison merge stack (decodeNodeElements +
-// k-way merge + seen-dedup + distributedLimit). A full multi-data-node broadcast
-// harness is out of scope in-session; see the report notes.
+// The same merge consumes both reply formats.
 func TestLiaisonMerge_MixedProtoAndFrame_MatchesAllProto(t *testing.T) {
 	data.SetStreamWireModeRaw(true)
 	defer data.SetStreamWireModeRaw(false)
@@ -196,8 +189,14 @@ func TestLiaisonMerge_FrameDecodeProducesProjectedTags(t *testing.T) {
 	require.NoError(t, encErr)
 
 	plan := &distributedPlan{sortByTime: true}
-	elements, _, decErr := plan.decodeNodeElements(frame)
-	require.NoError(t, decErr)
+	var node nodeStreamResult
+	require.NoError(t, plan.decodeNodeChunk(frame, &node))
+	require.Len(t, node.chunks, 1)
+	chunk := node.chunks[0]
+	require.Empty(t, chunk.elements, "a frame chunk must not be materialized while it is decoded")
+	defer chunk.batch.ReleaseOwners()
+	elements, buildErr := vstream.BuildElementsFromBatch(chunk.batch, vstream.ProjectionFromBatchSchema(chunk.batch))
+	require.NoError(t, buildErr)
 	require.Len(t, elements, 1)
 	require.Equal(t, hexElementID(7), elements[0].ElementId)
 	require.Len(t, elements[0].TagFamilies, 1)

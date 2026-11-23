@@ -23,6 +23,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"google.golang.org/protobuf/proto"
@@ -38,6 +39,7 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/queue/pub"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
+	"github.com/apache/skywalking-banyandb/pkg/host"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/node"
 )
@@ -114,8 +116,7 @@ func (l *lifecycleService) getSnapshots(ctx context.Context, groups []*commonv1.
 //     alone strips the port and would pick whichever same-host node the
 //     registry listing happens to return first.
 //   - Pass 2 (pod hostname): falls back to the sidecar's own pod
-//     hostname (POD_NAME → os.Hostname(), same precedence as
-//     nativeNodeContext at service.go:160-165) matched against the host
+//     hostname (host.PodName: POD_NAME, else os.Hostname()) matched against the host
 //     portion of GrpcAddress via hostMatches. This covers the K8s case
 //     where --grpc-addr is a loopback or service alias that does not
 //     string-match the pod's registered GrpcAddress.
@@ -146,21 +147,6 @@ func resolveSelfIdentity(selfGRPCAddr, selfPodHost string, nodes []*databasev1.N
 		}
 	}
 	return "", "", false
-}
-
-// selfPodHostname returns the lifecycle sidecar's own pod host.
-// Precedence matches nativeNodeContext at service.go:160-165:
-// POD_NAME first (K8s downward API), then os.Hostname() as a
-// fallback. Returns "" only if both lookups fail (very rare; e.g.
-// hostname uname syscall returns ENAMETOOLONG).
-func selfPodHostname() string {
-	if v := os.Getenv("POD_NAME"); v != "" {
-		return v
-	}
-	if h, err := os.Hostname(); err == nil {
-		return h
-	}
-	return ""
 }
 
 // hostMatches reports whether aRegistryHost (which may carry a :port
@@ -354,13 +340,11 @@ func parseGroup(
 		l.Info().Msgf("no matching stage for group %s, defaulting to first stage %s segment interval: %d(%s), total ttl needs: %d(%s)",
 			g.Metadata.Name, nst.Name, segmentInterval.Num, segmentInterval.Unit.String(), ttlTime.Num, ttlTime.Unit.String())
 	}
-	nsl, err := pub.ParseLabelSelector(nst.NodeSelector)
+	listCtx, cancelList := context.WithTimeout(context.Background(), 10*time.Second)
+	nodeSel, nsl, err := node.NewStageSelector(listCtx, nst.NodeSelector, metadata.GroupRegistry().ListGroup)
+	cancelList()
 	if err != nil {
-		return nil, "", "", "", errors.WithMessagef(err, "failed to parse node selector %s", nst.NodeSelector)
-	}
-	nodeSel := node.NewRoundRobinSelector("", metadata)
-	if ok, _ := nodeSel.OnInit([]schema.Kind{schema.KindGroup}); !ok {
-		return nil, "", "", "", fmt.Errorf("failed to initialize node selector for group %s", g.Metadata.Name)
+		return nil, "", "", "", errors.WithMessagef(err, "failed to initialize node selector %s for group %s", nst.NodeSelector, g.Metadata.Name)
 	}
 	client := pub.NewWithoutMetadata(omr) //nolint:contextcheck // health check goroutine uses context.Background()
 	// Stamp the lifecycle's self identity onto the publisher so the wire
@@ -370,8 +354,7 @@ func parseGroup(
 	// --grpc-addr against the data-node registry's GrpcAddress
 	// (full host:port, so co-located nodes sharing a host are still
 	// disambiguated), then falls back to the sidecar's own pod hostname
-	// (POD_NAME -> os.Hostname(), same precedence as nativeNodeContext
-	// at service.go:160-165) with loopback-alias and port-strip
+	// (host.PodName: POD_NAME, else os.Hostname()) with loopback-alias and port-strip
 	// normalization. The first matching registry entry is the
 	// co-located data pod; its Metadata.Name is the BanyanDB NodeID the
 	// receiver records as remote_node, and its Labels["type"] is the
@@ -393,7 +376,7 @@ func parseGroup(
 	// sides (sender vs destination) and are not cross-joinable — see
 	// the struct comment in service.go and CHANGES.md for the
 	// asymmetry.
-	selfHost := selfPodHostname()
+	selfHost := host.PodName()
 	senderNode, senderTier, resolvedOK := resolveSelfIdentity(selfGRPCAddr, selfHost, nodes)
 	if resolvedOK {
 		senderRole = lifecycleRoleName

@@ -49,6 +49,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 )
 
 var (
@@ -92,7 +93,7 @@ func (s *standalone) FlagSet() *run.FlagSet {
 	fs.StringVar(&s.dataPath, "trace-data-path", "", "the path for trace data (optional)")
 	fs.StringVar(&s.exportSnapshotDir, "trace-export-snapshot-path", "", storage.ExportSnapshotPathUsage("trace"))
 	fs.DurationVar(&s.option.flushTimeout, "trace-flush-timeout", defaultFlushTimeout, "the timeout for trace data flush")
-	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", 5*time.Minute,
+	fs.DurationVar(&s.option.memWaitTimeout, "trace-lifecycle-receive-mem-wait-timeout", queue.DefaultReceiveMemWaitTimeout,
 		"max time the migration receiver waits for memory to recover before introducing an external segment")
 
 	// Retention configuration flags
@@ -205,9 +206,12 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	s.diskMonitor.Start()
 
 	// Set up write callback handler. For now, keep the original write throttling behavior based on high watermark
-	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm)
+	writeListener := setUpWriteCallback(s.l, &s.schemaRepo, int(s.retentionConfig.HighWatermark), s.pm, observability.NewWriteDropCounter(s.omr, "trace"))
 	err = s.pipeline.Subscribe(data.TopicTraceWrite, writeListener)
 	if err != nil {
+		return err
+	}
+	if err = s.pipeline.Subscribe(data.TopicTraceImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
 		return err
 	}
 	err = s.pipeline.Subscribe(data.TopicSnapshot, &standaloneSnapshotListener{s: s})
@@ -236,11 +240,10 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	// FINALIZE event, so starting it unconditionally-under-the-flag is safe.
 	if s.option.nativePipelineEnabled {
 		s.finalizeCloser = run.NewCloser(1)
-		// Launch via run.Go (not a bare `go`) so a panic in the scan loop is recovered
-		// and reported instead of crashing the process; the loop's deferred closer.Done
-		// still fires during panic unwinding. It uses the run.Closer for cancellation,
+		// Launch via run.GoOrDie: a panic in the scan loop is reported, then crashes the
+		// process instead of leaving finalize sampling silently stopped. It uses the run.Closer for cancellation,
 		// hence the contextcheck suppression (mirrors the tsTable background loops).
-		run.Go(context.Background(), "trace.finalize-scanner", s.l, func(_ context.Context) { //nolint:contextcheck
+		run.GoOrDie(context.Background(), "trace.finalize-scanner", s.l, func(_ context.Context) { //nolint:contextcheck
 			s.schemaRepo.finalizeScanLoop(s.finalizeCloser, defaultFinalizeScanInterval) //nolint:contextcheck
 		})
 	}

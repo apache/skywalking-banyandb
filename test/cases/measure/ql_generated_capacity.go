@@ -63,7 +63,7 @@ func registerGeneratedQLCapacityScenarios(suite qlgen.Suite, base *time.Time) {
 					batchBefore := vmeasure.BatchExecutionStats()
 					defer func() {
 						gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, 5*time.Second).Should(gm.Equal(before.LiveReservedBytes))
-						gm.Expect(vmeasure.BatchExecutionStats().LiveResults).To(gm.Equal(batchBefore.LiveResults))
+						expectLiveResults(batchBefore.LiveResults)
 					}()
 					query, expected := renderGeneratedQLCase(fixtureBase, c)
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -121,7 +121,7 @@ func registerGeneratedQLShardAggregateScenarios(suite qlgen.Suite, base *time.Ti
 					batchBefore := vmeasure.BatchExecutionStats()
 					defer func() {
 						gm.Eventually(func() int64 { return vectorized.QueryMemoryStats().LiveReservedBytes }, 5*time.Second).Should(gm.Equal(before.LiveReservedBytes))
-						gm.Expect(vmeasure.BatchExecutionStats().LiveResults).To(gm.Equal(batchBefore.LiveResults))
+						expectLiveResults(batchBefore.LiveResults)
 					}()
 					query, expected := renderGeneratedQLCase(fixtureBase, c)
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)

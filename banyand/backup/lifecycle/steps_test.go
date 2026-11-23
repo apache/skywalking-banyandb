@@ -96,7 +96,7 @@ func TestParseGroup_RejectsMissingIntervals(t *testing.T) {
 // Note: parseGroup's (senderNode, senderRole, senderTier) return is
 // driven by resolveSelfIdentity, which is exhaustively covered by
 // TestResolveSelfIdentity below. The full parseGroup body requires a
-// real metadata.Repo for nodeSel.OnInit (steps.go:335) and a real
+// real metadata.Repo for node.NewStageSelector (steps.go) and a real
 // clusterStateMgr for the route table, so calling parseGroup from a
 // unit test requires an integration harness — that coverage lives in
 // test/cases/lifecycle/lifecycle.go.
@@ -190,22 +190,4 @@ func TestResolveSelfIdentity_GRPCAddrDisambiguates(t *testing.T) {
 	_, tier, ok = resolveSelfIdentity("", "127.0.0.1", nodes)
 	assert.True(t, ok)
 	assert.Equal(t, "warm", tier, "hostname-only matching is order-dependent — the flake this fix eliminates")
-}
-
-// TestSelfPodHostnamePrecedence checks that selfPodHostname() prefers
-// POD_NAME (the K8s downward API value) and falls back to os.Hostname()
-// when POD_NAME is unset.
-func TestSelfPodHostnamePrecedence(t *testing.T) {
-	t.Setenv("POD_NAME", "my-pod")
-	assert.Equal(t, "my-pod", selfPodHostname(),
-		"POD_NAME takes precedence (K8s downward API)")
-
-	t.Setenv("POD_NAME", "")
-	// Without POD_NAME, the function falls back to os.Hostname().
-	// The test host name is non-empty on Linux, so the result is
-	// either the test runner's hostname or "" if uname fails.
-	// Either way it must not panic and must not return "my-pod".
-	got := selfPodHostname()
-	assert.NotEqual(t, "my-pod", got,
-		"empty POD_NAME must fall back to os.Hostname(), not return the previous value")
 }

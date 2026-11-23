@@ -28,6 +28,7 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	"github.com/apache/skywalking-banyandb/api/common"
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
@@ -38,7 +39,7 @@ import (
 )
 
 const (
-	internalDeletionTaskGroup        = "_deletion_task"
+	internalDeletionTaskGroup        = common.DeletionTaskGroup
 	internalDeletionTaskPropertyName = "_deletion_task"
 	taskDataTagName                  = "task_data"
 	taskStaleTimeout                 = 10 * time.Minute
@@ -83,7 +84,9 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 		if !errors.Is(getGroupErr, schema.ErrGRPCResourceNotFound) {
 			return fmt.Errorf("failed to get internal deletion task group: %w", getGroupErr)
 		}
-		if _, createErr := m.schemaRegistry.GroupRegistry().CreateGroup(ctx, group); createErr != nil {
+		// Another liaison may create it between the get and the create.
+		if _, createErr := m.schemaRegistry.GroupRegistry().CreateGroup(ctx, group); createErr != nil &&
+			!errors.Is(createErr, schema.ErrGRPCAlreadyExists) {
 			return fmt.Errorf("failed to create internal deletion task group: %w", createErr)
 		}
 	}
@@ -104,7 +107,8 @@ func (m *groupDeletionTaskManager) initPropertyStorage(ctx context.Context) erro
 		if !errors.Is(getPropErr, schema.ErrGRPCResourceNotFound) {
 			return fmt.Errorf("failed to get internal deletion task property schema: %w", getPropErr)
 		}
-		if createErr := m.schemaRegistry.PropertyRegistry().CreateProperty(ctx, propSchema); createErr != nil {
+		if createErr := m.schemaRegistry.PropertyRegistry().CreateProperty(ctx, propSchema); createErr != nil &&
+			!errors.Is(createErr, schema.ErrGRPCAlreadyExists) {
 			return fmt.Errorf("failed to create internal deletion task property schema: %w", createErr)
 		}
 	}

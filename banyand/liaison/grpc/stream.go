@@ -99,7 +99,7 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 	metadata *commonv1.Metadata, stream streamResponseSender,
 ) modelv1.Status {
 	if errTime := timestamp.CheckPb(writeEntity.GetElement().Timestamp); errTime != nil {
-		s.l.Error().Err(errTime).Stringer("written", writeEntity).Msg("the element time is invalid")
+		s.logFor(metadata.GetGroup()).Error().Err(errTime).Stringer("written", writeEntity).Msg("the element time is invalid")
 		s.sendReply(metadata, modelv1.Status_STATUS_INVALID_TIMESTAMP, writeEntity.GetMessageId(), stream)
 		return modelv1.Status_STATUS_INVALID_TIMESTAMP
 	}
@@ -108,7 +108,7 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 		id := getID(metadata)
 		streamCache, existed := s.entityRepo.getLocator(id)
 		if !existed {
-			s.l.Error().Stringer("written", writeEntity).Msg("stream schema not found")
+			s.logFor(metadata.GetGroup()).Error().Stringer("written", writeEntity).Msg("stream schema not found")
 			s.sendReply(metadata, modelv1.Status_STATUS_NOT_FOUND, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_NOT_FOUND
 		}
@@ -120,7 +120,7 @@ func (s *streamService) validateWriteRequest(writeEntity *streamv1.WriteRequest,
 		clientRev := metadata.ModRevision
 		cacheRev := resolveSchemaRevision(reg, schema.KindStream, metadata.GetGroup(), metadata.GetName(), streamCache.ModRevision)
 		if clientRev < cacheRev {
-			s.l.Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
+			s.logFor(metadata.GetGroup()).Error().Stringer("written", writeEntity).Msg("the stream schema is expired")
 			s.metrics.emitStatusExpired(rpcLabelStreamWrite, metadata.GetGroup())
 			s.sendReply(metadata, modelv1.Status_STATUS_EXPIRED_SCHEMA, writeEntity.GetMessageId(), stream)
 			return modelv1.Status_STATUS_EXPIRED_SCHEMA
@@ -203,13 +203,20 @@ func (t streamSessionSender) Send(resp *streamv1.WriteResponse) error {
 	return nil
 }
 
+// logFor returns the logger for what the write handler logs about an event of
+// group. A producer writes its own log events here, so what is logged about
+// them must not be stored with them; see logger.ForGroup.
+func (s *streamService) logFor(group string) *logger.Logger {
+	return logger.ForGroup(s.l, group, "liaison-grpc")
+}
+
 func (s *streamService) sendReply(metadata *commonv1.Metadata, status modelv1.Status, messageID uint64, sender streamResponseSender) {
 	if metadata == nil {
 		s.l.Error().Stringer("status", status).Msg("metadata is nil, cannot send reply")
 		return
 	}
 	if errResp := sender.Send(&streamv1.WriteResponse{Metadata: metadata, Status: status.String(), StatusCode: status, MessageId: messageID}); errResp != nil {
-		if dl := s.l.Debug(); dl.Enabled() {
+		if dl := s.logFor(metadata.GetGroup()).Debug(); dl.Enabled() {
 			dl.Err(errResp).Msg("failed to queue stream write response")
 		}
 	}
@@ -230,7 +237,7 @@ func (s *streamService) sendResponse(stream streamv1.StreamService_WriteServer, 
 		RetryAfterMs: reply.retryAfterMs,
 	})
 	if errResp != nil {
-		if dl := s.l.Debug(); dl.Enabled() {
+		if dl := s.logFor(group).Debug(); dl.Enabled() {
 			dl.Err(errResp).Msg("failed to send stream write response")
 		}
 		s.metrics.totalStreamMsgSentErr.Inc(1, group, "stream", "write")
@@ -362,7 +369,7 @@ func (s *streamService) receiveWrites(stream streamv1.StreamService_WriteServer,
 
 		tagValues, shardID, err := s.navigateWithRetry(writeEntity, metadata, specLocator)
 		if err != nil {
-			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
+			s.logFor(metadata.GetGroup()).Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("navigation failed")
 			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), sender)
 			s.groupRepo.releaseRequest(metadata.Group)
 			continue
@@ -370,7 +377,7 @@ func (s *streamService) receiveWrites(stream streamv1.StreamService_WriteServer,
 
 		if s.ingestionAccessLog != nil {
 			if errAL := s.ingestionAccessLog.Write(writeEntity); errAL != nil {
-				s.l.Error().Err(errAL).Msg("failed to write ingestion access log")
+				s.logFor(metadata.GetGroup()).Error().Err(errAL).Msg("failed to write ingestion access log")
 			}
 		}
 
@@ -379,7 +386,7 @@ func (s *streamService) receiveWrites(stream streamv1.StreamService_WriteServer,
 			if !errors.Is(err, errWriteRowRejected) {
 				return err
 			}
-			s.l.Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
+			s.logFor(metadata.GetGroup()).Error().Err(err).RawJSON("written", logger.Proto(writeEntity)).Msg("publishing failed")
 			s.sendReply(metadata, modelv1.Status_STATUS_INTERNAL_ERROR, writeEntity.GetMessageId(), sender)
 		}
 	}

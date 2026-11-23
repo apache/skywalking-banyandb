@@ -87,6 +87,9 @@ const (
 	mExportPlan       = "/banyandb.transfer.v1.ExportService/Plan"
 	mExportSessions   = "/banyandb.transfer.v1.ExportService/Sessions"
 	mExportExport     = "/banyandb.transfer.v1.ExportService/Export"
+	mImportRows       = "/banyandb.transfer.v1.ImportService/ImportRows"
+	mImportTargets    = "/banyandb.transfer.v1.ImportService/Targets"
+	mImportParts      = "/banyandb.transfer.v1.ImportService/ImportParts"
 	mGetMaxRevision   = "/banyandb.cluster.v1.NodeSchemaStatusService/GetMaxRevision"
 	mGetKeyRevisions  = "/banyandb.cluster.v1.NodeSchemaStatusService/GetKeyRevisions"
 	mGetAbsentKeys    = "/banyandb.cluster.v1.NodeSchemaStatusService/GetAbsentKeys"
@@ -115,6 +118,9 @@ var globalMethods = map[string]auth.Permission{
 	mExportPlan:       auth.PermissionClusterAdmin,
 	mExportSessions:   auth.PermissionClusterAdmin,
 	mExportExport:     auth.PermissionClusterAdmin,
+	mImportRows:       auth.PermissionClusterAdmin,
+	mImportTargets:    auth.PermissionClusterAdmin,
+	mImportParts:      auth.PermissionClusterAdmin,
 	mGetMaxRevision:   auth.PermissionClusterAdmin,
 	mGetKeyRevisions:  auth.PermissionClusterAdmin,
 	mGetAbsentKeys:    auth.PermissionClusterAdmin,
@@ -171,8 +177,8 @@ func policyTable(t *testing.T) liaisongrpc.MethodPolicyTable {
 // from the registered set alone.
 func TestR1_MethodPolicyCoversExactlyTheRegisteredMethods(t *testing.T) {
 	table := policyTable(t)
-	if len(table) != 81 {
-		t.Fatalf("GlobalMethodPolicies() returned %d rows, want the fixed 81-method oracle", len(table))
+	if len(table) != 84 {
+		t.Fatalf("GlobalMethodPolicies() returned %d rows, want the fixed 84-method oracle", len(table))
 	}
 	registered := liaisongrpc.RegisteredMethods(fullActivation)
 	if len(registered) == 0 {
@@ -205,7 +211,7 @@ func TestR1_RegisteredMethodsTracksTheServiceDescriptors(t *testing.T) {
 		mGetMaxRevision, mGetKeyRevisions, mGetAbsentKeys, mAwaitRevision,
 		mStreamDeleteSeg, mMeasureDeleteSeg, mTraceDeleteSeg, mMeasureInternalQ,
 		mMeasureQuery, mStreamWrite, mGroupCreate, mGroupList, mPropertyApply, mBydbQLQuery,
-		mExportPlan, mExportSessions, mExportExport,
+		mExportPlan, mExportSessions, mExportExport, mImportRows, mImportTargets, mImportParts,
 	} {
 		if !present[m] {
 			t.Errorf("RegisteredMethods(full activation) is missing %q, which the liaison serves", m)
@@ -340,7 +346,7 @@ func TestR6_GlobalMethodsAreActivatedAndTheRestFailClosed(t *testing.T) {
 		}
 	}
 	for permission, want := range map[auth.Permission]int{
-		auth.PermissionClusterRead: 4, auth.PermissionClusterAdmin: 11,
+		auth.PermissionClusterRead: 4, auth.PermissionClusterAdmin: 14,
 		auth.PermissionSchemaRead: 27, auth.PermissionSchemaWrite: 24,
 		auth.PermissionDataRead: 6, auth.PermissionDataWrite: 5,
 	} {
@@ -389,6 +395,9 @@ func TestR3_GlobalDecisionMatrix(t *testing.T) {
 		{mExportPlan, allow, deny, deny, deny, deny},
 		{mExportSessions, allow, deny, deny, deny, deny},
 		{mExportExport, allow, deny, deny, deny, deny},
+		{mImportRows, allow, deny, deny, deny, deny},
+		{mImportTargets, allow, deny, deny, deny, deny},
+		{mImportParts, allow, deny, deny, deny, deny},
 		{mGetMaxRevision, allow, deny, deny, deny, deny},
 		{mGetKeyRevisions, allow, deny, deny, deny, deny},
 		{mGetAbsentKeys, allow, deny, deny, deny, deny},

@@ -35,6 +35,7 @@ import (
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
+	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
@@ -475,24 +476,36 @@ var blockPool = pool.Register[*block]("measure-block")
 // and pooled only when the count reaches zero, so a borrowed cell stays valid
 // until the last batch that holds it is released.
 type blockCursor struct {
-	p *part
+	schemaTagTypes map[string]pbv1.ValueType
 	// res is the scan's memory reservation for this cursor, released when the
 	// last reference goes (see releaseBlockCursor). It is nil outside a window scan.
-	res                 *scanReservation
-	fields              columnFamily
-	timestamps          []int64
-	versions            []int64
-	tagFamilies         []columnFamily
-	columnValuesDecoder encoding.BytesBlockDecoder
+	res *scanReservation
+	// sliceTracker is the query tracker a time-slice clone's own memory (sliceCharge bytes) is
+	// charged to, released with the cursor's last reference (see sliceMergeUnit). It is nil for a
+	// cursor that is not a slice clone.
+	sliceTracker *vectorized.MemoryTracker
+	p            *part
+	fields       columnFamily
+	timestamps   []int64
+	versions     []int64
+	tagFamilies  []columnFamily
+	// spareBacking is the decoder's backing array detached by compactValues; releaseLoadBlock
+	// returns it to decodeBackingPool once the temporary block that views it is released.
+	spareBacking        []byte
 	tagProjection       []model.TagProjection
 	fieldProjection     []string
-	schemaTagTypes      map[string]pbv1.ValueType
+	columnValuesDecoder encoding.BytesBlockDecoder
 	bm                  blockMetadata
 	idx                 int
+	sliceCharge         int64
 	minTimestamp        int64
 	maxTimestamp        int64
-	refs                atomic.Int32
-	shardID             common.ShardID
+	// compactedBytes is the size of the buffer compactValues copied the cell values into.
+	compactedBytes uint64
+	refs           atomic.Int32
+	shardID        common.ShardID
+	// compacted is set when compactValues released the decoded block.
+	compacted bool
 }
 
 // Retain adds one reference. The caller must already hold one.
@@ -510,6 +523,9 @@ func (bc *blockCursor) reset() {
 	bc.bm.reset()
 	bc.minTimestamp = 0
 	bc.maxTimestamp = 0
+	bc.spareBacking = nil
+	bc.compacted = false
+	bc.compactedBytes = 0
 	bc.tagProjection = bc.tagProjection[:0]
 	bc.fieldProjection = bc.fieldProjection[:0]
 	bc.schemaTagTypes = nil
@@ -932,7 +948,50 @@ NEXT_FIELD:
 		c.copyRowsFrom(&tmpBlock.field.columns[i], start, end+1)
 		bc.fields.columns = append(bc.fields.columns, c)
 	}
+	if kept := end - start + 1; kept*2 < len(tmpBlock.timestamps) && (bc.res == nil || bc.res.reuse == nil) {
+		bc.compactValues()
+	}
 	return true
+}
+
+// compactValues moves the bytes of the cursor's cell values into one buffer of their own
+// and drops the decoder's backing array. Cell values are views into that array, so a
+// cursor that keeps a few rows of a large block would otherwise keep the whole decoded
+// block alive. It is used when the query range covers under half of the block.
+func (bc *blockCursor) compactValues() {
+	var total int
+	each := func(fn func(c *column)) {
+		for i := range bc.tagFamilies {
+			for j := range bc.tagFamilies[i].columns {
+				fn(&bc.tagFamilies[i].columns[j])
+			}
+		}
+		for i := range bc.fields.columns {
+			fn(&bc.fields.columns[i])
+		}
+	}
+	each(func(c *column) {
+		for _, v := range c.values {
+			total += len(v)
+		}
+	})
+	buf := make([]byte, 0, total)
+	each(func(c *column) {
+		for i, v := range c.values {
+			switch {
+			case v == nil:
+			case len(v) == 0:
+				c.values[i] = []byte{}
+			default:
+				at := len(buf)
+				buf = append(buf, v...)
+				c.values[i] = buf[at:len(buf):len(buf)]
+			}
+		}
+	})
+	bc.spareBacking = bc.columnValuesDecoder.DetachBacking()
+	bc.compacted = true
+	bc.compactedBytes = uint64(total)
 }
 
 var blockCursorPool = pool.Register[*blockCursor]("measure-blockCursor")
@@ -987,6 +1046,11 @@ func releaseBlockCursor(bc *blockCursor) {
 	}
 	// Nothing borrows the decoded buffer any more; let the next block reuse it.
 	bc.columnValuesDecoder.Reset()
+	if tracker := bc.sliceTracker; tracker != nil {
+		bc.sliceTracker = nil
+		tracker.Release(bc.sliceCharge)
+		bc.sliceCharge = 0
+	}
 	if res := bc.res; res != nil {
 		bc.res = nil
 		res.release()
@@ -1200,39 +1264,39 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	tagFamilyMap := make(map[string]*columnFamily)
+	// Families and columns are found by index, not by pointer: appending a new family or column may
+	// reallocate the slice, and a pointer taken before that would strand the values appended through it.
+	familyIdx := make(map[string]int, len(bi.tagFamilies))
 	for i := range bi.tagFamilies {
-		tagFamilyMap[bi.tagFamilies[i].name] = &bi.tagFamilies[i]
+		familyIdx[bi.tagFamilies[i].name] = i
 	}
 
 	for _, tf := range b.tagFamilies {
-		if existingTagFamily, exists := tagFamilyMap[tf.name]; exists {
-			columnMap := make(map[string]*column)
-			for i := range existingTagFamily.columns {
-				columnMap[existingTagFamily.columns[i].name] = &existingTagFamily.columns[i]
-			}
-
-			for _, c := range tf.columns {
-				if existingColumn, exists := columnMap[c.name]; exists {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
-				} else {
-					assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
-					col := column{name: c.name, valueType: c.valueType}
-					for j := 0; j < existDataSize; j++ {
-						col.values = append(col.values, nil)
-					}
-					col.values = append(col.values, c.values[b.idx:offset]...)
-					existingTagFamily.columns = append(existingTagFamily.columns, col)
-				}
-			}
-		} else {
+		fi, exists := familyIdx[tf.name]
+		if !exists {
 			appendTagFamilies(tf)
+			continue
+		}
+		columnIdx := make(map[string]int, len(bi.tagFamilies[fi].columns))
+		for i := range bi.tagFamilies[fi].columns {
+			columnIdx[bi.tagFamilies[fi].columns[i].name] = i
+		}
+		for _, c := range tf.columns {
+			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			if ci, exists := columnIdx[c.name]; exists {
+				existingColumn := &bi.tagFamilies[fi].columns[ci]
+				existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
+				continue
+			}
+			col := column{name: c.name, valueType: c.valueType}
+			for j := 0; j < existDataSize; j++ {
+				col.values = append(col.values, nil)
+			}
+			col.values = append(col.values, c.values[b.idx:offset]...)
+			bi.tagFamilies[fi].columns = append(bi.tagFamilies[fi].columns, col)
 		}
 	}
-	for k := range tagFamilyMap {
-		delete(tagFamilyMap, k)
-	}
+	tagFamilyMap := make(map[string]*columnFamily, len(b.tagFamilies))
 	for i := range b.tagFamilies {
 		tagFamilyMap[b.tagFamilies[i].name] = &b.tagFamilies[i]
 	}
@@ -1292,22 +1356,22 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 		return
 	}
 
-	fieldMap := make(map[string]*column)
+	// Fields are found by index, not by pointer: appending a new field may reallocate bi.field.columns.
+	fieldIdx := make(map[string]int, len(bi.field.columns))
 	for i := range bi.field.columns {
-		fieldMap[bi.field.columns[i].name] = &bi.field.columns[i]
+		fieldIdx[bi.field.columns[i].name] = i
 	}
 
 	for _, c := range b.field.columns {
-		if existingField, exists := fieldMap[c.name]; exists {
+		if fi, exists := fieldIdx[c.name]; exists {
 			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			existingField := &bi.field.columns[fi]
 			existingField.values = append(existingField.values, c.values[b.idx:offset]...)
 		} else {
 			appendFields(c)
 		}
 	}
-	for k := range fieldMap {
-		delete(fieldMap, k)
-	}
+	fieldMap := make(map[string]*column, len(b.field.columns))
 	for i := range b.field.columns {
 		fieldMap[b.field.columns[i].name] = &b.field.columns[i]
 	}
@@ -1424,17 +1488,20 @@ var blockPointerPool = pool.Register[*blockPointer]("measure-blockPointer")
 // boundDecodeBacking drops oversized pooled buffers before a budgeted decode.
 // The shared scan envelope includes twice a normal batch per projected column.
 func (bc *blockCursor) boundDecodeBacking(tmpBlock *block) {
+	// The temporary block decodes the whole block, the cursor keeps the rows in range.
 	rows := 2 * max(int(bc.bm.count), 16)
+	keptRows := 2 * max(int(inRangeRows(bc)), 16)
 	encoded := 2 * max(int(bc.bm.uncompressedSizeBytes), 1024)
 	reusing := bc.res != nil && bc.res.reuse != nil
 	if reusing {
 		rows = 2 * int(bc.res.reuse.rows)
+		keptRows = rows
 		encoded = 2 * int(bc.res.reuse.encoded)
 	}
-	if cap(bc.timestamps) > rows {
+	if cap(bc.timestamps) > keptRows {
 		bc.timestamps = nil
 	}
-	if cap(bc.versions) > rows {
+	if cap(bc.versions) > keptRows {
 		bc.versions = nil
 	}
 	bc.columnValuesDecoder.ResetBounded(encoded)
@@ -1488,4 +1555,25 @@ func boundFamilyBacking(family *columnFamily, columns, rows int) {
 			column.float64s = nil
 		}
 	}
+}
+
+// retainedBytes adds up what a decoded cursor's buffers hold: the row slices, the cell slices and
+// their bytes, and the decoder's backing array. Cells that view the decoder's backing are counted
+// twice, so it is an upper bound. It costs a pass over the cells and is only taken for traced queries.
+func (bc *blockCursor) retainedBytes() int {
+	n := cap(bc.timestamps)*8 + cap(bc.versions)*8
+	family := func(cf *columnFamily) {
+		for i := range cf.columns {
+			c := &cf.columns[i]
+			n += cap(c.values)*24 + cap(c.int64s)*8 + cap(c.float64s)*8
+			for _, v := range c.values {
+				n += len(v)
+			}
+		}
+	}
+	family(&bc.fields)
+	for i := range bc.tagFamilies {
+		family(&bc.tagFamilies[i])
+	}
+	return n + bc.columnValuesDecoder.BackingCap()
 }

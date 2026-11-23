@@ -57,3 +57,12 @@ var PropertyRepairKindVersion = common.KindVersion{
 
 // TopicPropertyRepair is the property repair topic.
 var TopicPropertyRepair = bus.BiTopic(PropertyRepairKindVersion.String())
+
+// PropertyPartSyncKindVersion is the version tag of property part sync kind.
+var PropertyPartSyncKindVersion = common.KindVersion{
+	Version: "v1",
+	Kind:    "property-part-sync",
+}
+
+// TopicPropertyPartSync is the property part sync topic.
+var TopicPropertyPartSync = bus.BiTopic(PropertyPartSyncKindVersion.String())

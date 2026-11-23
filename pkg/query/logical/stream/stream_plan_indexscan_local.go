@@ -41,9 +41,8 @@ type localIndexScan struct {
 	// preMergeFilter is the criteria filter carried by the wrapping tagFilterPlan,
 	// stashed by scanFromInput so ExecuteVectorized can run it as a PRE-MERGE
 	// fusible — which is what lets the merge cap at maxElementSize for a criteria
-	// query. Nil when the query has no criteria, when the criteria collapsed to
-	// DummyFilter, or for a timestamp-order scan, whose filter stays at the egress
-	// behind the cap (see scanResumesAcrossPulls). Field order here is
+	// query. Nil when the query has no criteria or when the criteria collapsed to
+	// DummyFilter. Field order here is
 	// fieldalignment's, not grouped by meaning.
 	preMergeFilter    logical.TagFilter
 	invertedFilter    index.Filter

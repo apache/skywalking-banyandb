@@ -32,10 +32,11 @@ routeTables:
         propertySchemaGrpcAddress: ""
         propertySchemaGossipGrpcAddress: ""
         version:
-          fileFormatVersion: "1.5.0"
+          fileFormatVersion: "1.6.0"
           compatibleFileFormatVersion:
             - "1.4.0"
             - "1.5.0"
+            - "1.6.0"
           apiVersion: "0.11"
         tzName: {{ notEmpty (index . "routeTables" "tire1" "registered" 0 "tzName") }}
     active:
@@ -60,10 +61,11 @@ routeTables:
         propertySchemaGrpcAddress: data:17916
         propertySchemaGossipGrpcAddress: ""
         version:
-          fileFormatVersion: "1.5.0"
+          fileFormatVersion: "1.6.0"
           compatibleFileFormatVersion:
             - "1.4.0"
             - "1.5.0"
+            - "1.6.0"
           apiVersion: "0.11"
         tzName: {{ notEmpty (index . "routeTables" "tire2" "registered" 0 "tzName") }}
     active:

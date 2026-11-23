@@ -35,6 +35,8 @@ Set the following environment variables:
 - `MCP_RATE_LIMIT_MAX_REQUESTS`: Maximum HTTP requests allowed per client in each rate-limit window. Default is `60`.
 - `MCP_RATE_LIMIT_MAX_CLIENTS`: Maximum number of client IDs tracked by the in-memory HTTP rate limiter. Default is `10000`.
 
+All numeric settings must be plain positive integers (e.g. `1048576`, not `1MiB`), and `TRANSPORT` accepts only `stdio` or `http` (case-insensitive); the server fails at startup with a clear error for any invalid value. Values can also be provided via a `.env` file in the working directory, which is loaded before the configuration is read.
+
 **Address formats:**
 - `localhost:17900` - Local BanyanDB
 - `192.168.1.100:17900` - Remote server

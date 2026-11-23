@@ -411,3 +411,52 @@ func computeOracleWithTop(t *testing.T, rows []topologyRow, fn AggFunc, topN int
 	}
 	return flattenReduce(topped)
 }
+
+// TestTopologyMatrix_MultiGroup extends the matrix to two storage groups.
+// Each group numbers its shards from 1, so every cell has the same shard id
+// and group key in both groups. With the frames scoped by group, the reduce
+// must still match a single-node AggModeAll over both groups' rows, for any
+// replica count.
+func TestTopologyMatrix_MultiGroup(t *testing.T) {
+	groupA := []topologyRow{
+		{group: "a", value: 10},
+		{group: "b", value: 20},
+		{group: "a", value: 30},
+		{group: "c", value: 40},
+		{group: "b", value: 50},
+		{group: "a", value: 60},
+	}
+	groupB := []topologyRow{
+		{group: "a", value: 5},
+		{group: "c", value: 15},
+		{group: "b", value: 25},
+		{group: "a", value: 35},
+		{group: "c", value: 45},
+		{group: "b", value: 55},
+	}
+	for _, fn := range []AggFunc{AggSum, AggCount, AggMin, AggMax, AggMean} {
+		oracle := computeOracle(t, append(append([]topologyRow(nil), groupA...), groupB...), fn)
+		for shards := 1; shards <= 4; shards++ {
+			for replicas := 1; replicas <= 3; replicas++ {
+				t.Run(fmt.Sprintf("%v/S%d_R%d", fn, shards, replicas), func(t *testing.T) {
+					var frames [][]byte
+					var scopes []int64
+					for scope, rows := range [][]topologyRow{groupA, groupB} {
+						for _, body := range buildPartialFrames(t, rows, shards, replicas, fn) {
+							frames = append(frames, body)
+							scopes = append(scopes, int64(scope))
+						}
+					}
+					got, _, reduceErr := ReduceRawFramesToSchema(frames, nil, scopes, "default", []string{"g"}, false,
+						[]AggReduceSpec{{OutputName: "out", Func: fn}}, 1024, vectorized.NewMemoryTracker(1<<30))
+					if reduceErr != nil {
+						t.Fatalf("ReduceRawFramesToSchema: %v", reduceErr)
+					}
+					if gotMap := flattenReduce(got); !mapsEqual(gotMap, oracle) {
+						t.Fatalf("Reduce mismatch:\n  got    %v\n  oracle %v", gotMap, oracle)
+					}
+				})
+			}
+		}
+	}
+}

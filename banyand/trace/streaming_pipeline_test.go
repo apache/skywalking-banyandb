@@ -65,7 +65,7 @@ func (f *fakeSIDX) QuerySync(_ context.Context, _ sidx.QueryRequest) ([]*sidx.Qu
 }
 func (f *fakeSIDX) Stats(context.Context) (*sidx.Stats, error) { return &sidx.Stats{}, nil }
 func (f *fakeSIDX) Close() error                               { return nil }
-func (f *fakeSIDX) Flush(map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
+func (f *fakeSIDX) Flush(<-chan struct{}, map[uint64]struct{}) (*sidx.FlusherIntroduction, error) {
 	panic("not implemented")
 }
 

@@ -59,6 +59,9 @@ spec:
             - --grpc-listen-addr=:17912
             - --http-listen-addr=:17913
             - --heartbeat-interval=5s
+            # Its own logs, through the liaison's public write API.
+            - --logging-native-enabled
+            - --logging-native-addr=liaison:17912
           ports:
             - { name: grpc, containerPort: 17912 }
             - { name: http, containerPort: 17913 }

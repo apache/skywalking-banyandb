@@ -260,7 +260,7 @@ These flags configure how every node talks to the schema server.
 
 These flags configure the connections a liaison holds to the data nodes it queries and writes to. `<prefix>` is `data` or `liaison` depending on which peer set the client serves.
 
-- `--<prefix>-client-health-check-interval duration`: How often to re-check the nodes the client currently considers active, evicting any that no longer answer; `0` disables the periodic check (default: `10s`). The active set is otherwise only validated when a node is admitted and, after that, when a request happens to fail on it — so a node that dies stays routable until some query picks it and pays that query's full timeout to discover it. Keep this well below the distributed query timeouts (`--dst-broadcast-timeout`, default `15s`), since the interval bounds how long a dead node can keep absorbing queries.
+- `--<prefix>-client-health-check-interval duration`: How often to re-check the nodes the client currently considers active, evicting any that no longer answer; `0` disables the periodic check (default: `10s`). The active set is otherwise only validated when a node is admitted and, after that, when a request happens to fail on it — so a node that dies stays routable until some query picks it and pays that query's full timeout to discover it. Keep this well below the 15s idle deadline of a distributed query's node streams, since the interval bounds how long a dead node can keep absorbing queries.
 - `--<prefix>-client-tls`: Enable client TLS.
 - `--<prefix>-client-ca-cert string`: CA certificate file to verify the server.
 
@@ -277,11 +277,12 @@ These flags configure the connections a liaison holds to the data nodes it queri
 - `--logging-level string`: The root level of logging (default: "info").
 - `--logging-levels strings`: The logging level of each module, one per module.
 - `--logging-modules strings`: The modules whose logging level overrides the root one.
-- `--logging-native-enabled`: Store this process's own logs in BanyanDB, in addition to normal logging. Supported by `standalone` and `data`; `liaison` warns and ignores it.
+- `--logging-native-enabled`: Store this process's own logs in BanyanDB, in addition to normal logging. Supported by `standalone`, `data` and `liaison`.
 - `--logging-native-exclude-modules strings`: Modules never sent to native storage, with the modules named under them; adds to the built-in protections.
 - `--logging-native-level string`: The minimum level reaching native storage, independent of `--logging-level` (default: "info").
 - `--logging-native-levels strings`: The native level of each module in `--logging-native-modules`, one per module.
 - `--logging-native-modules strings`: The modules whose native level overrides `--logging-native-level`; an excluded module stays excluded.
+- `--logging-native-receiver-enabled`: Create and keep the native log schema for the other processes that write their logs here, such as backup, lifecycle and FODC, whether or not `--logging-native-enabled` is set.
 - `--logging-native-ttl-days uint32`: Retention of the `_monitoring_log` group in days, used when the group is created (default: 7).
 
 See [Logging](observability/logging.md#native-self-storage) for how native self-storage works.

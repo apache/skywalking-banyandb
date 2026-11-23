@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
 	"time"
@@ -57,15 +58,26 @@ const (
 	schemaTimeout = 5 * time.Second
 	// schemaRetryInterval is how often a failed schema creation is retried.
 	schemaRetryInterval = 10 * time.Second
-	// destinationRetries bounds how many ticks a batch is held while the local
-	// write topic has no subscriber. At the one-second interval that covers ten
-	// seconds of startup; past it the batch is dropped and counted.
+	// destinationRetries bounds how many ticks a batch is held while its
+	// destination cannot take it: the local write topic has no subscriber, or a
+	// liaison has located no liaison yet. Past it the batch is dropped and
+	// counted.
 	destinationRetries = 10
 )
 
 // errSchemaUnavailable is the delivery failure while the schema has never
 // been established.
 var errSchemaUnavailable = errors.New("the native log schema is not established yet")
+
+// errDestinationUnready is the delivery failure of a producer that has no
+// connection to its destination: nothing was sent, so the batch is retried.
+var errDestinationUnready = errors.New("no connection to the native log destination")
+
+// NodeLocator locates the node that takes a shard of a group, as a liaison's
+// node registry does.
+type NodeLocator interface {
+	Locate(group, name string, shardID, replicaID uint32) (string, error)
+}
 
 // timing holds the internal intervals. They are constants in production; a
 // field lets a test shorten them.
@@ -94,16 +106,26 @@ type Service struct {
 	omr      observability.MetricsRegistry
 	metrics  *metrics
 	pipeline queue.Client
-	sink     *Sink
-	closer   *run.Closer
+	// nodes is set on a liaison, which has no storage engine: each batch goes
+	// to the write queue of the liaison it locates, as a stream write does.
+	// Elsewhere it is nil and batches are written through the local pipeline.
+	nodes  NodeLocator
+	sink   *Sink
+	closer *run.Closer
 	// stopMaintain cancels the loop's context, so a schema pass in progress
 	// does not hold GracefulStop for its whole timeout.
 	stopMaintain context.CancelFunc
 	l            *logger.Logger
 	pm           protector.Memory
 	cfg          *logger.NativeLogging
-	node         NodeInfo
-	timing       timing
+	// gauges publishes the counters of a producer, which has no metrics
+	// registry of its own; a node publishes them through omr.
+	gauges Gauges
+	// dest is set on a producer: a process with no storage engine and no
+	// metadata client, which writes its logs to one node (producer.go).
+	dest   *destination
+	node   NodeInfo
+	timing timing
 	// schema is schemaReady, schemaUnready or schemaIncompatible. It is
 	// written by the schema pass and read at every delivery. An incompatible
 	// stream keeps the retry in place -- an operator can drop and recreate it
@@ -131,6 +153,18 @@ func NewService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
 	}
 }
 
+// NewLiaisonService returns the service of a liaison. A liaison has no storage
+// engine, so it writes each batch as a stream write does: over client, its
+// tier-1 client, to the liaison nodes locates for shard 0 of the log group,
+// whose write queue holds the batch until it reaches a data node.
+func NewLiaisonService(sink *Sink, cfg *logger.NativeLogging, md metadata.Repo,
+	client queue.Client, nodes NodeLocator, pm protector.Memory, omr observability.MetricsRegistry,
+) *Service {
+	s := NewService(sink, cfg, md, client, pm, omr)
+	s.nodes = nodes
+	return s
+}
+
 // Name implements run.Unit.
 func (s *Service) Name() string { return logger.NativeWriteModule }
 
@@ -156,22 +190,37 @@ func (s *Service) SetNodeType(t string) { s.node.NodeType = t }
 
 // Serve creates the schema, connects the sink to the memory protector and
 // starts delivery. It returns immediately: delivery runs until GracefulStop.
+//
+// A node with only --logging-native-receiver-enabled keeps the schema for the
+// producers that write to it and collects nothing of its own: it starts no
+// delivery and reports no counters.
 func (s *Service) Serve() run.StopNotify {
-	if !s.cfg.Enabled {
+	collect := s.cfg.Enabled
+	if !collect && !s.ownsSchema() {
 		s.closer.Done()
 		return s.closer.CloseNotify()
 	}
-	s.sink.SetNode(s.node)
-	s.bindPressure()
-	s.metrics = newMetrics(s.omr)
+	if collect {
+		s.sink.SetNode(s.node)
+		s.bindPressure()
+		s.metrics = s.newMetrics()
+	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
-	s.applySchema(createSchema(ctx, s.metadata, s.cfg.TTLDays))
-	cancel()
+	if s.metadata != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), schemaTimeout)
+		s.applySchema(createSchema(ctx, s.metadata, s.cfg.TTLDays))
+		cancel()
+	}
 
-	s.sink.pub.Start(s.delivery())
+	if collect {
+		if s.dest != nil {
+			s.dest.start()
+		}
+		s.sink.pub.Start(s.delivery())
+	}
 	// run.Go rather than a raw goroutine, so a panic in the loop is recovered
 	// instead of taking the process down.
+	var ctx context.Context
 	ctx, s.stopMaintain = context.WithCancel(context.Background())
 	run.Go(ctx, s.Name(), s.l, func(runCtx context.Context) {
 		s.maintain(runCtx)
@@ -179,12 +228,40 @@ func (s *Service) Serve() run.StopNotify {
 	return s.closer.CloseNotify()
 }
 
+// ownsSchema reports whether this node creates and checks the schema: a node
+// that collects its own logs, or one the other producers write to. A producer
+// has no metadata client, so it never does.
+func (s *Service) ownsSchema() bool {
+	return s.metadata != nil && (s.cfg.Enabled || s.cfg.ReceiverEnabled)
+}
+
+// newMetrics returns the instruments the sink's counters are published
+// through: a node's metrics registry, or the gauges a producer was given.
+func (s *Service) newMetrics() *metrics {
+	if s.omr != nil {
+		return newMetrics(s.omr.With(Scope).NewGauge)
+	}
+	return newMetrics(s.gauges)
+}
+
 // delivery is what the publisher delivers each batch through.
 func (s *Service) delivery() queue.Delivery {
-	return &delivery{
-		svc:   s,
-		local: queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout),
+	if s.dest != nil {
+		return &delivery{svc: s, dest: s.dest.delivery, public: s.dest.public}
 	}
+	dest := queue.NewLocalDelivery(s.pipeline, data.TopicStreamWrite, s.timing.writeTimeout)
+	if s.nodes != nil {
+		dest = queue.NewNodeDelivery(s.pipeline, data.TopicStreamWrite, s.locate, s.timing.writeTimeout)
+	}
+	return &delivery{svc: s, dest: dest}
+}
+
+// locate returns the liaison that takes shard 0 of the log group, the shard
+// every event is written to. It runs for every attempt, so a batch held while
+// no liaison was located goes to the one located by then.
+func (s *Service) locate() (string, error) {
+	// The queue counts an error or an empty node as a failed locate.
+	return s.nodes.Locate(GroupName, StreamName, shardID, 0)
 }
 
 // bindPressure makes the sink drop while the memory protector reports high
@@ -238,6 +315,9 @@ func (s *Service) report() {
 // batch would be published into nothing and counted as written. createSchema is
 // idempotent, so the healthy path costs two AlreadyExists replies and a read.
 func (s *Service) retrySchema(ctx context.Context) {
+	if !s.ownsSchema() {
+		return
+	}
 	retryCtx, cancel := context.WithTimeout(ctx, schemaTimeout)
 	defer cancel()
 	s.applySchema(createSchema(retryCtx, s.metadata, s.cfg.TTLDays))
@@ -290,13 +370,17 @@ func (s *Service) warnOnce(done *bool, msg string) {
 	s.l.Warn().Msg(msg)
 }
 
-// delivery prepares each batch for the local write path: it checks the
-// schema, stamps the identity known by now, and marks the context so the
-// write path's own logging about these events is never collected.
+// delivery prepares each batch for its destination: it checks the schema,
+// stamps the identity known by now, and marks the context so the write path's
+// own logging about these events is never collected.
 type delivery struct {
 	svc   *Service
-	local queue.Delivery
+	dest  queue.Delivery
 	batch []any
+	// public is set on a producer that writes through a liaison's public
+	// write API: the liaison builds the internal request, so the batch
+	// carries the requests themselves.
+	public bool
 }
 
 func (d *delivery) Deliver(ctx context.Context, batch []any) error {
@@ -315,6 +399,10 @@ func (d *delivery) Deliver(ctx context.Context, batch []any) error {
 		r.encodeFailed.Store(false)
 		// The identity is known now even when it was not at admission.
 		d.svc.sink.stamp(r)
+		if d.public {
+			d.batch = append(d.batch, r)
+			continue
+		}
 		iwr, err := internalRequest(r.WriteRequest)
 		if err != nil {
 			// Counted by the request's outcome, which reads this flag.
@@ -328,14 +416,15 @@ func (d *delivery) Deliver(ctx context.Context, batch []any) error {
 	}
 	// Marked here and not on the publisher's context: the publisher is built
 	// before logging is initialized, and the mark is a logger.
-	err := d.local.Deliver(logger.WithNativeWrite(ctx), d.batch)
+	err := d.dest.Deliver(logger.WithNativeWrite(ctx), d.batch)
 	clear(d.batch)
 	return err
 }
 
 // internalRequest adds what the internal write path needs. The shard is always
-// shard 0, as for native metrics: the request goes to this node's own local
-// pipeline, so the logs stay on the node that produced them.
+// shard 0, as for native metrics: a standalone or data node writes to its own
+// local pipeline, so its logs stay on the node that produced them, and a
+// liaison writes to the write queue of the liaison that takes shard 0.
 func internalRequest(req *streamv1.WriteRequest) (*streamv1.InternalWriteRequest, error) {
 	entity := entityOf(req)
 	if _, err := entity.ToEntity(); err != nil {
@@ -382,10 +471,20 @@ func (s *Service) GracefulStop() {
 		s.stopMaintain()
 	}
 	s.closer.CloseThenWait()
+	if s.dest != nil {
+		s.dest.stop()
+		// A producer with no metrics endpoint has no other record of a loss.
+		if s.cfg.Enabled && s.metrics == nil {
+			reportDropped(s.sink)
+		}
+	}
 }
 
 // reportf writes the sink's own failures straight to stderr. Routing them
 // through the logging path would feed the buffer that just failed.
 func reportf(format string, args ...any) {
-	_, _ = fmt.Fprintf(os.Stderr, format+"\n", args...)
+	_, _ = fmt.Fprintf(reportTo, format+"\n", args...)
 }
+
+// reportTo is where reportf writes: stderr, a variable so a test can read it.
+var reportTo io.Writer = os.Stderr
