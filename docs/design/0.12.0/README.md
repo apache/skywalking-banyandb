@@ -17,7 +17,6 @@
 - [Measure QL: remaining gaps and order of work](measure-ql-gaps/README.md)
 - [Aggregating measures and materialized views](measure-aggregation-mv/README.md)
 - [Streaming API: progressive queries and acknowledged write streams](streaming-api/README.md)
-- [Document Index: a first-class document model](document-index/README.md)
 
 The [native inverted-index replacement](../archive/0.12.0/native-inverted-index/README.md)
 design shipped and has moved to the archive ahead of the rest of this milestone.
