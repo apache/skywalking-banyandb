@@ -266,17 +266,8 @@ func TestMergeNumericColumnsThroughFileParts(t *testing.T) {
 			}()
 			for source := 0; source < 3; source++ {
 				partID := uint64(source + 1)
-				writer := generateBlockWriter()
-				writer.mustInitForFilePart(fileSystem, partPath(root, partID), true)
 				data := mergeReuseNumericBlock(rows, source)
-				writer.mustWriteBlock(1, &data)
-				metadata := &partMetadata{}
-				types := make(tagType)
-				writer.Flush(metadata, &types)
-				releaseBlockWriter(writer)
-				types.mustWriteTagType(fileSystem, partPath(root, partID))
-				metadata.mustWriteMetadata(fileSystem, partPath(root, partID))
-				inputs = append(inputs, newPartWrapper(nil, mustOpenFilePart(partID, root, fileSystem)))
+				inputs = append(inputs, writeMergeTestPart(fileSystem, root, partID, mergeTestBlock{seriesID: 1, data: data}))
 			}
 			table := &tsTable{pm: protector.Nop{}}
 			merged, err := table.mergeParts(fileSystem, make(chan struct{}), inputs, 4, root)
@@ -287,15 +278,8 @@ func TestMergeNumericColumnsThroughFileParts(t *testing.T) {
 			require.Equal(t, uint64(2*rows), output.partMetadata.TotalCount)
 			require.Equal(t, uint64((2*rows+maxBlockLength-1)/maxBlockLength), output.partMetadata.BlocksCount,
 				"small inputs must coalesce and large output must split")
-			iterator := generatePartMergeIter()
-			defer releasePartMergeIter(iterator)
-			iterator.mustInitFromPart(output)
-			decoder := generateColumnValuesDecoder()
-			defer releaseColumnValuesDecoder(decoder)
 			count := 0
-			for iterator.nextBlockMetadata() {
-				iterator.mustLoadBlockData(decoder, &iterator.block)
-				b := &iterator.block
+			walkMergeTestPart(t, output, func(b *blockPointer) {
 				require.LessOrEqual(t, len(b.timestamps), maxBlockLength)
 				require.Equal(t, uint64(len(b.timestamps)), b.bm.count)
 				require.Equal(t, b.uncompressedSizeBytes(), b.bm.uncompressedSizeBytes)
@@ -338,9 +322,7 @@ func TestMergeNumericColumnsThroughFileParts(t *testing.T) {
 						}
 					}
 				}
-				decoder.Reset()
-			}
-			require.NoError(t, iterator.error())
+			})
 			require.Equal(t, 2*rows, count)
 		})
 	}

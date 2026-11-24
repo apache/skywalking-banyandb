@@ -156,10 +156,11 @@ the existing compression, still accounts for 18.79 s versus 19.95 s originally.
 These observations support the intended mechanism: reuse storage and remove
 per-cell conversions while continuing to repack the selected numeric rows.
 
-### Reproduction and evidence
+### Evidence and repeatable checks
 
-Local evidence is under `/mnt/d/bydb-measure-reuse/`. The
-`harness-and-evidence.tar.gz` archive and its `.sha256` sidecar preserve the frozen
+The captured inputs and replay harness are not distributed with this repository;
+the captured-data table above is a historical measurement, not a runnable fixture.
+The retained `harness-and-evidence.tar.gz` archive and its `.sha256` sidecar preserve the frozen
 baseline/revised source, three binaries and their provenance, build overlays,
 runner, input hashes, all 14 output validation records, raw timing results,
 CPU/allocation profiles, profile text reports, and verification logs. Captured
@@ -168,18 +169,29 @@ input files and large merged output files remain outside the archive.
 Archive SHA-256:
 `eabfea3c98148f19b39ecfd03c0599af28cb3905c3971291b64ca80b7a5f669e`.
 
-The original input manifest is
-`/mnt/d/bydb-showcase-merge/measure/manifest.json`. On this workspace, the archived
-runner's working copy is `/tmp/bydb-measure-reuse/run.py`; another four rounds can
-use `python3 /tmp/bydb-measure-reuse/run.py --start 5 --rounds 4` to avoid
-overwriting the existing samples. Run it without concurrent builds, tests, or
-profiling. `summarize.py` calculates medians and within-round differences from
-the validation records. The archive records the fixed 12-sample comparison above.
+The checksum identifies the retained evidence; it is not a download location.
+Repeating that exact experiment requires the original capture, the frozen
+variants, and the replay harness. The benchmark design above specifies the
+execution order, input preparation, measured region, and validation method for
+an equivalent experiment on another capture.
+
+The repository provides synthetic file-part benchmarks and correctness fixtures
+that do not require that capture. After `make generate`, run:
+
+```sh
+GOMAXPROCS=4 go test ./banyand/measure -run '^TestMergeNumericColumnsThroughFileParts$' -count=1
+GOMAXPROCS=4 GOMEMLIMIT=3GiB go test ./banyand/measure \
+  -run '^$' -bench '^BenchmarkMergeParts$' -benchtime=3x -count=1
+```
+
+The synthetic benchmark checks merged values and unchanged inputs outside its
+timed region. Its workload differs from the capture, so its timings should not
+be compared directly with the captured-data table.
 
 The inner timing harness reports `input_cache=as-is` and `digest_rows=0` because
 the outer runner performs the full input checksum pre-read and complete output
 file comparison. `*-invocation.json` records that preparation and host activity;
 each run's `validation.json` records the file hashes and equality checks. All
 eight output files match both references in all 14 runs, and input hashes remain
-unchanged. Source provenance confirms that the benchmarked production code
-matches the final implementation.
+unchanged. Source provenance records the production code used for those
+measurements, before subsequent review refactoring.

@@ -289,7 +289,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 
 	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
 	for i := range cfm.columnMetadata {
-		cc[i].mustSeqReadValuesTyped(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()), typedNumeric)
+		cc[i].mustSeqReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()), typedNumeric)
 	}
 }
 
@@ -364,18 +364,14 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 	}
 }
 
-func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
-	b.mustSeqReadFromTyped(decoder, seqReaders, bm, false)
-}
-
-func (b *block) mustSeqReadFromTyped(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata, typedNumeric bool) {
+func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata, typedNumeric bool) {
 	b.reset()
 
 	b.timestamps, b.versions = mustSeqReadTimestampsFrom(b.timestamps, b.versions, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
 
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
-		cc[i].mustSeqReadValuesTyped(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count, typedNumeric)
+		cc[i].mustSeqReadValues(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count, typedNumeric)
 	}
 	_ = b.resizeTagFamilies(len(bm.tagFamilies))
 	keys := make([]string, 0, len(bm.tagFamilies))

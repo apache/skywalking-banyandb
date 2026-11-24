@@ -76,15 +76,8 @@ func TestMergeFullBlocksWithEqualBoundary(t *testing.T) {
 			merged, err := table.mergeParts(fileSystem, make(chan struct{}), inputs, 3, root)
 			require.NoError(t, err)
 			defer merged.decRef()
-			iterator := generatePartMergeIter()
-			defer releasePartMergeIter(iterator)
-			iterator.mustInitFromPart(merged.p)
-			decoder := generateColumnValuesDecoder()
-			defer releaseColumnValuesDecoder(decoder)
 			count := 0
-			for iterator.nextBlockMetadata() {
-				iterator.mustLoadBlockData(decoder, &iterator.block)
-				b := &iterator.block
+			walkMergeTestPart(t, merged.p, func(b *blockPointer) {
 				require.LessOrEqual(t, len(b.timestamps), maxBlockLength)
 				require.Len(t, b.field.columns, 1)
 				require.Equal(t, "number", b.field.columns[0].name)
@@ -101,8 +94,7 @@ func TestMergeFullBlocksWithEqualBoundary(t *testing.T) {
 					require.Equal(t, convert.Int64ToBytes(timestamp*wantVersion), b.field.columns[0].values[row],
 						"field value at timestamp %d", timestamp)
 				}
-			}
-			require.NoError(t, iterator.error())
+			})
 			require.Equal(t, 2*maxBlockLength-1, count)
 			require.Equal(t, uint64(count), merged.p.partMetadata.TotalCount)
 		})

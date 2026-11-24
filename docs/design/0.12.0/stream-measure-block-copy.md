@@ -249,18 +249,19 @@ Alternate base and changed binaries over five rounds. Isolated follow-ups select
 `BenchmarkMergeParts/small_disjoint` or `BenchmarkMergeParts/full_overlap` and
 use `-test.benchtime=5x`.
 
-The local evidence bundle is `/tmp/bydb-block-copy-benchmark`: `reproduce.sh`
-runs the frozen binaries; `comparison.json` and logs preserve raw metrics and
-hash checks. `provenance.json` records binary/source hashes and machine details.
+The retained historical evidence bundle contains frozen binaries, raw metrics,
+hash checks, and binary/source provenance. It is not distributed with the
+repository; the commands above build the available synthetic fixtures instead.
 The frozen source-patch SHA256 is
 `6777ed440246f84f104535f8173b25cce22984d43f1e3093ccafdf5c130b02a7`.
 Measure's unchanged source and binary were measured before the final stream-only
 flush-transition adjustment; their original provenance is retained in `v1/`.
-The base checkout is `/tmp/bydb-block-copy-baseline-e15b`. Its ignored generated
-protobuf/mock Go files were copied from the working tree and archived in
-`generated-go.tar.gz`, with filenames in `generated-files.txt`. To reconstruct
-that checkout, create a detached worktree at the base commit, extract the archive
-there, copy the two identical benchmark files, and run the compile commands.
+The original baseline used archived generated protobuf/mock Go files. For a new
+comparison, create separate worktrees at the selected commits, generate their
+prerequisites with `make generate`, and use the same benchmark fixtures and
+shared test helpers in both trees before compiling. This repeats the method;
+reproducing the historical block-copy results also requires the reverted
+experimental implementation.
 
 ### Regression-test evidence
 

@@ -20,13 +20,9 @@ package measure
 import (
 	"bytes"
 	"crypto/sha256"
-	"encoding/binary"
 	"fmt"
 	"hash"
-	"io"
-	"io/fs"
 	"os"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"testing"
@@ -36,6 +32,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	banyanfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
+	"github.com/apache/skywalking-banyandb/pkg/test/helpers"
 )
 
 // BenchmarkMergeParts measures file-backed compaction, including output flush and sync.
@@ -53,11 +50,13 @@ func BenchmarkMergeParts(b *testing.B) {
 					input.decRef()
 				}
 			}()
-			inputHash, inputBytes := mergeBenchmarkInputDigest(b, inputs)
+			var inputPaths []string
 			var inputBlocks uint64
 			for _, input := range inputs {
+				inputPaths = append(inputPaths, input.p.path)
 				inputBlocks += input.p.partMetadata.BlocksCount
 			}
+			inputHash, inputBytes := helpers.DirectoriesDigest(b, inputPaths)
 			table := &tsTable{pm: protector.Nop{}}
 			closeCh := make(chan struct{})
 			var outputBytes int64
@@ -85,12 +84,12 @@ func BenchmarkMergeParts(b *testing.B) {
 					b.Fatalf("small blocks were not coalesced: got %d blocks, want %d", outputBlocks, mergeBenchmarkSeries)
 				}
 				output.close()
-				_, outputBytes = mergeBenchmarkDirectoryDigest(b, partPath(root, outputID))
+				_, outputBytes = helpers.DirectoryDigest(b, partPath(root, outputID))
 				if removeErr := os.RemoveAll(partPath(root, outputID)); removeErr != nil {
 					b.Fatal(removeErr)
 				}
 			}
-			afterHash, afterBytes := mergeBenchmarkInputDigest(b, inputs)
+			afterHash, afterBytes := helpers.DirectoriesDigest(b, inputPaths)
 			if inputHash != afterHash || inputBytes != afterBytes {
 				b.Fatal("merge modified its input files")
 			}
@@ -120,8 +119,7 @@ func mergeBenchmarkFixture(b *testing.B, fileSystem banyanfs.FileSystem, root, s
 	var expected []mergeBenchmarkRow
 	for partIndex := 0; partIndex < mergeBenchmarkParts; partIndex++ {
 		partID := uint64(partIndex + 1)
-		writer := generateBlockWriter()
-		writer.mustInitForFilePart(fileSystem, partPath(root, partID), true)
+		var blocks []mergeTestBlock
 		for series := common.SeriesID(1); series <= mergeBenchmarkSeries; series++ {
 			rows, start, step := fullRows, int64(partIndex*fullRows+1), int64(1)
 			switch scenario {
@@ -138,18 +136,12 @@ func mergeBenchmarkFixture(b *testing.B, fileSystem banyanfs.FileSystem, root, s
 				}
 			}
 			data := mergeBenchmarkBlock(rows, start, step)
-			writer.mustWriteBlock(series, &data)
+			blocks = append(blocks, mergeTestBlock{seriesID: series, data: data})
 			for _, timestamp := range data.timestamps {
 				expected = append(expected, mergeBenchmarkRow{series, timestamp})
 			}
 		}
-		metadata := &partMetadata{}
-		types := make(tagType)
-		writer.Flush(metadata, &types)
-		releaseBlockWriter(writer)
-		types.mustWriteTagType(fileSystem, partPath(root, partID))
-		metadata.mustWriteMetadata(fileSystem, partPath(root, partID))
-		input := newPartWrapper(nil, mustOpenFilePart(partID, root, fileSystem))
+		input := writeMergeTestPart(fileSystem, root, partID, blocks...)
 		inputs = append(inputs, input)
 	}
 	sort.Slice(expected, func(i, j int) bool {
@@ -171,75 +163,8 @@ func mergeBenchmarkArray(timestamp int64) []byte {
 	return marshalVarArray(result, []byte(fmt.Sprintf("%016x", timestamp)))
 }
 
-func mergeBenchmarkInputDigest(b *testing.B, inputs []*partWrapper) ([sha256.Size]byte, int64) {
-	b.Helper()
-	digest := sha256.New()
-	var size int64
-	for _, input := range inputs {
-		partDigest, partBytes := mergeBenchmarkDirectoryDigest(b, input.p.path)
-		_, _ = digest.Write(partDigest[:])
-		size += partBytes
-	}
-	var result [sha256.Size]byte
-	copy(result[:], digest.Sum(nil))
-	return result, size
-}
-
-func mergeBenchmarkDirectoryDigest(b *testing.B, root string) ([sha256.Size]byte, int64) {
-	b.Helper()
-	digest := sha256.New()
-	var size int64
-	walkErr := filepath.WalkDir(root, func(path string, entry fs.DirEntry, pathErr error) error {
-		if pathErr != nil {
-			return pathErr
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		relative, relativeErr := filepath.Rel(root, path)
-		if relativeErr != nil {
-			return relativeErr
-		}
-		mergeBenchmarkHashValue(digest, []byte(relative))
-		file, openErr := os.Open(path)
-		if openErr != nil {
-			return openErr
-		}
-		copied, copyErr := io.Copy(digest, file)
-		closeErr := file.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		size += copied
-		return nil
-	})
-	if walkErr != nil {
-		b.Fatal(walkErr)
-	}
-	var result [sha256.Size]byte
-	copy(result[:], digest.Sum(nil))
-	return result, size
-}
-
-func mergeBenchmarkHashValue(digest hash.Hash, value []byte) {
-	var length [8]byte
-	binary.LittleEndian.PutUint64(length[:], uint64(len(value)))
-	_, _ = digest.Write(length[:])
-	_, _ = digest.Write(value)
-}
-
 func mergeBenchmarkVerify(b *testing.B, output *part, expected []mergeBenchmarkRow) [sha256.Size]byte {
 	b.Helper()
-	iterator := &partMergeIter{}
-	iterator.mustInitFromPart(output)
-	defer iterator.reset()
-	reader := &blockReader{}
-	reader.init([]*partMergeIter{iterator})
-	decoder := generateColumnValuesDecoder()
-	defer releaseColumnValuesDecoder(decoder)
 	type checkedRow struct {
 		key    mergeBenchmarkRow
 		digest [sha256.Size]byte
@@ -248,9 +173,7 @@ func mergeBenchmarkVerify(b *testing.B, output *part, expected []mergeBenchmarkR
 	var blocks, uncompressed uint64
 	var previousSeries common.SeriesID
 	var previousMin int64
-	for reader.nextBlockMetadata() {
-		reader.loadBlockData(decoder)
-		data := reader.block
+	walkMergeTestPart(b, output, func(data *blockPointer) {
 		blocks++
 		uncompressed += data.bm.uncompressedSizeBytes
 		if data.bm.count != uint64(len(data.timestamps)) || data.bm.timestamps.min != data.timestamps[0] ||
@@ -266,18 +189,14 @@ func mergeBenchmarkVerify(b *testing.B, output *part, expected []mergeBenchmarkR
 				b.Fatal("rows within a block are not ordered")
 			}
 			rowDigest := sha256.New()
-			mergeBenchmarkHashValue(rowDigest, convert.Int64ToBytes(int64(data.bm.seriesID)))
-			mergeBenchmarkHashValue(rowDigest, convert.Int64ToBytes(timestamp))
+			helpers.HashValue(rowDigest, convert.Int64ToBytes(int64(data.bm.seriesID)))
+			helpers.HashValue(rowDigest, convert.Int64ToBytes(timestamp))
 			mergeBenchmarkVerifyValues(b, rowDigest, &data.block, row, timestamp)
 			item := checkedRow{key: mergeBenchmarkRow{data.bm.seriesID, timestamp}}
 			copy(item.digest[:], rowDigest.Sum(nil))
 			actual = append(actual, item)
 		}
-		decoder.Reset()
-	}
-	if readErr := reader.error(); readErr != nil {
-		b.Fatal(readErr)
-	}
+	})
 	if len(actual) != len(expected) || output.partMetadata.TotalCount != uint64(len(actual)) || output.partMetadata.BlocksCount != blocks {
 		b.Fatalf("wrong output counts: read %d/%d rows and %d/%d blocks", len(actual), len(expected), blocks, output.partMetadata.BlocksCount)
 	}
@@ -340,7 +259,7 @@ func mergeBenchmarkVerifyValues(b *testing.B, digest hash.Hash, data *block, row
 	if data.versions[row] != timestamp+31 || len(data.tagFamilies) != 1 || len(data.tagFamilies[0].columns) != 2 || len(data.field.columns) != 3 {
 		b.Fatal("version or column schema changed")
 	}
-	mergeBenchmarkHashValue(digest, convert.Int64ToBytes(data.versions[row]))
+	helpers.HashValue(digest, convert.Int64ToBytes(data.versions[row]))
 	for _, family := range []columnFamily{data.tagFamilies[0], data.field} {
 		for _, column := range family.columns {
 			var expected []byte
@@ -365,8 +284,8 @@ func mergeBenchmarkVerifyValues(b *testing.B, digest hash.Hash, data *block, row
 			if column.valueType != expectedType || !bytes.Equal(column.values[row], expected) {
 				b.Fatalf("wrong %s at timestamp %d", column.name, timestamp)
 			}
-			mergeBenchmarkHashValue(digest, []byte(column.name))
-			mergeBenchmarkHashValue(digest, column.values[row])
+			helpers.HashValue(digest, []byte(column.name))
+			helpers.HashValue(digest, column.values[row])
 		}
 	}
 }

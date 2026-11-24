@@ -181,11 +181,11 @@ func TestMergeColumnSequentialReadForms(t *testing.T) {
 				var decoder encoding.BytesBlockDecoder
 				var old, typed column
 				reader.init(&stored)
-				old.mustSeqReadValues(&decoder, &reader, metadata, uint64(source.rowCount()))
+				old.mustSeqReadValues(&decoder, &reader, metadata, uint64(source.rowCount()), false)
 				require.Equal(t, numericFormBytes, old.form)
 				require.Equal(t, source.values, old.values)
 				reader.init(&stored)
-				typed.mustSeqReadValuesTyped(&decoder, &reader, metadata, uint64(source.rowCount()), true)
+				typed.mustSeqReadValues(&decoder, &reader, metadata, uint64(source.rowCount()), true)
 				if nullable {
 					require.Equal(t, numericFormBytes, typed.form)
 				} else {

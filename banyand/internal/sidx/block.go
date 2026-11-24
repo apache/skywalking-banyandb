@@ -349,28 +349,7 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 
 	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
 	if !isDictionaryEncoded || td.valueType == pbv1.ValueTypeInt64 {
-		var arrays map[string]struct{}
-		for i := range td.values {
-			if array := td.values[i].encodedArray; array != nil {
-				if arrays == nil {
-					arrays = make(map[string]struct{})
-				}
-				key := convert.BytesToString(array.value)
-				if _, exists := arrays[key]; exists {
-					continue
-				}
-				arrays[key] = struct{}{}
-				for _, v := range array.values {
-					addUnique(v)
-				}
-			} else if td.values[i].valueArr != nil {
-				for _, v := range td.values[i].valueArr {
-					addUnique(v)
-				}
-			} else {
-				addUnique(td.values[i].value)
-			}
-		}
+		forEachTagElement(td.values, addUnique)
 	}
 
 	if td.valueType == pbv1.ValueTypeInt64 && hasMinMax {

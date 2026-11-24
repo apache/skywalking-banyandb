@@ -18,8 +18,6 @@
 package measure
 
 import (
-	"encoding/binary"
-	"math"
 	"strings"
 
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
@@ -300,19 +298,17 @@ func (c *column) materializeBytes() {
 }
 
 func (c *column) appendNumericBytes(src *column, start, end int) {
-	payload := make([]byte, 8*(end-start))
+	payload := make([]byte, 0, 8*(end-start))
 	oldLen := len(c.values)
 	c.values = append(c.values, make([][]byte, end-start)...)
 	for i := start; i < end; i++ {
-		row := payload[:8:8]
+		offset := len(payload)
 		if src.form == numericFormInt64 {
-			// Flipping the sign bit matches convert.Int64ToBytes, including MinInt64.
-			binary.BigEndian.PutUint64(row, uint64(src.int64s[i])^(1<<63))
+			payload = convert.AppendInt64Bytes(payload, src.int64s[i])
 		} else {
-			binary.BigEndian.PutUint64(row, math.Float64bits(src.float64s[i]))
+			payload = convert.AppendFloat64Bytes(payload, src.float64s[i])
 		}
-		c.values[oldLen+i-start] = row
-		payload = payload[8:]
+		c.values[oldLen+i-start] = payload[offset:len(payload):len(payload)]
 	}
 }
 
@@ -474,11 +470,7 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	c.decodeColumnValues(decoder, reader.Path(), count, bb, typedNumeric)
 }
 
-func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64) {
-	c.mustSeqReadValuesTyped(decoder, reader, cm, count, false)
-}
-
-func (c *column) mustSeqReadValuesTyped(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64, typedNumeric bool) {
+func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64, typedNumeric bool) {
 	c.name = cm.name
 	c.valueType = cm.valueType
 	c.clearNumeric()

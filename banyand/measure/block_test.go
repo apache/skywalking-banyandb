@@ -433,7 +433,7 @@ func Test_marshalAndUnmarshalBlock(t *testing.T) {
 	sr.init(p)
 	defer sr.reset()
 
-	unmarshaled2.mustSeqReadFrom(decoder, &sr, bm)
+	unmarshaled2.mustSeqReadFrom(decoder, &sr, bm, false)
 	if !reflect.DeepEqual(b, unmarshaled2) {
 		t.Errorf("block.mustSeqReadFrom() = %+v, want %+v", unmarshaled, b)
 	}

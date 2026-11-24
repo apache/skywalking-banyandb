@@ -163,36 +163,27 @@ payloads. Later repetitions must match the audited raw row multiset for their
 own revision exactly. This retains a strict check without incorrectly demanding
 identical physical retention of superseded versions.
 
-## Local evidence and reproduction
+## Retained evidence and replay method
 
-Captured files and replay outputs stay under `/mnt/d/bydb-showcase-merge`, with
-access restricted by its parent directory. Raw observability data is not added
-to the repository. `capture.json` and each input's `source.json` record exact
-snapshot paths and part lists; `source-before.sha256` and `source-after.sha256`
-record the remote checksums.
+The captured observability data and replay harness are not distributed with this
+repository. Repeating these exact measurements requires both the capture and the
+frozen implementations. For runnable repository fixtures, use the
+[synthetic merge benchmarks](stream-measure-block-copy.md#fixtures-and-reproduction).
 
-The working harness bundle is `/tmp/bydb-showcase-merge`. A durable copy is
-`/mnt/d/bydb-showcase-merge/harness-and-evidence.tar.gz`, with a SHA-256 sidecar.
-It includes the frozen binaries, audit tools, revised package sources, and
-generated-code prerequisites; captured inputs and merged outputs remain outside
-that archive in the data directory. The package folders
-contain the Go test overlay source, overlay mappings, frozen baseline/revised
-binaries, and build logs. `production-provenance.json` records the source hashes
-and environment. The baseline worktree is `/tmp/bydb-block-copy-baseline-e15b`;
-its generated protobuf/mock prerequisites are archived in
-`/tmp/bydb-block-copy-benchmark/generated-go.tar.gz`.
+The retained `harness-and-evidence.tar.gz` archive has SHA-256
+`6acd4194beb2d615c6b7dbf0b74d8fc0025c4fe9d2530e248dcdcaa8bc229c32`.
+This identifies the evidence, not a public download. It preserves the frozen
+binaries, audit tools, package sources, build overlays, and generated-code
+prerequisites; captured inputs and merged outputs are stored separately.
+`capture.json` and each input's `source.json` record snapshot paths and part lists.
+Before/after checksum manifests record the source-file hashes, while
+`production-provenance.json` records source hashes and the environment.
 
-The driver pre-reads inputs, runs one binary at a time, saves its invocation and
-binary hash, and validates the output before starting the next run:
-
-```sh
-python3 /tmp/bydb-showcase-merge/replay.py stream --pairs 6
-python3 /tmp/bydb-showcase-merge/replay.py measure --pairs 3 \
-  --expected /tmp/bydb-showcase-merge/audited-reference.json
-python3 /tmp/bydb-showcase-merge/replay.py sidx --pairs 3
-python3 /tmp/bydb-showcase-merge/replay.py stream --diagnostic
-python3 /tmp/bydb-showcase-merge/replay.py measure --diagnostic
-```
+The replay driver pre-reads inputs, runs one binary at a time, saves its
+invocation and binary hash, and validates the output before starting the next
+run. The initial comparison uses six stream pairs, three measure pairs against
+the audited reference, and three secondary-index pairs. Separate diagnostic runs
+count shortcut eligibility without contributing to the timing samples.
 
 Run directories must be new; use a fresh capture/output root for a repeated
 experiment. Each output retains `report.json`, `validation.json`, the persisted
@@ -464,8 +455,8 @@ For example, a column can retain capacity for 8,192 rows, then allocate a new
 100-row buffer after reset instead of using that space; later appends grow and
 copy it again. These lists hold byte-slice headers, not copies of every payload.
 Not all profiled append allocation is avoidable: new columns, schema padding,
-and genuine capacity growth still need storage. A buffer-reuse fix has not yet
-been implemented or benchmarked here.
+and genuine capacity growth still need storage. This diagnosis predates the
+[implemented and benchmarked measure buffer-reuse change](measure-merge-buffer-reuse.md).
 
 In revised stream, ordinary block writing accounts for 55.0% of CPU samples and
 loading block data for 22.9%. Zstd encoding is prominent. `fastTagAppend` and
@@ -492,23 +483,23 @@ large eligibility-check overhead was observed on these captures.
 3. Keep small-block coalescing. Relaxing it does not address the dominant stream
    limitation and would violate the intended output-size behavior.
 
-### Follow-up artifacts and reproduction
+### Follow-up evidence and replay method
 
-Temporary harness source, overlays, frozen binaries, profile summaries, and
-commands are in `/tmp/bydb-showcase-diagnosis`. The durable harness archive is
-`/mnt/d/bydb-showcase-diagnosis/harness-and-evidence.tar.gz`, with a SHA-256
-sidecar. The earlier capture/harness archive supplies capture references
-and production source provenance; raw source parts remain under the original
-capture directory and are not included in either harness archive.
+The retained follow-up `harness-and-evidence.tar.gz` archive has SHA-256
+`346a3e92aa685b9a2cb965bac43dfe29ad2a5ea99ada87f510b561785d3df4c7`.
+It contains harness source, overlays, frozen binaries, and profile summaries.
+Like the original archive, it is not a distributed repository fixture and does
+not include the captured input parts. The earlier capture archive supplies the
+capture references and production source provenance.
 
-Quiet outputs, invocations, all 48 timing samples, and four separate profiled
-runs are under `/mnt/d/bydb-showcase-diagnosis/quiet`. Its `summary.json` retains
+The follow-up evidence records all 48 timing samples and four separate profiled
+runs. Its `summary.json` retains
 medians, ranges, paired differences, and exploratory bootstrap intervals;
 `samples.json` retains every unprofiled observation. Each run retains complete
 persisted-file hashes. `postflight.json` records 52 successful output-reference
 comparisons and unchanged production sources/baseline tracked tree.
 
-Eligibility evidence is under the original capture's `runs` directory:
+Eligibility evidence includes:
 `stream-eligibility-diagnostic`, `measure-eligibility-1`, and
 `measure-eligibility-counterfactual-1`. The counterfactual diagnostic leaves the
 history guard enabled and confirms the output files remain identical.
@@ -516,22 +507,11 @@ Pending logical-byte metadata can be stale after accumulating blocks; use the
 reported row-work counts, not those raw pending-byte counters, to quantify
 repeated merging.
 
-To rebuild the frozen overlays and replay into a new output directory:
-
-```sh
-python3 /tmp/bydb-showcase-diagnosis/build.py
-BYDB_DIAG_ROOT=/mnt/d/bydb-showcase-diagnosis/new-run \
-  python3 /tmp/bydb-showcase-diagnosis/run.py stream --rounds 8
-BYDB_DIAG_ROOT=/mnt/d/bydb-showcase-diagnosis/new-run \
-  python3 /tmp/bydb-showcase-diagnosis/run.py measure --rounds 4
-BYDB_DIAG_ROOT=/mnt/d/bydb-showcase-diagnosis/new-run \
-  python3 /tmp/bydb-showcase-diagnosis/summarize.py
-```
-
-Keep builds, replays, profiling, and other heavy work sequential. Existing run
-directories are rejected. The archived mappings use this machine's absolute
-paths and require adjustment on another machine. No production implementation
-changes were made during this follow-up analysis.
+The follow-up compares the frozen variants over eight stream rounds and four
+measure rounds, using fresh output directories and the same captured inputs.
+Builds, replays, profiling, and other heavy work run sequentially. All output
+files are compared with their validated reference outside the timed region.
+No production implementation changes were made during this follow-up analysis.
 
 ### Follow-up raw timing samples
 
