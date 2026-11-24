@@ -101,9 +101,12 @@ func ladderSelection(
 //nolint:govet // request fields are grouped by meaning, like the other native requests.
 type TopFieldRequest struct {
 	Candidates TermSetRequest
-	Field      string
-	Limit      int
-	Desc       bool
+	// Filter, when set, narrows the candidates at posting level, before any document is decoded, so a selective filter
+	// ranks only the documents it keeps.
+	Filter *PostingFilter
+	Field  string
+	Limit  int
+	Desc   bool
 }
 
 // topFieldCandidateBuilds counts the per-segment candidate sets a TopFieldPlan has built. Tests read it (through
@@ -151,6 +154,10 @@ func (v *ReadView) NewTopFieldPlan(ctx context.Context, request TopFieldRequest)
 	if patternErr != nil {
 		return nil, patternErr
 	}
+	compiledFilter, filterErr := compilePostingFilter(ctx, request.Filter)
+	if filterErr != nil {
+		return nil, filterErr
+	}
 	timeRange := request.Candidates.Scope.TimeRange
 	for segmentIndex := range v.root.segments {
 		if err := ctx.Err(); err != nil {
@@ -163,6 +170,9 @@ func (v *ReadView) NewTopFieldPlan(ctx context.Context, request TopFieldRequest)
 		topFieldCandidateBuilds.Add(1)
 		candidates, err := exactCandidates(ctx, segment, request.Candidates, patterns)
 		if err != nil {
+			return nil, err
+		}
+		if candidates, err = narrowByFilter(ctx, segment, candidates, compiledFilter); err != nil {
 			return nil, err
 		}
 		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, timeRange)

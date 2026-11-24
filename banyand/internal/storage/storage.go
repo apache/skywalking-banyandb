@@ -117,7 +117,9 @@ type IndexSearchOpts struct {
 	// hold, in time order, reading the stored fields of only those rows, and reports it in SeriesData.LimitApplied. A
 	// series search (Search with series matchers) ordered by an index rule, without IsShadowed, reads Limit as a count of
 	// SERIES: it returns the first Limit series in the rule's order, reports whether more exist in SeriesData.MoreSeries,
-	// and sets LimitApplied. Any other search ignores it and returns every row.
+	// and sets LimitApplied. An index-mode search with IsShadowed and no order returns the first Limit rows that
+	// IsShadowed does not hold, in no particular order, reading the stored fields of only those rows, and sets
+	// LimitApplied. Any other search ignores it and returns every row.
 	Limit int
 }
 
