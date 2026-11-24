@@ -54,6 +54,12 @@ import (
 func loadProgress(path string, opts config.Export) (*exportProgress, *cluster.PlanResult, []*nodeJob, error) {
 	state := &exportProgress{}
 	if err := resume.Read(path, progressKind, progressVersion, state); err != nil {
+		if version := new(resume.VersionError); errors.As(err, &version) {
+			// The session id is there when the file decodes at all.
+			return nil, nil, nil, exitcode.Exit(exitcode.ExitResume, "an earlier export left the progress file %s, but another version of bydbctl wrote it "+
+				"(progress file version %d, this bydbctl reads version %d), so it cannot be resumed; nothing was deleted. "+
+				"Resume it with the bydbctl version that wrote it; or %s", path, version.Found, version.Want, giveUpHint(state, path, opts))
+		}
 		// What the file records cannot be read, the session id included: name only the files.
 		return nil, nil, nil, exitcode.Exit(exitcode.ExitResume, "%w; nothing was deleted. To start over: if it records an export session, "+
 			"release it with: bydbctl data release-session --id <id>; then delete %s and export again", err, giveUpFiles(path, opts.Output))
@@ -100,6 +106,17 @@ func outputOf(opts config.Export, state *exportProgress) string {
 		return opts.Output
 	}
 	return state.OutputDir
+}
+
+// giveUpHint is how to give up the export a progress file records that this bydbctl cannot read:
+// with the session id when the file holds one, else the general form.
+func giveUpHint(state *exportProgress, path string, opts config.Export) string {
+	output := outputOf(opts, state)
+	if state.Session.ID == "" {
+		return "to give up: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete " +
+			giveUpFiles(path, output) + " and export again, or export into a new output directory"
+	}
+	return startOverHint(state.Session.ID, path, output) + ", or export into a new output directory once the session is released"
 }
 
 // checkMembers refuses (exitcode.ExitResume) a resume while a data node that still has units to

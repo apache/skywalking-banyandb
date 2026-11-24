@@ -2006,6 +2006,16 @@ of the side file's temporary files, is renamed over it.
 }
 ```
 
+- `version` is the format version of the progress file and of its plan side file (`progressVersion`).
+  A resume reads a file of the same `kind` and `version` only: a change to the format of either
+  raises the version by one, and the side file is written only after the version of the progress
+  file was accepted, or by the run that starts the progress file, so the version of the progress
+  file covers it. A file of another version, written by an older or a newer bydbctl, exits `6`
+  before anything of it is read or deleted, with no summary and also under `--dry-run` and `-o json|yaml`,
+  and the message names the file, both versions and the two ways on: resume with the bydbctl that
+  wrote it, or give the export up (release its session, delete what is in the output directory and
+  export again, or export into a new output directory). The session id is named when the file
+  records one, else the general form `bydbctl data release-session --id <id>`.
 - `groups` is the manifest's group list as the first run wrote it, so the manifest of a resumed
   export does not depend on the live group list. `sourceTimezones` are the time zones of the
   cluster's data nodes when the export started (node id → zone), which the manifest records even
@@ -2310,7 +2320,7 @@ heartbeat that fails otherwise settles nothing.
 ```
 
 `noBaseline: true` replaces `baselineAt` when the first run could not count the target and needed
-no baseline (below). A version 1 progress file, which kept the baseline in a side file of its own (`<progress file>.baseline`), is refused (exit `6`, naming the version); `--restart` or another `--checkpoint` imports anyway.
+no baseline (below). `version` is the format version of the progress file and of its side files, the plan and the cursor (`progressVersion`). An import resumes a file of the same `kind` and `version` only: a change to the format of any of the three raises the version by one, and a side file is written only after the version of the progress file was accepted, or by the run that starts the progress file, so the version of the progress file covers the side files. A file of another version, written by an older or a newer bydbctl, exits `6` before anything of it is read, with no summary and also under `--dry-run` and `-o json|yaml`; nothing is written or deleted. The message names the file, both versions and the ways on: resume with the bydbctl that wrote it; `--restart` imports from scratch, setting the progress file and its side files aside as `.bak` files, and stores the stream and trace data already imported into the target once more; `--checkpoint <another path>` runs the import separately.
 
 - The file is `<input>/.import-progress.json` unless `--checkpoint` / `import.checkpoint` names
   one; its side files are named `<path without .json>-cursor.json` (CSV cursors)
@@ -2756,9 +2766,14 @@ merges, so only the routes, the growth on the target nodes and at most the rows 
 checked`, and a verify that passes with any such group prints `VERIFY    ok (N group(s) not fully
 checked)` (plus ` in <elapsed>`).
 
-**Assumption.** Nothing else writes to the target groups during the import — the assumption
-`--verify` already states. A foreign write makes `Δ` neither `0` nor `n`, which is undecidable,
-never a wrong decision, except in the unlikely case it equals `n` exactly.
+**Premise: the imported groups of the target are quiet.** From the baseline until the import ends, resumes included, nothing else may write to or delete from the groups being imported on the target: no other import, no application writes, no data removed by hand. `--verify` states the same premise. The reconciler counts rows per key and cannot tell the part's rows from anyone else's, so its decision is right only while the part is the one thing that changed the count of its key. When the premise is broken:
+
+- Most cases are undecidable (`reconcile.go`, `evaluateKey`): `Δ` is neither `0` nor `n`; the key is missing from the snapshot although the baseline or the progress file records rows there (a segment removed by retention or deleted by hand); the node's shard grew elsewhere; or the counts never read the same twice. At a resume the payload follows `resumeDuplicationPolicy`; within a run the import fails. `block` lists these payloads and exits `7` instead of pushing them again.
+- Two cases are not recognised, because the counts then look like a clean outcome, and `block` does not stop them, since a decided part never reaches the policy:
+  - The net change others made at the key equals the part's rows (`Δ == n`): a part that did not land is taken as landed and not pushed, so its rows are missing. A net change of zero (`Δ == 0`), such as others' writes and deletes cancelling, or others removing exactly as many rows as the part added, takes a part that landed as not landed: it is pushed again and stored twice.
+  - Rows lost between the baseline and a later read in a segment that is still there (retention, lifecycle migration). A key that vanished with rows expected is undecidable, but fewer rows in a surviving segment is judged by `Δ` like any other change: normally negative, so undecidable, yet when the loss equals the rows of a landed part, `Δ` is `0` and the part is pushed again.
+
+When the data lies close to the retention boundary of the target stage, avoid leaving the import interrupted for long, and resume with `--resume-duplication-policy block`, so that the parts the counts cannot decide stop the import for a human decision instead of being pushed again under `warn`.
 
 **Also within one run.** A failed target with `completion_sent` on a duplicable payload fails the import at once (`native_push.go` `pushPayload`); for a stream or trace `PART` the push reconciles first: landed → done; anything else → fail at once. A count that did not grow
 is not taken as not landed within the run: a target that fails after the completion lost its
@@ -2805,7 +2820,7 @@ exit `1`).
 
 - `--restart`, or deleting a progress file, loses the record: a rerun of an import then stores
   stream and trace parts, element indexes and CSV stream/trace rows twice.
-- Reconciliation assumes a quiet target; with foreign writes it degrades to the policy.
+- The imported groups of the target must have no other write or delete from the baseline until the import ends, resumes included ([7.4](#74-count-reconciliation)). Reconciliation then degrades to the policy in most cases, but a net change by others equal to the part's rows is taken for a landed part, a net change of zero for a part that did not land, and rows lost in a segment that is still there (retention, lifecycle) can cancel the rows of a landed part; `block` does not stop these. Near the retention boundary of the target stage, avoid long interruptions and resume with `--resume-duplication-policy block`.
 - Element indexes and CSV stream/trace rows in (cursor, `sent`] are at-least-once, decided by the
   policy.
 - The CSV cursor side file is never synced: after a power loss or an OS crash that loses or empties it
@@ -2813,6 +2828,13 @@ exit `1`).
   `checkpointEveryBatches` acknowledgements across the import, plus the batches in flight), are ambiguous
   and follow the duplication policy. A side file of the same `foldSeq` that the crash rolled back to an
   older content cannot be told from a current one: its window is the one it records.
+- A progress file resumes only with a bydbctl that reads its format version (`progressVersion`):
+  the side files follow the version of the progress file, so an upgrade or a downgrade of bydbctl
+  between the runs of one export or import is refused (exit `6`, nothing deleted) with the file, the
+  two versions and the ways on. The run is finished with the bydbctl that began it; or it is started
+  over, an import with `--restart` (the earlier files are kept as `.bak` files, and stream and trace
+  data already imported is stored twice), an export by releasing its session and deleting what is in
+  the output directory, or exporting into another one.
 - An export session lost between runs cannot be resumed (exit `6`).
 - All nodes of the target run one version; do not import during a rolling upgrade (as for the
   native import).

@@ -172,6 +172,37 @@ func TestRead_RefusesUnusableFilesWithExit6(t *testing.T) {
 	}
 }
 
+// A file of the kind a command resumes in another version is told from every other unusable
+// file by its type, which carries both versions; the exit code is the same.
+func TestRead_AnotherVersionOfTheKindIsAVersionError(t *testing.T) {
+	dir := t.TempDir()
+	for name, tc := range map[string]struct {
+		body    string
+		version bool
+	}{
+		"newer version, decodes":  {`{"kind":"k","version":3}`, true},
+		"older version, decodes":  {`{"kind":"k","version":1,"items":[1]}`, true},
+		"older version, no match": {`{"kind":"k","version":1,"items":"no"}`, true},
+		"other kind":              {`{"kind":"x","version":2}`, false},
+		"same version, no match":  {`{"kind":"k","version":2,"items":"no"}`, false},
+		"torn":                    {`{"kind":"k",`, false},
+	} {
+		path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-"))
+		require.NoError(t, os.WriteFile(path, []byte(tc.body), 0o600))
+		var got doc
+		err := Read(path, "k", 2, &got)
+		require.Equal(t, exitcode.ExitResume, exitcode.For(err), name)
+		var version *VersionError
+		require.Equal(t, tc.version, errors.As(err, &version), name)
+		if tc.version {
+			assert.Equal(t, path, version.Path, name)
+			assert.Equal(t, "k", version.Kind, name)
+			assert.Equal(t, 2, version.Want, name)
+			assert.NotEqual(t, 2, version.Found, name)
+		}
+	}
+}
+
 func TestPersister_AppliesInOrderAndSyncs(t *testing.T) {
 	var mu sync.Mutex
 	var written [][]int

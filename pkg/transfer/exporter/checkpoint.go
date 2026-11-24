@@ -46,7 +46,13 @@ const (
 	// --checkpoint names another path.
 	ProgressFileName = ".export-progress.json"
 	progressKind     = "export-progress"
-	progressVersion  = 2
+	// progressVersion is the format version of the progress file and of its plan side file. Any
+	// change to the format of either raises it by one. A run writes the side file only after the
+	// version of the progress file was accepted, or when it starts the progress file itself, so
+	// that version covers the side file too; a progress file of another version is refused
+	// (exit 6) before the side file is read, and resumes only with the bydbctl that wrote it or
+	// is given up (the session released, the directory emptied).
+	progressVersion = 2
 	// planSide names the side file of the progress file that holds the plan (resume.SidePath).
 	planSide = "plan"
 )

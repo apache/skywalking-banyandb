@@ -50,8 +50,14 @@ const (
 	// (resume.SidePath): written with the plan, written again to add the baseline once it is
 	// counted, and later only to append the items a gate refused then and accepts now, or to add
 	// to the baseline the groups or target nodes it lacks.
-	planSide        = "plan"
-	progressKind    = "import-progress"
+	planSide     = "plan"
+	progressKind = "import-progress"
+	// progressVersion is the format version of the progress file and of its side files (plan,
+	// cursor). Any change to the format of one of them raises it by one. A run writes a side
+	// file only after the version of the progress file was accepted, or when it starts the
+	// progress file itself, so that version covers the side files too; a progress file of another
+	// version is refused (exit 6) before any side file is read, and resumes only with the bydbctl
+	// that wrote it or is started over (--restart).
 	progressVersion = 2
 )
 

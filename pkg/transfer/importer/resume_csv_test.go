@@ -19,8 +19,10 @@ package importer
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -717,9 +719,9 @@ func TestResumeCSV_RefusesAnotherArtifactTargetOrPlan(t *testing.T) {
 		}, want: streamItemKey + ": target hot [data-a data-b], recorded hot [data-a]"},
 		{name: "unknown kind", edit: func(s *progressState) { s.Kind = "export-progress" }, want: "this command resumes \"import-progress\""},
 		{
-			// Version 1 kept the baseline in a side file of its own.
 			name: "older version", edit: func(s *progressState) { s.Version = 1 },
-			want: "is a \"import-progress\" version 1 file; this command resumes \"import-progress\" version 2; nothing was written. To import anyway, give --checkpoint",
+			want: "(progress file version 1, this bydbctl reads version 2), so it cannot be resumed; nothing was written. " +
+				"Resume it with the bydbctl version that wrote it; or give --restart",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -742,6 +744,101 @@ func TestResumeCSV_RefusesAnotherArtifactTargetOrPlan(t *testing.T) {
 		})
 		require.NoError(t, os.WriteFile(path, original, 0o600))
 		require.NoError(t, os.WriteFile(planFile, originalPlan, 0o600))
+	}
+}
+
+// progressFilesOf reads the progress file of path and its side files, the lock file and the
+// temporary files a run creates and removes aside.
+func progressFilesOf(t *testing.T, dir string) map[string][]byte {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join(dir, ".import-progress*"))
+	require.NoError(t, err)
+	out := map[string][]byte{}
+	for _, name := range names {
+		if strings.HasSuffix(name, ".lock") || strings.HasSuffix(name, ".tmp") {
+			continue
+		}
+		data, readErr := os.ReadFile(name)
+		require.NoError(t, readErr)
+		out[filepath.Base(name)] = data
+	}
+	return out
+}
+
+// A progress file another version of bydbctl wrote is refused (exit 6) before anything is read
+// of it or printed, however the command is run, and the refusal names the file, both versions
+// and how to go on; the files are left as they are.
+func TestResumeCSV_ProgressFileOfAnotherVersionIsRefusedWithTheNextStep(t *testing.T) {
+	f := newFakeLiaison()
+	li := f.serve(t)
+	opts := resumeImport(t, writeDataArtifact(t))
+	interruptedCSV(t, f, li, opts, 5)
+	path := ProgressPath(opts)
+	for _, version := range []int{1, progressVersion + 1} {
+		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
+			editState(t, path, func(s *progressState) { s.Version = version })
+			before := progressFilesOf(t, opts.Input)
+			batches := len(f.receivedBatches())
+			want := []string{
+				"an earlier import left the progress file " + path,
+				fmt.Sprintf("(progress file version %d, this bydbctl reads version %d)", version, progressVersion),
+				"so it cannot be resumed; nothing was written",
+				"Resume it with the bydbctl version that wrote it",
+				"give --restart to import from scratch",
+				"kept as .bak files",
+				"stream and trace data already imported into this target is then stored twice",
+			}
+			for name, tweak := range map[string]func(*config.Import){
+				"no terminal, no --resume": func(*config.Import) {},
+				"--resume":                 func(o *config.Import) { o.Resume = true },
+				"--dry-run":                func(o *config.Import) { o.DryRun = true },
+				"-o json":                  func(o *config.Import) { o.Resume, o.OutputFormat = true, "json" },
+				"--dry-run -o yaml":        func(o *config.Import) { o.DryRun, o.OutputFormat = true, "yaml" },
+			} {
+				run := opts
+				tweak(&run)
+				got := runImportEnv(context.Background(), f, li, run, nil, nil)
+				require.Equal(t, exitcode.ExitResume, got.code(), "%s: %v\n%s", name, got.err, got.log)
+				for _, w := range want {
+					assert.Contains(t, got.err.Error(), w, name)
+				}
+				for _, text := range []string{got.out, got.log} {
+					assert.NotContains(t, text, "RESUME ", "%s: a file that cannot be read has no summary", name)
+					assert.NotContains(t, text, "DONE ", name)
+				}
+				assert.Len(t, f.receivedBatches(), batches, "%s: nothing is sent", name)
+				assert.Equal(t, before, progressFilesOf(t, opts.Input), "%s: the files are left as they are", name)
+			}
+		})
+	}
+}
+
+// The next step the refusal offers works: --restart sets the progress file of another version
+// aside, with its side files under one stamp, and imports everything again.
+func TestResumeCSV_RestartImportsOverAProgressFileOfAnotherVersion(t *testing.T) {
+	f := newFakeLiaison()
+	li := f.serve(t)
+	opts := resumeImport(t, writeDataArtifact(t))
+	interruptedCSV(t, f, li, opts, 5)
+	path := ProgressPath(opts)
+	editState(t, path, func(s *progressState) { s.Version = 1 })
+	before := progressFilesOf(t, opts.Input)
+
+	opts.Restart = true
+	run := runImportEnv(context.Background(), f, li, opts, nil, nil)
+	require.NoError(t, run.err, run.log)
+	assert.Equal(t, progressVersion, readState(t, path).Version, "the new progress file is of this version")
+	var stamp string
+	for name, data := range before {
+		sides, err := filepath.Glob(filepath.Join(opts.Input, name+".*.bak"))
+		require.NoError(t, err)
+		require.Len(t, sides, 1, name)
+		moved, err := os.ReadFile(sides[0])
+		require.NoError(t, err)
+		assert.Equal(t, data, moved, "%s is kept as it was", name)
+		this := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(sides[0]), name+"."), ".bak")
+		assert.Equal(t, cmp.Or(stamp, this), this, "the files of one restart share a stamp")
+		stamp = this
 	}
 }
 

@@ -220,10 +220,36 @@ the file atomically. Finished units are recorded at most once a second, so a cra
 last second again, never more. A run that cannot write the progress file fails with exit `3`. Once `manifest.json` is written
 the session is released, then the progress file and its plan are deleted (a crash in between leaves the progress file, and the
 same command finishes the export again without the session). A `--checkpoint` in a subdirectory of `--output` is refused (exit
-`1`): put it directly in the output directory or outside it. The progress file is version `2`; a path that ends in `-plan.json`
+`1`): put it directly in the output directory or outside it. The progress file has format version `2`, and a file of another version is refused ([A progress file of another bydbctl version](#a-progress-file-of-another-bydbctl-version)); a path that ends in `-plan.json`
 or `-cursor.json` is refused (exit `1`), as it would be the side file of another progress file. The progress file is JSON with
 two-space indentation; each finished file is listed with its size and CRC-32, and the bindings a resume is checked against (the
 selectors, the options that change the bytes of a file, the source nodes) are in clear.
+
+#### A progress file of another bydbctl version
+
+A progress file and its side files can be resumed only by a bydbctl that reads the same progress file version (this bydbctl reads
+version `2`). When the version differs, because bydbctl was upgraded or downgraded between two runs of one export or import, the
+command exits `6` before it reads the file any further. Nothing is written or deleted, no summary is printed, and it is the same
+under `--dry-run`, without `--resume` and with `-o json|yaml`: the refusal goes to stderr and stdout stays free of it. It names
+the file, the version in it and the version this bydbctl reads, and says how to go on. An import:
+
+```text
+an earlier import left the progress file /data/backup-20260914/.import-progress.json, but another version of bydbctl wrote it (progress file version 1, this bydbctl reads version 2), so it cannot be resumed; nothing was written. Resume it with the bydbctl version that wrote it; or give --restart to import from scratch (the progress file and its side files are kept as .bak files, and the stream and trace data already imported into this target is then stored twice); or give --checkpoint <another path> to run this import separately
+```
+
+An export:
+
+```text
+an earlier export left the progress file /data/backup-20260914/.export-progress.json, but another version of bydbctl wrote it (progress file version 1, this bydbctl reads version 2), so it cannot be resumed; nothing was deleted. Resume it with the bydbctl version that wrote it; or to start over: bydbctl data release-session --id 85f65ac92eafa06eec2ab5e6f53c1b67, then delete what is in /data/backup-20260914 and export again, or export into a new output directory once the session is released
+```
+
+- To go on, run the same command with the bydbctl version that wrote the file, and finish the export or import with it.
+- To start an import over, give `--restart`: the progress file and its side files are set aside as `.bak` files, and the stream and trace data
+  the earlier run already imported into the target is stored once more. `--checkpoint <another path>` runs the import apart from
+  the file.
+- To start an export over, release its session with the command the message gives, delete what is in the output directory (or give
+  another `--output`) and export again. The message names the session id when the file records one, and gives
+  `bydbctl data release-session --id <id>` otherwise; a session that is not released is reclaimed when its lease runs out.
 
 #### Progress file lock
 
@@ -391,6 +417,7 @@ while the old session is held is refused with exit `2`.
 | `schema/` files that no longer match the progress file, or are unusable, while units are done | restore them, or start over |
 | a schema that changed after units were done (native: a resource changed or removed; CSV: a stream, measure, trace or property of a group with units left changed, added or removed) | start over: the finished units were exported with the old schema |
 | a plan side file that is missing or not the one the progress file was written with | start over |
+| `another version of bydbctl wrote it` | run the same command with the bydbctl that wrote the progress file, or start over ([A progress file of another bydbctl version](#a-progress-file-of-another-bydbctl-version)) |
 | a progress file that cannot be read or parsed | start over; release the session whose id the first run printed, or let its lease run out |
 
 ### Flags
@@ -972,7 +999,14 @@ baseline did not count, a (segment, shard, node) where an earlier part was pushe
 stopped waiting for (`failure_cause` `NO_ANSWER`, recorded in the progress file's `causes` as `no_answer`) whose count did not grow are undecidable too (a cause this client does not know, such as one a newer client wrote in the file, is taken as none: the counts decide); so is every part of a trace group whose sampling
 pipeline may drop spans in merges (an enabled sampler with the `MERGE` or `FINALIZE` event). Each decision is logged as
 `reconcile <item> part <part id> of <source node> on <node>: landed|not landed|undecidable (<expected>→<actual>, part <n> rows)`,
-an undecidable one followed by `: <reason>`. It assumes nothing else writes to the target groups.
+an undecidable one followed by `: <reason>`.
+
+**Keep the target quiet.** Reconciliation compares row counts, so from the first count until the import ends, resumes included, nothing else may write to or delete from the imported groups on the target: no other import, no application writes, no data removed by hand. Most violations are noticed: the counts grow by neither 0 nor the part's rows, or a segment the count expected is gone, so the part is undecidable and follows the duplication policy. Two cases are not noticed, and `--resume-duplication-policy block` does not stop them either, since the part counts as decided:
+
+- Others' net change at the part's (segment, shard, node) equals the part's rows: a part that did not land is taken as landed and not pushed, so its rows are missing. A net change of zero, such as others' writes and deletes cancelling, takes a part that landed as not landed: it is pushed again and stored twice.
+- Rows disappear from a segment that is still there (retention or lifecycle migration) between the first count and a later one. A segment that vanished entirely is undecidable, but fewer rows in a surviving segment is judged like any other change: normally undecidable, yet when the loss equals the rows of a part that landed, the part is taken as not landed and pushed again.
+
+When the data lies close to the retention boundary of the target stage, avoid leaving the import interrupted for long, and resume with `--resume-duplication-policy block`, so that the parts the counts cannot decide stop the import (exit `7`) for you to decide instead of being pushed again.
 
 The import also reconciles during a run: a stream or trace part that a target node failed after its completion reached it is done
 when the node's count grew by its rows; otherwise the import fails (exit `3`) and a resume decides it, since the node may still be
@@ -1022,7 +1056,8 @@ Choosing a policy:
 | `records no liaisons` | the progress file was written before the liaisons were recorded: give another `--checkpoint`, or `--restart` |
 | `options` | run with the first run's `--all-sources` and `--include-schema`, or start over |
 | a plan that differs from the recorded one | restore what changed it (the first run's options, the target's stages and nodes), or start over |
-| a progress file or a cursor side file that cannot be read or parsed, of another version (version 1 kept the baseline in `<progress file>.baseline`, `.import-progress.json.baseline` by default, a file of its own), or a plan side file that is missing or has another digest, or a progress file that records a baseline or pushed rows but names no plan side file | start over |
+| `another version of bydbctl wrote it` | run the same command with the bydbctl that wrote the progress file, or give `--restart` ([A progress file of another bydbctl version](#a-progress-file-of-another-bydbctl-version)) |
+| a progress file or a cursor side file that cannot be read or parsed, or a plan side file that is missing or has another digest, or a progress file that records a baseline or pushed rows but names no plan side file | start over |
 
 ### Import flags
 

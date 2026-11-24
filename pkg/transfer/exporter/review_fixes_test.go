@@ -407,13 +407,12 @@ func TestResume_ShowsLocalTimeAndKeepsUTCInTheManifest(t *testing.T) {
 	}
 }
 
-// The progress file of the layout before the plan went to a side file of its own is refused
-// with exit 6 and named by its version.
+// The progress file of the previous version is refused with exit 6 and named by its version.
 func TestResume_ProgressFileOfThePreviousVersionExits6(t *testing.T) {
 	f, opts := interruptAfterOne(t)
 	editState(t, &opts, func(s *exportProgress) { s.Version = progressVersion - 1 })
 	opts.Resume = true
 	err := runExport(t, f, opts)
-	requireExit(t, err, exitcode.ExitResume, fmt.Sprintf("version %d file", progressVersion-1))
+	requireExit(t, err, exitcode.ExitResume, fmt.Sprintf("(progress file version %d, this bydbctl reads version %d)", progressVersion-1, progressVersion))
 	requireExit(t, err, exitcode.ExitResume, "nothing was deleted")
 }

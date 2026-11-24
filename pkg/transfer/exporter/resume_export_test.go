@@ -946,6 +946,80 @@ func TestResume_ALeaseExpiredOnANodeWithUnitsLeftRefuses(t *testing.T) {
 	}
 }
 
+// A progress file another version of bydbctl wrote is refused (exit 6) before anything is
+// printed or deleted, however the command is run, and the refusal names the file, both versions
+// and the two ways on: the version that wrote it, or giving the export up with its session.
+func TestResume_ProgressFileOfAnotherVersionIsRefusedWithTheNextStep(t *testing.T) {
+	for _, version := range []int{1, progressVersion + 1} {
+		t.Run(fmt.Sprintf("version %d", version), func(t *testing.T) {
+			f, opts := interruptAfterOne(t)
+			path := ProgressPath(opts.Export)
+			editState(t, &opts, func(s *exportProgress) { s.Version = version })
+			before := tree(t, opts.Output)
+			plans := len(f.plans)
+			want := []string{
+				"an earlier export left the progress file " + path,
+				fmt.Sprintf("(progress file version %d, this bydbctl reads version %d)", version, progressVersion),
+				"so it cannot be resumed; nothing was deleted",
+				"Resume it with the bydbctl version that wrote it",
+				"to start over: bydbctl data release-session --id feedfeed, then delete what is in " + opts.Output + " and export again",
+			}
+			check := func(name string, err error, log *syncBuffer) {
+				t.Helper()
+				requireExit(t, err, exitcode.ExitResume, "")
+				for _, w := range want {
+					if !strings.Contains(err.Error(), w) {
+						t.Fatalf("%s: the refusal lacks %q:\n%v", name, w, err)
+					}
+				}
+				if strings.Contains(log.String(), "RESUME ") || strings.Contains(log.String(), "DONE ") {
+					t.Fatalf("%s: a file that cannot be read has no summary:\n%s", name, log)
+				}
+				requireUntouched(t, before, opts.Output)
+				if len(f.plans) != plans {
+					t.Fatalf("%s: the cluster was contacted", name)
+				}
+			}
+
+			log, err := resumeRun(t, f, opts)
+			check("--resume", err, log)
+
+			noResume := opts
+			noResume.Resume = false
+			noResume.Log, noResume.Out = &syncBuffer{}, &syncBuffer{}
+			err = runExport(t, f, noResume)
+			check("no terminal, no --resume", err, noResume.Log.(*syncBuffer))
+
+			for _, format := range []string{"table", "json", "yaml"} {
+				dry := opts
+				dry.DryRun, dry.OutputFormat = true, format
+				dry.Log, dry.Out = &syncBuffer{}, &syncBuffer{}
+				found, dryErr := DryRunResume(envFor(t, dry, f), dry.Export)
+				if !found {
+					t.Fatalf("--dry-run -o %s found no progress file", format)
+				}
+				check("--dry-run -o "+format, dryErr, dry.Log.(*syncBuffer))
+				if dry.Out.(*syncBuffer).String() != "" {
+					t.Fatalf("--dry-run -o %s printed a plan:\n%s", format, dry.Out)
+				}
+			}
+		})
+	}
+}
+
+// A progress file that records no session id is refused with the general way to give up.
+func TestResume_ProgressFileOfAnotherVersionWithoutASession(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	editState(t, &opts, func(s *exportProgress) { s.Version, s.Session.ID = 1, "" })
+	before := tree(t, opts.Output)
+	_, err := resumeRun(t, f, opts)
+	requireExit(t, err, exitcode.ExitResume, "release it with: bydbctl data release-session --id <id>; then delete what is in "+opts.Output)
+	if strings.Contains(err.Error(), "release-session --id feedfeed") {
+		t.Fatalf("no session id is recorded:\n%v", err)
+	}
+	requireUntouched(t, before, opts.Output)
+}
+
 // waitUntil polls cond until it holds, failing after 10 seconds.
 func waitUntil(cond func() bool) error {
 	deadline := time.Now().Add(10 * time.Second)

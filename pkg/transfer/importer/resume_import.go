@@ -71,6 +71,11 @@ func newProgress(art *Artifact, bindings importBindings) *progressState {
 func loadProgress(path string, bindings importBindings) (*progressState, error) {
 	state := &progressState{}
 	if err := resume.Read(path, progressKind, progressVersion, state); err != nil {
+		if version := new(resume.VersionError); errors.As(err, &version) {
+			return nil, exitcode.Exit(exitcode.ExitResume, "an earlier import left the progress file %s, but another version of bydbctl wrote it "+
+				"(progress file version %d, this bydbctl reads version %d), so it cannot be resumed; nothing was written. "+
+				"Resume it with the bydbctl version that wrote it; or %s", path, version.Found, version.Want, otherVersionHint)
+		}
 		return nil, exitcode.Exit(exitcode.For(err), "%w; nothing was written. To import anyway, %s", err, separateHint)
 	}
 	// The bindings are compared with the plan's target nodes; a plan that cannot be read is
@@ -180,6 +185,12 @@ func readPlan(path string, state *progressState) error {
 // separateHint is how to run an import apart from a progress file it cannot resume, and its cost.
 const separateHint = "give --checkpoint <another path> to run this import separately, or --restart to start this one over; " +
 	"the stream and trace data an earlier run already imported into this target is then stored twice"
+
+// otherVersionHint is how to go on from a progress file another version of bydbctl wrote, and
+// what it costs.
+const otherVersionHint = "give --restart to import from scratch (the progress file and its side files are kept as .bak files, " +
+	"and the stream and trace data already imported into this target is then stored twice); " +
+	"or give --checkpoint <another path> to run this import separately"
 
 // bindingHints says, per binding that differs, how to resume the progress file, and once at the
 // end what else to do.

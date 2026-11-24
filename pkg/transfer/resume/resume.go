@@ -52,9 +52,22 @@ func Exists(path string) bool {
 	return !errors.Is(err, os.ErrNotExist)
 }
 
+// VersionError is a progress file of the kind a command resumes that another version of bydbctl
+// wrote: Found is the version of its format, Want the one this command reads. Read wraps it in
+// an exitcode.ExitResume error, so that the command can tell the file from any other unusable
+// one and say how to go on.
+type VersionError struct {
+	Path, Kind  string
+	Found, Want int
+}
+
+func (e *VersionError) Error() string {
+	return fmt.Sprintf("progress file %s is a %q version %d file; this command resumes %q version %d", e.Path, e.Kind, e.Found, e.Kind, e.Want)
+}
+
 // Read decodes the progress file at path into v after checking its kind and version. A file
 // that cannot be read or parsed, or that another command or version wrote, exits
-// exitcode.ExitResume: nothing is deleted.
+// exitcode.ExitResume: nothing is deleted. A file of another version is a *VersionError.
 func Read(path, kind string, version int, v any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -70,7 +83,10 @@ func Read(path, kind string, version int, v any) error {
 	} else if err = json.Unmarshal(data, &hdr); err != nil {
 		return exitcode.Exit(exitcode.ExitResume, "progress file %s is unusable: %w", path, err)
 	}
-	if hdr.Kind != kind || hdr.Version != version {
+	if hdr.Kind == kind && hdr.Version != version {
+		return exitcode.Exit(exitcode.ExitResume, "%w", &VersionError{Path: path, Kind: kind, Found: hdr.Version, Want: version})
+	}
+	if hdr.Kind != kind {
 		return exitcode.Exit(exitcode.ExitResume, "progress file %s is a %q version %d file; this command resumes %q version %d",
 			path, hdr.Kind, hdr.Version, kind, version)
 	}

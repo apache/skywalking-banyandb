@@ -115,6 +115,9 @@ func writeProgressBody(body string) func(*testing.T, *fakeLiaison, *testOptions)
 // session's answer reads it, and no other renews its lease. The error says how to start over.
 func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
 	unusable := "nothing was deleted. To start over: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete what is in "
+	// A progress file of another version that records no session names the general way to give up.
+	otherVersion := "so it cannot be resumed; nothing was deleted. Resume it with the bydbctl version that wrote it; " +
+		"or to give up: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete what is in "
 	noHint := func(string, testOptions) string { return "" }
 	schemaChanged := "the schema changed after 1 unit(s) were exported with the first one"
 	for _, tc := range []struct {
@@ -258,11 +261,12 @@ func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
 		{name: "progress file of an import", hint: noHint, want: []string{"progress file", unusable}, change: writeProgressBody(`{"kind":"import-progress","version":1}`)},
 		{
 			name: "progress file of the previous version", hint: noHint,
-			want:   []string{"progress file", `"export-progress" version 1 file`, `resumes "export-progress" version 2`, unusable},
+			want:   []string{"an earlier export left the progress file", "(progress file version 1, this bydbctl reads version 2)", otherVersion},
 			change: writeProgressBody(`{"kind":"export-progress","version":1}`),
 		},
 		{
-			name: "progress file of a later version", hint: noHint, want: []string{"progress file", `"export-progress" version 3 file`, unusable},
+			name: "progress file of a later version", hint: noHint,
+			want:   []string{"an earlier export left the progress file", "(progress file version 3, this bydbctl reads version 2)", otherVersion},
 			change: writeProgressBody(`{"kind":"export-progress","version":3}`),
 		},
 		{
