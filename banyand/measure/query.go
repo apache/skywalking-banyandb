@@ -607,7 +607,6 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		}
 		r.tfl = append(r.tfl, tagFamilyLocation)
 	}
-	var err error
 	opts := storage.IndexSearchOpts{
 		Criteria:             mqo.Criteria,
 		PatternRequests:      mqo.PatternRequests,
@@ -619,45 +618,11 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 		MultiValueProjection: multiValueProjection,
 		TimeRange:            mqo.TimeRange,
 	}
-	seriesFilter := make(map[common.SeriesID]struct{})
-	limited := mqo.Limit > 0 && mqo.Order != nil
-	// Only a time order ranks by the rows' timestamps, which is what lets a segment's time range prune it; an index
-	// order ranks by a tag value that a segment's time range says nothing about.
-	timeLimited := limited && mqo.Order.Type == index.OrderByTypeTime
-	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
-	var kept []int64 // timestamps of the rows the limited searches kept, to prune older segments
-	for i := range segments {
-		if timeLimited && segmentCannotBeatKept(segments[i].GetTimeRange(), kept, mqo.Limit, mqo.Order.Sort == modelv1.Sort_SORT_DESC) {
-			continue
-		}
-		segOpts := opts
-		if limited {
-			// The search returns only the first Limit rows that no newer segment shadows, in the query's order, so a
-			// series a newer segment holds cannot take a place in the limit.
-			segOpts.Limit = mqo.Limit
-			segOpts.IsShadowed = shadowedByNewer(segments[:i], existing)
-		}
-		sr := &segResult{}
-		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, segOpts)
-		if err != nil {
-			return nil, err
-		}
-		for j := 0; j < len(sr.SeriesList) && !sr.LimitApplied; j++ {
-			if _, seen := seriesFilter[sr.SeriesList[j].ID]; seen {
-				sr.remove(j)
-				j--
-				continue
-			}
-			seriesFilter[sr.SeriesList[j].ID] = struct{}{}
-		}
-		if len(sr.SeriesList) < 1 {
-			continue
-		}
-		if sr.LimitApplied && timeLimited {
-			kept = append(kept, sr.Timestamps...)
-		}
-		r.segResults.results = append(r.segResults.results, sr)
+	results, searchErr := searchIndexSegments(ctx, segments, mqo, opts)
+	if searchErr != nil {
+		return nil, searchErr
 	}
+	r.segResults.results = results
 	if len(r.segResults.results) < 1 {
 		return nilResult, nil
 	}
@@ -674,6 +639,112 @@ func (m *measure) buildIndexQueryResult(ctx context.Context, mqo model.MeasureQu
 
 	heap.Init(&r.segResults)
 	return r, nil
+}
+
+// indexSegmentSearch is the state of one index-mode query's search over its segments, newest first. It decides which
+// segment the search can skip and when it can stop, for the two kinds of limit that let it: a time-ordered limit prunes the
+// segments that lie beyond the rows already kept, and a limit without an order stops once the newer segments hold enough.
+type indexSegmentSearch struct {
+	order *index.OrderBy
+	// kept holds the timestamps of the rows the time-limited searches kept: they are final, since newer segments already
+	// dropped what they shadow.
+	kept []int64
+	// limit is the query's limit, 0 when it has none.
+	limit int
+	// unorderedRows counts the rows the unordered limited searches kept so far.
+	unorderedRows int
+	// timeLimited is a limit ordered by time: only a time order ranks by the rows' timestamps, which is what lets a segment's
+	// time range prune it, where an index order ranks by a tag value that a segment's time range says nothing about.
+	timeLimited bool
+	// unordered is a limit without an order, which accepts any rows.
+	unordered bool
+}
+
+func newIndexSegmentSearch(mqo model.MeasureQueryOptions) *indexSegmentSearch {
+	limited := mqo.Limit > 0
+	return &indexSegmentSearch{
+		order:       mqo.Order,
+		limit:       mqo.Limit,
+		timeLimited: limited && mqo.Order != nil && mqo.Order.Type == index.OrderByTypeTime,
+		unordered:   limited && mqo.Order == nil,
+	}
+}
+
+// skips reports that no row of a segment spanning rng can rank inside the rows already kept, so it need not be searched.
+func (s *indexSegmentSearch) skips(rng timestamp.TimeRange) bool {
+	return s.timeLimited && segmentCannotBeatKept(rng, s.kept, s.limit, s.order.Sort == modelv1.Sort_SORT_DESC)
+}
+
+// record notes the rows one segment's search kept, and reports that the segments older than it need not be searched: an
+// unordered limit accepts any rows, every row kept so far is unshadowed, and an older segment can only add rows.
+func (s *indexSegmentSearch) record(sr *segResult) (done bool) {
+	if !sr.LimitApplied {
+		return false
+	}
+	if s.timeLimited {
+		s.kept = append(s.kept, sr.Timestamps...)
+	}
+	if s.unordered {
+		s.unorderedRows += len(sr.SeriesList)
+		return s.unorderedRows >= s.limit
+	}
+	return false
+}
+
+// limitFor is the limit to ask the next segment for. An ordered limit asks every segment for its own first rows, which the
+// merge then ranks; an unordered limit accepts any rows, so a segment only has to supply what the newer ones left missing.
+func (s *indexSegmentSearch) limitFor() int {
+	if s.unordered {
+		return s.limit - s.unorderedRows
+	}
+	return s.limit
+}
+
+// searchIndexSegments searches the segments of an index-mode query, newest first, and returns the rows of each segment that
+// kept any. A query with a limit asks each segment for only its first rows that no newer segment shadows; a query without
+// one asks for every row and drops the series a newer segment already returned.
+func searchIndexSegments(ctx context.Context, segments []storage.Segment[*tsTable, option], mqo model.MeasureQueryOptions,
+	opts storage.IndexSearchOpts,
+) ([]*segResult, error) {
+	seriesFilter := make(map[common.SeriesID]struct{})
+	limited := mqo.Limit > 0
+	search := newIndexSegmentSearch(mqo)
+	existing := opts // what a newer segment is asked: the same subject, time range, criteria and patterns
+	var results []*segResult
+	for i := range segments {
+		if search.skips(segments[i].GetTimeRange()) {
+			continue
+		}
+		segOpts := opts
+		if limited {
+			// The search returns only the first Limit rows that no newer segment shadows, in the query's order, so a
+			// series a newer segment holds cannot take a place in the limit.
+			segOpts.Limit = search.limitFor()
+			segOpts.IsShadowed = shadowedByNewer(segments[:i], existing)
+		}
+		sr := &segResult{}
+		var err error
+		sr.SeriesData, sr.sortedValues, err = segments[i].IndexDB().SearchWithoutSeries(ctx, segOpts)
+		if err != nil {
+			return nil, err
+		}
+		for j := 0; j < len(sr.SeriesList) && !sr.LimitApplied; j++ {
+			if _, seen := seriesFilter[sr.SeriesList[j].ID]; seen {
+				sr.remove(j)
+				j--
+				continue
+			}
+			seriesFilter[sr.SeriesList[j].ID] = struct{}{}
+		}
+		if len(sr.SeriesList) < 1 {
+			continue
+		}
+		results = append(results, sr)
+		if search.record(sr) {
+			break
+		}
+	}
+	return results, nil
 }
 
 // shadowedByNewer returns the check an index-mode search runs on its candidates: which identifiers a newer segment
