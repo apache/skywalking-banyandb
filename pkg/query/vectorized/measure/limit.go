@@ -41,7 +41,7 @@ type BatchLimit struct {
 	rowsOut int64
 	offset  uint32
 	limit   uint32
-	seen    uint32
+	seen    uint64
 	closed  bool
 }
 
@@ -91,9 +91,11 @@ func (l *BatchLimit) Process(_ context.Context, b *vectorized.RecordBatch) error
 		l.rowsIn += int64(len(active))
 	}
 	out := make([]uint16, 0, len(active))
-	end := l.offset + l.limit
+	// The window is summed in 64 bits: LIMIT 4294967295 OFFSET 1 would wrap a uint32 sum to 0 and emit nothing.
+	offset := uint64(l.offset)
+	end := offset + uint64(l.limit)
 	for _, idx := range active {
-		if l.seen >= l.offset && l.seen < end {
+		if l.seen >= offset && l.seen < end {
 			out = append(out, idx)
 		}
 		l.seen++

@@ -196,3 +196,20 @@ func TestActiveIndices_NonNilSelection_NeverErrorsRegardlessOfLen(t *testing.T) 
 		t.Fatalf("active = %v, want %v", active, sel)
 	}
 }
+
+// A uint32 offset+limit sum wraps for LIMIT 4294967295 OFFSET 1 (to 0) and emitted nothing; the window is summed in 64 bits.
+func TestBatchLimit_WindowPastUint32_DoesNotWrap(t *testing.T) {
+	s := limitTestSchema()
+	for _, offset := range []uint32{1, 2, 10, math.MaxUint32} {
+		op := NewBatchLimit(s, offset, math.MaxUint32)
+		_ = op.Init(context.Background())
+		b := mkBatchN(s, 5)
+		if err := op.Process(context.Background(), b); err != nil {
+			t.Fatalf("offset=%d: unexpected error: %v", offset, err)
+		}
+		want := max(0, 5-int(min(offset, 5)))
+		if got := b.ActiveLen(); got != want {
+			t.Fatalf("offset=%d: ActiveLen want %d, got %d", offset, want, got)
+		}
+	}
+}
