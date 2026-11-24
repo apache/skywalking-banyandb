@@ -41,6 +41,13 @@ type FieldResolver interface {
 	Field(tagName string) (field string, analyzer string, ok bool)
 }
 
+// SingleTermResolver is an optional interface of a FieldResolver. SingleTerm reports that a tag's field holds exactly one
+// term per document (a scalar that is not analyzed), which is what lets two range conditions on it fold into one range at
+// posting level. A resolver that does not implement it, or a tag it does not vouch for, gets no folding.
+type SingleTermResolver interface {
+	SingleTerm(tagName string) bool
+}
+
 // Filter narrows universe, a candidate set already produced by the caller
 // (for example view.MatchAllTermSets over series or identity matchers), to
 // the hits criteria additionally selects. It translates EQ, NE, IN, NOT_IN,
@@ -93,105 +100,141 @@ func matchCriteria(
 	}
 }
 
+// resolvedCondition is a condition checked and reduced to what both translations need: the engine field and the terms or
+// range it selects, whether the selection is excluded, and whether the tag is indexed at all.
+type resolvedCondition struct {
+	terms      [][]byte
+	field      string
+	rng        native.RangeRequest
+	mode       native.TermSetMode
+	isRange    bool
+	negated    bool // NE, NOT_IN and NOT_HAVING exclude the hits the terms select
+	unresolved bool // the tag is not indexed for this caller
+	singleTerm bool // the resolver vouches that the field holds one term per document
+}
+
+// resolveCondition validates condition, parses its value, resolves its tag and builds the terms or range it selects. It is
+// the one place that decides what a condition means, so that the hit-level filter and the posting-level translation cannot
+// drift apart. The checks run in the order the hit-level filter has always run them: a tag that is not indexed resolves
+// before the operator's operand count is checked.
+//
 //nolint:gocyclo // the condition-op switch is kept explicit, matching the code this was promoted from.
-func matchCondition(
-	ctx context.Context, view *native.ReadView, universe []native.QueryHit, condition *modelv1.Condition, fields FieldResolver,
-) ([]native.QueryHit, error) {
+func resolveCondition(condition *modelv1.Condition, fields FieldResolver) (resolvedCondition, error) {
+	var resolved resolvedCondition
 	if condition == nil || condition.Value == nil || condition.Value.Value == nil {
-		return nil, logical.ErrUnsupportedConditionValue
+		return resolved, logical.ErrUnsupportedConditionValue
 	}
 	if condition.Op == modelv1.Condition_BINARY_OP_MATCH {
 		if _, ok := condition.Value.Value.(*modelv1.TagValue_Str); !ok {
-			return nil, logical.ErrUnsupportedConditionValue
+			return resolved, logical.ErrUnsupportedConditionValue
 		}
 	}
 	if condition.Op == modelv1.Condition_BINARY_OP_IN || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN {
 		switch condition.Value.Value.(type) {
 		case *modelv1.TagValue_StrArray, *modelv1.TagValue_IntArray:
 		default:
-			return nil, logical.ErrUnsupportedConditionValue
+			return resolved, logical.ErrUnsupportedConditionValue
 		}
 	}
 	expr, err := logical.ParseExpr(condition)
 	if err != nil {
-		return nil, err
+		return resolved, err
 	}
-	negated := condition.Op == modelv1.Condition_BINARY_OP_NE || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN ||
+	resolved.negated = condition.Op == modelv1.Condition_BINARY_OP_NE || condition.Op == modelv1.Condition_BINARY_OP_NOT_IN ||
 		condition.Op == modelv1.Condition_BINARY_OP_NOT_HAVING
 	field, analyzer, ok := fields.Field(condition.Name)
 	if !ok {
-		if negated {
+		resolved.unresolved = true
+		return resolved, nil
+	}
+	resolved.field = field
+	if single, vouches := fields.(SingleTermResolver); vouches {
+		resolved.singleTerm = single.SingleTerm(condition.Name)
+	}
+	values := expr.Bytes()
+	switch condition.Op {
+	case modelv1.Condition_BINARY_OP_EQ, modelv1.Condition_BINARY_OP_NE:
+		if len(values) != 1 {
+			return resolved, logical.ErrUnsupportedConditionOp
+		}
+		resolved.terms, resolved.mode = values, native.MatchAnyTerm
+	case modelv1.Condition_BINARY_OP_IN, modelv1.Condition_BINARY_OP_NOT_IN:
+		resolved.terms, resolved.mode = values, native.MatchAnyTerm
+	case modelv1.Condition_BINARY_OP_HAVING, modelv1.Condition_BINARY_OP_NOT_HAVING:
+		resolved.terms, resolved.mode = values, native.MatchAllTerms
+	case modelv1.Condition_BINARY_OP_MATCH:
+		if len(values) != 1 {
+			return resolved, logical.ErrUnsupportedConditionOp
+		}
+		if resolved.terms, resolved.mode, err = analyzeMatch(condition, analyzer, values[0]); err != nil {
+			return resolved, err
+		}
+	case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE,
+		modelv1.Condition_BINARY_OP_LT, modelv1.Condition_BINARY_OP_LE:
+		if len(values) != 1 {
+			return resolved, logical.ErrUnsupportedConditionOp
+		}
+		resolved.isRange = true
+		resolved.rng = native.RangeRequest{Field: field, MaxTerms: ^uint64(0)}
+		switch condition.Op {
+		case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE:
+			resolved.rng.Lower, resolved.rng.IncludesLower = values[0], condition.Op == modelv1.Condition_BINARY_OP_GE
+		default:
+			resolved.rng.Upper, resolved.rng.IncludesUpper = values[0], condition.Op == modelv1.Condition_BINARY_OP_LE
+		}
+	default:
+		return resolved, logical.ErrUnsupportedConditionOp
+	}
+	return resolved, nil
+}
+
+// analyzeMatch analyzes the text of a MATCH condition and returns the terms and the mode that select the documents. The
+// request's own analyzer choice (if any) wins over the schema's, exactly as Property's MATCH handling always worked.
+func analyzeMatch(condition *modelv1.Condition, schemaAnalyzer string, text []byte) ([][]byte, native.TermSetMode, error) {
+	requestAnalyzer := condition.MatchOption.GetAnalyzer()
+	if requestAnalyzer == "" {
+		requestAnalyzer = schemaAnalyzer
+	}
+	terms, err := nativeanalysis.Analyze(requestAnalyzer, text)
+	if err != nil {
+		return nil, 0, err
+	}
+	analyzed := make([][]byte, 0, len(terms))
+	for _, term := range terms {
+		analyzed = append(analyzed, term.Value)
+	}
+	mode := native.MatchAnyTerm
+	if condition.MatchOption.GetOperator() == modelv1.Condition_MatchOption_OPERATOR_AND {
+		mode = native.MatchAllTerms
+	}
+	return analyzed, mode, nil
+}
+
+func matchCondition(
+	ctx context.Context, view *native.ReadView, universe []native.QueryHit, condition *modelv1.Condition, fields FieldResolver,
+) ([]native.QueryHit, error) {
+	resolved, err := resolveCondition(condition, fields)
+	if err != nil {
+		return nil, err
+	}
+	if resolved.unresolved {
+		// An unindexed tag has no live posting to find or exclude.
+		if resolved.negated {
 			return universe, nil
 		}
 		return nil, nil
 	}
-	values := expr.Bytes()
-	match := func(terms [][]byte, mode native.TermSetMode) ([]native.QueryHit, error) {
-		return view.FilterTermsSet(ctx, universe, native.TermSetRequest{Field: field, Terms: terms, Mode: mode})
+	if resolved.isRange {
+		return view.FilterRange(ctx, universe, resolved.rng)
 	}
-	switch condition.Op {
-	case modelv1.Condition_BINARY_OP_EQ:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		return match(values, native.MatchAnyTerm)
-	case modelv1.Condition_BINARY_OP_IN:
-		return match(values, native.MatchAnyTerm)
-	case modelv1.Condition_BINARY_OP_HAVING:
-		return match(values, native.MatchAllTerms)
-	case modelv1.Condition_BINARY_OP_MATCH:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		// The request's own analyzer choice (if any) wins over the schema's,
-		// exactly as Property's MATCH handling always worked.
-		requestAnalyzer := condition.MatchOption.GetAnalyzer()
-		if requestAnalyzer == "" {
-			requestAnalyzer = analyzer
-		}
-		terms, analyzeErr := nativeanalysis.Analyze(requestAnalyzer, values[0])
-		if analyzeErr != nil {
-			return nil, analyzeErr
-		}
-		analyzed := make([][]byte, 0, len(terms))
-		for _, term := range terms {
-			analyzed = append(analyzed, term.Value)
-		}
-		mode := native.MatchAnyTerm
-		if condition.MatchOption.GetOperator() == modelv1.Condition_MatchOption_OPERATOR_AND {
-			mode = native.MatchAllTerms
-		}
-		return match(analyzed, mode)
-	case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE,
-		modelv1.Condition_BINARY_OP_LT, modelv1.Condition_BINARY_OP_LE:
-		if len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		request := native.RangeRequest{Field: field, MaxTerms: ^uint64(0), Lower: nil, Upper: nil}
-		switch condition.Op {
-		case modelv1.Condition_BINARY_OP_GT, modelv1.Condition_BINARY_OP_GE:
-			request.Lower, request.IncludesLower = values[0], condition.Op == modelv1.Condition_BINARY_OP_GE
-		default:
-			request.Upper, request.IncludesUpper = values[0], condition.Op == modelv1.Condition_BINARY_OP_LE
-		}
-		return view.FilterRange(ctx, universe, request)
-	case modelv1.Condition_BINARY_OP_NE, modelv1.Condition_BINARY_OP_NOT_IN,
-		modelv1.Condition_BINARY_OP_NOT_HAVING:
-		if condition.Op == modelv1.Condition_BINARY_OP_NE && len(values) != 1 {
-			return nil, logical.ErrUnsupportedConditionOp
-		}
-		mode := native.MatchAnyTerm
-		if condition.Op == modelv1.Condition_BINARY_OP_NOT_HAVING {
-			mode = native.MatchAllTerms
-		}
-		excluded, matchErr := match(values, mode)
-		if matchErr != nil {
-			return nil, matchErr
-		}
-		return subtractHits(universe, excluded), nil
-	default:
-		return nil, logical.ErrUnsupportedConditionOp
+	matched, err := view.FilterTermsSet(ctx, universe, native.TermSetRequest{Field: resolved.field, Terms: resolved.terms, Mode: resolved.mode})
+	if err != nil {
+		return nil, err
 	}
+	if resolved.negated {
+		return subtractHits(universe, matched), nil
+	}
+	return matched, nil
 }
 
 // hitKey identifies one native.QueryHit by its physical coordinates, so set
@@ -246,4 +289,89 @@ func subtractHits(universe, excluded []native.QueryHit) []native.QueryHit {
 		}
 	}
 	return result
+}
+
+// PostingFilterOf translates criteria into a posting-level filter that selects a superset of what Filter selects: the same
+// documents when every condition translates, and otherwise the documents the translatable conditions leave. A caller
+// narrows its candidates with it at posting level, before it decodes any document, and still applies Filter afterwards, so
+// a condition that is left out (an invalid one, or one under an OR next to a condition that is left out) only costs speed,
+// never correctness. It returns nil when nothing can be pushed down, which matches every candidate.
+func PostingFilterOf(criteria *modelv1.Criteria, fields FieldResolver) *native.PostingFilter {
+	filter, _ := PostingFilterExact(criteria, fields)
+	return filter
+}
+
+// PostingFilterExact is PostingFilterOf that also reports whether the filter selects exactly what Filter selects, so a
+// caller can tell how many of the candidates the filter leaves still fall to the hit-level filter.
+func PostingFilterExact(criteria *modelv1.Criteria, fields FieldResolver) (filter *native.PostingFilter, exact bool) {
+	if criteria == nil {
+		return nil, true
+	}
+	if fields == nil {
+		return nil, false
+	}
+	switch expression := criteria.GetExp().(type) {
+	case *modelv1.Criteria_Condition:
+		if filter = conditionPostingFilter(expression.Condition, fields); filter == nil {
+			return nil, false
+		}
+		return filter, true
+	case *modelv1.Criteria_Le:
+		if expression.Le == nil {
+			return nil, false
+		}
+		if expression.Le.Left == nil {
+			return PostingFilterExact(expression.Le.Right, fields)
+		}
+		if expression.Le.Right == nil {
+			return PostingFilterExact(expression.Le.Left, fields)
+		}
+		left, leftExact := PostingFilterExact(expression.Le.Left, fields)
+		right, rightExact := PostingFilterExact(expression.Le.Right, fields)
+		switch expression.Le.Op {
+		case modelv1.LogicalExpression_LOGICAL_OP_AND:
+			// A conjunct that cannot be pushed only leaves more documents than the criteria keeps.
+			switch {
+			case left == nil:
+				return right, leftExact && rightExact
+			case right == nil:
+				return left, leftExact && rightExact
+			}
+			return native.AllOf(left, right), leftExact && rightExact
+		case modelv1.LogicalExpression_LOGICAL_OP_OR:
+			// A disjunct that cannot be pushed may select any document, so the union cannot be narrowed.
+			if left == nil || right == nil {
+				return nil, false
+			}
+			return native.AnyOf(left, right), leftExact && rightExact
+		}
+	}
+	return nil, false
+}
+
+// conditionPostingFilter is the posting-level filter of one condition: the filter of what resolveCondition resolves it to.
+// It returns nil for a condition resolveCondition rejects, so that Filter reports the error.
+func conditionPostingFilter(condition *modelv1.Condition, fields FieldResolver) *native.PostingFilter {
+	resolved, err := resolveCondition(condition, fields)
+	if err != nil {
+		return nil
+	}
+	switch {
+	case resolved.unresolved:
+		// A tag that is not indexed never has a posting to find or exclude.
+		if resolved.negated {
+			return native.MatchAll()
+		}
+		return native.MatchNone()
+	case resolved.isRange:
+		if resolved.singleTerm {
+			return native.FilterSingleTermRanges(resolved.rng)
+		}
+		return native.FilterRanges(resolved.rng)
+	}
+	terms := native.FilterTerms(native.TermSetRequest{Field: resolved.field, Terms: resolved.terms, Mode: resolved.mode})
+	if resolved.negated {
+		return native.NotOf(terms)
+	}
+	return terms
 }

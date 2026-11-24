@@ -152,7 +152,7 @@ func TestMultiGroupMerge_MaterializesRowsOnce(t *testing.T) {
 	serializedBefore := measure.SerializedRowCount()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
 		var group *GroupBatches
 		if dispatchErr == nil {
@@ -210,7 +210,7 @@ func mgDispatchAll(t *testing.T, merge *MultiGroupMerge, groups []*mgBatchEC, sc
 	t.Helper()
 	var batches []*GroupBatches
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, false, true)
 		var group *GroupBatches
 		if dispatchErr == nil {
@@ -463,4 +463,42 @@ func (s *recycledGroupSource) Close() error {
 	s.batch.ReleaseOwners()
 	s.closed = true
 	return nil
+}
+
+// A plain-row multi-group query dispatches each group with a request that names only that group: the window is pushed down
+// to storage only for a single-group request, so a request that still named every group read every document of every group.
+func TestMultiGroupMerge_GroupRequestForNamesOneGroup(t *testing.T) {
+	cfg := measure.VectorizedConfig{BatchSize: 16, QueryMemoryMiB: 16}
+	groups := []*mgBatchEC{
+		{schema: testMeasureSchemaForGroup("a"), batches: [][]mgRowSpec{{{ts: 1, sid: 1, version: 1, value: 1}}}},
+		{schema: testMeasureSchemaForGroup("b"), batches: [][]mgRowSpec{{{ts: 2, sid: 2, version: 1, value: 1}}}},
+	}
+	schemas, measureSchemas := mgTestSetup(t, groups)
+	request := mgTestRequest(20)
+	request.Offset = 5
+	merge, mergeErr := NewMultiGroupMerge(context.Background(), request, schemas, measureSchemas, cfg)
+	if mergeErr != nil {
+		t.Fatalf("NewMultiGroupMerge: %v", mergeErr)
+	}
+	for _, group := range []string{"a", "b"} {
+		got := merge.GroupRequestFor(group)
+		if len(got.GetGroups()) != 1 || got.GetGroups()[0] != group {
+			t.Fatalf("group %s: request names groups %v, want only %s", group, got.GetGroups(), group)
+		}
+		if got.GetLimit() != 25 || got.GetOffset() != 0 {
+			t.Fatalf("group %s: window limit=%d offset=%d, want limit 25 (offset+limit) and offset 0", group, got.GetLimit(), got.GetOffset())
+		}
+	}
+	if len(merge.GroupRequest().GetGroups()) != 2 {
+		t.Fatalf("the shared request must keep every group, got %v", merge.GroupRequest().GetGroups())
+	}
+	// A query that reduces aggregates keeps the shared request: a group cannot prune, and the groups are reduced together.
+	aggMerge, aggErr := NewMultiGroupMerge(context.Background(), mgAggRequest(modelv1.AggregationFunction_AGGREGATION_FUNCTION_SUM),
+		schemas, measureSchemas, cfg)
+	if aggErr != nil {
+		t.Fatalf("NewMultiGroupMerge agg: %v", aggErr)
+	}
+	if got := aggMerge.GroupRequestFor("a"); len(got.GetGroups()) != 2 {
+		t.Fatalf("an aggregate must keep every group in the request, got %v", got.GetGroups())
+	}
 }
