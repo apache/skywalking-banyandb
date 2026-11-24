@@ -29,7 +29,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
-// The scan limit is offset plus limit, for an index-mode scan with an order, or a normal-mode scan ordered by an index
+// The scan limit is offset plus limit, for an index-mode scan, ordered or not, or a normal-mode scan ordered by an index
 // rule, that nothing but the Limit operator follows.
 func TestScanLimit(t *testing.T) {
 	indexMode := &databasev1.Measure{IndexMode: true}
@@ -56,7 +56,19 @@ func TestScanLimit(t *testing.T) {
 		{name: "default limit when unset", measure: indexMode, order: timeOrder, scan: plainScan, req: req(func(r *measurev1.QueryRequest) { r.Limit = 0 }), want: 105},
 		{name: "unbounded limit", measure: indexMode, order: timeOrder, scan: plainScan, req: req(func(r *measurev1.QueryRequest) { r.Limit = math.MaxUint32 })},
 		{name: "normal measure", measure: normal, order: timeOrder, scan: plainScan, req: req(nil)},
-		{name: "no order", measure: indexMode, scan: plainScan, req: req(nil)},
+		{name: "no order", measure: indexMode, scan: plainScan, req: req(nil), want: 25},
+		{
+			name: "no order several groups", measure: indexMode, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Groups = []string{"a", "b"} }),
+		},
+		{
+			name: "no order aggregation", measure: indexMode, req: req(nil),
+			scan: &Scan{Params: ScanParams{Agg: &model.MeasureAgg{}}},
+		},
+		{
+			name: "no order unbounded", measure: indexMode, scan: plainScan,
+			req: req(func(r *measurev1.QueryRequest) { r.Limit = math.MaxUint32 }),
+		},
 		{name: "index order", measure: indexMode, order: indexOrder, scan: plainScan, req: req(nil), want: 25},
 		{name: "index order normal measure", measure: normal, order: indexOrder, scan: plainScan, req: req(nil), want: 25},
 		{name: "normal measure no order", measure: normal, scan: plainScan, req: req(nil)},

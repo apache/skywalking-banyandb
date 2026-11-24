@@ -668,7 +668,16 @@ func (f Field) Marshal() ([]byte, error) {
 	if f.Index {
 		flags |= 4
 	}
+	if f.Numeric {
+		flags |= 8
+	}
 	result = append(result, flags)
+	if f.Numeric {
+		// The sort ladder is built from the key, so a document that crosses the wire (the liaison builds the index
+		// documents of an index-mode measure and ships them to the data node) must carry it, or every ordered limited
+		// search on the data node decodes all of its candidates.
+		result = encoding.VarInt64ToBytes(result, f.NumericKey)
+	}
 	return result, nil
 }
 
@@ -719,6 +728,17 @@ func (f *Field) Unmarshal(data []byte) error {
 	f.NoSort = (flags & 1) != 0
 	f.Store = (flags & 2) != 0
 	f.Index = (flags & 4) != 0
+	f.Numeric = (flags & 8) != 0
+	f.NumericKey = 0
+	if f.Numeric {
+		if len(tail) < 2 {
+			return fmt.Errorf("insufficient data for the numeric key of a field")
+		}
+		var keyErr error
+		if _, f.NumericKey, keyErr = encoding.BytesToVarInt64(tail[1:]); keyErr != nil {
+			return fmt.Errorf("failed to decode the numeric key of a field: %w", keyErr)
+		}
+	}
 	return nil
 }
 
