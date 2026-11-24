@@ -348,6 +348,7 @@ func generatePartMergeIter() *partMergeIter {
 
 func releasePartMergeIter(pmi *partMergeIter) {
 	pmi.reset()
+	pmi.block.boundMergeBuffers()
 	pmiPool.Put(pmi)
 }
 

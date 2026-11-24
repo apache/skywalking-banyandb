@@ -349,7 +349,7 @@ func Test_marshalAndUnmarshalTagFamily(t *testing.T) {
 	defer releaseSeqReader(valueReader)
 	valueReader.init(dataBuffer)
 
-	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader)
+	unmarshaled2.unmarshalTagFamilyFromSeqReaders(decoder, tfIndex, name, bm.getTagFamilyMetadata(name), metaReader, valueReader, false)
 
 	if diff := cmp.Diff(unmarshaled2.tagFamilies[0], b.tagFamilies[0],
 		cmp.AllowUnexported(columnFamily{}, column{}),

@@ -175,15 +175,15 @@ func (b *block) validate() {
 	tff := b.tagFamilies
 	for _, tf := range tff {
 		for _, c := range tf.columns {
-			if len(c.values) != itemsCount {
-				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", c.name, len(c.values), itemsCount)
+			if c.rowCount() != itemsCount {
+				logger.Panicf("unexpected number of values for tags %q: got %d; want %d", c.name, c.rowCount(), itemsCount)
 			}
 		}
 	}
 	ff := b.field
 	for _, f := range ff.columns {
-		if len(f.values) != itemsCount {
-			logger.Panicf("unexpected number of values for fields %q: got %d; want %d", f.name, len(f.values), itemsCount)
+		if f.rowCount() != itemsCount {
+			logger.Panicf("unexpected number of values for fields %q: got %d; want %d", f.name, f.rowCount(), itemsCount)
 		}
 	}
 }
@@ -270,7 +270,7 @@ NEXT:
 }
 
 func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDecoder, tfIndex int, name string,
-	columnFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader,
+	columnFamilyMetadataBlock *dataBlock, metaReader, valueReader *seqReader, typedNumeric bool,
 ) {
 	if columnFamilyMetadataBlock.offset != metaReader.bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", columnFamilyMetadataBlock.offset, metaReader.bytesRead)
@@ -289,7 +289,7 @@ func (b *block) unmarshalTagFamilyFromSeqReaders(decoder *encoding.BytesBlockDec
 
 	cc := b.tagFamilies[tfIndex].resizeColumns(len(cfm.columnMetadata))
 	for i := range cfm.columnMetadata {
-		cc[i].mustSeqReadValues(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()))
+		cc[i].mustSeqReadValuesTyped(decoder, valueReader, cfm.columnMetadata[i], uint64(b.Len()), typedNumeric)
 	}
 }
 
@@ -365,13 +365,17 @@ func (b *block) mustReadFrom(decoder *encoding.BytesBlockDecoder, p *part, bm bl
 }
 
 func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata) {
+	b.mustSeqReadFromTyped(decoder, seqReaders, bm, false)
+}
+
+func (b *block) mustSeqReadFromTyped(decoder *encoding.BytesBlockDecoder, seqReaders *seqReaders, bm blockMetadata, typedNumeric bool) {
 	b.reset()
 
 	b.timestamps, b.versions = mustSeqReadTimestampsFrom(b.timestamps, b.versions, &bm.timestamps, int(bm.count), &seqReaders.timestamps)
 
 	cc := b.field.resizeColumns(len(bm.field.columnMetadata))
 	for i := range cc {
-		cc[i].mustSeqReadValues(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count)
+		cc[i].mustSeqReadValuesTyped(decoder, &seqReaders.fieldValues, bm.field.columnMetadata[i], bm.count, typedNumeric)
 	}
 	_ = b.resizeTagFamilies(len(bm.tagFamilies))
 	keys := make([]string, 0, len(bm.tagFamilies))
@@ -382,7 +386,7 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, seqReaders 
 	for i, name := range keys {
 		block := bm.tagFamilies[name]
 		b.unmarshalTagFamilyFromSeqReaders(decoder, i, name, block,
-			seqReaders.tagFamilyMetadata[name], seqReaders.tagFamilies[name])
+			seqReaders.tagFamilyMetadata[name], seqReaders.tagFamilies[name], typedNumeric)
 	}
 }
 
@@ -1225,8 +1229,8 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 				return fmt.Errorf("unexpected tag name for tag family %q: got %q; want %q",
 					bi.tagFamilies[i].name, b.tagFamilies[i].columns[j].name, bi.tagFamilies[i].columns[j].name)
 			}
-			assertIdxAndOffset(b.tagFamilies[i].columns[j].name, len(b.tagFamilies[i].columns[j].values), b.idx, offset)
-			bi.tagFamilies[i].columns[j].values = append(bi.tagFamilies[i].columns[j].values, b.tagFamilies[i].columns[j].values[b.idx:offset]...)
+			assertIdxAndOffset(b.tagFamilies[i].columns[j].name, b.tagFamilies[i].columns[j].rowCount(), b.idx, offset)
+			bi.tagFamilies[i].columns[j].appendRowsFrom(&b.tagFamilies[i].columns[j], b.idx, offset)
 		}
 	}
 	return nil
@@ -1235,8 +1239,8 @@ func fastTagAppend(bi, b *blockPointer, offset int) error {
 func rollbackFastTagAppend(bi *blockPointer, existingDataSize int) {
 	for i := range bi.tagFamilies {
 		for j := range bi.tagFamilies[i].columns {
-			if len(bi.tagFamilies[i].columns[j].values) > existingDataSize {
-				bi.tagFamilies[i].columns[j].values = bi.tagFamilies[i].columns[j].values[:existingDataSize]
+			if bi.tagFamilies[i].columns[j].rowCount() > existingDataSize {
+				bi.tagFamilies[i].columns[j].truncateRows(existingDataSize)
 			}
 		}
 	}
@@ -1245,17 +1249,14 @@ func rollbackFastTagAppend(bi *blockPointer, existingDataSize int) {
 func fullTagAppend(bi, b *blockPointer, offset int) {
 	existDataSize := len(bi.timestamps)
 	appendTagFamilies := func(tf columnFamily) {
-		tagFamily := columnFamily{name: tf.name}
+		index := len(bi.tagFamilies)
+		bi.resizeTagFamilies(index + 1)
+		tagFamily := &bi.tagFamilies[index]
+		tagFamily.reset()
+		tagFamily.name = tf.name
 		for i := range tf.columns {
-			assertIdxAndOffset(tf.columns[i].name, len(tf.columns[i].values), b.idx, offset)
-			col := column{name: tf.columns[i].name, valueType: tf.columns[i].valueType}
-			for j := 0; j < existDataSize; j++ {
-				col.values = append(col.values, nil)
-			}
-			col.values = append(col.values, tf.columns[i].values[b.idx:offset]...)
-			tagFamily.columns = append(tagFamily.columns, col)
+			appendMergeColumn(tagFamily, &tf.columns[i], existDataSize, b.idx, offset)
 		}
-		bi.tagFamilies = append(bi.tagFamilies, tagFamily)
 	}
 	if len(bi.tagFamilies) == 0 {
 		for _, tf := range b.tagFamilies {
@@ -1282,18 +1283,13 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 			columnIdx[bi.tagFamilies[fi].columns[i].name] = i
 		}
 		for _, c := range tf.columns {
-			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			assertIdxAndOffset(c.name, c.rowCount(), b.idx, offset)
 			if ci, exists := columnIdx[c.name]; exists {
 				existingColumn := &bi.tagFamilies[fi].columns[ci]
-				existingColumn.values = append(existingColumn.values, c.values[b.idx:offset]...)
+				existingColumn.appendRowsFrom(&c, b.idx, offset)
 				continue
 			}
-			col := column{name: c.name, valueType: c.valueType}
-			for j := 0; j < existDataSize; j++ {
-				col.values = append(col.values, nil)
-			}
-			col.values = append(col.values, c.values[b.idx:offset]...)
-			bi.tagFamilies[fi].columns = append(bi.tagFamilies[fi].columns, col)
+			appendMergeColumn(&bi.tagFamilies[fi], &c, existDataSize, b.idx, offset)
 		}
 	}
 	tagFamilyMap := make(map[string]*columnFamily, len(b.tagFamilies))
@@ -1304,9 +1300,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 	for _, tf := range bi.tagFamilies {
 		if _, exists := tagFamilyMap[tf.name]; !exists {
 			for i := range tf.columns {
-				for j := 0; j < emptySize; j++ {
-					tf.columns[i].values = append(tf.columns[i].values, nil)
-				}
+				tf.columns[i].appendNulls(emptySize)
 			}
 		} else {
 			existingTagFamily := tagFamilyMap[tf.name]
@@ -1316,9 +1310,7 @@ func fullTagAppend(bi, b *blockPointer, offset int) {
 			}
 			for i := range tf.columns {
 				if _, exists := columnMap[tf.columns[i].name]; !exists {
-					for j := 0; j < emptySize; j++ {
-						tf.columns[i].values = append(tf.columns[i].values, nil)
-					}
+					tf.columns[i].appendNulls(emptySize)
 				}
 			}
 		}
@@ -1333,8 +1325,10 @@ func fastFieldAppend(bi, b *blockPointer, offset int) error {
 		if bi.field.columns[i].name != b.field.columns[i].name {
 			return fmt.Errorf("unexpected field name: got %q; want %q", b.field.columns[i].name, bi.field.columns[i].name)
 		}
-		assertIdxAndOffset(b.field.columns[i].name, len(b.field.columns[i].values), b.idx, offset)
-		bi.field.columns[i].values = append(bi.field.columns[i].values, b.field.columns[i].values[b.idx:offset]...)
+	}
+	for i := range bi.field.columns {
+		assertIdxAndOffset(b.field.columns[i].name, b.field.columns[i].rowCount(), b.idx, offset)
+		bi.field.columns[i].appendRowsFrom(&b.field.columns[i], b.idx, offset)
 	}
 	return nil
 }
@@ -1342,12 +1336,7 @@ func fastFieldAppend(bi, b *blockPointer, offset int) error {
 func fullFieldAppend(bi, b *blockPointer, offset int) {
 	existDataSize := len(bi.timestamps)
 	appendFields := func(c column) {
-		col := column{name: c.name, valueType: c.valueType}
-		for j := 0; j < existDataSize; j++ {
-			col.values = append(col.values, nil)
-		}
-		col.values = append(col.values, c.values[b.idx:offset]...)
-		bi.field.columns = append(bi.field.columns, col)
+		appendMergeColumn(&bi.field, &c, existDataSize, b.idx, offset)
 	}
 	if len(bi.field.columns) == 0 {
 		for _, c := range b.field.columns {
@@ -1364,9 +1353,9 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 
 	for _, c := range b.field.columns {
 		if fi, exists := fieldIdx[c.name]; exists {
-			assertIdxAndOffset(c.name, len(c.values), b.idx, offset)
+			assertIdxAndOffset(c.name, c.rowCount(), b.idx, offset)
 			existingField := &bi.field.columns[fi]
-			existingField.values = append(existingField.values, c.values[b.idx:offset]...)
+			existingField.appendRowsFrom(&c, b.idx, offset)
 		} else {
 			appendFields(c)
 		}
@@ -1379,11 +1368,23 @@ func fullFieldAppend(bi, b *blockPointer, offset int) {
 	emptySize := offset - b.idx
 	for i := range bi.field.columns {
 		if _, exists := fieldMap[bi.field.columns[i].name]; !exists {
-			for j := 0; j < emptySize; j++ {
-				bi.field.columns[i].values = append(bi.field.columns[i].values, nil)
-			}
+			bi.field.columns[i].appendNulls(emptySize)
 		}
 	}
+}
+
+// appendMergeColumn reuses a reset slot, including its row buffers, instead of
+// overwriting it with a fresh column when a merge starts filling the destination.
+func appendMergeColumn(family *columnFamily, src *column, missingRows, start, end int) {
+	assertIdxAndOffset(src.name, src.rowCount(), start, end)
+	index := len(family.columns)
+	family.resizeColumns(index + 1)
+	c := &family.columns[index]
+	c.reset()
+	c.name = src.name
+	c.valueType = src.valueType
+	c.appendNulls(missingRows)
+	c.appendRowsFrom(src, start, end)
 }
 
 func (bi *blockPointer) mergeAndAppendTopN(
@@ -1480,7 +1481,18 @@ func generateBlockPointer() *blockPointer {
 
 func releaseBlockPointer(bi *blockPointer) {
 	bi.reset()
+	bi.boundMergeBuffers()
 	blockPointerPool.Put(bi)
+}
+
+func (bi *blockPointer) boundMergeBuffers() {
+	// Two ordinary blocks can be combined before splitting. Keep that working
+	// capacity, but do not retain oversized legacy input buffers in the pool.
+	boundFamilyBacking(&bi.field, cap(bi.field.columns), 2*maxBlockLength)
+	for i := range bi.tagFamilies[:cap(bi.tagFamilies)] {
+		family := &bi.tagFamilies[:cap(bi.tagFamilies)][i]
+		boundFamilyBacking(family, cap(family.columns), 2*maxBlockLength)
+	}
 }
 
 var blockPointerPool = pool.Register[*blockPointer]("measure-blockPointer")

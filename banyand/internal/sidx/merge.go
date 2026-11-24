@@ -169,8 +169,9 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 			decoder = nil
 		}
 	}
+	defer releaseDecoder()
 	loadAndRename := func() bool {
-		br.loadBlockData(getDecoder())
+		br.loadBlockDataForMerge(getDecoder())
 		renameConflictTags(&br.block.block, conflictTags)
 		if keep != nil {
 			filterBlockPointer(br.block, keep)

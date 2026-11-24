@@ -23,6 +23,7 @@ import (
 
 	internalencoding "github.com/apache/skywalking-banyandb/banyand/internal/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/bytes"
+	"github.com/apache/skywalking-banyandb/pkg/convert"
 	pkgencoding "github.com/apache/skywalking-banyandb/pkg/encoding"
 	"github.com/apache/skywalking-banyandb/pkg/filter"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -115,11 +116,22 @@ type tagData struct {
 }
 
 type tagRow struct {
-	value    []byte
-	valueArr [][]byte
+	encodedArray *encodedTagArray
+	value        []byte
+	valueArr     [][]byte
+}
+
+// encodedTagArray is shared by equal array rows during a merge. Its contents
+// remain immutable while rows move between blocks; value retains the decoded
+// input bytes until the merged output has been written.
+type encodedTagArray struct {
+	value       []byte
+	values      [][]byte
+	payloadSize uint64
 }
 
 func (tr *tagRow) reset() {
+	tr.encodedArray = nil
 	tr.value = nil
 	tr.valueArr = nil
 }
@@ -271,6 +283,9 @@ func decodeBloomFilter(src []byte) (*filter.BloomFilter, error) {
 
 // marshalTagRow marshals the tagRow value to a byte slice.
 func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
+	if tr.encodedArray != nil {
+		return append(dst, tr.encodedArray.value...)
+	}
 	if tr.valueArr != nil {
 		for i := range tr.valueArr {
 			if valueType == pbv1.ValueTypeInt64Arr {
@@ -283,6 +298,49 @@ func marshalTagRow(dst []byte, tr *tagRow, valueType pbv1.ValueType) []byte {
 	}
 	dst = append(dst, tr.value...)
 	return dst
+}
+
+// decodeMergeTagValues preserves array encodings and shares their decoded
+// elements within this input block. Size accounting and Bloom filters need the
+// elements, but equal rows do not need separate element slices or byte buffers.
+func decodeMergeTagValues(td *tagData, decoder *pkgencoding.BytesBlockDecoder, encodedData *bytes.Buffer,
+	valueType pbv1.ValueType, count int,
+) error {
+	if valueType != pbv1.ValueTypeStrArr && valueType != pbv1.ValueTypeInt64Arr {
+		return decodeAndConvertTagValues(td, decoder, encodedData, valueType, count)
+	}
+	var err error
+	td.tmpBytes, err = internalencoding.DecodeTagValues(td.tmpBytes[:0], decoder, encodedData, valueType, count)
+	if err != nil {
+		return fmt.Errorf("cannot decode tag values: %w", err)
+	}
+	if cap(td.values) < len(td.tmpBytes) {
+		td.values = make([]tagRow, len(td.tmpBytes))
+	} else {
+		td.values = td.values[:len(td.tmpBytes)]
+	}
+	arrays := make(map[string]*encodedTagArray)
+	for i, value := range td.tmpBytes {
+		if len(value) == 0 {
+			td.values[i] = tagRow{}
+			continue
+		}
+		key := convert.BytesToString(value)
+		array := arrays[key]
+		if array == nil {
+			values, decodeErr := unmarshalTag(nil, value, valueType)
+			if decodeErr != nil {
+				return fmt.Errorf("cannot unmarshal tag array: %w", decodeErr)
+			}
+			array = &encodedTagArray{value: value, values: values}
+			for _, element := range values {
+				array.payloadSize += uint64(len(element))
+			}
+			arrays[key] = array
+		}
+		td.values[i] = tagRow{encodedArray: array}
+	}
+	return nil
 }
 
 // decodeAndConvertTagValues decodes encoded tag values and converts them to tagRow format.

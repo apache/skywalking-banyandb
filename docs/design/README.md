@@ -7,6 +7,8 @@ must be added there when it is introduced. When a milestone ships, its directory
 
 ## Current milestone — 0.12.0
 
+- [Reuse measure merge buffers and keep numeric columns typed](0.12.0/measure-merge-buffer-reuse.md)
+- [Whole-block merge copy experiment (reverted)](0.12.0/stream-measure-block-copy.md)
 - [Trace sampling before lifecycle migration](0.12.0/lifecycle-trace-sampling.md)
 - [Measure QL Catalog B: core SQL implementation plan](0.12.0/measure-ql-core-sql/README.md)
 - [Tag aggregation and time bucketing in the measure query engine](0.12.0/tag-aggregation/README.md)
