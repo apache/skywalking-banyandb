@@ -509,7 +509,9 @@ shards, segments, TTL and stages, so migration is one of two cases:
 
 1. **Field layout preserved.** If the legacy layout maps one-to-one (the subject is readable as
    `_im_name`, entity and tag fields map to tag-name fields, `_timestamp` and `_version` are kept),
-   create the `DocumentIndex` resource and nothing moves. The reader of §4.5 serves both layouts.
+   create the `DocumentIndex` resource and nothing moves. The resource keeps the source subject, so
+   legacy documents stay addressable under the same name and no document is rewritten. The reader
+   of §4.5 serves both layouts.
 2. **In-place re-index, optional.** If a resource needs the new field layout, rewrite its documents
    in place with the new field names. This is an optional tool, not a prerequisite for the default
    path. Extend the existing `banyand/cmd/migration` tooling (`copy`, `verify`, `analyze`, and the
