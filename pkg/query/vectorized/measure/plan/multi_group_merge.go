@@ -193,8 +193,22 @@ func (m *MultiGroupMerge) hideCriteriaOnlyKeys(req *measurev1.QueryRequest, sche
 	}
 }
 
-// GroupRequest returns the request every group is dispatched with.
+// GroupRequest returns the shared request, which still names every group. A group is dispatched with GroupRequestFor, which
+// narrows it to that group when the query's window can be pushed down.
 func (m *MultiGroupMerge) GroupRequest() *measurev1.QueryRequest { return m.groupReq }
+
+// GroupRequestFor returns the request to dispatch for one group. A plain-row query names only that group, so the scan can
+// push the group's window down to storage the way a data node does: the window is pushed only for a request over a single
+// group, and a request that still named every group read every document of every group. A query that reduces aggregates
+// or ranks a top-N keeps the shared request.
+func (m *MultiGroupMerge) GroupRequestFor(group string) *measurev1.QueryRequest {
+	if !m.plainRows || len(m.groupReq.GetGroups()) <= 1 {
+		return m.groupReq
+	}
+	request := proto.Clone(m.groupReq).(*measurev1.QueryRequest)
+	request.Groups = []string{group}
+	return request
+}
 
 // ReducesAggregates reports whether the groups must be dispatched in partial mode, because
 // MergeBatches reduces their aggregation partials across groups.

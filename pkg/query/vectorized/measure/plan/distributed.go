@@ -203,7 +203,12 @@ func AnalyzeDistributed(
 	if limit == 0 {
 		limit = defaultLimit
 	}
-	nodeTemplate.Limit = limit + nodeTemplate.GetOffset()
+	// A node returns the first offset+limit rows; a window past uint32 is every row a node can return.
+	window, fits := query.AddWindow(limit, nodeTemplate.GetOffset())
+	if !fits {
+		window = math.MaxUint32
+	}
+	nodeTemplate.Limit = uint32(window)
 	nodeTemplate.Offset = 0
 	if nodeTemplate.GetAgg() != nil {
 		// A node's partials are reduced before the limit applies: a key cut off by one node's limit would lose
