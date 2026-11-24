@@ -20,6 +20,7 @@ package plan
 import (
 	"github.com/pkg/errors"
 
+	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	"github.com/apache/skywalking-banyandb/pkg/index"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
@@ -258,4 +259,36 @@ func (r measureFieldResolver) Field(tagName string) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// SingleTerm implements criteria.SingleTermResolver: it reports that the tag's field holds exactly one term per document,
+// which is what lets two range conditions on it fold into one range at posting level. That holds for an entity tag, and for
+// a scalar int, timestamp or string tag that no analyzer splits into tokens and that is the only tag of its rule. An analyzed tag gets one term per token and an
+// array tag one per value, and a multi-tag rule one per tag, so a document can match "x >= m" and "x <= c" taken one at a time and match no single range.
+func (r measureFieldResolver) SingleTerm(tagName string) bool {
+	if ok, rule := r.schema.IndexDefined(tagName); ok {
+		// A rule over several tags stores every tag's value under one field, so the field holds one term per tag.
+		if len(rule.Tags) != 1 {
+			return false
+		}
+		if rule.Analyzer != index.AnalyzerUnspecified && rule.Analyzer != index.AnalyzerKeyword {
+			return false
+		}
+		spec := r.schema.FindTagSpecByName(tagName)
+		if spec == nil {
+			return false
+		}
+		switch spec.Spec.GetType() {
+		case databasev1.TagType_TAG_TYPE_INT, databasev1.TagType_TAG_TYPE_TIMESTAMP, databasev1.TagType_TAG_TYPE_STRING:
+			return true
+		default:
+			return false
+		}
+	}
+	for _, name := range r.schema.EntityList() {
+		if name == tagName {
+			return true
+		}
+	}
+	return false
 }

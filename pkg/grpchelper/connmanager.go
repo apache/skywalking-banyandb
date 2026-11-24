@@ -75,7 +75,8 @@ type ConnManager[C Client] struct {
 	log                 *logger.Logger
 	registered          map[string]*databasev1.Node
 	active              map[string]*managedNode[C]
-	evictable           map[string]evictNode
+	evictable           map[string]*connectionAttempt
+	pending             map[string]*connectionAttempt
 	cbStates            map[string]*circuitState
 	closer              *run.Closer
 	dialOpts            []grpc.DialOption
@@ -83,17 +84,22 @@ type ConnManager[C Client] struct {
 	healthCheckInterval time.Duration
 	mu                  sync.RWMutex
 	cbMu                sync.RWMutex
+	stopped             bool
 }
 
 type managedNode[C Client] struct {
-	client C
-	conn   *grpc.ClientConn
-	node   *databasev1.Node
+	client   C
+	conn     *grpc.ClientConn
+	node     *databasev1.Node
+	checking bool
 }
 
-type evictNode struct {
-	n *databasev1.Node
-	c chan struct{}
+// Each attempt owns its cancellation and identity, so an obsolete probe cannot
+// publish a connection after a node is deleted, replaced, or reconnected.
+type connectionAttempt struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	node   *databasev1.Node
 }
 
 // NewConnManager creates a new ConnManager.
@@ -115,7 +121,8 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 		log:                 cfg.Logger,
 		registered:          make(map[string]*databasev1.Node),
 		active:              make(map[string]*managedNode[C]),
-		evictable:           make(map[string]evictNode),
+		evictable:           make(map[string]*connectionAttempt),
+		pending:             make(map[string]*connectionAttempt),
 		cbStates:            make(map[string]*circuitState),
 		closer:              run.NewCloser(1),
 		dialOpts:            dialOpts,
@@ -124,7 +131,7 @@ func NewConnManager[C Client](cfg ConnManagerConfig[C]) *ConnManager[C] {
 	}
 	if m.healthCheckInterval > 0 && m.closer.AddRunning() {
 		run.GoOrDie(context.Background(), "grpchelper.connmanager.health-check", m.log, func(_ context.Context) {
-			m.periodicHealthCheck()
+			m.periodicHealthCheck() //nolint:contextcheck // probes use the manager's lifetime context
 		})
 	}
 	return m
@@ -143,44 +150,97 @@ func (m *ConnManager[C]) OnAddOrUpdate(node *databasev1.Node) {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if m.stopped {
+		m.mu.Unlock()
+		return
+	}
 	m.registerNode(node)
 
 	if _, ok := m.active[name]; ok {
+		m.mu.Unlock()
 		return
 	}
 	if _, ok := m.evictable[name]; ok {
+		m.mu.Unlock()
 		return
 	}
+	if _, ok := m.pending[name]; ok {
+		m.mu.Unlock()
+		return
+	}
+	attempt := m.startConnection(node)
+	m.mu.Unlock()
+	if attempt != nil {
+		m.connect(attempt)
+	}
+}
+
+// startConnection reserves a node before releasing mu for connection setup.
+// The caller must hold mu and call connect even if the attempt is canceled.
+func (m *ConnManager[C]) startConnection(node *databasev1.Node) *connectionAttempt {
+	if !m.closer.AddRunning() {
+		return nil
+	}
+	ctx, cancel := context.WithCancel(m.closer.Ctx())
+	attempt := &connectionAttempt{ctx: ctx, cancel: cancel, node: node}
+	m.pending[node.Metadata.Name] = attempt
+	return attempt
+}
+
+func (m *ConnManager[C]) dial(node *databasev1.Node) (*grpc.ClientConn, error) {
 	credOpts, dialErr := m.handler.GetDialOptions()
 	if dialErr != nil {
-		m.log.Error().Err(dialErr).Msg("failed to load client TLS credentials")
-		return
+		return nil, fmt.Errorf("failed to load client TLS credentials: %w", dialErr)
 	}
 	allOpts := make([]grpc.DialOption, 0, len(credOpts)+len(m.dialOpts))
 	allOpts = append(allOpts, credOpts...)
 	allOpts = append(allOpts, m.dialOpts...)
-	conn, connErr := grpc.NewClient(address, allOpts...)
+	return grpc.NewClient(m.handler.AddressOf(node), allOpts...)
+}
+
+func (m *ConnManager[C]) connect(attempt *connectionAttempt) {
+	defer m.closer.Done()
+	defer attempt.cancel()
+	name := attempt.node.Metadata.Name
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if m.pending[name] == attempt {
+			delete(m.pending, name)
+		}
+	}()
+	if attempt.ctx.Err() != nil {
+		return
+	}
+	conn, connErr := m.dial(attempt.node)
 	if connErr != nil {
 		m.log.Error().Err(connErr).Msg("failed to connect to grpc server")
 		return
 	}
-
-	client, clientErr := m.handler.NewClient(conn, node)
+	healthy := m.healthCheck(attempt.ctx, attempt.node.String(), conn)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped || m.pending[name] != attempt {
+		_ = conn.Close()
+		return
+	}
+	client, clientErr := m.handler.NewClient(conn, attempt.node)
 	if clientErr != nil {
 		m.log.Error().Err(clientErr).Msg("failed to create client")
 		_ = conn.Close()
 		return
 	}
-	if !m.checkHealthAndReconnect(conn, node, client) {
-		m.log.Info().Str("status", m.dump()).Stringer("node", node).Msg("node is unhealthy in the register flow, move it to evict queue")
+	mn := &managedNode[C]{conn: conn, client: client, node: attempt.node}
+	if !healthy {
+		m.evict(name, mn)
+		m.log.Info().Str("status", m.dump()).Stringer("node", attempt.node).Msg("node is unhealthy in the register flow, move it to evict queue")
 		return
 	}
-	m.active[name] = &managedNode[C]{conn: conn, client: client, node: node}
+	m.active[name] = mn
 	m.handler.OnActive(name, client)
 	// Initialize or reset circuit breaker state to closed
 	m.RecordSuccess(name)
-	m.log.Info().Str("status", m.dump()).Stringer("node", node).Msg("new node is healthy, add it to active queue")
+	m.log.Info().Str("status", m.dump()).Stringer("node", attempt.node).Msg("new node is healthy, add it to active queue")
 }
 
 // OnDelete removes a node and its connection.
@@ -191,52 +251,71 @@ func (m *ConnManager[C]) OnDelete(node *databasev1.Node) {
 		return
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.registered, name)
-	if en, ok := m.evictable[name]; ok {
-		close(en.c)
-		delete(m.evictable, name)
-		m.log.Info().Str("status", m.dump()).Stringer("node", node).Msg("node is removed from evict queue by delete event")
+	if m.stopped {
+		m.mu.Unlock()
 		return
 	}
-	if mn, ok := m.active[name]; ok {
-		if m.removeNodeIfUnhealthy(name, mn) {
-			m.log.Info().Str("status", m.dump()).Stringer("node", node).Msg("remove node from active queue by delete event")
-			return
-		}
-		if !m.closer.AddRunning() {
-			return
-		}
-		run.Go(context.Background(), "connmanager-reconnect", m.log, func(_ context.Context) {
-			defer m.closer.Done()
-			var elapsed time.Duration
-			attempt := 0
-			for {
-				backoff := JitteredBackoff(InitBackoff, MaxBackoff, attempt, DefaultJitterFactor)
-				select {
-				case <-time.After(backoff):
-					if func() bool { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
-						elapsed += backoff
-						m.mu.Lock()
-						defer m.mu.Unlock()
-						if _, ok := m.registered[name]; ok {
-							return true
-						}
-						if m.removeNodeIfUnhealthy(name, mn) {
-							m.log.Info().Str("status", m.dump()).Stringer("node", node).Dur("after", elapsed).Msg("remove node from active queue by delete event")
-							return true
-						}
-						return false
-					}() {
-						return
-					}
-				case <-m.closer.CloseNotify():
+	delete(m.registered, name)
+	m.cancelPending(name)
+	if en, ok := m.evictable[name]; ok {
+		en.cancel()
+		delete(m.evictable, name)
+		m.log.Info().Str("status", m.dump()).Stringer("node", node).Msg("node is removed from evict queue by delete event")
+		m.mu.Unlock()
+		return
+	}
+	mn := m.active[name]
+	if mn == nil || !m.closer.AddRunning() {
+		m.mu.Unlock()
+		return
+	}
+	m.mu.Unlock()
+	defer m.closer.Done()
+	if m.removeDeletedNode(name, mn) {
+		return
+	}
+	if !m.closer.AddRunning() {
+		return
+	}
+	run.Go(m.closer.Ctx(), "connmanager-reconnect", m.log, func(_ context.Context) {
+		defer m.closer.Done()
+		for attempt := 0; ; attempt++ {
+			backoff := JitteredBackoff(InitBackoff, MaxBackoff, attempt, DefaultJitterFactor)
+			select {
+			case <-time.After(backoff):
+				if m.removeDeletedNode(name, mn) {
 					return
 				}
-				attempt++
+			case <-m.closer.CloseNotify():
+				return
 			}
-		})
+		}
+	})
+}
+
+// removeDeletedNode preserves a healthy connection after a discovery deletion.
+// It returns true once this cleanup is obsolete or the unhealthy node is removed.
+func (m *ConnManager[C]) removeDeletedNode(name string, mn *managedNode[C]) bool {
+	m.mu.RLock()
+	obsolete := m.stopped || m.registered[name] != nil || m.active[name] != mn
+	m.mu.RUnlock()
+	if obsolete {
+		return true
 	}
+	healthy := m.healthCheck(m.closer.Ctx(), mn.node.String(), mn.conn)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped || m.registered[name] != nil || m.active[name] != mn {
+		return true
+	}
+	if healthy {
+		return false
+	}
+	_ = mn.conn.Close()
+	delete(m.active, name)
+	m.handler.OnInactive(name, mn.client)
+	m.log.Info().Str("node", name).Msg("remove unhealthy node after discovery deletion")
+	return true
 }
 
 // GetClient returns the client for the given node name.
@@ -338,31 +417,50 @@ func (m *ConnManager[C]) GetRouteTable() *databasev1.RouteTable {
 // FailoverNode checks health for a node and moves it to evictable if unhealthy.
 func (m *ConnManager[C]) FailoverNode(node string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	if m.stopped {
+		m.mu.Unlock()
+		return
+	}
 	if en, ok := m.evictable[node]; ok {
 		if _, registered := m.registered[node]; !registered {
-			close(en.c)
+			en.cancel()
 			delete(m.evictable, node)
 			m.log.Info().Str("node", node).Str("status", m.dump()).Msg("node is removed from evict queue by wire event")
 		}
+		m.mu.Unlock()
 		return
 	}
-	mn, ok := m.active[node]
-	if !ok {
+	mn := m.active[node]
+	if mn == nil || mn.checking || !m.closer.AddRunning() {
+		m.mu.Unlock()
 		return
 	}
-	if !m.checkHealthAndReconnect(mn.conn, mn.node, mn.client) {
-		m.log.Info().Str("status", m.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
+	mn.checking = true
+	m.mu.Unlock()
+	defer m.closer.Done()
+	healthy := m.healthCheck(m.closer.Ctx(), mn.node.String(), mn.conn)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	mn.checking = false
+	if m.stopped || m.active[node] != mn || healthy {
+		return
 	}
+	m.evict(node, mn)
+	m.log.Info().Str("status", m.dump()).Str("node", node).Msg("node is unhealthy in the failover flow, move it to evict queue")
 }
 
 // ReconnectAll closes all active and evictable connections and re-registers all nodes.
 func (m *ConnManager[C]) ReconnectAll() {
 	m.mu.Lock()
-	nodesToReconnect := make([]*databasev1.Node, 0, len(m.registered))
+	if m.stopped {
+		m.mu.Unlock()
+		return
+	}
+	attempts := make([]*connectionAttempt, 0, len(m.registered))
 	for name, node := range m.registered {
+		m.cancelPending(name)
 		if en, ok := m.evictable[name]; ok {
-			close(en.c)
+			en.cancel()
 			delete(m.evictable, name)
 		}
 		if mn, ok := m.active[name]; ok {
@@ -370,19 +468,25 @@ func (m *ConnManager[C]) ReconnectAll() {
 			delete(m.active, name)
 			m.handler.OnInactive(name, mn.client)
 		}
-		nodesToReconnect = append(nodesToReconnect, node)
+		if attempt := m.startConnection(node); attempt != nil {
+			attempts = append(attempts, attempt)
+		}
 	}
 	m.mu.Unlock()
-	for _, node := range nodesToReconnect {
-		m.OnAddOrUpdate(node)
+	for _, attempt := range attempts {
+		m.connect(attempt)
 	}
 }
 
 // GracefulStop closes all connections and stops background goroutines.
 func (m *ConnManager[C]) GracefulStop() {
 	m.mu.Lock()
-	for idx := range m.evictable {
-		close(m.evictable[idx].c)
+	m.stopped = true
+	for name := range m.pending {
+		m.cancelPending(name)
+	}
+	for _, en := range m.evictable {
+		en.cancel()
 	}
 	m.evictable = nil
 	m.mu.Unlock()
@@ -396,6 +500,14 @@ func (m *ConnManager[C]) GracefulStop() {
 	m.mu.Unlock()
 }
 
+// cancelPending invalidates a connection attempt. The caller must hold mu.
+func (m *ConnManager[C]) cancelPending(name string) {
+	if attempt := m.pending[name]; attempt != nil {
+		attempt.cancel()
+		delete(m.pending, name)
+	}
+}
+
 func (m *ConnManager[C]) registerNode(node *databasev1.Node) {
 	name := node.Metadata.GetName()
 	defer func() {
@@ -404,13 +516,20 @@ func (m *ConnManager[C]) registerNode(node *databasev1.Node) {
 
 	n, ok := m.registered[name]
 	if !ok {
-		return
+		// Discovery deletion retains healthy clients; a new registration must
+		// still replace one whose address has changed.
+		if mn := m.active[name]; mn != nil {
+			n = mn.node
+		} else {
+			return
+		}
 	}
 	if m.handler.AddressOf(n) == m.handler.AddressOf(node) {
 		return
 	}
+	m.cancelPending(name)
 	if en, ok := m.evictable[name]; ok {
-		close(en.c)
+		en.cancel()
 		delete(m.evictable, name)
 		m.log.Info().Str("node", name).Str("status", m.dump()).Msg("node is removed from evict queue by the new gRPC address updated event")
 	}
@@ -422,94 +541,72 @@ func (m *ConnManager[C]) registerNode(node *databasev1.Node) {
 	}
 }
 
-func (m *ConnManager[C]) removeNodeIfUnhealthy(name string, mn *managedNode[C]) bool {
-	if m.healthCheck(mn.node.String(), mn.conn) {
-		return false
-	}
-	m.log.Info().Str("node", name).Msg("removeNodeIfUnhealthy: node is unhealthy, removing from active")
+// evict moves a failed connection to the retry queue. The caller must hold mu.
+func (m *ConnManager[C]) evict(name string, mn *managedNode[C]) {
 	_ = mn.conn.Close()
 	delete(m.active, name)
 	m.handler.OnInactive(name, mn.client)
-	return true
-}
-
-// checkHealthAndReconnect checks if a node is healthy. If not, closes the conn,
-// adds to evictable, deletes from active, calls OnInactive, and starts a retry goroutine.
-// Returns true if healthy.
-func (m *ConnManager[C]) checkHealthAndReconnect(conn *grpc.ClientConn, node *databasev1.Node, client C) bool {
-	if m.healthCheck(node.String(), conn) {
-		return true
+	if m.registered[name] == nil || !m.closer.AddRunning() {
+		return
 	}
-	m.log.Info().Str("node", node.Metadata.Name).Msg("checkHealthAndReconnect: node is unhealthy, moving to evictable")
-	_ = conn.Close()
-	if !m.closer.AddRunning() {
-		return false
-	}
-	name := node.Metadata.Name
-	m.evictable[name] = evictNode{n: node, c: make(chan struct{})}
-	m.handler.OnInactive(name, client)
-	en := m.evictable[name]
-	run.Go(context.Background(), "connmanager-evict-reconnect", m.log, func(_ context.Context) {
+	ctx, cancel := context.WithCancel(m.closer.Ctx())
+	en := &connectionAttempt{ctx: ctx, cancel: cancel, node: mn.node}
+	m.evictable[name] = en
+	run.Go(ctx, "connmanager-evict-reconnect", m.log, func(_ context.Context) {
 		defer m.closer.Done()
-		attempt := 0
-		for {
+		defer en.cancel()
+		for attempt := 0; ; attempt++ {
 			backoff := JitteredBackoff(InitBackoff, MaxBackoff, attempt, DefaultJitterFactor)
 			select {
 			case <-time.After(backoff):
-				address := m.handler.AddressOf(en.n)
-				credOpts, errEvict := m.handler.GetDialOptions()
-				if errEvict != nil {
-					m.log.Error().Err(errEvict).Msg("failed to load client TLS credentials (evict)")
+				if m.reconnect(en) {
 					return
 				}
-				allOpts := make([]grpc.DialOption, 0, len(credOpts)+len(m.dialOpts))
-				allOpts = append(allOpts, credOpts...)
-				allOpts = append(allOpts, m.dialOpts...)
-				connEvict, errEvict := grpc.NewClient(address, allOpts...)
-				if errEvict == nil && m.healthCheck(en.n.String(), connEvict) { //nolint:contextcheck // healthCheck uses its own timeout via context.Background()
-					func() {
-						m.mu.Lock()
-						defer m.mu.Unlock()
-						if _, ok := m.evictable[name]; !ok {
-							// The client has been removed from evict clients map, just return
-							return
-						}
-						newClient, clientErr := m.handler.NewClient(connEvict, en.n)
-						if clientErr != nil {
-							m.log.Error().Err(clientErr).Msg("failed to create client during reconnect")
-							_ = connEvict.Close()
-							return
-						}
-						m.active[name] = &managedNode[C]{conn: connEvict, client: newClient, node: en.n}
-						m.handler.OnActive(name, newClient)
-						delete(m.evictable, name)
-						m.RecordSuccess(name)
-						m.log.Info().Str("status", m.dump()).Stringer("node", en.n).Msg("node is healthy, move it back to active queue")
-					}()
-					return
-				}
-				if connEvict != nil {
-					_ = connEvict.Close()
-				}
-				if func() bool {
-					m.mu.RLock()
-					defer m.mu.RUnlock()
-					_, ok := m.registered[name]
-					return !ok
-				}() {
-					return
-				}
-				m.log.Error().Err(errEvict).Msgf("failed to re-connect to grpc server %s after waiting for %s", address, backoff)
-			case <-en.c:
-				return
-			case <-m.closer.CloseNotify():
+			case <-en.ctx.Done():
 				return
 			}
-			attempt++
 		}
 	})
-	delete(m.active, name)
-	return false
+}
+
+// reconnect returns true when the attempt is complete or has been superseded.
+func (m *ConnManager[C]) reconnect(en *connectionAttempt) bool {
+	if en.ctx.Err() != nil {
+		return true
+	}
+	conn, connErr := m.dial(en.node)
+	if connErr != nil {
+		m.log.Error().Err(connErr).Msg("failed to reconnect to grpc server")
+		return false
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			_ = conn.Close()
+		}
+	}()
+	healthy := m.healthCheck(en.ctx, en.node.String(), conn)
+	name := en.node.Metadata.Name
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.stopped || m.evictable[name] != en {
+		return true
+	}
+	if !healthy {
+		return false
+	}
+	client, clientErr := m.handler.NewClient(conn, en.node)
+	if clientErr != nil {
+		m.log.Error().Err(clientErr).Msg("failed to create client during reconnect")
+		return false
+	}
+	m.active[name] = &managedNode[C]{conn: conn, client: client, node: en.node}
+	m.handler.OnActive(name, client)
+	delete(m.evictable, name)
+	m.RecordSuccess(name)
+	keep = true
+	m.log.Info().Str("status", m.dump()).Stringer("node", en.node).Msg("node is healthy, move it back to active queue")
+	return true
 }
 
 func (m *ConnManager[C]) periodicHealthCheck() {
@@ -528,9 +625,9 @@ func (m *ConnManager[C]) periodicHealthCheck() {
 	}
 }
 
-func (m *ConnManager[C]) healthCheck(node string, conn *grpc.ClientConn) bool {
+func (m *ConnManager[C]) healthCheck(ctx context.Context, node string, conn *grpc.ClientConn) bool {
 	var resp *grpc_health_v1.HealthCheckResponse
-	if requestErr := Request(context.Background(), m.healthCheckTimeout, func(rpcCtx context.Context) (err error) {
+	if requestErr := Request(ctx, m.healthCheckTimeout, func(rpcCtx context.Context) (err error) {
 		resp, err = grpc_health_v1.NewHealthClient(conn).Check(rpcCtx,
 			&grpc_health_v1.HealthCheckRequest{
 				Service: "",

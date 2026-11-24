@@ -411,3 +411,46 @@ func TestMeasureFieldResolver_Field(t *testing.T) {
 		})
 	}
 }
+
+// TestMeasureFieldResolver_SingleTerm pins when two ranges on one tag may fold into one: only when the tag's field holds a
+// single term per document. An analyzed tag, an array tag and a tag whose rule covers several tags (one field, one term per
+// tag) do not.
+func TestMeasureFieldResolver_SingleTerm(t *testing.T) {
+	md := &databasev1.Measure{
+		Metadata: &commonv1.Metadata{Name: "demo", Group: "default"},
+		Entity:   &databasev1.Entity{TagNames: []string{"service"}},
+		TagFamilies: []*databasev1.TagFamilySpec{{
+			Name: "default",
+			Tags: []*databasev1.TagSpec{
+				{Name: "service", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "region", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "words", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "x", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "y", Type: databasev1.TagType_TAG_TYPE_STRING},
+				{Name: "labels", Type: databasev1.TagType_TAG_TYPE_STRING_ARRAY},
+				{Name: "unindexed", Type: databasev1.TagType_TAG_TYPE_STRING},
+			},
+		}},
+	}
+	rules := []*databasev1.IndexRule{
+		{Metadata: &commonv1.Metadata{Id: 1, Name: "region_rule"}, Tags: []string{"region"}, Analyzer: "keyword"},
+		{Metadata: &commonv1.Metadata{Id: 2, Name: "words_rule"}, Tags: []string{"words"}, Analyzer: "standard"},
+		{Metadata: &commonv1.Metadata{Id: 3, Name: "xy_rule"}, Tags: []string{"x", "y"}, Analyzer: "keyword"},
+		{Metadata: &commonv1.Metadata{Id: 4, Name: "labels_rule"}, Tags: []string{"labels"}, Analyzer: "keyword"},
+	}
+	schema, err := logicalmeasure.BuildSchema(md, rules)
+	require.NoError(t, err)
+	resolver := measureFieldResolver{schema: schema}
+	for tag, want := range map[string]bool{
+		"service":   true,
+		"region":    true,
+		"words":     false,
+		"x":         false,
+		"y":         false,
+		"labels":    false,
+		"unindexed": false,
+		"missing":   false,
+	} {
+		require.Equal(t, want, resolver.SingleTerm(tag), tag)
+	}
+}

@@ -388,12 +388,13 @@ func prepareBatchDispatch(req *measurev1.QueryRequest, metadata *commonv1.Metada
 
 // scanLimit returns how many rows the plan can use from the scan, offset plus limit, when only the Limit operator follows
 // the scan and the order lets the storage stop early: a single group and no group-by, aggregation or top-N that could need
-// rows beyond the limit. An index-mode scan qualifies with an order by time or by an index rule. A normal-mode scan
-// qualifies only with an order by an index rule, whose series order the series index computes (storage then reads the
-// limit as a number of data points); its time order does not use the index. It returns 0, meaning every row, for any other
-// plan.
+// rows beyond the limit. An index-mode scan qualifies with any order or none: any rows serve a limit, and storage picks
+// the ones it reads cheapest instead of reading every matching document. A normal-mode scan qualifies only with an order
+// by an index rule, whose series order the series index computes (storage then reads the limit as a number of data
+// points); its time order does not use the index. It returns 0, meaning every row, for any other plan.
 func scanLimit(req *measurev1.QueryRequest, measureSchema *databasev1.Measure, order *index.OrderBy, scan *Scan) int {
-	if len(req.GetGroups()) != 1 || order == nil || (!measureSchema.GetIndexMode() && order.Type != index.OrderByTypeIndex) ||
+	normalWithoutIndexOrder := !measureSchema.GetIndexMode() && (order == nil || order.Type != index.OrderByTypeIndex)
+	if len(req.GetGroups()) != 1 || normalWithoutIndexOrder ||
 		scan.Params.GroupBy != nil || scan.Params.Agg != nil || req.GetTop() != nil {
 		return 0
 	}
