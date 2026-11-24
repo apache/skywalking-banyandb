@@ -103,6 +103,11 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	return nil
 }
 
+// A chunked sync session seals a part only if its handler is a queue.PartSealer; one that is not
+// is introduced at once, before the session completes, so the assertion keeps that from
+// happening silently.
+var _ queue.PartSealer = (*syncPartContext)(nil)
+
 // SealSync implements queue.PartSealer: it completes the core part and its SIDX parts on disk
 // without introducing them, so Close still removes them until FinishSync introduces them.
 func (s *syncPartContext) SealSync() error {

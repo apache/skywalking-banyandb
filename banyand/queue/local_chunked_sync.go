@@ -102,12 +102,7 @@ func (l *localChunkedSync) serve(stream grpc.BidiStreamingServer[clusterv1.SyncP
 		return stream.Send(&clusterv1.SyncPartResponse{SessionId: req.GetSessionId(), ChunkIndex: req.GetChunkIndex(), Status: st, Error: msg})
 	}
 	defer func() {
-		if session.partCtx != nil {
-			if closeErr := session.partCtx.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}
-		if discardErr := session.pending.Discard(); discardErr != nil && err == nil {
+		if discardErr := session.pending.Discard(session.partCtx); discardErr != nil && err == nil {
 			err = discardErr
 		}
 	}()
@@ -353,8 +348,13 @@ func (p *PendingParts) Finish(c *ChunkedSyncPartContext) error {
 	return nil
 }
 
-// Commit finishes the open part c into p, then introduces every part p holds in the order they
-// were finished. When a part fails, the parts after it are discarded and the error is returned.
+// Commit completes the session: it finishes the open part c into p, then introduces every part p
+// holds in the order they were finished.
+//
+// When c cannot be sealed, Commit returns the error at once and introduces nothing: c and every
+// part p holds are left for the caller to Discard. When a held part cannot be introduced, the
+// parts before it stay introduced, that part and every part after it are discarded, and the
+// error is returned.
 func (p *PendingParts) Commit(c *ChunkedSyncPartContext) error {
 	if err := p.Finish(c); err != nil {
 		return err
@@ -372,14 +372,23 @@ func (p *PendingParts) Commit(c *ChunkedSyncPartContext) error {
 	return nil
 }
 
-// Discard removes every part p holds. It returns the first error the parts reported while closing.
-func (p *PendingParts) Discard() error {
+// Discard abandons the session: it closes the open part c, if any, and removes every part p
+// holds, so none of them is introduced. It is the counterpart of Commit, and every path that
+// ends a session without its completion calls it once with the session's open part. It
+// returns the errors the parts reported while closing.
+func (p *PendingParts) Discard(c *ChunkedSyncPartContext) error {
+	var openErr error
+	if c != nil {
+		if err := c.Close(); err != nil {
+			openErr = fmt.Errorf("failed to close the open part %d: %w", c.ID, err)
+		}
+	}
 	if p == nil {
-		return nil
+		return openErr
 	}
 	sealed := p.sealed
 	p.sealed = nil
-	return discard(sealed)
+	return errors.Join(openErr, discard(sealed))
 }
 
 func discard(parts []*ChunkedSyncPartContext) error {

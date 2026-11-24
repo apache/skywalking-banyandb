@@ -88,13 +88,8 @@ func (s *server) SyncPart(stream clusterv1.ChunkedSyncService_SyncPartServer) er
 		if currentSession == nil {
 			return
 		}
-		if currentSession.partCtx != nil {
-			if closeErr := currentSession.partCtx.Close(); closeErr != nil {
-				s.log.Error().Err(closeErr).Str("session_id", currentSession.sessionID).Msg("failed to close session partCtx")
-			}
-		}
-		if discardErr := currentSession.pending.Discard(); discardErr != nil {
-			s.log.Error().Err(discardErr).Str("session_id", currentSession.sessionID).Msg("failed to discard the sealed parts of the session")
+		if discardErr := currentSession.pending.Discard(currentSession.partCtx); discardErr != nil {
+			s.log.Error().Err(discardErr).Str("session_id", currentSession.sessionID).Msg("failed to discard the parts of the session")
 		}
 	}()
 
@@ -199,13 +194,8 @@ func (s *server) cleanupPreviousSession(previousSession *syncSession) {
 	}
 
 	// A session replaced before its completion is abandoned: none of its parts is introduced.
-	if previousSession.partCtx != nil {
-		if closeErr := previousSession.partCtx.Close(); closeErr != nil {
-			s.log.Error().Err(closeErr).Str("session_id", previousSession.sessionID).Msg("failed to close previous session partCtx")
-		}
-	}
-	if discardErr := previousSession.pending.Discard(); discardErr != nil {
-		s.log.Error().Err(discardErr).Str("session_id", previousSession.sessionID).Msg("failed to discard the sealed parts of the previous session")
+	if discardErr := previousSession.pending.Discard(previousSession.partCtx); discardErr != nil {
+		s.log.Error().Err(discardErr).Str("session_id", previousSession.sessionID).Msg("failed to discard the parts of the previous session")
 	}
 }
 

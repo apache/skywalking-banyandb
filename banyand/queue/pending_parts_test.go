@@ -31,10 +31,12 @@ import (
 )
 
 // sealingSyncHandler records what the receiver hands parts whose handlers are PartSealers.
-// The chunk of part busyOn is refused with ErrServerBusy, and FinishSync of part failFinishOn fails.
+// The chunk of part busyOn is refused with ErrServerBusy, SealSync of part failSealOn fails, and
+// FinishSync of part failFinishOn fails.
 type sealingSyncHandler struct {
 	recSyncHandler
 	busyOn       uint64
+	failSealOn   uint64
 	failFinishOn uint64
 }
 
@@ -58,6 +60,9 @@ type sealingPartHandler struct {
 func (p *sealingPartHandler) NewPartType(_ *ChunkedSyncPartContext) error { return nil }
 
 func (p *sealingPartHandler) SealSync() error {
+	if p.id == p.h.failSealOn {
+		return errors.New("disk full")
+	}
 	p.h.recordf("seal id=%d", p.id)
 	return nil
 }
@@ -143,7 +148,7 @@ func TestPendingParts_CommitDiscardsThePartsAfterAFailure(t *testing.T) {
 		"create id=3", "seal id=3",
 		"finish id=1", "close id=2", "close id=3",
 	}, h.recorded())
-	require.NoError(t, pending.Discard(), "a committed session holds no part")
+	require.NoError(t, pending.Discard(nil), "a committed session holds no part")
 	assert.Len(t, h.recorded(), 9)
 }
 
@@ -153,6 +158,62 @@ func TestPendingParts_NilFinishesAtOnce(t *testing.T) {
 	cur, err := SwitchPart(context.Background(), nil, pending, &clusterv1.SyncMetadata{}, &clusterv1.PartInfo{Id: 1}, h)
 	require.NoError(t, err)
 	require.NoError(t, pending.Commit(cur))
-	require.NoError(t, pending.Discard())
+	require.NoError(t, pending.Discard(nil))
 	assert.Equal(t, []string{"create id=1", "finish id=1"}, h.recorded(), fmt.Sprint(h.recorded()))
+}
+
+// openParts opens the parts ids in a session, sealing every part but the last, which it returns.
+func openParts(t *testing.T, h *sealingSyncHandler, pending *PendingParts, ids ...uint64) *ChunkedSyncPartContext {
+	var cur *ChunkedSyncPartContext
+	var err error
+	for _, id := range ids {
+		cur, err = SwitchPart(context.Background(), cur, pending, &clusterv1.SyncMetadata{Group: "g"}, &clusterv1.PartInfo{Id: id}, h)
+		require.NoError(t, err)
+	}
+	return cur
+}
+
+func TestPendingParts_DiscardClosesTheOpenPartAndEveryHeldPart(t *testing.T) {
+	h := &sealingSyncHandler{}
+	pending := &PendingParts{}
+	cur := openParts(t, h, pending, 1, 2, 3)
+
+	require.NoError(t, pending.Discard(cur))
+	assert.Equal(t, []string{
+		"create id=1", "seal id=1",
+		"create id=2", "seal id=2",
+		"create id=3",
+		"close id=3", "close id=1", "close id=2",
+	}, h.recorded(), "one call abandons the whole session, the open part included")
+	require.Nil(t, cur.Handler)
+
+	require.NoError(t, pending.Discard(cur), "discarding a discarded session is a no-op")
+	assert.Len(t, h.recorded(), 8)
+}
+
+func TestPendingParts_NilDiscardStillClosesTheOpenPart(t *testing.T) {
+	h := &sealingSyncHandler{}
+	var pending *PendingParts
+	cur := openParts(t, h, pending, 1)
+	require.NoError(t, pending.Discard(cur))
+	assert.Equal(t, []string{"create id=1", "close id=1"}, h.recorded())
+}
+
+func TestPendingParts_CommitLeavesEveryPartToDiscardWhenTheOpenPartCannotBeSealed(t *testing.T) {
+	h := &sealingSyncHandler{failSealOn: 3}
+	pending := &PendingParts{}
+	cur := openParts(t, h, pending, 1, 2, 3)
+
+	err := pending.Commit(cur)
+	require.ErrorContains(t, err, "failed to seal part 3: disk full")
+	assert.NotContains(t, h.recorded(), "finish id=1", "a failed seal introduces nothing")
+	require.NotNil(t, cur.Handler, "the open part is left to the caller")
+
+	require.NoError(t, pending.Discard(cur))
+	assert.Equal(t, []string{
+		"create id=1", "seal id=1",
+		"create id=2", "seal id=2",
+		"create id=3",
+		"close id=3", "close id=1", "close id=2",
+	}, h.recorded())
 }

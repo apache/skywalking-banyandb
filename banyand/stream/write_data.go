@@ -56,6 +56,11 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	return fmt.Errorf("a stream part does not support part type %q", ctx.PartType)
 }
 
+// A chunked sync session seals a part only if its handler is a queue.PartSealer; one that is not
+// is introduced at once, before the session completes, so the assertion keeps that from
+// happening silently.
+var _ queue.PartSealer = (*syncPartContext)(nil)
+
 // SealSync implements queue.PartSealer: it completes the part on disk without introducing it,
 // so Close still removes the part until FinishSync introduces it.
 func (s *syncPartContext) SealSync() error {
