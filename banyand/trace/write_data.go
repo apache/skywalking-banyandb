@@ -43,16 +43,20 @@ type syncPartContext struct {
 	// can drive refCount to 0; releasing earlier lets each sync call bottom out
 	// there, so the next session's incRef re-runs initTSTable and deletes the
 	// in-flight part.
-	segment             storage.Segment[*tsTable, *commonv1.ResourceOpts]
-	fileSystem          fs.FileSystem
-	l                   *logger.Logger
-	writers             *writers
-	partPath            string
-	sidxPartContexts    map[string]*sidx.SyncPartContext
+	segment          storage.Segment[*tsTable, *commonv1.ResourceOpts]
+	fileSystem       fs.FileSystem
+	l                *logger.Logger
+	writers          *writers
+	partPath         string
+	sidxPartContexts map[string]*sidx.SyncPartContext
+	// sealedSidxParts holds the sidx part paths SealSync completed; FinishSync introduces them
+	// with the core part and Close removes them while the part is not introduced.
+	sealedSidxParts     map[string]string
 	traceIDFilterBuffer []byte
 	tagTypeBuffer       []byte
 	partMeta            partMetadata
 	partID              uint64
+	sealed              bool
 }
 
 func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
@@ -99,11 +103,18 @@ func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	return nil
 }
 
-func (s *syncPartContext) FinishSync() error {
-	if s.partPath == "" {
-		// No core part was written (only SIDX parts arrived). Nothing to finalize;
-		// Close will discard any partially-written SIDX parts too.
-		return s.Close()
+// A chunked sync session seals a part only if its handler is a queue.PartSealer; one that is not
+// is introduced at once, before the session completes, so the assertion keeps that from
+// happening silently.
+var _ queue.PartSealer = (*syncPartContext)(nil)
+
+// SealSync implements queue.PartSealer: it completes the core part and its SIDX parts on disk
+// without introducing them, so Close still removes them until FinishSync introduces them.
+func (s *syncPartContext) SealSync() error {
+	if s.sealed || s.partPath == "" {
+		// Sealed already, or no core part was written (only SIDX parts arrived): FinishSync
+		// has nothing to introduce and Close discards any partially-written SIDX parts.
+		return nil
 	}
 
 	// Close writers first so file data is flushed before we write sidecar metadata.
@@ -115,19 +126,33 @@ func (s *syncPartContext) FinishSync() error {
 	if len(s.tagTypeBuffer) > 0 {
 		fs.MustFlushAtomic(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
 	}
+	s.traceIDFilterBuffer = nil
+	s.tagTypeBuffer = nil
 	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
 
 	// Finish SIDX writers and collect file paths for file-backed parts.
-	sidxFilePartsMap := make(map[string]string, len(s.sidxPartContexts))
+	s.sealedSidxParts = make(map[string]string, len(s.sidxPartContexts))
 	for _, sidxPartContext := range s.sidxPartContexts {
-		sidxFilePartsMap[sidxPartContext.Name()] = sidxPartContext.Finish()
+		s.sealedSidxParts[sidxPartContext.Name()] = sidxPartContext.Finish()
 	}
-	s.tsTable.mustAddFilePart(s.partID, sidxFilePartsMap)
+	s.sealed = true
+	return nil
+}
+
+func (s *syncPartContext) FinishSync() error {
+	if err := s.SealSync(); err != nil {
+		return err
+	}
+	if !s.sealed {
+		// No core part was written (only SIDX parts arrived). Nothing to introduce;
+		// Close discards any partially-written SIDX parts too.
+		return s.Close()
+	}
+	s.tsTable.mustAddFilePart(s.partID, s.sealedSidxParts)
 	s.partPath = ""
-	s.traceIDFilterBuffer = nil
-	s.tagTypeBuffer = nil
+	s.sealedSidxParts = nil
 	return s.Close()
 }
 
@@ -148,6 +173,13 @@ func (s *syncPartContext) Close() error {
 		s.fileSystem.MustRMAll(s.partPath)
 		s.partPath = ""
 	}
+	// SIDX parts sealed but never introduced no longer belong to their sync contexts.
+	for _, sidxPartPath := range s.sealedSidxParts {
+		if sidxPartPath != "" && s.fileSystem != nil {
+			s.fileSystem.MustRMAll(sidxPartPath)
+		}
+	}
+	s.sealedSidxParts = nil
 	if s.sidxPartContexts != nil {
 		for _, sidxPartContext := range s.sidxPartContexts {
 			sidxPartContext.Close()
