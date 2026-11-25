@@ -793,7 +793,7 @@ func dispatchMeasureBatches(
 	groups := make([]*vecplan.GroupBatches, 0, len(mctx.ecc))
 	planStrs := make([]string, 0, len(mctx.ecc))
 	for groupIdx, vec := range vecs {
-		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequest(),
+		result, planStr, dispatchErr := vecplan.DispatchBatches(ctx, merge.GroupRequestFor(mctx.metadata[groupIdx].GetGroup()),
 			mctx.metadata[groupIdx], vec.GetSchema(), mctx.schemas[groupIdx], vec, vec.VectorizedConfig(), groupEmitPartial, true, groupPatternRequests(resolved, groupIdx)...)
 		if dispatchErr == nil {
 			var group *vecplan.GroupBatches

@@ -44,6 +44,9 @@ const (
 // The request's Scope.TimeRange is required: documents without a timestamp never match a time range, which is what
 // makes the _timestamp trie a complete index of the candidates.
 type TopTimeRequest struct {
+	// Filter, when set, narrows the candidates at posting level, before any document is decoded, so a selective filter
+	// ranks only the documents it keeps.
+	Filter     *PostingFilter
 	Candidates TermSetRequest
 	Limit      int
 	Desc       bool
@@ -76,8 +79,12 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 	if patternErr != nil {
 		return nil, patternErr
 	}
+	compiledFilter, filterErr := compilePostingFilter(ctx, request.Filter)
+	if filterErr != nil {
+		return nil, filterErr
+	}
 	timeRange := request.Candidates.Scope.TimeRange
-	best := make([]QueryHit, 0, request.Limit)
+	best := make([]QueryHit, 0, min(request.Limit, maxPreallocatedHits))
 	for _, segmentIndex := range v.topTimeSegmentOrder(request.Desc) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -95,6 +102,9 @@ func (v *ReadView) TopTimeHits(ctx context.Context, request TopTimeRequest) ([]Q
 		}
 		candidates, err := exactCandidates(ctx, segment, request.Candidates, patterns)
 		if err != nil {
+			return nil, err
+		}
+		if candidates, err = narrowByFilter(ctx, segment, candidates, compiledFilter); err != nil {
 			return nil, err
 		}
 		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, timeRange)

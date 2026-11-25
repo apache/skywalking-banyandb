@@ -150,57 +150,106 @@ type SortRequest struct {
 // MatchTermsSet performs exact any/all term matching over one pinned root.
 // Deletion masks and QueryScope are applied before hits escape the view.
 func (v *ReadView) MatchTermsSet(ctx context.Context, request TermSetRequest) ([]QueryHit, error) {
-	if err := v.check(ctx); err != nil {
-		return nil, err
+	hits, _, err := v.MatchTermsSetPrefixFiltered(ctx, request, nil, 0)
+	return hits, err
+}
+
+// maxPreallocatedHits bounds the room a listing reserves up front for the hits it expects.
+const maxPreallocatedHits = 1 << 10
+
+// MatchTermsSetPrefixFiltered is MatchTermsSet over the candidates that the filter also matches, listing at most limit of
+// them: it takes the first documents of each segment in document order and decodes only those, so a caller that needs a
+// few of the candidates neither reads nor charges the rest. The filter is evaluated on postings, before any document is
+// decoded, so a selective filter lists and charges only the documents it keeps instead of every candidate. truncated
+// reports that candidates were left out, so the caller can ask for more. A nil filter keeps every candidate, and a
+// non-positive limit lists every candidate and never truncates.
+func (v *ReadView) MatchTermsSetPrefixFiltered(ctx context.Context, request TermSetRequest, filter *PostingFilter, limit int,
+) (hits []QueryHit, truncated bool, err error) {
+	if err = v.check(ctx); err != nil {
+		return nil, false, err
 	}
 	if termSetRequestEmpty(request) {
-		return nil, nil
+		return nil, false, nil
 	}
-	if err := validateTermSetRequest(request); err != nil {
-		return nil, err
+	if err = validateTermSetRequest(request); err != nil {
+		return nil, false, err
 	}
 	patterns, patternErr := compileTermPatterns(ctx, request, nil)
 	if patternErr != nil {
-		return nil, patternErr
+		return nil, false, patternErr
 	}
-	result := make([]QueryHit, 0)
+	compiledFilter, filterErr := compilePostingFilter(ctx, filter)
+	if filterErr != nil {
+		return nil, false, filterErr
+	}
+	// The limit is how many hits at most, not how many the filter leaves: do not reserve room for all of them up front.
+	result := make([]QueryHit, 0, min(max(limit, 0), maxPreallocatedHits))
 	var totalCandidates uint64
 	for segmentIndex, current := range v.root.segments {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+		if err = ctx.Err(); err != nil {
+			return nil, false, err
 		}
 		segment, ok := current.(*memorySegment)
 		if !ok {
-			return nil, fmt.Errorf("match terms segment %d has type %T", segmentIndex, current)
+			return nil, false, fmt.Errorf("match terms segment %d has type %T", segmentIndex, current)
 		}
-		candidates, err := exactCandidates(ctx, segment, request, patterns)
-		if err != nil {
-			return nil, err
+		candidates, candidatesErr := exactCandidates(ctx, segment, request, patterns)
+		if candidatesErr != nil {
+			return nil, false, candidatesErr
 		}
-		narrowed, projection, skip, err := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
-		if err != nil {
-			return nil, err
+		if candidates, candidatesErr = narrowByFilter(ctx, segment, candidates, compiledFilter); candidatesErr != nil {
+			return nil, false, candidatesErr
 		}
-		if skip {
+		narrowed, projection, skip, narrowErr := narrowSegmentForTime(ctx, v.owner, segment, candidates, request.Scope.TimeRange)
+		if narrowErr != nil {
+			return nil, false, narrowErr
+		}
+		if skip || narrowed == nil || narrowed.IsEmpty() {
 			continue
 		}
-		// Counted after narrowing: a document the range excludes was never a
-		// candidate the query has to consider, so it should not spend the
-		// caller's limit.
+		// Counted after narrowing: a document the range excludes was never a candidate the query has to consider, so it
+		// should not spend the caller's limit.
 		totalCandidates += narrowed.GetCardinality()
 		if request.MaxCandidates != 0 && totalCandidates > request.MaxCandidates {
-			return nil, ErrQueryLimit
+			return nil, false, ErrQueryLimit
 		}
-		hits, err := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
-		if err != nil {
-			return nil, err
+		if limit > 0 {
+			remaining := limit - len(result)
+			if remaining <= 0 {
+				return result, true, nil
+			}
+			var cut bool
+			if narrowed, cut = firstN(narrowed, uint64(remaining)); cut {
+				truncated = true
+			}
 		}
-		result, err = appendQueryHits(ctx, result, hits)
-		if err != nil {
-			return nil, err
+		segmentHits, projectErr := projectCandidates(ctx, uint64(segmentIndex), segment, narrowed, request.Scope.TimeRange, projection)
+		if projectErr != nil {
+			return nil, false, projectErr
+		}
+		if result, err = appendQueryHits(ctx, result, segmentHits); err != nil {
+			return nil, false, err
+		}
+		// A cut segment filled the limit and left candidates out, so the prefix is complete and the answer known: do not
+		// evaluate the remaining segments, which would spend the query's memory and pattern budget for nothing.
+		if truncated {
+			return result, true, nil
 		}
 	}
-	return result, nil
+	return result, truncated, nil
+}
+
+// firstN returns the first n documents of candidates in document order, and whether it left any out. It returns candidates
+// itself, unmodified, when there are n or fewer.
+func firstN(candidates *roaringpkg.Bitmap, n uint64) (first *roaringpkg.Bitmap, cut bool) {
+	if candidates.GetCardinality() <= n {
+		return candidates, false
+	}
+	first = roaringpkg.New()
+	for iterator := candidates.Iterator(); iterator.HasNext() && first.GetCardinality() < n; {
+		first.Add(iterator.Next())
+	}
+	return first, true
 }
 
 // termSetRequestEmpty reports a request with no literal terms and no pattern
