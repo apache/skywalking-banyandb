@@ -220,15 +220,15 @@ the file atomically. Finished units are recorded at most once a second, so a cra
 last second again, never more. A run that cannot write the progress file fails with exit `3`. Once `manifest.json` is written
 the session is released, then the progress file and its plan are deleted (a crash in between leaves the progress file, and the
 same command finishes the export again without the session). A `--checkpoint` in a subdirectory of `--output` is refused (exit
-`1`): put it directly in the output directory or outside it. The progress file has format version `2`, and a file of another version is refused ([A progress file of another bydbctl version](#a-progress-file-of-another-bydbctl-version)); a path that ends in `-plan.json`
+`1`): put it directly in the output directory or outside it. The progress file has format version `3`, and a file of another version is refused ([A progress file of another bydbctl version](#a-progress-file-of-another-bydbctl-version)); a path that ends in `-plan.json`
 or `-cursor.json` is refused (exit `1`), as it would be the side file of another progress file. The progress file is JSON with
 two-space indentation; each finished file is listed with its size and CRC-32, and the bindings a resume is checked against (the
 selectors, the options that change the bytes of a file, the source nodes) are in clear.
 
 #### A progress file of another bydbctl version
 
-A progress file and its side files can be resumed only by a bydbctl that reads the same progress file version (this bydbctl reads
-version `2`). When the version differs, because bydbctl was upgraded or downgraded between two runs of one export or import, the
+A progress file and its side files can be resumed only by a bydbctl that reads the same progress file version (this bydbctl reads version `3` for an export,
+version `2` for an import). When the version differs, because bydbctl was upgraded or downgraded between two runs of one export or import, the
 command exits `6` before it reads the file any further. Nothing is written or deleted, no summary is printed, and it is the same
 under `--dry-run`, without `--resume` and with `-o json|yaml`: the refusal goes to stderr and stdout stays free of it. It names
 the file, the version in it and the version this bydbctl reads, and says how to go on. An import:
@@ -240,7 +240,7 @@ an earlier import left the progress file /data/backup-20260914/.import-progress.
 An export:
 
 ```text
-an earlier export left the progress file /data/backup-20260914/.export-progress.json, but another version of bydbctl wrote it (progress file version 1, this bydbctl reads version 2), so it cannot be resumed; nothing was deleted. Resume it with the bydbctl version that wrote it; or to start over: bydbctl data release-session --id 85f65ac92eafa06eec2ab5e6f53c1b67, then delete what is in /data/backup-20260914 and export again, or export into a new output directory once the session is released
+an earlier export left the progress file /data/backup-20260914/.export-progress.json, but another version of bydbctl wrote it (progress file version 1, this bydbctl reads version 3), so it cannot be resumed; nothing was deleted. Resume it with the bydbctl version that wrote it; or to start over: bydbctl data release-session --id 85f65ac92eafa06eec2ab5e6f53c1b67, then delete what is in /data/backup-20260914 and export again, or export into a new output directory once the session is released
 ```
 
 - To go on, run the same command with the bydbctl version that wrote the file, and finish the export or import with it.
@@ -331,7 +331,7 @@ nothing on a resume, which creates no session: a `NOTE` says it is ignored.
 4. With `--resume` (or `BYDBCTL_RESUME=true`) the export continues. Otherwise, when stdin is a terminal, it asks
    `Resume? [y/N]` below the summary: on stdout when that is a terminal too; when stdout is redirected (`| tee log`, `> log`) and stderr is a
    terminal, on stderr, after the summary (`RESUME`, `DONE`, the tables, `LEFT`) is written there as well, while stdout keeps its usual content. Anything but `y`/`yes` exits `1` with
-   `not resumed; <file> and the files it records are left in place; to start over: bydbctl data release-session --id <id>, then delete what is in <output> and export again`
+   `not resumed; <file> and the files it records are left in place; to start over: release the session with: bydbctl data release-session --id <id>; then delete what is in <output> and export again`
    (a progress file outside the output directory adds itself and its plan side file: `then delete <file>, <file without .json>-plan.json and what
    is in <output> and export again`); Ctrl-C at the question exits `3` and leaves everything in place too. With no terminal to ask on (stdin is not one, or neither stdout nor stderr is) the run gets
    `a previous run left <file>; add --resume to continue it (needed when not at a terminal); to start over: ...` (the same start-over
@@ -374,7 +374,7 @@ A run that fails once its session exists, resumed or not, keeps the session and 
 ```text
 export session <id> and the progress file <file> are kept
   to resume: run the same command again (add --resume when not at a terminal)
-  to give up: bydbctl data release-session --id <id>, then delete what is in <output>; a released session cannot be resumed
+  to give up: release the session with: bydbctl data release-session --id <id>; then delete what is in <output>; a released session cannot be resumed
 ```
 
 Two failures cannot be resumed and print only the second way, with the progress file among what to delete: a session the heartbeat
@@ -1093,7 +1093,7 @@ Choosing a policy:
 | `--checkpoint-every-batches` | `import.checkpointEveryBatches`, else `BYDBCTL_IMPORT_CHECKPOINT_EVERY_BATCHES`, else `64` | CSV only: acknowledged batches between two synced progress-file writes, `1` to `10000` |
 | `--resume` | `BYDBCTL_IMPORT_RESUME`, else `false` | continue an interrupted import without asking; the flag without a progress file at the path exits `1`, the variable without one starts a fresh import; ignored by `--dry-run` and `--schema-only`, which therefore accept it together with `--restart` |
 | `--restart` | `false` (no variable, no plan field) | keep the progress file and its side files as `.bak` files and import from scratch ([Starting over](#starting-over)); excludes the `--resume` flag except under `--dry-run` or `--schema-only` (a resume from the variable yields to it); with `--dry-run`, preview the fresh import without reading the progress file; ignored by `--schema-only` |
-| `--resume-duplication-policy` | `import.resumeDuplicationPolicy`, else `BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY`, else `warn` (the help says `default warn`) | the policy of the stream and trace payloads: `block`, `warn`, `push` or `skip` ([Duplication policy](#duplication-policy)) |
+| `--resume-duplication-policy` | `import.resumeDuplicationPolicy`, else `BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY`, else `warn` (the help says `(default "warn")`) | the policy of the stream and trace payloads: `block`, `warn`, `push` or `skip` ([Duplication policy](#duplication-policy)) |
 | `--enable-tls`, `--insecure`, `--cert` | `connection.nodesTLS` in `plan.yaml`, else `BYDBCTL_ENABLE_TLS` / `BYDBCTL_INSECURE` / `BYDBCTL_CERT` | TLS towards the liaisons |
 | `--logging-level`, `--logging-env` | `BYDBCTL_LOGGING_LEVEL` / `BYDBCTL_LOGGING_ENV`, else `info`, `prod` | client-side logging |
 

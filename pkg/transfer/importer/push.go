@@ -560,9 +560,7 @@ func (w *worker) flush(ctx context.Context, st *importStream, e *Entry) error {
 		if sent, err := w.open(ctx, st, req); err != nil {
 			if !sent {
 				// The batch reached no liaison: its rows were not sent, the window stays as it was.
-				if unsentErr := w.unsent(e, b); unsentErr != nil {
-					return errors.Join(w.batchError(st, b, err), unsentErr)
-				}
+				return w.failUnsent(st, e, b, err)
 			}
 			return w.batchError(st, b, err)
 		}
@@ -570,31 +568,7 @@ func (w *worker) flush(ctx context.Context, st *importStream, e *Entry) error {
 	}
 	st.inflight = append(st.inflight, b)
 	if err := st.client.Send(req); err != nil {
-		if !errors.Is(err, io.EOF) {
-			// gRPC returns an error of its own making (a batch over the client's send limit, one it
-			// cannot encode) only when none of b reached the wire: the rows were not sent. Whatever
-			// else is in flight stays in the window, as the stream ends with it.
-			st.inflight = st.inflight[:len(st.inflight)-1]
-			if unsentErr := w.unsent(e, b); unsentErr != nil {
-				return errors.Join(w.batchError(st, b, err), unsentErr)
-			}
-			return w.batchError(st, b, err)
-		}
-		// The liaison ended the stream before b reached it: b was not sent, so its rows leave the
-		// window a resume treats as ambiguous. The status follows the acknowledgements already sent.
-		st.inflight = st.inflight[:len(st.inflight)-1]
-		if err = w.unsent(e, b); err != nil {
-			return err
-		}
-		for len(st.inflight) > 0 {
-			if err = w.recvAck(st); err != nil {
-				return err
-			}
-		}
-		if _, err = st.client.Recv(); err == nil || errors.Is(err, io.EOF) {
-			err = errors.New("the liaison ended the import stream")
-		}
-		return w.batchError(st, b, err)
+		return w.sendFailed(st, e, b, err)
 	}
 	for len(st.inflight) >= w.window {
 		if err := w.recvAck(st); err != nil {
@@ -602,6 +576,40 @@ func (w *worker) flush(ctx context.Context, st *importStream, e *Entry) error {
 		}
 	}
 	return nil
+}
+
+// failUnsent fails b, whose rows were not sent: they leave the window a resume treats as
+// ambiguous. An error of leaving it joins the batch error.
+func (w *worker) failUnsent(st *importStream, e *Entry, b *sentBatch, err error) error {
+	if unsentErr := w.unsent(e, b); unsentErr != nil {
+		return errors.Join(w.batchError(st, b, err), unsentErr)
+	}
+	return w.batchError(st, b, err)
+}
+
+// sendFailed handles the failure of st.client.Send for b, the last batch in flight.
+func (w *worker) sendFailed(st *importStream, e *Entry, b *sentBatch, err error) error {
+	st.inflight = st.inflight[:len(st.inflight)-1]
+	if !errors.Is(err, io.EOF) {
+		// gRPC returns an error of its own making (a batch over the client's send limit, one it
+		// cannot encode) only when none of b reached the wire: the rows were not sent. Whatever
+		// else is in flight stays in the window, as the stream ends with it.
+		return w.failUnsent(st, e, b, err)
+	}
+	// The liaison ended the stream before b reached it: b was not sent, so its rows leave the
+	// window a resume treats as ambiguous. The status follows the acknowledgements already sent.
+	if err = w.unsent(e, b); err != nil {
+		return err
+	}
+	for len(st.inflight) > 0 {
+		if err = w.recvAck(st); err != nil {
+			return err
+		}
+	}
+	if _, err = st.client.Recv(); err == nil || errors.Is(err, io.EOF) {
+		err = errors.New("the liaison ended the import stream")
+	}
+	return w.batchError(st, b, err)
 }
 
 // recvAck receives the acknowledgement of the oldest batch in flight on the stream. A failure

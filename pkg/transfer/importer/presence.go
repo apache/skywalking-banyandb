@@ -226,6 +226,8 @@ func lackingSchema(diff *SchemaDiff, groups map[string]commonv1.Catalog) []strin
 // items, since the target stage's shard number differs from the source's (coarse).
 type presenceCheck struct {
 	blindNodes map[string]bool
+	// coarseSeen are the (catalog, group, stage)s coarse already notes.
+	coarseSeen map[string]bool
 	missing    []string
 	unchecked  []string
 	sampled    []string
@@ -270,67 +272,114 @@ func (c *presenceCheck) report(place string, blind []string, sampled bool) {
 // parse as a time of the stage's interval is an error.
 func missingData(art *Artifact, target *TargetState, counts *Counts, done []doneItem, now time.Time) (presenceCheck, error) {
 	var out presenceCheck
-	coarse := map[string]bool{}
 	sampled := mergeSampledGroups(target.Groups)
 	idx := indexCounts(counts)
 	for _, d := range done {
 		item := &d.entry.Item
-		stage := normalizeStage(d.entry.TargetStage)
-		route := routeOf(target.Routes, item.Group, stage)
 		if item.Catalog == commonv1.Catalog_CATALOG_PROPERTY {
-			if counts.Properties[item.Group] == 0 {
-				out.report(fmt.Sprintf("property %s: %d row(s) imported (%s), the target holds no documents of the group", item.Group, d.rows, item.Key()),
-					uncountedOf(counts, nil), false)
-			}
+			out.checkProperty(counts, d)
 			continue
 		}
 		w := segmentWindow(art, target, d, now)
 		if w.expired {
 			continue
 		}
-		samples := item.Catalog == commonv1.Catalog_CATALOG_TRACE && sampled[item.Group]
+		stage := normalizeStage(d.entry.TargetStage)
+		p := presenceItem{
+			done: d, stage: stage, route: routeOf(target.Routes, item.Group, stage), w: w,
+			samples: item.Catalog == commonv1.Catalog_CATALOG_TRACE && sampled[item.Group],
+		}
 		perNode := art.Native() && item.Kind == ShardItem &&
 			(item.Catalog == commonv1.Catalog_CATALOG_STREAM || item.Catalog == commonv1.Catalog_CATALOG_TRACE) &&
 			len(d.landed) > 0
 		if perNode {
-			if err := out.checkNodes(idx, d, stage, route, w, samples); err != nil {
+			if err := out.checkNodes(idx, d, stage, p.route, w, p.samples); err != nil {
 				return out, err
 			}
 			continue
 		}
 		if item.Kind == ShardItem {
-			src, dst := shardNums(art, target, item, d.entry.TargetStage)
-			if src != 0 && src == dst {
-				held, err := idx.holdsShard(item, stage, w)
-				if err != nil {
-					return out, err
-				}
-				if !held {
-					out.report(fmt.Sprintf("%s %s stage %s shard %d: %d row(s) imported (%s), no node of the target holds any in %s",
-						item.CatalogName(), item.Group, stage, item.Shard, d.rows, item.Key(), w.describe()),
-						uncountedOf(counts, route.targets(item.Shard)), samples)
-				}
+			done, err := out.checkShard(art, target, idx, p)
+			if err != nil {
+				return out, err
+			}
+			if done {
 				continue
 			}
-			if label := fmt.Sprintf("%s %s stage %s", item.CatalogName(), item.Group, stage); !coarse[label] {
-				coarse[label] = true
-				why := fmt.Sprintf("its target stage has %d shard(s), the source stage %d, so the rows were routed to other shards", dst, src)
-				if src == 0 || dst == 0 {
-					why = "the shard number of its source or target stage is not known"
-				}
-				out.coarse = append(out.coarse, fmt.Sprintf("the data check of %s is per (group, stage), not per shard: %s", label, why))
-			}
 		}
-		held, err := idx.holdsAny(item.Catalog, item.Group, stage, w)
-		if err != nil {
+		if err := out.checkGroup(idx, p); err != nil {
 			return out, err
-		}
-		if !held {
-			out.report(fmt.Sprintf("%s %s stage %s: %d row(s) imported (%s), the target holds none in %s",
-				item.CatalogName(), item.Group, stage, d.rows, item.Key(), w.describe()), uncountedOf(counts, route.nodes()), samples)
 		}
 	}
 	return out, nil
+}
+
+// presenceItem is a recorded item with what its presence check needs: the target stage, its
+// route, the segments to look in and whether the group samples spans.
+type presenceItem struct {
+	done    doneItem
+	stage   string
+	route   routeView
+	w       segmentFilter
+	samples bool
+}
+
+// checkProperty reports a property item whose group holds no documents.
+func (c *presenceCheck) checkProperty(counts *Counts, d doneItem) {
+	item := &d.entry.Item
+	if counts.Properties[item.Group] == 0 {
+		c.report(fmt.Sprintf("property %s: %d row(s) imported (%s), the target holds no documents of the group", item.Group, d.rows, item.Key()),
+			uncountedOf(counts, nil), false)
+	}
+}
+
+// checkShard checks a shard item per shard when the shard number of its target stage is the
+// source's, and reports whether it did. Otherwise the item is left to checkGroup, with a note,
+// filed once per (catalog, group, stage), that the check is coarser.
+func (c *presenceCheck) checkShard(art *Artifact, target *TargetState, idx *countIndex, p presenceItem) (bool, error) {
+	d, item := p.done, &p.done.entry.Item
+	src, dst := shardNums(art, target, item, d.entry.TargetStage)
+	if src != 0 && src == dst {
+		held, err := idx.holdsShard(item, p.stage, p.w)
+		if err != nil {
+			return false, err
+		}
+		if !held {
+			c.report(fmt.Sprintf("%s %s stage %s shard %d: %d row(s) imported (%s), no node of the target holds any in %s",
+				item.CatalogName(), item.Group, p.stage, item.Shard, d.rows, item.Key(), p.w.describe()),
+				uncountedOf(idx.counts, p.route.targets(item.Shard)), p.samples)
+		}
+		return true, nil
+	}
+	label := fmt.Sprintf("%s %s stage %s", item.CatalogName(), item.Group, p.stage)
+	if c.coarseSeen[label] {
+		return false, nil
+	}
+	if c.coarseSeen == nil {
+		c.coarseSeen = map[string]bool{}
+	}
+	c.coarseSeen[label] = true
+	why := fmt.Sprintf("its target stage has %d shard(s), the source stage %d, so the rows were routed to other shards", dst, src)
+	if src == 0 || dst == 0 {
+		why = "the shard number of its source or target stage is not known"
+	}
+	c.coarse = append(c.coarse, fmt.Sprintf("the data check of %s is per (group, stage), not per shard: %s", label, why))
+	return false, nil
+}
+
+// checkGroup checks an item per (catalog, group, stage): the target must hold some rows in the
+// segments of the item.
+func (c *presenceCheck) checkGroup(idx *countIndex, p presenceItem) error {
+	d, item := p.done, &p.done.entry.Item
+	held, err := idx.holdsAny(item.Catalog, item.Group, p.stage, p.w)
+	if err != nil {
+		return err
+	}
+	if !held {
+		c.report(fmt.Sprintf("%s %s stage %s: %d row(s) imported (%s), the target holds none in %s",
+			item.CatalogName(), item.Group, p.stage, d.rows, item.Key(), p.w.describe()), uncountedOf(idx.counts, p.route.nodes()), p.samples)
+	}
+	return nil
 }
 
 // checkNodes checks a native stream or trace item on every node its rows landed on. A node the

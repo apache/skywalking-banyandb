@@ -44,6 +44,12 @@ type lockFile interface {
 // openLock locks the lock file at a path; tests replace it.
 var openLock = openLockFile
 
+// openLockFile takes the lock of the lock file at lockPath without waiting. The file is emptied
+// only once it is locked, so a refused attempt leaves the holder's entry.
+func openLockFile(lockPath string) (lockFile, error) {
+	return fs.NewLocalFileSystem().CreateLockFile(lockPath, 0o600, fs.PreserveUntilLocked())
+}
+
 // lockRetryWait is the pause before Lock looks at a lock file that changed while it was locked.
 var lockRetryWait = 10 * time.Millisecond
 
@@ -128,13 +134,10 @@ func acquire(path, lockPath string) (lockFile, os.FileInfo, *Holder, error) {
 	if before == nil {
 		return nil, nil, nil, err
 	}
-	// Read who holds the file first: a lock taken empties it, and on Windows the file system
-	// empties it before it tries the lock.
-	data, prev := readHolder(lockPath)
+	// Read who holds the file first: a lock taken empties it.
+	prev := readHolder(lockPath)
 	f, err := openLock(lockPath)
 	if err != nil {
-		// A refused lock may have emptied the file (Windows).
-		restoreHolder(lockPath, before, data)
 		if errors.Is(err, fs.ErrLockHeld) {
 			return nil, nil, nil, refused(path, lockPath, prev)
 		}
@@ -256,12 +259,12 @@ func writeHolder(f io.Writer, h Holder) error {
 	return err
 }
 
-// readHolder reads the lock file at lockPath: its bytes and the holder they name, none when they
-// name none (empty, partly written or not a lock file of this bydbctl).
-func readHolder(lockPath string) ([]byte, *Holder) {
+// readHolder reads the lock file at lockPath and returns the holder it names, none when it
+// names none (empty, partly written or not a lock file of this bydbctl).
+func readHolder(lockPath string) *Holder {
 	f, err := os.Open(lockPath)
 	if err != nil {
-		return nil, nil
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 	buf := make([]byte, maxHolderBytes)
@@ -270,7 +273,7 @@ func readHolder(lockPath string) ([]byte, *Holder) {
 		// The first byte is locked: read past it.
 		n, err = f.ReadAt(buf[1:], 1)
 		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, nil
+			return nil
 		}
 		buf[0] = '\n'
 		n++
@@ -278,27 +281,7 @@ func readHolder(lockPath string) ([]byte, *Holder) {
 	data := buf[:n]
 	var h Holder
 	if json.Unmarshal(bytes.TrimSpace(data), &h) != nil || h.PID <= 0 || h.Host == "" {
-		return data, nil
+		return nil
 	}
-	return data, &h
-}
-
-// restoreHolder writes data back into the lock file a refused CreateLockFile truncated, when it
-// is still the file read and still empty, so that the next process to try it learns its holder.
-func restoreHolder(lockPath string, before os.FileInfo, data []byte) {
-	if len(data) < 2 {
-		return
-	}
-	f, err := os.OpenFile(lockPath, os.O_WRONLY, 0)
-	if err != nil {
-		return
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil || !os.SameFile(before, info) || info.Size() != 0 {
-		return
-	}
-	if _, err = f.WriteAt(data, 0); err != nil {
-		_, _ = f.WriteAt(data[1:], 1)
-	}
+	return &h
 }

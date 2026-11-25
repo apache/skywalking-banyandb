@@ -100,8 +100,8 @@ type Import struct {
 	OnSchemaConflict string `flag:"on-schema-conflict" plan:"import.schemaConflictPolicy.default" env:"IMPORT_ON_SCHEMA_CONFLICT" default:"error" parse:"conflict-policy" usage:"default handling of a schema that differs from the target: error|ignore|overwrite; plan.yaml rules override it per resource"`
 	// DuplicationPolicy decides, at resume, what happens to a payload that may have landed
 	// already and cannot be reconciled.
-	DuplicationPolicy string         `flag:"resume-duplication-policy" plan:"import.resumeDuplicationPolicy" env:"IMPORT_RESUME_DUPLICATION_POLICY" parse:"duplication-policy" usage:"default warn; at resume, what to do with a stream or trace payload that may have landed already and cannot be reconciled: block = list them and exit 7, warn = push again with a warning, push = push again, skip = leave out and verify; measure and property payloads are always pushed again"`
-	ConflictRules     []ConflictRule `flag:"-" plan:"import.schemaConflictPolicy.rules" parse:"conflict-rules"`
+	DuplicationPolicy DuplicationPolicy `flag:"resume-duplication-policy" plan:"import.resumeDuplicationPolicy" env:"IMPORT_RESUME_DUPLICATION_POLICY" default:"warn" parse:"duplication-policy" usage:"at resume, what to do with a stream or trace payload that may have landed already and cannot be reconciled: block = list them and exit 7, warn = push again with a warning, push = push again, skip = leave out and verify; measure and property payloads are always pushed again"`
+	ConflictRules     []ConflictRule    `flag:"-" plan:"import.schemaConflictPolicy.rules" parse:"conflict-rules"`
 
 	WriteBatchBytes  uint64  `flag:"write-batch-bytes" plan:"import.writeBatchBytes" env:"IMPORT_WRITE_BATCH_BYTES" default:"4MiB" parse:"size" usage:"bytes of rows sent in one batch, 64KiB to 64MiB"`
 	WriteRateLimit   float64 `flag:"write-rate-limit" plan:"import.writeRateLimit" env:"IMPORT_WRITE_RATE_LIMIT" default:"0" parse:"rate-rows" usage:"CSV only: rows written per second across the import, e.g. 50000/s or 3000000/min; 0 = unlimited"`

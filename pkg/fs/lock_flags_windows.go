@@ -15,18 +15,10 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package rowsrc
+//go:build windows
 
-import (
-	"io/fs"
-	"path/filepath"
-	"testing"
+package fs
 
-	"github.com/stretchr/testify/require"
-)
-
-func TestReadOnlyFSReportsMissingDirectory(t *testing.T) {
-	rofs := NewReadOnlyFS()
-	require.NotPanics(t, func() { rofs.ReadDir(filepath.Join(t.TempDir(), "gone")) })
-	require.ErrorIs(t, rofs.Err(), fs.ErrNotExist)
-}
+// preservedLockOpenFlags is empty on Windows: a regular file check after the open refuses what the
+// flags refuse elsewhere.
+const preservedLockOpenFlags = 0

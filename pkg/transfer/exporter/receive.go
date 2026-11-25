@@ -38,6 +38,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
@@ -186,7 +187,7 @@ func (n *nodeExport) run(ctx context.Context) error {
 // the format cannot encode, say): only a heartbeat that finds the session gone says it is. A
 // heartbeat that fails otherwise settles nothing, and the stream's own error stands.
 func (n *nodeExport) sessionGone(ctx context.Context) bool {
-	err := HeartbeatOnce(ctx, n.liaisons[0].Conn, n.init.GetSessionId(), []string{n.job.nodeID})
+	err := HeartbeatOnce(ctx, n.liaisons[0].Conn, n.init.GetSessionId(), OnlyNodes([]string{n.job.nodeID}))
 	return heartbeatLost(err)
 }
 
@@ -470,7 +471,7 @@ func (n *nodeExport) finishFile(u *plannedUnit, p *partialFile, ff *transferv1.F
 		err = os.Rename(p.tmp, p.final)
 	}
 	if err == nil {
-		err = syncDir(filepath.Dir(p.final))
+		err = pkgfs.SyncDirIfSupported(filepath.Dir(p.final))
 	}
 	if err != nil {
 		return receivedFile{}, fmt.Errorf("node %s: persist %s: %w", n.job.nodeID, p.rel, err)
@@ -522,19 +523,6 @@ func revisionLabel(rev int64, ok bool) string {
 		return "missing"
 	}
 	return strconv.FormatInt(rev, 10)
-}
-
-// syncDir makes a directory's new entries durable.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	err = d.Sync()
-	if closeErr := d.Close(); err == nil {
-		err = closeErr
-	}
-	return err
 }
 
 // idleTimer fires when no frame was received for its duration (--node-idle-timeout). The

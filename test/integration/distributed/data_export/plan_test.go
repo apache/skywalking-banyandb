@@ -489,7 +489,7 @@ func planServiceSpecs() {
 				gomega.Expect(f.GetDone()).NotTo(gomega.BeNil(), f.String())
 			}
 		}
-		gomega.Expect(exporter.HeartbeatOnce(context.Background(), conn, id, []string{nodeNames[0]})).To(gomega.Succeed())
+		gomega.Expect(exporter.HeartbeatOnce(context.Background(), conn, id, exporter.OnlyNodes([]string{nodeNames[0]}))).To(gomega.Succeed())
 
 		read.GetRead().RequiredNodes = nodeNames
 		_, err = transfertest.Plan(conn, read)

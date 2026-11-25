@@ -79,7 +79,7 @@ var (
 		kindConflictRules:     reflect.TypeOf([]ConflictRule(nil)),
 		kindConflictPolicy:    reflect.TypeOf(""),
 		kindCount:             reflect.TypeOf(0),
-		kindDuplicationPolicy: reflect.TypeOf(""),
+		kindDuplicationPolicy: reflect.TypeOf(DuplicationPolicy("")),
 	}
 )
 
@@ -463,7 +463,7 @@ func setText(dst reflect.Value, k kind, text string) error {
 		if err != nil {
 			return err
 		}
-		dst.SetString(p)
+		dst.SetString(string(p))
 	default:
 		return fmt.Errorf("grammar %d takes no text", k)
 	}

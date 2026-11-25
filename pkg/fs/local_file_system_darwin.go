@@ -30,37 +30,11 @@ import (
 )
 
 // localFileSystem is the implementation of FileSystem interface.
-func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, error) {
-	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
-	switch {
-	case err == nil:
-		if err = unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
-			_ = file.Close()
-			return nil, &FileSystemError{
-				Code:    lockError,
-				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
-				held:    errors.Is(err, unix.EWOULDBLOCK),
-			}
-		}
-		return &LocalFile{
-			file: file, locked: true,
-		}, nil
-	case os.IsExist(err):
-		return nil, &FileSystemError{
-			Code:    isExistError,
-			Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
-		}
-	case os.IsPermission(err):
-		return nil, &FileSystemError{
-			Code:    permissionError,
-			Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
-		}
-	default:
-		return nil, &FileSystemError{
-			Code:    otherError,
-			Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
-		}
-	}
+func (*localFileSystem) CreateLockFile(name string, permission Mode, opts ...LockOption) (File, error) {
+	return createLockFile(name, permission, opts, func(file *os.File) (bool, error) {
+		err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		return errors.Is(err, unix.EWOULDBLOCK), err
+	})
 }
 
 func (fs *localFileSystem) SyncPath(name string) {

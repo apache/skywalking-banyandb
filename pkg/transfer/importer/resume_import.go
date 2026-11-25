@@ -18,6 +18,7 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -261,9 +262,9 @@ type ambiguousPayload struct {
 	cursor *csvCursor
 	// action is reconcile, re-push, or the duplication policy, from source; fallback is the
 	// policy, from fallbackSource, of a part reconciliation cannot decide.
-	action         string
+	action         resumeAction
 	source         string
-	fallback       string
+	fallback       config.DuplicationPolicy
 	fallbackSource string
 	// landed, notLanded and undecided are what reconciliation decided per node.
 	landed, notLanded, undecided []string
@@ -276,10 +277,47 @@ type ambiguousPayload struct {
 	skipRefused bool
 }
 
+// resumeAction is what a resume does with an ambiguous payload: reconcile it with the counts of
+// the target, push it again, or what a duplication policy says.
+type resumeAction struct {
+	// policy is the duplication policy of an action of kind actionKindPolicy.
+	policy config.DuplicationPolicy
+	kind   actionKind
+}
+
+type actionKind uint8
+
 const (
-	actionReconcile = "reconcile"
-	actionRepush    = "re-push"
+	actionKindPolicy actionKind = iota
+	actionKindReconcile
+	actionKindRepush
 )
+
+var (
+	actionReconcile = resumeAction{kind: actionKindReconcile}
+	actionRepush    = resumeAction{kind: actionKindRepush}
+)
+
+// policyAction is the action a duplication policy stands for.
+func policyAction(p config.DuplicationPolicy) resumeAction {
+	return resumeAction{kind: actionKindPolicy, policy: p}
+}
+
+// is tells whether the action is the duplication policy p.
+func (a resumeAction) is(p config.DuplicationPolicy) bool {
+	return a.kind == actionKindPolicy && a.policy == p
+}
+
+func (a resumeAction) String() string {
+	switch a.kind {
+	case actionKindReconcile:
+		return "reconcile"
+	case actionKindRepush:
+		return "re-push"
+	default:
+		return string(a.policy)
+	}
+}
 
 // name renders the payload for the summary and the warnings.
 func (a *ambiguousPayload) name() string {
@@ -326,30 +364,31 @@ func (a *ambiguousPayload) rows() uint64 {
 // line is the AMBIGUOUS line of the payload; a reconciled one names the policy of what
 // reconciliation cannot decide.
 func (a *ambiguousPayload) line() string {
-	what := a.action
+	what := a.action.String()
 	if a.source != "" {
 		what += " (" + a.source + ")"
 	}
 	if a.action == actionReconcile {
-		what += ", else " + a.fallback + " (" + a.fallbackSource + ")"
+		what += ", else " + string(a.fallback) + " (" + a.fallbackSource + ")"
 	}
 	return fmt.Sprintf("  %s: %s", a.name(), what)
 }
 
-// resumeActionOf is what resume does with an ambiguous payload of e, "" for the policy.
-func resumeActionOf(e *Entry, ref payloadRef, csv bool, sampled map[string]bool) string {
+// resumeActionOf is what resume does with an ambiguous payload of e; false when the duplication
+// policy decides.
+func resumeActionOf(e *Entry, ref payloadRef, csv bool, sampled map[string]bool) (resumeAction, bool) {
 	dupRows := storesDuplicates(e.Item.Catalog)
 	switch {
 	case csv && !dupRows:
-		return actionRepush
+		return actionRepush, true
 	case csv:
-		return ""
+		return resumeAction{}, false
 	case ref.kind == nativefmt.KindPart && dupRows && (e.Item.Catalog != commonv1.Catalog_CATALOG_TRACE || !sampled[e.Item.Group]):
-		return actionReconcile
+		return actionReconcile, true
 	case ref.kind == nativefmt.KindElementIndex || (ref.kind == nativefmt.KindPart && dupRows):
-		return ""
+		return resumeAction{}, false
 	default:
-		return actionRepush
+		return actionRepush, true
 	}
 }
 
@@ -369,14 +408,14 @@ func classify(state *progressState, entries []Entry, opts *config.Import, sample
 	var out []*ambiguousPayload
 	add := func(e *Entry, ref payloadRef, nodes []string, cursor *csvCursor) *ambiguousPayload {
 		a := &ambiguousPayload{entry: e, ref: ref, nodes: nodes, cursor: cursor}
-		a.fallback, a.fallbackSource = opts.ResolveDuplicationPolicy(policySource)
-		a.action = resumeActionOf(e, ref, cursor != nil, sampled)
-		if a.action == "" {
-			a.action, a.source = a.fallback, a.fallbackSource
+		a.fallback, a.fallbackSource = opts.DuplicationPolicy, cmp.Or(policySource, "--resume-duplication-policy")
+		var ok bool
+		if a.action, ok = resumeActionOf(e, ref, cursor != nil, sampled); !ok {
+			a.action, a.source = policyAction(a.fallback), a.fallbackSource
 		}
-		if a.action == config.DuplicationSkip {
+		if a.action.is(config.DuplicationSkip) {
 			if why := skipUncheckable(state, e, ref, cursor != nil, sampled); why != "" {
-				a.action, a.skipRefused = config.DuplicationBlock, true
+				a.action, a.skipRefused = policyAction(config.DuplicationBlock), true
 				a.source = a.fallbackSource + "; skip is refused: " + why
 			}
 		}
@@ -471,7 +510,7 @@ func locateLimitWindows(ctx context.Context, art *Artifact, target *Schemas, amb
 	var entries []Entry
 	var windows []*ambiguousPayload
 	for _, a := range amb {
-		if a.cursor != nil && a.cursor.limitWindow && a.action == config.DuplicationSkip {
+		if a.cursor != nil && a.cursor.limitWindow && a.action.is(config.DuplicationSkip) {
 			entries = append(entries, *a.entry)
 			windows = append(windows, a)
 		}
@@ -895,10 +934,11 @@ func reconcileAmbiguous(ctx context.Context, log io.Writer, rec *reconciler, amb
 	}
 }
 
-// policy is what the policy, or the action, does with the nodes of the payload still unknown.
-func (a *ambiguousPayload) policy() (policy, source string) {
+// policy is the action, the duplication policy or the re-push, that applies to the nodes of the
+// payload still unknown, and where it comes from.
+func (a *ambiguousPayload) policy() (resumeAction, string) {
 	if a.action == actionReconcile {
-		return a.fallback, a.fallbackSource
+		return policyAction(a.fallback), a.fallbackSource
 	}
 	return a.action, a.source
 }
@@ -910,7 +950,7 @@ func (a *ambiguousPayload) unknown() bool { return len(a.nodes) > 0 || a.cursor 
 func checkBlocked(log io.Writer, amb []*ambiguousPayload) error {
 	var blocked []string
 	for _, a := range amb {
-		if policy, source := a.policy(); policy == config.DuplicationBlock && a.unknown() {
+		if policy, source := a.policy(); policy.is(config.DuplicationBlock) && a.unknown() {
 			blocked = append(blocked, fmt.Sprintf("%s (%s)", a.name(), source))
 		}
 	}
@@ -957,7 +997,7 @@ func (res *resolution) apply(log io.Writer, rec *reconciler, a *ambiguousPayload
 	policy, source := a.policy()
 	key := a.entry.Item.Key()
 	pk := PushKey{streamKey: entryStreamKey(a.entry), Kind: a.entry.Item.Kind}
-	skip := policy == config.DuplicationSkip
+	skip := policy.is(config.DuplicationSkip)
 	if a.unknown() {
 		res.applyPolicy(log, a, pk, policy, source)
 	}
@@ -993,7 +1033,7 @@ func (res *resolution) apply(log io.Writer, rec *reconciler, a *ambiguousPayload
 		p.Missing = slices.DeleteFunc(p.Missing, func(n string) bool { return slices.Contains(nodes, n) })
 	} else {
 		p.Missing = transfer.UniqueSorted(append(p.Missing, nodes...))
-		if ref.kind == nativefmt.KindPart && (policy == config.DuplicationWarn || policy == config.DuplicationPush) {
+		if ref.kind == nativefmt.KindPart && (policy.is(config.DuplicationWarn) || policy.is(config.DuplicationPush)) {
 			p.Repushed = transfer.UniqueSorted(append(p.Repushed, nodes...))
 		}
 	}
@@ -1011,20 +1051,20 @@ func (res *resolution) apply(log io.Writer, rec *reconciler, a *ambiguousPayload
 
 // applyPolicy logs what the policy does with a payload still unknown and records the rows a
 // re-push may duplicate, or the payload skip leaves out.
-func (res *resolution) applyPolicy(log io.Writer, a *ambiguousPayload, pk PushKey, policy, source string) {
-	switch policy {
-	case config.DuplicationWarn, config.DuplicationPush:
-		if policy == config.DuplicationWarn {
+func (res *resolution) applyPolicy(log io.Writer, a *ambiguousPayload, pk PushKey, policy resumeAction, source string) {
+	switch {
+	case policy.is(config.DuplicationWarn), policy.is(config.DuplicationPush):
+		if policy.is(config.DuplicationWarn) {
 			warnDuplicationPushed(log, a.name(), source, a.rows())
 		}
 		dupRows := storesDuplicates(a.entry.Item.Catalog) && (a.cursor != nil || a.ref.kind == nativefmt.KindPart)
 		if dupRows && a.rows() > 0 {
 			res.duplicate(pk, a)
 		}
-	case config.DuplicationSkip:
+	case policy.is(config.DuplicationSkip):
 		warnDuplicationSkipped(log, a.name(), source)
 		res.skipped = append(res.skipped, a.name())
-	case actionRepush:
+	case policy == actionRepush:
 		// A measure point pushed again overwrites the one that may have landed, but both versions
 		// are counted until a merge: verify tolerates them as it tolerates a stream re-push.
 		// An index-mode measure is not counted by rows.

@@ -15,66 +15,86 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package rowsrc
+package csv
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 
+	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 )
 
 // localFS is the file system the part readers open snapshot files through.
 var localFS = pkgfs.NewLocalFileSystem()
 
-// ReadOnlyFS is the file system the part readers open snapshot files through. It never
+// readOnlyFS is the file system the part readers open snapshot files through. It never
 // writes; ReadDir reports a failure instead of panicking (a preempted session can remove
 // the directory mid-read). The part readers skip some files they cannot open, so the first
 // failure to list, open or read is kept for the caller to check with Err; only a missing file
 // may be opened or read without failing, as the readers probe optional files that way.
-type ReadOnlyFS struct {
+type readOnlyFS struct {
 	pkgfs.FileSystem
 	err error
 }
 
-// NewReadOnlyFS returns a ReadOnlyFS over the local file system.
-func NewReadOnlyFS() *ReadOnlyFS {
-	return &ReadOnlyFS{FileSystem: localFS}
+// newReadOnlyFS returns a readOnlyFS over the local file system.
+func newReadOnlyFS() *readOnlyFS {
+	return &readOnlyFS{FileSystem: localFS}
 }
 
 // Err returns the first failure to list, open or read a file, nil without one.
-func (f *ReadOnlyFS) Err() error { return f.err }
+func (f *readOnlyFS) Err() error { return f.err }
 
-func (f *ReadOnlyFS) keep(err error) {
+func (f *readOnlyFS) keep(err error) {
 	if err != nil && f.err == nil {
 		f.err = err
 	}
 }
 
 // keepPresent keeps err unless it reports a missing file.
-func (f *ReadOnlyFS) keepPresent(err error) {
+func (f *readOnlyFS) keepPresent(err error) {
 	if !errors.Is(err, fs.ErrNotExist) {
 		f.keep(err)
 	}
 }
 
 // ReadDir implements pkgfs.FileSystem.
-func (f *ReadOnlyFS) ReadDir(dirname string) []pkgfs.DirEntry {
+func (f *readOnlyFS) ReadDir(dirname string) []pkgfs.DirEntry {
 	entries, err := f.ReadDirLimit(dirname, 0)
 	f.keep(err)
 	return entries
 }
 
 // OpenFile implements pkgfs.FileSystem.
-func (f *ReadOnlyFS) OpenFile(name string) (pkgfs.File, error) {
+func (f *readOnlyFS) OpenFile(name string) (pkgfs.File, error) {
 	file, err := f.FileSystem.OpenFile(name)
 	f.keepPresent(err)
 	return file, err
 }
 
 // Read implements pkgfs.FileSystem.
-func (f *ReadOnlyFS) Read(name string) ([]byte, error) {
+func (f *readOnlyFS) Read(name string) ([]byte, error) {
 	data, err := f.FileSystem.Read(name)
 	f.keepPresent(err)
 	return data, err
+}
+
+// openSnapshotPart opens part id of shardDir read-only through open (a dump package's OpenPart),
+// failing when the part or any file it lists cannot be read.
+func openSnapshotPart[P interface{ Close() error }](open func(id uint64, root string, fileSystem pkgfs.FileSystem) (P, error),
+	id uint64, shardDir string,
+) (P, error) {
+	rofs := newReadOnlyFS()
+	part, err := open(id, shardDir, rofs)
+	if err == nil && rofs.Err() != nil {
+		_ = part.Close()
+		err = rofs.Err()
+	}
+	if err != nil {
+		var zero P
+		return zero, snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), err)
+	}
+	return part, nil
 }

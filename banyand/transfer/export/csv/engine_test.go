@@ -48,7 +48,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/queue"
 	"github.com/apache/skywalking-banyandb/banyand/stream"
 	"github.com/apache/skywalking-banyandb/banyand/trace"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/internal/exporttest"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/bus"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
@@ -75,9 +74,9 @@ func registerEngineSchemas(t *testing.T, metaSvc metadataservice.Service) {
 	reg := metaSvc.SchemaRegistry()
 	ctx := context.Background()
 	for _, g := range []*commonv1.Group{
-		exporttest.DayGroup(engStreamGroup, commonv1.Catalog_CATALOG_STREAM),
-		exporttest.DayGroup(engMeasureGroup, commonv1.Catalog_CATALOG_MEASURE),
-		exporttest.DayGroup(engTraceGroup, commonv1.Catalog_CATALOG_TRACE),
+		DayGroup(engStreamGroup, commonv1.Catalog_CATALOG_STREAM),
+		DayGroup(engMeasureGroup, commonv1.Catalog_CATALOG_MEASURE),
+		DayGroup(engTraceGroup, commonv1.Catalog_CATALOG_TRACE),
 	} {
 		_, err := reg.CreateGroup(ctx, g)
 		require.NoError(t, err)
@@ -196,7 +195,7 @@ func unitWarnings(units []*producedUnit) []string {
 // topNPoint is a version of the data point of the Top-N aggregation name in the group's
 // internal _top_n_result measure.
 func topNPoint(base time.Time, name string, version int64, value string) *measurev1.InternalWriteRequest {
-	topNTags := []*modelv1.TagValue{exporttest.StrTV(name), exporttest.IntTV(1), exporttest.StrTV(engMeasureGroup), exporttest.StrTV("{}")}
+	topNTags := []*modelv1.TagValue{StrTV(name), IntTV(1), StrTV(engMeasureGroup), StrTV("{}")}
 	return &measurev1.InternalWriteRequest{
 		EntityValues: topNTags,
 		Request: &measurev1.WriteRequest{
@@ -218,18 +217,18 @@ func writeSecondBatch(t *testing.T, pipeline queue.Queue, base time.Time) {
 	bp := pipeline.NewBatchPublisher(5 * time.Second)
 	_, err := bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(999), topNPoint(base, "cpm_top", 1, "older")))
 	require.NoError(t, err)
-	_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(998), topNPoint(base, "cpm_bad", 1, exporttest.UnmergeableTopN)))
+	_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(998), topNPoint(base, "cpm_bad", 1, UnmergeableTopN)))
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		svc := "svc" + strconv.Itoa(i)
 		_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(1000+i), &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{exporttest.StrTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "cpm", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: timestamppb.New(base.Add(time.Duration(i) * time.Second)),
 					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
-						exporttest.StrTV(svc), exporttest.StrTV("stale"), exporttest.StrTV("GENERAL"), exporttest.StrTV("zone"), exporttest.StrTV("rack"),
+						StrTV(svc), StrTV("stale"), StrTV("GENERAL"), StrTV("zone"), StrTV("rack"),
 					}}},
 					Fields: []*modelv1.FieldValue{
 						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 900}}},
@@ -272,24 +271,24 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 		ts := timestamppb.New(base.Add(time.Duration(i) * time.Second))
 		svc := "svc" + strconv.Itoa(i)
 		publish(data.TopicStreamWrite, &streamv1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{exporttest.StrTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &streamv1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "log", Group: engStreamGroup},
 				Element: &streamv1.ElementValue{
 					Timestamp: ts, ElementId: "log" + strconv.Itoa(i),
-					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{exporttest.StrTV(svc), exporttest.StrTV(`\N,` + svc), exporttest.IntTV(int64(200 + i))}}},
+					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV(svc), StrTV(`\N,` + svc), IntTV(int64(200 + i))}}},
 				},
 			},
 		})
 		publish(data.TopicMeasureWrite, &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{exporttest.StrTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "cpm", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: ts,
 					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
-						exporttest.StrTV(svc), exporttest.StrTV("plain" + strconv.Itoa(i)), exporttest.StrTV("GENERAL"),
-						exporttest.StrTV("zone" + strconv.Itoa(i)), exporttest.StrTV("rack" + strconv.Itoa(i)),
+						StrTV(svc), StrTV("plain" + strconv.Itoa(i)), StrTV("GENERAL"),
+						StrTV("zone" + strconv.Itoa(i)), StrTV("rack" + strconv.Itoa(i)),
 					}}},
 					Fields: []*modelv1.FieldValue{
 						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: int64(100 + i)}}},
@@ -303,23 +302,23 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_top", 2, "latest"))
 	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_bad", 2, "bad-latest"))
 	publish(data.TopicStreamWrite, &streamv1.InternalWriteRequest{
-		EntityValues: []*modelv1.TagValue{exporttest.StrTV("svc9")},
+		EntityValues: []*modelv1.TagValue{StrTV("svc9")},
 		Request: &streamv1.WriteRequest{
 			Metadata: &commonv1.Metadata{Name: "event", Group: engStreamGroup},
 			Element: &streamv1.ElementValue{
 				Timestamp: timestamppb.New(base), ElementId: "event0",
-				TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{exporttest.StrTV("svc9"), exporttest.StrTV("")}}},
+				TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV("svc9"), StrTV("")}}},
 			},
 		},
 	})
 	for i := 0; i < 2; i++ {
 		publishTo("index-mode", data.TopicMeasureWrite, &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{exporttest.StrTV("id" + strconv.Itoa(i))},
+			EntityValues: []*modelv1.TagValue{StrTV("id" + strconv.Itoa(i))},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "traffic", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp:   timestamppb.New(base),
-					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{exporttest.StrTV("id" + strconv.Itoa(i)), exporttest.StrTV("name" + strconv.Itoa(i))}}},
+					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV("id" + strconv.Itoa(i)), StrTV("name" + strconv.Itoa(i))}}},
 					Version:     1,
 				},
 			},
@@ -328,14 +327,14 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 	tsTag := &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(base)}}
 	publish(data.TopicTraceWrite, &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
 		Metadata: &commonv1.Metadata{Name: "segment", Group: engTraceGroup},
-		Tags:     []*modelv1.TagValue{exporttest.StrTV("t1"), exporttest.StrTV("s1"), tsTag, exporttest.StrTV("checkout")},
+		Tags:     []*modelv1.TagValue{StrTV("t1"), StrTV("s1"), tsTag, StrTV("checkout")},
 		Span:     []byte("span-one"),
 		TagSpec:  &tracev1.TagSpec{TagNames: []string{"trace_id", "span_id", "timestamp", "service"}},
 		Version:  1,
 	}})
 	publish(data.TopicTraceWrite, &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
 		Metadata: &commonv1.Metadata{Name: "zipkin", Group: engTraceGroup},
-		Tags:     []*modelv1.TagValue{exporttest.StrTV("t2"), exporttest.StrTV("s2"), tsTag, exporttest.StrTV(""), exporttest.IntTV(15)},
+		Tags:     []*modelv1.TagValue{StrTV("t2"), StrTV("s2"), tsTag, StrTV(""), IntTV(15)},
 		Span:     []byte("span-two"),
 		TagSpec:  &tracev1.TagSpec{TagNames: []string{"trace_id", "span_id", "timestamp", "endpoint", "latency"}},
 		Version:  1,
@@ -349,7 +348,7 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 
 // produceAll snapshots every group's service as name and produces each segment of
 // it as one unit holding every shard; it returns the units per catalog.
-func produceAll(t *testing.T, meta metadata.Repo, groups []exporttest.EngineGroup, name string) map[commonv1.Catalog][]*producedUnit {
+func produceAll(t *testing.T, meta metadata.Repo, groups []EngineGroup, name string) map[commonv1.Catalog][]*producedUnit {
 	t.Helper()
 	ctx := context.Background()
 	out := map[commonv1.Catalog][]*producedUnit{}
@@ -383,7 +382,7 @@ func produceAll(t *testing.T, meta metadata.Repo, groups []exporttest.EngineGrou
 				}
 			}
 			var sent []*transferv1.ExportResponse
-			p := NewProducer(ctx, meta, exporttest.IndexModeWalker{}, &transferv1.ExportRequest_Init{Compress: transferv1.Compress_COMPRESS_GZIP},
+			p := NewProducer(ctx, meta, IndexModeWalker{}, &transferv1.ExportRequest_Init{Compress: transferv1.Compress_COMPRESS_GZIP},
 				func(r *transferv1.ExportResponse) error {
 					sent = append(sent, r)
 					return nil
@@ -490,10 +489,10 @@ func TestProducer_RealEngineData(t *testing.T) {
 	base := time.Now().Truncate(time.Hour)
 	writeEngineData(t, pipeline, base)
 
-	groups := []exporttest.EngineGroup{
-		{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: engStreamGroup, Svc: streamSvc.(exporttest.Snapshotter)},
-		{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: engMeasureGroup, Svc: measureSvc.(exporttest.Snapshotter)},
-		{Catalog: commonv1.Catalog_CATALOG_TRACE, Name: engTraceGroup, Svc: traceSvc.(exporttest.Snapshotter)},
+	groups := []EngineGroup{
+		{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: engStreamGroup, Svc: streamSvc.(Snapshotter)},
+		{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: engMeasureGroup, Svc: measureSvc.(Snapshotter)},
+		{Catalog: commonv1.Catalog_CATALOG_TRACE, Name: engTraceGroup, Svc: traceSvc.(Snapshotter)},
 	}
 
 	// Parts flush asynchronously: produce until every written row is there.

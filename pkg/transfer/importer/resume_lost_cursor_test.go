@@ -145,7 +145,7 @@ func TestResumeCSV_SideFileFoldedByABlockedRunIsNotLost(t *testing.T) {
 // The policy decides the rows up to the send limit as it decides any ambiguous rows.
 func TestResumeCSV_LostCursorSideFileFollowsThePolicy(t *testing.T) {
 	for _, tc := range []struct {
-		policy     string
+		policy     config.DuplicationPolicy
 		log        string
 		noLog      string
 		code       int
@@ -160,7 +160,7 @@ func TestResumeCSV_LostCursorSideFileFollowsThePolicy(t *testing.T) {
 		{policy: config.DuplicationPush, streamRows: 4, log: "within the 1 row(s) the resumed import pushed again", noLog: "WARN " + streamItemKey},
 		{policy: config.DuplicationSkip, streamRows: 3, log: "verify: on, since resumeDuplicationPolicy skip left payloads out"},
 	} {
-		t.Run(tc.policy, func(t *testing.T) {
+		t.Run(string(tc.policy), func(t *testing.T) {
 			f, li, opts, batches := crashedAfterFold(t, sideLosses["empty"])
 			require.Equal(t, int64(3), storedStreamRows(f))
 			opts.Resume, opts.DuplicationPolicy = true, tc.policy

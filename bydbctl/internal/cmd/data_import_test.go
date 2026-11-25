@@ -160,6 +160,7 @@ func TestDataImport_DuplicationSourceNamesWhereThePolicyWasSet(t *testing.T) {
 		{args: []string{"--resume-duplication-policy", "skip"}, want: "--resume-duplication-policy"},
 		{env: "push", want: "BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY"},
 		{args: []string{"--plan", plan}, want: "plan.yaml import.resumeDuplicationPolicy"},
+		{want: "default"},
 	} {
 		t.Setenv("BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY", c.env)
 		cmd, _ := parsedImport(t, c.args...)
@@ -167,8 +168,6 @@ func TestDataImport_DuplicationSourceNamesWhereThePolicyWasSet(t *testing.T) {
 		sources, err := resolveSettings(cmd, &config.Connection{}, opts)
 		require.NoError(t, err)
 		assert.Equal(t, c.want, sourcedEnv(sources, opts).DuplicationSource, "%v BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY=%q", c.args, c.env)
-		_, source := opts.ResolveDuplicationPolicy(sourcedEnv(sources, opts).DuplicationSource)
-		assert.Equal(t, c.want, source)
 	}
 }
 

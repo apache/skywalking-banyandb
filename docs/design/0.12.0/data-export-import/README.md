@@ -1824,7 +1824,7 @@ Both commands share one flow, in the package `pkg/transfer/resume`:
    (finished at <time>, <age> ago)`, the `DONE` line and the table of what is done; it has no `LEFT` or
    `AMBIGUOUS` lines and no table of what is left.
 4. **Confirm** (`resume.ConfirmResume`). Every refusal ends with how to start over instead:
-   export `to start over: bydbctl data release-session --id <id>, then delete what is in <output>
+   export `to start over: release the session with: bydbctl data release-session --id <id>; then delete what is in <output>
    and export again` (`exporter.startOverHint`; a progress file outside the output directory names
    itself and its plan side file too: `then delete <file>, <file without .json>-plan.json and what is in <output>
    and export again`); import `give --restart to import from scratch (<file> is kept as a .bak file);
@@ -1929,7 +1929,7 @@ of the side file's temporary files, is renamed over it.
 ```json
 {
   "kind": "export-progress",
-  "version": 2,
+  "version": 3,
   "format": "native",
   "session": {
     "id": "9f2a0c…"
@@ -1947,15 +1947,13 @@ of the side file's temporary files, is renamed over it.
       "data-1:17912",
       "data-2:17912"
     ],
-    "sourceNodesDigest": "sha256:…",
     "options": {
       "compress": "none",
       "csvAnnotations": "false",
       "format": "native",
       "includeSchema": "true",
       "maxFileSize": "0"
-    },
-    "optionsDigest": "sha256:…"
+    }
   },
   "schemaFiles": [
     {
@@ -2023,8 +2021,7 @@ of the side file's temporary files, is renamed over it.
   lacks them, and the live zones are used then.
 - `outputDir` (absolute) is a binding too.
 - `selectorsDigest` covers the normalised selectors. `options` records the options that change
-  the bytes of a file: `format`, `compress`, `maxFileSize`, `csvAnnotations`, `includeSchema`
-  (`optionsDigest`, their digest, is recorded only). A resume compares them by value, all but
+  the bytes of a file: `format`, `compress`, `maxFileSize`, `csvAnnotations`, `includeSchema`. A resume compares them by value, all but
   `maxFileSize`: that one only decides where the files of a unit roll over, an interrupted unit is
   exported again from its start and the manifest does not record it, so a resume may change it.
   The units already exported keep their files, the units left get the new limit, a `WARN` names
@@ -2033,7 +2030,7 @@ of the side file's temporary files, is renamed over it.
   differs field by field, e.g. `options differs (…):` followed by
   `compress: recorded gzip (default), now none`: sizes print in IEC units, and a value equal to
   the option's default is marked `(default)` (`resume.OptionDiffs`, `resume.SetDiffs`).
-- `sourceNodes` (and `sourceNodesDigest`) are the data nodes of the cluster at the first run,
+- `sourceNodes` are the data nodes of the cluster at the first run,
   recorded only. They are not compared as a set (`checkMembers`): every data node that still has
   units to export (every recorded source node while no plan is recorded) must still be a data node
   of the cluster, so a cluster that gained a node resumes; a node whose units are all done is not

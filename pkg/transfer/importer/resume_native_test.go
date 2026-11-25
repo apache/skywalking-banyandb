@@ -162,14 +162,16 @@ func crashOn(s *storingTarget, kind nativefmt.Kind, cancel context.CancelFunc, s
 
 // nativeRun runs the push of a native import as RunImport does, recording the progress in path
 // and resuming what it records when resumed.
-func nativeRun(ctx context.Context, t *testing.T, li *cluster.Liaison, path string, resumed bool, policy string) (string, error) {
+func nativeRun(ctx context.Context, t *testing.T, li *cluster.Liaison, path string, resumed bool, policy config.DuplicationPolicy) (string, error) {
 	t.Helper()
 	art, entries := nativeArtifact(t) //nolint:contextcheck // writing a test fixture takes no context
 	return nativeRunOf(ctx, t, li, path, resumed, policy, art, entries)
 }
 
 // nativeRunOf is nativeRun of another artifact.
-func nativeRunOf(ctx context.Context, t *testing.T, li *cluster.Liaison, path string, resumed bool, policy string, art *Artifact, entries []Entry) (string, error) {
+func nativeRunOf(ctx context.Context, t *testing.T, li *cluster.Liaison, path string, resumed bool, policy config.DuplicationPolicy,
+	art *Artifact, entries []Entry,
+) (string, error) {
 	t.Helper()
 	return nativeRunWith(ctx, t, li, path, resumed, art, entries, func(o *config.Import) { o.DuplicationPolicy = policy })
 }
@@ -198,8 +200,13 @@ func nativeRunWith(ctx context.Context, t *testing.T, li *cluster.Liaison, path 
 	rec.interval = time.Millisecond
 	opts := nativePushOptions().Import
 	tune(&opts)
+	// An import that sets no policy has the default, as bydbctl resolves it.
+	var source string
+	if opts.DuplicationPolicy == "" {
+		opts.DuplicationPolicy, source = config.DuplicationWarn, "default"
+	}
 	var log bytes.Buffer
-	_, _, err = pushWithProgress(ctx, Env{Log: &log, Liaisons: &cluster.Liaisons{All: []*cluster.Liaison{li}}}, art, opts, nil, entries,
+	_, _, err = pushWithProgress(ctx, Env{Log: &log, Liaisons: &cluster.Liaisons{All: []*cluster.Liaison{li}}, DuplicationSource: source}, art, opts, nil, entries,
 		progressRun{state: state, track: track, rec: rec, resumed: resumed})
 	require.NoError(t, track.close())
 	return log.String(), err
@@ -239,7 +246,7 @@ func TestResumeNative_InflightStreamPartIsReconciled(t *testing.T) {
 		foreign map[string]int64
 		want    map[string]int
 		name    string
-		policy  string
+		policy  config.DuplicationPolicy
 		log     string
 		store   []string
 		sent    []string
@@ -325,7 +332,7 @@ func TestResumeNative_MissingNodeIsRetriedAlone(t *testing.T) {
 func TestResumeNative_AmbiguousElementIndexFollowsThePolicy(t *testing.T) {
 	shortenPartRetries(t)
 	for _, tc := range []struct {
-		policy string
+		policy config.DuplicationPolicy
 		sent   []string
 		code   int
 	}{

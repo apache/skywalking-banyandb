@@ -490,7 +490,7 @@ func TestResumeCSV_AckedButNotFoldedRowsComeFromTheSideFile(t *testing.T) {
 func TestResumeCSV_AppliedButNotAcknowledgedFollowsThePolicy(t *testing.T) {
 	fastPolls(t)
 	for _, tc := range []struct {
-		policy     string
+		policy     config.DuplicationPolicy
 		log        string
 		noLog      string
 		seq        uint64
@@ -508,7 +508,7 @@ func TestResumeCSV_AppliedButNotAcknowledgedFollowsThePolicy(t *testing.T) {
 		{policy: config.DuplicationSkip, seq: 1, streamRows: 3, log: "verify: on, since resumeDuplicationPolicy skip left payloads out"},
 		{policy: config.DuplicationSkip, seq: 2, streamRows: 3, log: "verify: on, since resumeDuplicationPolicy skip left payloads out"},
 	} {
-		t.Run(tc.policy+"/seq "+string(rune('0'+tc.seq)), func(t *testing.T) {
+		t.Run(string(tc.policy)+"/seq "+string(rune('0'+tc.seq)), func(t *testing.T) {
 			f := newFakeLiaison()
 			li := f.serve(t)
 			opts := resumeImport(t, writeDataArtifact(t))

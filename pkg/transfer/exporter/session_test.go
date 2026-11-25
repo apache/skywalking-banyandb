@@ -360,7 +360,7 @@ func TestCreateSession_ContextCanceledDuringBackoff(t *testing.T) {
 func TestHeartbeat_SendsHeartbeatAction(t *testing.T) {
 	f := newFakeLiaison()
 	conn := dial(t, serveLiaison(t, f))
-	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", nil, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
+	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", AllNodes, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
 	deadline := time.Now().Add(5 * time.Second)
 	for f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT) < 3 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
@@ -383,7 +383,7 @@ func TestHeartbeat_LostOnFailedPrecondition(t *testing.T) {
 	f := newFakeLiaison()
 	f.hbCode = codes.FailedPrecondition
 	conn := dial(t, serveLiaison(t, f))
-	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", nil, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
+	stop, lost := StartHeartbeat(context.Background(), conn, "abcd", AllNodes, 20*time.Millisecond, logger.GetLogger("t"), io.Discard)
 	defer stop()
 	select {
 	case err := <-lost:
@@ -411,17 +411,17 @@ func TestHeartbeatOnce_ErrorFramesAreACoverageGap(t *testing.T) {
 	f := newFakeLiaison()
 	f.hbFrames = []*transferv1.SessionsResponse{doneFrame("data-a:17912"), errorFrame("data-b:17912", "export session abcd not found on this node")}
 	conn := dial(t, serveLiaison(t, f))
-	err := HeartbeatOnce(context.Background(), conn, "abcd", nil)
+	err := HeartbeatOnce(context.Background(), conn, "abcd", AllNodes())
 	if err == nil || !strings.Contains(err.Error(), "heartbeat did not reach [data-b:17912]") || heartbeatLost(err) {
 		t.Fatalf("an error frame must fail the heartbeat naming the node, got %v", err)
 	}
 	// A data node that does not hold the session, such as one the cluster gained after the
 	// session was created, answers an error frame too (NotFound on the node); it is no gap.
-	if err = HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912"}); err != nil {
+	if err = HeartbeatOnce(context.Background(), conn, "abcd", OnlyNodes([]string{"data-a:17912"})); err != nil {
 		t.Fatalf("the error frame of a node outside the holders is ignored, got %v", err)
 	}
 	f.hbFrames = append(f.hbFrames, errorFrame("data-c:17912", "unreachable"))
-	if err = HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912", "data-c:17912"}); err == nil ||
+	if err = HeartbeatOnce(context.Background(), conn, "abcd", OnlyNodes([]string{"data-a:17912", "data-c:17912"})); err == nil ||
 		!strings.Contains(err.Error(), "heartbeat did not reach [data-c:17912]") {
 		t.Fatalf("a holder's error frame still fails the heartbeat, got %v", err)
 	}
@@ -433,23 +433,23 @@ func TestHeartbeatOnce_HoldersAreTheRequiredNodes(t *testing.T) {
 	f := newFakeLiaison()
 	f.expiredNodes = []string{"data-a:17912"}
 	conn := dial(t, serveLiaison(t, f))
-	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-b:17912"}); err != nil {
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", OnlyNodes([]string{"data-b:17912"})); err != nil {
 		t.Fatalf("an expired lease on a node outside the holders is ignored, got %v", err)
 	}
 	if got := f.lastSessions().GetRequiredNodes(); !slices.Equal(got, []string{"data-b:17912"}) {
 		t.Fatalf("required_nodes = %v, want the holders", got)
 	}
-	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{"data-a:17912", "data-b:17912"}); !heartbeatLost(err) {
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", OnlyNodes([]string{"data-a:17912", "data-b:17912"})); !heartbeatLost(err) {
 		t.Fatalf("an expired lease on a holder loses the session, got %v", err)
 	}
-	if err := HeartbeatOnce(context.Background(), conn, "abcd", nil); !heartbeatLost(err) {
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", AllNodes()); !heartbeatLost(err) {
 		t.Fatalf("without holders every node is required, got %v", err)
 	}
 	if got := f.lastSessions().GetRequiredNodes(); len(got) != 0 {
 		t.Fatalf("required_nodes = %v, want none", got)
 	}
 	calls := f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT)
-	if err := HeartbeatOnce(context.Background(), conn, "abcd", []string{}); err != nil {
+	if err := HeartbeatOnce(context.Background(), conn, "abcd", OnlyNodes([]string{})); err != nil {
 		t.Fatalf("no holder left needs no heartbeat, got %v", err)
 	}
 	if got := f.countSessions(transferv1.SessionsRequest_ACTION_HEARTBEAT); got != calls {

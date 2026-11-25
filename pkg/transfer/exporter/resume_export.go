@@ -61,8 +61,8 @@ func loadProgress(path string, opts config.Export) (*exportProgress, *cluster.Pl
 				"Resume it with the bydbctl version that wrote it; or %s", path, version.Found, version.Want, giveUpHint(state, path, opts))
 		}
 		// What the file records cannot be read, the session id included: name only the files.
-		return nil, nil, nil, exitcode.Exit(exitcode.ExitResume, "%w; nothing was deleted. To start over: if it records an export session, "+
-			"release it with: bydbctl data release-session --id <id>; then delete %s and export again", err, giveUpFiles(path, opts.Output))
+		return nil, nil, nil, exitcode.Exit(exitcode.ExitResume, "%w; nothing was deleted. To start over: if it records an export session, %s",
+			err, giveUpSteps("", giveUpFiles(path, opts.Output)))
 	}
 	over := startOverHint(state.Session.ID, path, outputOf(opts, state))
 	rec, err := readPlan(path, state)
@@ -113,8 +113,7 @@ func outputOf(opts config.Export, state *exportProgress) string {
 func giveUpHint(state *exportProgress, path string, opts config.Export) string {
 	output := outputOf(opts, state)
 	if state.Session.ID == "" {
-		return "to give up: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete " +
-			giveUpFiles(path, output) + " and export again, or export into a new output directory"
+		return "to give up: if it records an export session, " + giveUpSteps("", giveUpFiles(path, output)) + ", or export into a new output directory"
 	}
 	return startOverHint(state.Session.ID, path, output) + ", or export into a new output directory once the session is released"
 }
@@ -124,16 +123,7 @@ func giveUpHint(state *exportProgress, path string, opts config.Export) string {
 // recorded counts. A node whose units are all done, or one the cluster gained, does not count.
 // over ends the refusal with how to start over.
 func checkMembers(state *exportProgress, jobs []*nodeJob, info *cluster.Info, over string) error {
-	needed := state.Bindings.SourceNodes
-	if jobs != nil {
-		needed = nil
-		for _, job := range jobs {
-			if slices.ContainsFunc(job.units, func(u *plannedUnit) bool { return !u.done }) {
-				needed = append(needed, job.nodeID)
-			}
-		}
-	}
-	missing := resume.Missing(needed, info.DataNodeNames())
+	missing := resume.Missing(holdersOf(state, jobs), info.DataNodeNames())
 	if len(missing) == 0 {
 		return nil
 	}
@@ -156,26 +146,19 @@ func DryRunResume(env Env, opts config.Export) (bool, error) {
 	if err := CheckFormat(&opts); err != nil {
 		return true, err
 	}
-	state, plan, jobs, err := loadProgress(path, opts)
+	prep, err := prepareResume(env, opts, path, func(p *resumePrep) error {
+		if opts.Output == "" {
+			summaryOutputDir(env.Log, p.state.OutputDir)
+		}
+		return nil
+	})
 	if err != nil {
 		return true, err
 	}
-	done := len(state.Done)
-	sum := summarize(path, state, jobs)
-	rep := leftReport(env, plan, jobs)
-	sum.LeftShards = leftShards(jobs)
-	if err = sum.Render(env.Log); err != nil {
-		return true, exitcode.Exit(exitcode.ExitRuntime, "render the resume summary: %w", err)
-	}
-	if opts.Output == "" {
-		summaryOutputDir(env.Log, state.OutputDir)
-	}
-	if _, _, err = localChecks(env, opts, path, state, jobs, done == sum.Total && done > 0); err != nil {
-		return true, err
-	}
-	rebindMaxFileSize(env.Log, state, opts, sum.Total-done)
+	state, plan, done, total := prep.state, prep.plan, prep.done, prep.total
+	rep := prep.rep
 	switch {
-	case done > 0 && done == sum.Total:
+	case prep.allDone:
 		noteManifestOnly(env.Log, state.Session.ID)
 	case plan == nil:
 		noteSessionNotContacted(env.Log, state.Session.ID)
@@ -187,8 +170,8 @@ func DryRunResume(env Env, opts config.Export) (bool, error) {
 		// No units are known: the report has none.
 		rep = BuildReport(env.Cluster, &cluster.PlanResult{})
 	}
-	rep.Resumed = &ResumedProgress{Path: path, Done: done, Total: sum.Total}
-	if (done > 0 && done == sum.Total) || plan == nil {
+	rep.Resumed = &ResumedProgress{Path: path, Done: done, Total: total}
+	if prep.allDone || plan == nil {
 		// Nothing is left to list: a table would say nothing the notes did not, while json and
 		// yaml must still print a document for whoever parses them.
 		if opts.OutputFormat != "json" && opts.OutputFormat != "yaml" {
@@ -201,15 +184,57 @@ func DryRunResume(env Env, opts config.Export) (bool, error) {
 	return true, nil
 }
 
+// resumePrep is what a resume and its dry run share: the progress file checked against this
+// invocation, the summary printed, and the results of the local checks.
+type resumePrep struct {
+	state *exportProgress
+	plan  *cluster.PlanResult
+	// rep is the plan of the units left, nil while no plan is recorded.
+	rep *Report
+	// schema is the schema the finished units were exported with, nil when none was recorded or
+	// none is needed.
+	schema *schemasync.Result
+	// tree is what the cleanup deletes from: nodes/ is walked once.
+	tree *nodesTree
+	jobs []*nodeJob
+	// done counts the finished units, total all units of the plan.
+	done, total int
+	// allDone tells that every unit is done: only the manifest is left.
+	allDone bool
+}
+
+// prepareResume makes what a resume and its dry run have in common: it loads the progress file
+// (loadProgress), prints the resume summary, calls between, which prints what follows the summary,
+// and makes the local checks (localChecks) and the rebinding of --max-file-size. A refusal exits
+// exitcode.ExitResume.
+func prepareResume(env Env, opts config.Export, path string, between func(*resumePrep) error) (*resumePrep, error) {
+	state, plan, jobs, err := loadProgress(path, opts)
+	if err != nil {
+		return nil, err
+	}
+	sum := summarize(path, state, jobs)
+	sum.LeftShards = leftShards(jobs)
+	p := &resumePrep{state: state, plan: plan, jobs: jobs, rep: leftReport(env, plan, jobs), done: len(state.Done), total: sum.Total}
+	p.allDone = p.done > 0 && p.done == p.total
+	if err = sum.Render(env.Log); err != nil {
+		return nil, exitcode.Exit(exitcode.ExitRuntime, "render the resume summary: %w", err)
+	}
+	if err = between(p); err != nil {
+		return nil, err
+	}
+	if p.schema, p.tree, err = localChecks(env, opts, path, state, jobs, p.allDone); err != nil {
+		return nil, err
+	}
+	rebindMaxFileSize(env.Log, state, opts, p.total-p.done)
+	return p, nil
+}
+
 // leftShards counts the shards of the units of jobs not done yet, each shard of a group once
 // however many nodes hold a replica of it; jobs nil (no plan recorded) counts none.
 func leftShards(jobs []*nodeJob) int {
 	seen := map[string]struct{}{}
-	for _, job := range jobs {
+	for _, job := range jobsLeft(jobs) {
 		for _, u := range job.units {
-			if u.done {
-				continue
-			}
 			for _, id := range u.shardIDs() {
 				seen[fmt.Sprintf("%s/%s/%d", transfer.CatalogName(u.catalog()), u.group(), id)] = struct{}{}
 			}
@@ -225,11 +250,8 @@ func leftReport(env Env, plan *cluster.PlanResult, jobs []*nodeJob) *Report {
 		return nil
 	}
 	left := &cluster.PlanResult{AnsweredNodes: plan.AnsweredNodes}
-	for _, job := range jobs {
+	for _, job := range jobsLeft(jobs) {
 		for _, u := range job.units {
-			if u.done {
-				continue
-			}
 			inv := &transferv1.UnitInventory{}
 			if u.property != nil {
 				inv.Kind = &transferv1.UnitInventory_Property{Property: u.property}
@@ -278,41 +300,30 @@ func localChecks(env Env, opts config.Export, path string, state *exportProgress
 // refusal (exit 6) comes before anything is deleted. An export whose units are all done only
 // lacks its manifest: it is written without the session, which may be gone by now.
 func resumeExport(ctx context.Context, env Env, prog *output.Progress, opts config.Export, path string) error {
-	state, plan, jobs, err := loadProgress(path, opts)
-	if err != nil {
-		return err
-	}
-	done := len(state.Done)
-	sessID := state.Session.ID
-	over := startOverHint(sessID, path, opts.Output)
-	sum := summarize(path, state, jobs)
-	rep := leftReport(env, plan, jobs)
-	sum.LeftShards = leftShards(jobs)
-	if err = sum.Render(env.Log); err != nil {
-		return exitcode.Exit(exitcode.ExitRuntime, "render the resume summary: %w", err)
-	}
-	if rep != nil && len(rep.Rows) > 0 {
-		rep.Resumed = &ResumedProgress{Path: path, Done: done, Total: sum.Total}
-		// One Write, as the terminal's progress writer would overwrite a tabwriter's cells.
-		var buf bytes.Buffer
-		buf.WriteByte('\n')
-		if err = renderTable(&buf, rep); err != nil {
-			return exitcode.Exit(exitcode.ExitRuntime, "render what is left: %w", err)
-		}
-		_, _ = env.Log.Write(buf.Bytes())
-	}
-	allDone := done > 0 && done == sum.Total
-	if opts.Preempt {
-		notePreemptIgnored(env.Log, sessID)
-	}
 	// The local checks before the question: they only read, so a refusal neither asks first, nor
 	// renews the session's lease, nor deletes anything.
-	// tree is what the cleanup deletes from: nodes/ is walked once.
-	schema, tree, err := localChecks(env, opts, path, state, jobs, allDone)
+	prep, err := prepareResume(env, opts, path, func(p *resumePrep) error {
+		if p.rep != nil && len(p.rep.Rows) > 0 {
+			p.rep.Resumed = &ResumedProgress{Path: path, Done: p.done, Total: p.total}
+			// One Write, as the terminal's progress writer would overwrite a tabwriter's cells.
+			var buf bytes.Buffer
+			buf.WriteByte('\n')
+			if err := renderTable(&buf, p.rep); err != nil {
+				return exitcode.Exit(exitcode.ExitRuntime, "render what is left: %w", err)
+			}
+			_, _ = env.Log.Write(buf.Bytes())
+		}
+		if opts.Preempt {
+			notePreemptIgnored(env.Log, p.state.Session.ID)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	rebindMaxFileSize(env.Log, state, opts, sum.Total-done)
+	state, plan, jobs, schema, tree, done, allDone := prep.state, prep.plan, prep.jobs, prep.schema, prep.tree, prep.done, prep.allDone
+	sessID := state.Session.ID
+	over := startOverHint(sessID, path, opts.Output)
 	if err = resume.ConfirmResume(ctx, opts.Resume, env.Confirm, path, over); err != nil {
 		return err
 	}
@@ -343,10 +354,7 @@ func resumeExport(ctx context.Context, env Env, prog *output.Progress, opts conf
 	}
 	// Only the nodes with units left must still hold the session, as only they must still be
 	// members of the cluster (checkMembers).
-	holders := state.Bindings.SourceNodes
-	if plan != nil {
-		holders = nodesLeft(jobs)
-	}
+	holders := holdersOf(state, jobs)
 	current := plan
 	if plan == nil || len(holders) > 0 {
 		// A plan without a unit left needs no node to hold the session: an empty required_nodes
@@ -465,11 +473,9 @@ func checkLiveSchema(ctx context.Context, env Env, opts config.Export, state *ex
 // yet; all of them when no plan is recorded (jobs nil).
 func recordedGroupsLeft(state *exportProgress, jobs []*nodeJob) []string {
 	left := map[string]bool{}
-	for _, job := range jobs {
+	for _, job := range jobsLeft(jobs) {
 		for _, u := range job.units {
-			if !u.done {
-				left[catalogLabel(u.catalog())+"\x00"+u.group()] = true
-			}
+			left[catalogLabel(u.catalog())+"\x00"+u.group()] = true
 		}
 	}
 	var out []string
@@ -510,12 +516,8 @@ func recordedGroups(env Env, opts config.Export, state *exportProgress) []*commo
 // unitsLeft counts the units of jobs not done yet.
 func unitsLeft(jobs []*nodeJob) int {
 	n := 0
-	for _, job := range jobs {
-		for _, u := range job.units {
-			if !u.done {
-				n++
-			}
-		}
+	for _, job := range jobsLeft(jobs) {
+		n += len(job.units)
 	}
 	return n
 }
@@ -824,23 +826,14 @@ func walkNodes(dir, over string) (*nodesTree, error) {
 	return tree, nil
 }
 
-// cleanNodes deletes every file below dir/nodes that no finished unit lists (.tmp files, the
-// volumes of unfinished units) and then the directories left empty, a manifest temporary file a
-// crash left in dir, and the temporary files a crash left of the progress file at path. What it
-// keeps comes from the progress file only, never from what the interrupted run may have had in
-// flight. It removes only regular files and directories: anything else below dir/nodes (a
-// symlink) refuses with exitcode.ExitResume before anything is deleted, which over ends with how
-// to start over.
-func cleanNodes(dir, path string, done []doneUnit, over string) error {
-	tree, err := walkNodes(dir, over)
-	if err != nil {
-		return err
-	}
-	return cleanTree(dir, path, done, tree)
-}
-
-// cleanTree is cleanNodes over tree, what walkNodes found below dir/nodes: a resume walks it once,
-// before its question, under the lock that keeps any other bydbctl from writing there meanwhile.
+// cleanTree deletes every file of tree, what walkNodes found below dir/nodes, that no finished
+// unit lists (.tmp files, the volumes of unfinished units) and then the directories left empty, a
+// manifest temporary file a crash left in dir, and the temporary files a crash left of the
+// progress file at path. What it keeps comes from the progress file only, never from what the
+// interrupted run may have had in flight. It removes only regular files and directories (walkNodes
+// refuses anything else below dir/nodes, a symlink, with exitcode.ExitResume before anything is
+// deleted). A resume walks once, before its question, under the lock that keeps any other bydbctl
+// from writing there meanwhile.
 func cleanTree(dir, path string, done []doneUnit, tree *nodesTree) error {
 	keep := map[string]struct{}{}
 	for _, d := range done {

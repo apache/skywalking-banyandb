@@ -28,7 +28,6 @@ import (
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/internal/exporttest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
 
@@ -49,13 +48,13 @@ type countedUnit struct {
 // produceCounted snapshots the group of g as name and produces each of its segments as
 // one unit holding every shard, with init as the stream settings. It also reads the live
 // parts of every shard the way the inventory does.
-func produceCounted(t *testing.T, meta metadata.Repo, g exporttest.EngineGroup, name string, init *transferv1.ExportRequest_Init) []*countedUnit {
+func produceCounted(t *testing.T, meta metadata.Repo, g EngineGroup, name string, init *transferv1.ExportRequest_Init) []*countedUnit {
 	t.Helper()
 	var out []*countedUnit
-	for _, seg := range exporttest.TakeSnapshot(t, g, name) {
+	for _, seg := range TakeSnapshot(t, g, name) {
 		cu := &countedUnit{unit: seg.Unit, totalCount: seg.TotalCount, parts: seg.Parts}
 		var sent []*transferv1.ExportResponse
-		p := NewProducer(context.Background(), meta, exporttest.IndexModeWalker{}, init, func(r *transferv1.ExportResponse) error {
+		p := NewProducer(context.Background(), meta, IndexModeWalker{}, init, func(r *transferv1.ExportResponse) error {
 			sent = append(sent, r)
 			return nil
 		})
@@ -124,7 +123,7 @@ func inventory(units []*countedUnit) (int, uint64) {
 
 // produceUntil produces g under fresh snapshot names until done accepts the units, which
 // waits for asynchronously flushed parts to reach a snapshot.
-func produceUntil(t *testing.T, meta metadata.Repo, g exporttest.EngineGroup, prefix string, init *transferv1.ExportRequest_Init,
+func produceUntil(t *testing.T, meta metadata.Repo, g EngineGroup, prefix string, init *transferv1.ExportRequest_Init,
 	done func([]*countedUnit) bool,
 ) []*countedUnit {
 	t.Helper()
@@ -141,7 +140,7 @@ func produceUntil(t *testing.T, meta metadata.Repo, g exporttest.EngineGroup, pr
 
 // matchRows checks that every exported row is one written row, exported once with every
 // expected cell, and that no written row is missing. key names the row.
-func matchRows(t *testing.T, rows []map[string]string, want map[string]exporttest.ExpectedRow, key func(map[string]string) string) {
+func matchRows(t *testing.T, rows []map[string]string, want map[string]ExpectedRow, key func(map[string]string) string) {
 	t.Helper()
 	seen := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
@@ -167,7 +166,7 @@ func shardOfFile(f *exportedFile) uint32 { return f.started.GetShardId() }
 // one segment with the real storage engines, and checks that the export holds exactly the
 // written rows, each once, and that its row counts agree with the parts' total_count.
 func TestProducer_ExportsEveryWrittenRow(t *testing.T) {
-	e := exporttest.StartCountEngine(t)
+	e := StartCountEngine(t)
 	t.Run("stream", func(t *testing.T) { checkStreamRows(t, e) })
 	t.Run("trace", func(t *testing.T) { checkTraceRows(t, e) })
 	t.Run("measure", func(t *testing.T) { checkMeasureRows(t, e) })
@@ -175,12 +174,12 @@ func TestProducer_ExportsEveryWrittenRow(t *testing.T) {
 
 // checkStreamRows exports every element of the stream group once, then again rolled over
 // several files per shard.
-func checkStreamRows(t *testing.T, e *exporttest.CountEngine) {
-	want := map[string]exporttest.ExpectedRow{}
+func checkStreamRows(t *testing.T, e *CountEngine) {
+	want := map[string]ExpectedRow{}
 	var units []*countedUnit
 	// Each batch is flushed before the next is written, so it lands in parts of its own.
-	for b := 0; b < exporttest.CntBatches; b++ {
-		exporttest.WriteStreamBatch(t, e.Pipeline, e.Base, b, want)
+	for b := 0; b < CntBatches; b++ {
+		WriteStreamBatch(t, e.Pipeline, e.Base, b, want)
 		units = produceUntil(t, e.Meta, e.Stream, fmt.Sprintf("s%d", b), gzipInit, func(us []*countedUnit) bool {
 			_, total := inventory(us)
 			return total == uint64(len(want))
@@ -188,10 +187,10 @@ func checkStreamRows(t *testing.T, e *exporttest.CountEngine) {
 	}
 	parts, total := inventory(units)
 	t.Logf("stream: %d live parts holding %d rows", parts, total)
-	require.GreaterOrEqual(t, parts, exporttest.CntShards, "every shard holds parts")
+	require.GreaterOrEqual(t, parts, CntShards, "every shard holds parts")
 	rows := countedRows(t, units)
 	require.Equal(t, total, uint64(len(rows)), "the export holds as many rows as the parts")
-	require.Equal(t, map[string]uint64{"log": exporttest.CntBatches * exporttest.CntSeries * 3, "event": exporttest.CntBatches * exporttest.CntSeries}, rowCounts(units))
+	require.Equal(t, map[string]uint64{"log": CntBatches * CntSeries * 3, "event": CntBatches * CntSeries}, rowCounts(units))
 	matchRows(t, rows, want, func(r map[string]string) string { return r["_element_id"] })
 	var exported uint64
 	for _, u := range units {
@@ -225,7 +224,7 @@ func checkStreamRows(t *testing.T, e *exporttest.CountEngine) {
 				perShard[shard]++
 			}
 		}
-		for shard := uint32(0); shard < exporttest.CntShards; shard++ {
+		for shard := uint32(0); shard < CntShards; shard++ {
 			require.Greater(t, perShard[shard], 1, "shard %d spans several files", shard)
 		}
 		rolledRows := countedRows(t, rolled)
@@ -236,11 +235,11 @@ func checkStreamRows(t *testing.T, e *exporttest.CountEngine) {
 }
 
 // checkTraceRows exports every span of the trace group once.
-func checkTraceRows(t *testing.T, e *exporttest.CountEngine) {
-	want := map[string]exporttest.ExpectedRow{}
+func checkTraceRows(t *testing.T, e *CountEngine) {
+	want := map[string]ExpectedRow{}
 	var units []*countedUnit
-	for b := 0; b < exporttest.CntBatches; b++ {
-		exporttest.WriteTraceBatch(t, e.Pipeline, e.Base, b, want)
+	for b := 0; b < CntBatches; b++ {
+		WriteTraceBatch(t, e.Pipeline, e.Base, b, want)
 		units = produceUntil(t, e.Meta, e.Trace, fmt.Sprintf("t%d", b), gzipInit, func(us []*countedUnit) bool {
 			_, total := inventory(us)
 			return total == uint64(len(want))
@@ -248,10 +247,10 @@ func checkTraceRows(t *testing.T, e *exporttest.CountEngine) {
 	}
 	parts, total := inventory(units)
 	t.Logf("trace: %d live parts holding %d spans", parts, total)
-	require.GreaterOrEqual(t, parts, exporttest.CntShards, "every shard holds parts")
+	require.GreaterOrEqual(t, parts, CntShards, "every shard holds parts")
 	rows := countedRows(t, units)
 	require.Equal(t, total, uint64(len(rows)), "the export holds as many spans as the parts")
-	perTrace := uint64(exporttest.CntBatches * exporttest.CntSeries / 2 * 3)
+	perTrace := uint64(CntBatches * CntSeries / 2 * 3)
 	require.Equal(t, map[string]uint64{"segment": perTrace, "zipkin": perTrace}, rowCounts(units))
 	matchRows(t, rows, want, func(r map[string]string) string { return r["trace_id"] + "/" + r["span_id"] })
 	for _, u := range units {
@@ -265,11 +264,11 @@ func checkTraceRows(t *testing.T, e *exporttest.CountEngine) {
 }
 
 // checkMeasureRows exports the latest version of every data point once, with its values.
-func checkMeasureRows(t *testing.T, e *exporttest.CountEngine) {
-	latest := map[string]exporttest.MeasurePoint{}
+func checkMeasureRows(t *testing.T, e *CountEngine) {
+	latest := map[string]MeasurePoint{}
 	var written int
-	write := func(points []exporttest.MeasurePoint) {
-		exporttest.WriteMeasurePoints(t, e.Pipeline, e.Base, points)
+	write := func(points []MeasurePoint) {
+		WriteMeasurePoints(t, e.Pipeline, e.Base, points)
 		written += len(points)
 		for _, p := range points {
 			if old, ok := latest[p.Key()]; !ok || p.Version > old.Version {
@@ -291,27 +290,27 @@ func checkMeasureRows(t *testing.T, e *exporttest.CountEngine) {
 		}
 		return true
 	}
-	var first []exporttest.MeasurePoint
-	for s := 0; s < exporttest.CntSeries; s++ {
+	var first []MeasurePoint
+	for s := 0; s < CntSeries; s++ {
 		for tick := 0; tick < 3; tick++ {
-			first = append(first, exporttest.MeasurePoint{Svc: s, Tick: tick, Version: 5})
+			first = append(first, MeasurePoint{Svc: s, Tick: tick, Version: 5})
 		}
 	}
 	write(first)
 	produceUntil(t, e.Meta, e.Measure, "m0", gzipInit, exportedLatest)
 	// Newer versions of every tick-0 point.
-	var newer []exporttest.MeasurePoint
-	for s := 0; s < exporttest.CntSeries; s++ {
-		newer = append(newer, exporttest.MeasurePoint{Svc: s, Tick: 0, Version: 9})
+	var newer []MeasurePoint
+	for s := 0; s < CntSeries; s++ {
+		newer = append(newer, MeasurePoint{Svc: s, Tick: 0, Version: 9})
 	}
 	write(newer)
 	produceUntil(t, e.Meta, e.Measure, "m1", gzipInit, exportedLatest)
 	// Older versions of every tick-1 point, and one new point that shows the batch arrived.
-	var older []exporttest.MeasurePoint
-	for s := 0; s < exporttest.CntSeries; s++ {
-		older = append(older, exporttest.MeasurePoint{Svc: s, Tick: 1, Version: 1})
+	var older []MeasurePoint
+	for s := 0; s < CntSeries; s++ {
+		older = append(older, MeasurePoint{Svc: s, Tick: 1, Version: 1})
 	}
-	older = append(older, exporttest.MeasurePoint{Svc: 0, Tick: 3, Version: 2})
+	older = append(older, MeasurePoint{Svc: 0, Tick: 3, Version: 2})
 	write(older)
 	units := produceUntil(t, e.Meta, e.Measure, "m2", gzipInit, exportedLatest)
 
@@ -321,9 +320,9 @@ func checkMeasureRows(t *testing.T, e *exporttest.CountEngine) {
 	require.Len(t, rows, len(latest), "one row per distinct data point")
 	require.LessOrEqual(t, uint64(len(rows)), total, "the export never holds more rows than the parts")
 	require.Equal(t, map[string]uint64{"cpm": uint64(len(latest))}, rowCounts(units))
-	want := make(map[string]exporttest.ExpectedRow, len(latest))
+	want := make(map[string]ExpectedRow, len(latest))
 	for k, p := range latest {
-		want[k] = exporttest.ExpectedRow{Cells: map[string]string{
+		want[k] = ExpectedRow{Cells: map[string]string{
 			"_name":         "cpm",
 			"_timestamp":    csvfmt.EncodeTimestamp(e.Base.Add(time.Duration(p.Tick) * time.Second).UnixNano()),
 			"_version":      strconv.FormatInt(p.Version, 10),

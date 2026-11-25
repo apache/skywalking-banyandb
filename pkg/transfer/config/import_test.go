@@ -18,18 +18,13 @@
 package config
 
 import (
-	"encoding/json"
 	"math"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 )
 
 func boundImport(t *testing.T, args ...string) *pflag.FlagSet {
@@ -57,7 +52,7 @@ func TestResolveImport_Defaults(t *testing.T) {
 	assert.Equal(t, Import{
 		OutputFormat: "table", OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, PartChunkSize: 1 << 20,
 		SendRetryTimeout: 15 * time.Minute, VerifyTimeout: 2 * time.Minute, Parallelism: math.MaxInt,
-		WriteBatchSize: 1000, WriteInflightBatches: 2, CheckpointEveryBatches: 64, IncludeSchema: true, Verify: true,
+		WriteBatchSize: 1000, WriteInflightBatches: 2, CheckpointEveryBatches: 64, IncludeSchema: true, Verify: true, DuplicationPolicy: DuplicationWarn,
 	}, *imp)
 	require.NoError(t, imp.Validate(sources))
 }
@@ -277,17 +272,6 @@ func rulesPlan(rules ...string) string {
 	return body
 }
 
-func TestResolveDuplicationPolicy(t *testing.T) {
-	got, source := (&Import{}).ResolveDuplicationPolicy("")
-	assert.Equal(t, DuplicationWarn, got)
-	assert.Equal(t, "default", source)
-	got, source = (&Import{DuplicationPolicy: DuplicationBlock}).ResolveDuplicationPolicy("")
-	assert.Equal(t, DuplicationBlock, got, "the policy set replaces the default")
-	assert.Equal(t, "--resume-duplication-policy", source, "a policy set is not called the default")
-	_, source = (&Import{DuplicationPolicy: DuplicationBlock}).ResolveDuplicationPolicy("plan.yaml import.resumeDuplicationPolicy")
-	assert.Equal(t, "plan.yaml import.resumeDuplicationPolicy", source, "the label names what set the policy")
-}
-
 func TestValidateConflictMatch(t *testing.T) {
 	for _, ok := range []string{
 		"group/g", "stream/g", "stream/g/n", "measure/g/n", "trace/g/n", "property/g/n",
@@ -505,79 +489,5 @@ func TestImportValidate_DryRunAndSchemaOnlyIgnoreResumeWithRestart(t *testing.T)
 		imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
 		require.NoError(t, imp.Validate(sources), mode)
 		assert.False(t, imp.Resume, mode)
-	}
-}
-
-// A --checkpoint that is a directory, the artifact directory itself among them, is refused up
-// front; schema-only uses no progress file and does not check it.
-func TestImportValidate_CheckpointIsAFile(t *testing.T) {
-	dir := t.TempDir()
-	for _, cp := range []string{dir, dir + "/", t.TempDir()} {
-		imp, sources, err := resolveImport(t, boundImport(t, "--checkpoint", cp), "", nil)
-		require.NoError(t, err)
-		imp.Input = dir
-		imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
-		err = imp.Validate(sources)
-		require.Error(t, err, cp)
-		assert.Contains(t, err.Error(), "is a directory; it names the progress file")
-		imp.SchemaOnly = true
-		assert.NoError(t, imp.Validate(sources), cp)
-	}
-	imp, sources, err := resolveImport(t, boundImport(t, "--checkpoint", dir+"/progress.json"), "", nil)
-	require.NoError(t, err)
-	imp.Input = dir
-	imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
-	assert.NoError(t, imp.Validate(sources))
-}
-
-// A --checkpoint that is the manifest or a file the manifest lists is refused: --restart would set
-// that file aside. Another file under the artifact, the default progress file among them, is not.
-func TestImportValidate_CheckpointIsNotAFileOfTheArtifact(t *testing.T) {
-	dir := t.TempDir()
-	m := &manifest.Manifest{
-		Format:      manifest.FormatCSV,
-		SchemaFiles: []manifest.File{{Path: "schema/groups.json"}},
-		Units: []manifest.Unit{{Sources: []manifest.UnitSource{{
-			SegmentFiles: []manifest.File{{Path: "nodes/a/segment.csv"}},
-			Shards:       []manifest.Shard{{Files: []manifest.File{{Path: "nodes/a/shard-0.csv.gz"}}}},
-		}}}},
-	}
-	body, err := json.Marshal(m)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, manifest.FileName), body, 0o600))
-
-	validate := func(checkpoint string) error {
-		imp, sources, resolveErr := resolveImport(t, boundImport(t, "--checkpoint", checkpoint), "", nil)
-		require.NoError(t, resolveErr)
-		imp.Input = dir
-		imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
-		return imp.Validate(sources)
-	}
-	for _, name := range []string{manifest.FileName, "./" + manifest.FileName, "schema/groups.json", "nodes/a/segment.csv", "nodes/a/shard-0.csv.gz"} {
-		err = validate(filepath.Join(dir, name))
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "is a file of the artifact", name)
-	}
-	for _, name := range []string{ImportProgressFileName, "nodes/a/progress.json", "other.json"} {
-		assert.NoError(t, validate(filepath.Join(dir, name)), name)
-	}
-	assert.NoError(t, validate(filepath.Join(t.TempDir(), manifest.FileName)), "a manifest.json of another directory is not this artifact's")
-}
-
-// A --checkpoint that ends in the name of a side file would be a side file of another progress
-// file, or its own: it is refused, as for an export. A schema-only import has no progress file.
-func TestImportValidate_CheckpointIsNotASideFileName(t *testing.T) {
-	dir := t.TempDir()
-	for _, name := range []string{"x-plan.json", "x-cursor.json", "-plan.json"} {
-		imp, sources, err := resolveImport(t, boundImport(t, "--checkpoint", filepath.Join(dir, name)), "", nil)
-		require.NoError(t, err)
-		imp.Input = dir
-		imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
-		err = imp.Validate(sources)
-		require.Error(t, err, name)
-		assert.Contains(t, err.Error(), "--checkpoint")
-		assert.Contains(t, err.Error(), "the name of a side file of a progress file")
-		imp.SchemaOnly = true
-		assert.NoError(t, imp.Validate(sources), name)
 	}
 }

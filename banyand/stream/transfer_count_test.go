@@ -18,9 +18,6 @@
 package stream
 
 import (
-	"errors"
-	"fmt"
-	iofs "io/fs"
 	"path/filepath"
 	"testing"
 	"time"
@@ -37,24 +34,17 @@ import (
 )
 
 // inventoryRows counts the rows of a shard directory the way the export inventory (statShard in
-// banyand/transfer/export) does, in one pass: the parts the newest snapshot file names
-// (LivePartIDs), each read through ParsePartMetadata, the reader the stream service hands the
-// inventory (ReadPartMetadata), its TotalCount summed; a part gone since the listing
-// (fs.ErrNotExist) is skipped. The listing is not repeated, so a merge that persists a snapshot
-// during the pass shows as a different count, as it does in the inventory.
+// banyand/transfer/export) does, in one pass over the parts the newest snapshot file names, each
+// read through ParsePartMetadata, the reader the stream service hands the inventory
+// (ReadPartMetadata). The listing is not repeated, so a merge that persists a snapshot during the
+// pass shows as a different count, as it does in the inventory.
 func inventoryRows(t *testing.T, fileSystem fs.FileSystem, shardDir string) uint64 {
 	t.Helper()
-	ids, err := exportsnapshot.LivePartIDs(shardDir)
+	rows, err := exportsnapshot.LiveRows(shardDir, func(partDir string) (uint64, error) {
+		pm, readErr := ParsePartMetadata(fileSystem, partDir)
+		return pm.TotalCount, readErr
+	})
 	require.NoError(t, err)
-	var rows uint64
-	for _, id := range ids {
-		pm, readErr := ParsePartMetadata(fileSystem, filepath.Join(shardDir, fmt.Sprintf("%016x", id)))
-		if errors.Is(readErr, iofs.ErrNotExist) {
-			continue
-		}
-		require.NoError(t, readErr)
-		rows += pm.TotalCount
-	}
 	return rows
 }
 

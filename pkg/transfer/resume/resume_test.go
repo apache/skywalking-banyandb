@@ -255,8 +255,6 @@ func TestDigests(t *testing.T) {
 	assert.Equal(t, DigestSet([]string{"b", "a", "a"}), DigestSet([]string{"a", "b"}))
 	assert.NotEqual(t, DigestSet([]string{"ab", "c"}), DigestSet([]string{"a", "bc"}))
 	assert.NotEqual(t, DigestSet([]string{"a\nb"}), DigestSet([]string{"a", "b"}))
-	assert.NotEqual(t, DigestOptions(map[string]string{"a=b": "c"}), DigestOptions(map[string]string{"a": "b=c"}))
-	assert.Equal(t, DigestOptions(map[string]string{"x": "1", "y": "2"}), DigestOptions(map[string]string{"y": "2", "x": "1"}))
 	assert.True(t, strings.HasPrefix(DigestBytes([]byte("m")), "sha256:"))
 	diff := DiffBindings([]Binding{
 		{Name: "same", Recorded: "a", Current: "a"},

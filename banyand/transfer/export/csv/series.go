@@ -15,10 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package rowsrc reads the rows and resources of a session snapshot whatever the artifact
-// format: it tells a row's resource from its series metadata or its tag set, opens snapshot
-// files read-only, and loads the schemas the readers need. The CSV export uses it.
-package rowsrc
+package csv
 
 import (
 	"bytes"
@@ -32,10 +29,10 @@ import (
 
 // Stored fields of a property document (banyand/property/db/shard.go buildUpdateDocument).
 const (
-	// PropertySourceField holds the property as protojson.
-	PropertySourceField = "_source"
-	// PropertyDeleteField holds the delete time of a tombstone, an 8-byte timestamp.
-	PropertyDeleteField = "_deleted"
+	// propertySourceField holds the property as protojson.
+	propertySourceField = "_source"
+	// propertyDeleteField holds the delete time of a tombstone, an 8-byte timestamp.
+	propertyDeleteField = "_deleted"
 )
 
 // IndexModeReader is implemented by the measure backend. Index-mode measures keep their
@@ -49,21 +46,16 @@ type IndexModeReader interface {
 		visit func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error) error
 }
 
-// RowDropper counts a row whose resource cannot be determined or is not in the schema.
-type RowDropper interface {
-	DropRow(reason string)
-}
-
-// SeriesDecoder decodes the EntityValues of a row (pbv1.Series: subject, then the entity
+// seriesDecoder decodes the EntityValues of a row (pbv1.Series: subject, then the entity
 // tag values) and remembers the last one, since rows of a block share it.
-type SeriesDecoder struct {
+type seriesDecoder struct {
 	err     error
 	subject string
 	last    []byte
 	values  []*modelv1.TagValue
 }
 
-func (d *SeriesDecoder) decode(entityValues []byte) (string, []*modelv1.TagValue, error) {
+func (d *seriesDecoder) decode(entityValues []byte) (string, []*modelv1.TagValue, error) {
 	if d.last != nil && bytes.Equal(d.last, entityValues) {
 		return d.subject, d.values, d.err
 	}
@@ -74,16 +66,16 @@ func (d *SeriesDecoder) decode(entityValues []byte) (string, []*modelv1.TagValue
 	return d.subject, d.values, d.err
 }
 
-// SubjectOf returns the resource of a row from its EntityValues, counting with drop the rows
+// subjectOf returns the resource of a row from its EntityValues, counting with run the rows
 // whose resource cannot be told.
-func SubjectOf(drop RowDropper, d *SeriesDecoder, catalog string, entityValues []byte) (string, []*modelv1.TagValue, bool) {
+func subjectOf(run *unitRun, d *seriesDecoder, catalog string, entityValues []byte) (string, []*modelv1.TagValue, bool) {
 	if len(entityValues) == 0 {
-		drop.DropRow(catalog + " rows without series metadata")
+		run.dropRow(catalog + " rows without series metadata")
 		return "", nil, false
 	}
 	subject, values, err := d.decode(entityValues)
 	if err != nil || subject == "" {
-		drop.DropRow(catalog + " rows with undecodable series metadata")
+		run.dropRow(catalog + " rows with undecodable series metadata")
 		return "", nil, false
 	}
 	return subject, values, true
@@ -93,8 +85,8 @@ func SubjectOf(drop RowDropper, d *SeriesDecoder, catalog string, entityValues [
 // parts hold it with different types: each typed column keeps the values of one type.
 var typedTagSuffixes = []string{"#str_arr", "#int_arr", "#str", "#int", "#float", "#bin", "#ts"}
 
-// StoredTagName is the tag a stored column holds: its name without a merge's type suffix.
-func StoredTagName(column string) string {
+// storedTagName is the tag a stored column holds: its name without a merge's type suffix.
+func storedTagName(column string) string {
 	if !strings.Contains(column, "#") {
 		return column
 	}

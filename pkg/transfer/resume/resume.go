@@ -33,6 +33,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
@@ -156,7 +157,7 @@ func writeAtomic(path string, data []byte, sync bool) error {
 		err = renameFile(tmp, path)
 	}
 	if err == nil && sync {
-		err = SyncDir(filepath.Dir(path))
+		err = fs.SyncDirIfSupported(filepath.Dir(path))
 	}
 	if err != nil {
 		_ = os.Remove(tmp)
@@ -207,7 +208,7 @@ func MkdirAll(dir string, perm os.FileMode) error {
 			return err
 		}
 	}
-	return SyncDir(filepath.Dir(dir))
+	return fs.SyncDirIfSupported(filepath.Dir(dir))
 }
 
 // TempPattern is the os.CreateTemp pattern of the temporary files WriteFile writes path
@@ -352,7 +353,7 @@ func Remove(path string, sides ...string) error {
 			return fmt.Errorf("remove %s: %w", p, err)
 		}
 	}
-	if err := SyncDir(filepath.Dir(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := fs.SyncDirIfSupported(filepath.Dir(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove %s: %w", path, err)
 	}
 	return nil

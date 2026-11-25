@@ -15,36 +15,18 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build !windows
-
-package resume
+package csv
 
 import (
-	"errors"
-	"os"
+	"io/fs"
+	"path/filepath"
+	"testing"
 
-	"golang.org/x/sys/unix"
+	"github.com/stretchr/testify/require"
 )
 
-// SyncDir makes the new entries of a directory durable: it opens the directory and fsyncs it.
-// A file system that cannot fsync a directory (EINVAL or ENOTSUP, as some FUSE and 9p mounts
-// answer) is not an error: there is nothing more to do there.
-func SyncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	if err = d.Sync(); dirSyncUnsupported(err) {
-		err = nil
-	}
-	if closeErr := d.Close(); err == nil {
-		err = closeErr
-	}
-	return err
-}
-
-// dirSyncUnsupported reports whether a directory fsync failed only because the file system
-// cannot fsync a directory.
-func dirSyncUnsupported(err error) bool {
-	return errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP)
+func TestReadOnlyFSReportsMissingDirectory(t *testing.T) {
+	rofs := newReadOnlyFS()
+	require.NotPanics(t, func() { rofs.ReadDir(filepath.Join(t.TempDir(), "gone")) })
+	require.ErrorIs(t, rofs.Err(), fs.ErrNotExist)
 }

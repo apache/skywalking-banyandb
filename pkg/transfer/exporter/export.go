@@ -254,45 +254,13 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 	}
 	env.Log, env.Err = prog.Wrap(env.Log), prog.Wrap(env.Err)
 	path := ProgressPath(opts)
-	if err := resume.CheckSideCollision(path); err != nil {
-		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
-	}
-	// First without the lock, which creates the lock file and its directory: an output directory
-	// that is refused is refused for what it holds, and gets nothing added.
-	if err := CheckOutputDir(opts.Output, path); err != nil {
-		return err
-	}
-	// Only a fresh export checks its selectors against the groups (exit 1): a resume compares them
-	// with the recorded ones and its session with the recorded plan, so a group deleted since
-	// refuses with how to start over (exit 6), and does not matter when only the manifest is left.
-	// Before the lock, which creates the output directory: a refused export leaves nothing behind.
-	if !resume.Exists(path) {
-		if err := ValidateSelectors(env.Groups, opts.Selectors); err != nil {
-			return exitcode.Exit(exitcode.ExitUsage, "%w", err)
-		}
-	}
-	// Under the lock no other bydbctl writes the progress file: the checks below and the cleanup
-	// of leftovers cannot race one. Taking the lock also creates the directory of the progress
-	// file, so an unusable --checkpoint is refused before the cluster is touched.
-	unlock, err := lockProgress(env.Log, path)
+	unlock, resuming, err := prepareExport(env, opts, path)
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	if err = CheckOutputDir(opts.Output, path); err != nil {
-		return err
-	}
-	if resume.Exists(path) {
-		if opts.SchemaOnly {
-			return exitcode.Exit(exitcode.ExitUsage, "a previous export left %s; a schema-only export needs a new or empty directory", path)
-		}
+	if resuming {
 		return resumeExport(ctx, env, prog, opts, path)
-	}
-	if err = cleanLeftover(env.Log, opts.Output, path); err != nil {
-		return err
-	}
-	if err = resume.MkdirAll(opts.Output, 0o700); err != nil {
-		return exitcode.Exit(exitcode.ExitUsage, "create output directory: %w", err)
 	}
 	conn := env.Liaisons.Primary()
 	groups := SelectedGroups(env.Groups, opts.Selectors)
@@ -329,11 +297,98 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 		SourceTimezones: nodeTimezones(env.Cluster, nil),
 		SchemaFiles:     m.SchemaFiles, Groups: m.Groups,
 	}
-	runCtx, cancelRun := context.WithCancelCause(ctx)
-	defer cancelRun(nil)
-	track := startTracker(ctx, path, state, start, cancelRun)
-	defer func() { _ = track.close() }()
+	created, err := createTrackedSession(ctx, env, prog, opts, path, state, start)
+	if err != nil {
+		return err
+	}
+	defer created.close()
+	sess := created.sess
+	jobs, err := buildJobs(created.plan)
+	if err != nil {
+		keptHint(env.Err, sess.ID, path, opts.Output)
+		return err
+	}
+	return runSession(ctx, created.runCtx, env, prog, opts, created.track, sessionRun{schema: schema, sessID: sess.ID, plan: created.plan, jobs: jobs, m: m, start: start})
+}
 
+// prepareExport makes the checks of an export before the cluster is touched and takes the lock of
+// the progress file at path, which the caller releases with unlock: the output directory, the
+// selectors of a fresh export, the progress file a previous run left. It reports whether that
+// progress file is there, so that the export is resumed (resuming); otherwise the output
+// directory is left empty and exists. A refusal is a usage error (exit 1).
+func prepareExport(env Env, opts config.Export, path string) (unlock func(), resuming bool, err error) {
+	// First without the lock, which creates the lock file and its directory: an output directory
+	// that is refused is refused for what it holds, and gets nothing added.
+	if err = CheckOutputDir(opts.Output, path); err != nil {
+		return nil, false, err
+	}
+	// Only a fresh export checks its selectors against the groups (exit 1): a resume compares them
+	// with the recorded ones and its session with the recorded plan, so a group deleted since
+	// refuses with how to start over (exit 6), and does not matter when only the manifest is left.
+	// Before the lock, which creates the output directory: a refused export leaves nothing behind.
+	if !resume.Exists(path) {
+		if err = ValidateSelectors(env.Groups, opts.Selectors); err != nil {
+			return nil, false, exitcode.Exit(exitcode.ExitUsage, "%w", err)
+		}
+	}
+	// Under the lock no other bydbctl writes the progress file: the checks below and the cleanup
+	// of leftovers cannot race one. Taking the lock also creates the directory of the progress
+	// file, so an unusable --checkpoint is refused before the cluster is touched.
+	release, err := lockProgress(env.Log, path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() {
+		if err != nil {
+			release()
+		}
+	}()
+	if err = CheckOutputDir(opts.Output, path); err != nil {
+		return nil, false, err
+	}
+	if resume.Exists(path) {
+		if opts.SchemaOnly {
+			return nil, false, exitcode.Exit(exitcode.ExitUsage, "a previous export left %s; a schema-only export needs a new or empty directory", path)
+		}
+		return release, true, nil
+	}
+	if err = cleanLeftover(env.Log, opts.Output, path); err != nil {
+		return nil, false, err
+	}
+	if err = resume.MkdirAll(opts.Output, 0o700); err != nil {
+		return nil, false, exitcode.Exit(exitcode.ExitUsage, "create output directory: %w", err)
+	}
+	return release, false, nil
+}
+
+// trackedSession is the session of a fresh export with the tracker that records it, and the
+// context that a failed write of the progress file cancels.
+type trackedSession struct {
+	sess   *Session
+	plan   *cluster.PlanResult
+	track  *tracker
+	runCtx context.Context
+	cancel context.CancelCauseFunc
+}
+
+// close stops the tracker, which writes what it still holds, and ends runCtx.
+func (t *trackedSession) close() {
+	_ = t.track.close()
+	t.cancel(nil)
+}
+
+// createTrackedSession creates the export session and records its id in the progress file
+// before anything uses it. It owns the tracker and the ids the create announced, and the one way
+// out of a create that gives no usable session: the tracker is stopped, every announced id is
+// released before the progress file that records the last one is deleted (so that a run stopped
+// while it waits for the release leaves that id on disk), and what the export wrote is removed
+// (removeCreated), so that the same command (with --preempt, say) can run again without emptying
+// the output directory. On success the caller closes the result.
+func createTrackedSession(ctx context.Context, env Env, prog *output.Progress, opts config.Export, path string, state *exportProgress,
+	start time.Time,
+) (*trackedSession, error) {
+	runCtx, cancelRun := context.WithCancelCause(ctx)
+	track := startTracker(ctx, path, state, start, cancelRun)
 	// createdErr is the failure to record the session id; OnCreated runs before CreateSession returns.
 	// announced is every id the attempts of the create announced, the last of which the progress file records.
 	var createdErr error
@@ -353,47 +408,38 @@ func RunExport(ctx context.Context, env Env, opts config.Export) error {
 				"Take over the session(s) above? An export still running on them fails on its next read. [y/N] ")
 		}
 	}
+	conn := env.Liaisons.Primary()
 	sess, plan, err := CreateSession(runCtx, conn, opts.Selectors, sessOpts)
-	if err != nil {
-		// No data was exported: leave the output directory empty again, so the same command
-		// (with --preempt, say) can run without emptying it first.
-		trackErr := track.close()
-		// The persister has stopped. A refused create (exit 2) was rolled back; one given up
-		// after an announcement (exit 3) may stand: every id its attempts announced is released
-		// here, before the progress file that records the last one is deleted, so that a run
-		// stopped while it waits for the release leaves that id on disk.
-		if len(announced) > 0 && exitcode.For(err) == exitcode.ExitRuntime {
-			err = abandonedCreate(ctx, env.Log, conn, announced, runErr(ctx, runCtx, err))
-			removeCreated(path, opts.Output)
-			return err
-		}
-		removeCreated(path, opts.Output)
-		if trackErr != nil {
-			return exitcode.Exit(exitcode.ExitRuntime, "%w; %w", trackErr, err)
-		}
-		if ctx.Err() != nil {
-			// Interrupted, at the takeover question included, before any session id was announced.
-			return exitcode.Exit(exitcode.ExitRuntime, "export interrupted before its session was created: %w", context.Cause(ctx))
-		}
-		return err
-	}
-	if len(sess.Preempted) > 0 {
+	if err == nil && len(sess.Preempted) > 0 {
 		warnPreempted(env.Log, sess.Preempted)
 	}
-	// The id must be on disk before the session is used: a failed write of it may not have
-	// stopped the create in time.
-	if err = createdErr; err != nil {
-		_ = track.close()
-		err = abandonedCreate(ctx, env.Log, conn, []string{sess.ID}, exitcode.Exit(exitcode.ExitRuntime, "%w", err))
-		removeCreated(path, opts.Output)
-		return err
+	// ids are the sessions to release: those of a create given up after an announcement (exit 3)
+	// may stand, a refused one (exit 2) was rolled back. The id must be on disk before the session
+	// is used: a failed write of it may not have stopped the create in time.
+	var ids []string
+	switch {
+	case err != nil && len(announced) > 0 && exitcode.For(err) == exitcode.ExitRuntime:
+		ids, err = announced, runErr(ctx, runCtx, err)
+	case err == nil && createdErr != nil:
+		ids, err = []string{sess.ID}, exitcode.Exit(exitcode.ExitRuntime, "%w", createdErr)
 	}
-	jobs, err := buildJobs(plan)
-	if err != nil {
-		keptHint(env.Err, sess.ID, path, opts.Output)
-		return err
+	if err == nil {
+		return &trackedSession{sess: sess, plan: plan, track: track, runCtx: runCtx, cancel: cancelRun}, nil
 	}
-	return runSession(ctx, runCtx, env, prog, opts, track, sessionRun{schema: schema, sessID: sess.ID, plan: plan, jobs: jobs, m: m, start: start})
+	defer cancelRun(nil)
+	// The persister has stopped once it is closed.
+	trackErr := track.close()
+	switch {
+	case len(ids) > 0:
+		err = abandonedCreate(ctx, env.Log, conn, ids, err)
+	case trackErr != nil:
+		err = exitcode.Exit(exitcode.ExitRuntime, "%w; %w", trackErr, err)
+	case ctx.Err() != nil:
+		// Interrupted, at the takeover question included, before any session id was announced.
+		err = exitcode.Exit(exitcode.ExitRuntime, "export interrupted before its session was created: %w", context.Cause(ctx))
+	}
+	removeCreated(path, opts.Output)
+	return nil, err
 }
 
 // removeCreated removes what an export whose session was not created wrote: the progress file at
@@ -466,7 +512,7 @@ func runSession(ctx, runCtx context.Context, env Env, prog *output.Progress, opt
 		holders := planNodes(run.plan)
 		if run.prev != nil {
 			// A resume needs nothing more of a node whose units are all done (checkMembers).
-			holders = nodesLeft(run.jobs)
+			holders = holdersOf(track.state, run.jobs)
 		}
 		err = exportSession(runCtx, env, prog, opts, run.schema, run.sessID, holders, run.prev != nil, run.jobs, track)
 	}
@@ -538,14 +584,33 @@ func unitCount(jobs []*nodeJob) int {
 	return n
 }
 
-// nodesLeft names the nodes of jobs with a unit not done yet; never nil, which would mean every
-// node to the heartbeat.
-func nodesLeft(jobs []*nodeJob) []string {
-	nodes := []string{}
+// jobsLeft is jobs reduced to the units not done yet, without the jobs that have none.
+func jobsLeft(jobs []*nodeJob) []*nodeJob {
+	var left []*nodeJob
 	for _, job := range jobs {
-		if slices.ContainsFunc(job.units, func(u *plannedUnit) bool { return !u.done }) {
-			nodes = append(nodes, job.nodeID)
+		rest := &nodeJob{nodeID: job.nodeID, dir: job.dir}
+		for _, u := range job.units {
+			if !u.done {
+				rest.units = append(rest.units, u)
+			}
 		}
+		if len(rest.units) > 0 {
+			left = append(left, rest)
+		}
+	}
+	return left
+}
+
+// holdersOf names the data nodes that must still hold the session the progress state records: the
+// nodes of jobs with a unit not done yet, as only they must still be members of the cluster
+// (checkMembers); every source node recorded while no plan is recorded (jobs nil).
+func holdersOf(state *exportProgress, jobs []*nodeJob) []string {
+	if jobs == nil {
+		return state.Bindings.SourceNodes
+	}
+	var nodes []string
+	for _, job := range jobsLeft(jobs) {
+		nodes = append(nodes, job.nodeID)
 	}
 	return nodes
 }
@@ -554,14 +619,11 @@ func nodesLeft(jobs []*nodeJob) []string {
 // release its session id ("" when none was recorded), delete the progress file and what is in
 // outputDir, and export again.
 func startOverHint(id, path, outputDir string) string {
-	files := "what is in " + outputDir
-	if !config.SameDir(filepath.Dir(path), outputDir) {
-		files = path + ", " + resume.SidePath(path, planSide) + " and what is in " + outputDir
-	}
+	files := giveUpFiles(path, outputDir)
 	if id == "" {
 		return "to start over: delete " + files + ", then export again"
 	}
-	return "to start over: bydbctl data release-session --id " + id + ", then delete " + files + " and export again"
+	return "to start over: " + giveUpSteps(id, files)
 }
 
 // finishExport ends an export whose manifest is written: it releases the session, whose failure
@@ -624,7 +686,7 @@ func abandonedCreate(ctx context.Context, log io.Writer, conn *grpc.ClientConn, 
 			releaseErr = fmt.Errorf("it failed on %d data node(s)", len(result.Failed))
 		}
 		releaseErrs = append(releaseErrs, releaseErr)
-		hints = append(hints, "bydbctl data release-session --id "+id)
+		hints = append(hints, releaseCommand(id))
 	}
 	if len(releaseErrs) == 0 {
 		outcome := "no data node holds it"
@@ -675,28 +737,17 @@ func (e schemaChangedError) Unwrap() error { return e.error }
 func exportSession(ctx context.Context, env Env, prog *output.Progress, opts config.Export, schema *schemasync.Result,
 	sessID string, holders []string, resumed bool, jobs []*nodeJob, track *tracker,
 ) error {
-	var pending []*nodeJob
-	for _, job := range jobs {
-		left := &nodeJob{nodeID: job.nodeID, dir: job.dir}
-		for _, u := range job.units {
-			if !u.done {
-				left.units = append(left.units, u)
-			}
-		}
-		if len(left.units) > 0 {
-			pending = append(pending, left)
-		}
-	}
+	pending := jobsLeft(jobs)
 	conn := env.Liaisons.Primary()
 	l := logger.GetLogger("exporter")
 	runCtx, cancelRun := context.WithCancelCause(ctx)
 	defer cancelRun(nil)
 	var holdersMu sync.Mutex
 	holders = slices.Clone(holders)
-	holdersNow := func() []string {
+	holdersNow := func() RequiredNodes {
 		holdersMu.Lock()
 		defer holdersMu.Unlock()
-		return slices.Clone(holders)
+		return OnlyNodes(holders)
 	}
 	stopHeartbeat, lost := StartHeartbeat(runCtx, conn, sessID, holdersNow, 0, l, env.Log)
 	defer stopHeartbeat()

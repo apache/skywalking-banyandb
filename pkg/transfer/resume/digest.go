@@ -49,15 +49,6 @@ func DigestSet(values []string) string {
 	return fieldDigest(slices.Compact(slices.Sorted(slices.Values(values)))...)
 }
 
-// DigestOptions is the fieldDigest of the names and values in name order.
-func DigestOptions(options map[string]string) string {
-	fields := make([]string, 0, 2*len(options))
-	for _, name := range slices.Sorted(maps.Keys(options)) {
-		fields = append(fields, name, options[name])
-	}
-	return fieldDigest(fields...)
-}
-
 // Binding is one recorded binding of a progress file next to the value this invocation has.
 type Binding struct {
 	Name     string

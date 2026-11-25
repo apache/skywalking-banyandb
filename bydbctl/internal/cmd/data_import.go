@@ -82,6 +82,9 @@ func validateImport(cmd *cobra.Command, sources config.Sources, opts *config.Imp
 	if err := opts.Validate(sources); err != nil {
 		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
+	if err := importer.CheckResume(sources, opts); err != nil {
+		return err
+	}
 	if !opts.DryRun {
 		return nil
 	}
@@ -124,6 +127,15 @@ func runImport(cmd *cobra.Command, conn *config.Connection, opts *config.Import,
 func sourcedEnv(sources config.Sources, opts *config.Import) importer.Env {
 	return importer.Env{
 		VerifyExplicit: sources.FromFlag(&opts.Verify), ResumeFromEnv: sources.FromEnv(&opts.Resume),
-		DuplicationSource: sources.Label(&opts.DuplicationPolicy),
+		DuplicationSource: duplicationSource(sources, opts),
 	}
+}
+
+// duplicationSource names where the resume duplication policy came from: the flag, plan.yaml or
+// the variable, else "default".
+func duplicationSource(sources config.Sources, opts *config.Import) string {
+	if !sources.Explicit(&opts.DuplicationPolicy) && !sources.FromEnv(&opts.DuplicationPolicy) {
+		return "default"
+	}
+	return sources.Label(&opts.DuplicationPolicy)
 }

@@ -40,6 +40,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	"gopkg.in/yaml.v3"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
@@ -327,7 +328,7 @@ func requireNodeDone(t *testing.T, opts testOptions, node string) {
 	if len(state.Done) == 0 {
 		t.Fatal("no unit done")
 	}
-	if left := nodesLeft(jobs); slices.Contains(left, node) || len(left) == 0 {
+	if left := holdersOf(&exportProgress{}, jobs); slices.Contains(left, node) || len(left) == 0 {
 		t.Fatalf("want every unit of %s done and others left, nodes with units left: %v", node, left)
 	}
 }
@@ -962,7 +963,7 @@ func TestResume_ProgressFileOfAnotherVersionIsRefusedWithTheNextStep(t *testing.
 				fmt.Sprintf("(progress file version %d, this bydbctl reads version %d)", version, progressVersion),
 				"so it cannot be resumed; nothing was deleted",
 				"Resume it with the bydbctl version that wrote it",
-				"to start over: bydbctl data release-session --id feedfeed, then delete what is in " + opts.Output + " and export again",
+				"to start over: release the session with: bydbctl data release-session --id feedfeed; then delete " + giveUpFiles(path, opts.Output) + " and export again",
 			}
 			check := func(name string, err error, log *syncBuffer) {
 				t.Helper()
@@ -1013,7 +1014,7 @@ func TestResume_ProgressFileOfAnotherVersionWithoutASession(t *testing.T) {
 	editState(t, &opts, func(s *exportProgress) { s.Version, s.Session.ID = 1, "" })
 	before := tree(t, opts.Output)
 	_, err := resumeRun(t, f, opts)
-	requireExit(t, err, exitcode.ExitResume, "release it with: bydbctl data release-session --id <id>; then delete what is in "+opts.Output)
+	requireExit(t, err, exitcode.ExitResume, "release the session with: bydbctl data release-session --id <id>; then delete what is in "+opts.Output)
 	if strings.Contains(err.Error(), "release-session --id feedfeed") {
 		t.Fatalf("no session id is recorded:\n%v", err)
 	}
@@ -1050,7 +1051,7 @@ func TestResume_ANodeDoneLeavesTheHeartbeatsRequiredNodes(t *testing.T) {
 	f, opts := interruptAfterOne(t)
 	if _, _, jobs, err := loadProgress(ProgressPath(opts.Export), opts.Export); err != nil {
 		t.Fatal(err)
-	} else if left := nodesLeft(jobs); !slices.Equal(left, []string{nodeA, nodeB}) {
+	} else if left := holdersOf(&exportProgress{}, jobs); !slices.Equal(left, []string{nodeA, nodeB}) {
 		t.Fatalf("want units left on both nodes, got %v", left)
 	}
 	shortHeartbeat(t, 5*time.Millisecond)
@@ -1173,8 +1174,8 @@ func TestResume_ConfirmationMatrix(t *testing.T) {
 		log := &syncBuffer{}
 		opts.Log, opts.Out = log, log
 		requireExit(t, runExport(t, f, opts), exitcode.ExitUsage,
-			"add --resume to continue it (needed when not at a terminal); to start over: bydbctl data release-session --id feedfeed, then delete what is in "+
-				opts.Output+" and export again")
+			"add --resume to continue it (needed when not at a terminal); to start over: release the session with: bydbctl data release-session --id feedfeed; then delete "+
+				giveUpFiles(filepath.Join(opts.Output, ProgressFileName), opts.Output)+" and export again")
 		requireUntouched(t, before, opts.Output)
 		if len(f.plans) != plans {
 			t.Fatal("a refused resume reads no session")
@@ -1219,7 +1220,7 @@ func TestResume_ConfirmationMatrix(t *testing.T) {
 				return
 			}
 			requireExit(t, err, exitcode.ExitUsage, "not resumed; ")
-			requireExit(t, err, exitcode.ExitUsage, "to start over: bydbctl data release-session --id feedfeed")
+			requireExit(t, err, exitcode.ExitUsage, "to start over: release the session with: bydbctl data release-session --id feedfeed")
 			requireUntouched(t, before, opts.Output)
 		})
 	}
@@ -1762,9 +1763,18 @@ func TestCheckOutputDir_LeftoverOfARunKilledBeforeItsFirstWrite(t *testing.T) {
 		"(it holds a, b, c, d, e, and 2 more); give a new or empty directory, or delete it first with: rm -rf "+other)
 }
 
+// walkAndClean is the sequence a resume follows: walkNodes before its question, cleanTree after.
+func walkAndClean(dir, path string, done []doneUnit, over string) error {
+	tree, err := walkNodes(dir, over)
+	if err != nil {
+		return err
+	}
+	return cleanTree(dir, path, done, tree)
+}
+
 func TestCleanNodes_EdgeCases(t *testing.T) {
 	dir := t.TempDir()
-	if err := cleanNodes(dir, filepath.Join(dir, ProgressFileName), nil, ""); err != nil {
+	if err := walkAndClean(dir, filepath.Join(dir, ProgressFileName), nil, ""); err != nil {
 		t.Fatalf("no nodes directory is nothing to clean: %v", err)
 	}
 	write := func(rel string) string {
@@ -1779,7 +1789,7 @@ func TestCleanNodes_EdgeCases(t *testing.T) {
 	drop := write("nodes/a/y.csv.tmp")
 	deep := write("nodes/b/c/z.csv")
 	manifestTmp := write(".manifest.json.123.tmp")
-	if err := cleanNodes(dir, filepath.Join(dir, ProgressFileName), []doneUnit{{Files: []doneFile{{File: manifest.File{Path: "nodes/a/x.csv"}}}}}, ""); err != nil {
+	if err := walkAndClean(dir, filepath.Join(dir, ProgressFileName), []doneUnit{{Files: []doneFile{{File: manifest.File{Path: "nodes/a/x.csv"}}}}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(keep); err != nil {
@@ -1832,5 +1842,278 @@ func TestDiffPlans(t *testing.T) {
 	}
 	if diff := diffPlans(recorded, current, doneKeys([]doneUnit{{Node: nodeB, Unit: lastKey}})); diff != "" {
 		t.Fatalf("a missing done unit does not count:\n%s", diff)
+	}
+}
+
+// A progress file named like a side file would be its own, or another progress file's: CheckResume,
+// which data export runs before it contacts anything, refuses it.
+func TestProgressPath_RefusesTheNameOfASideFile(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out")
+	for _, name := range []string{"p-plan.json", "p-cursor.json"} {
+		checkpoint := filepath.Join(t.TempDir(), name)
+		_, err := checkedExport(t, nil, "--output", out, "--checkpoint", checkpoint)
+		requireExit(t, err, exitcode.ExitUsage, "side file")
+		if _, statErr := os.Stat(out); !os.IsNotExist(statErr) {
+			t.Fatalf("%s: the output directory is not created: %v", name, statErr)
+		}
+	}
+}
+
+// allDoneProgress is an export whose every unit is done and whose manifest is not written: the
+// progress file and the plan of its last write are put back, the manifest removed.
+func allDoneProgress(t *testing.T) (*fakeLiaison, testOptions) {
+	t.Helper()
+	saved := writeProgress
+	var mu sync.Mutex
+	var last, plan []byte
+	writeProgress = func(path string, v any) error {
+		if err := saved(path, v); err != nil {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		side, _ := os.ReadFile(resume.SidePath(path, planSide))
+		mu.Lock()
+		last, plan = body, side
+		mu.Unlock()
+		return err
+	}
+	f := exportFake()
+	opts, log := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	writeProgress = saved
+	if err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	path := ProgressPath(opts.Export)
+	for p, body := range map[string][]byte{path: last, resume.SidePath(path, planSide): plan} {
+		if err = os.WriteFile(p, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.Remove(filepath.Join(opts.Output, manifest.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	return f, opts
+}
+
+// noPlanProgress is an export interrupted after its session was created and before its plan was
+// recorded.
+func noPlanProgress(t *testing.T) (*fakeLiaison, testOptions) {
+	t.Helper()
+	failNthWrite(t, 2, false)
+	f := exportFake()
+	opts, _ := exportOptions(t, f)
+	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "disk full (injected)")
+	return f, opts
+}
+
+// A dry run of a resume that has no units to list still prints the json or yaml document its
+// caller parses: with no rows, and the progress it previews.
+func TestResume_DryRunJSONAndYAMLWithNothingToList(t *testing.T) {
+	for _, tc := range []struct {
+		setup func(*testing.T) (*fakeLiaison, testOptions)
+		name  string
+		done  int
+		total int
+	}{
+		{name: "every unit done", setup: allDoneProgress, done: 4, total: 4},
+		{name: "no plan recorded", setup: noPlanProgress, done: 0, total: 0},
+	} {
+		for _, format := range []string{"json", "yaml"} {
+			t.Run(tc.name+" "+format, func(t *testing.T) {
+				f, opts := tc.setup(t)
+				errLog, out := &syncBuffer{}, &syncBuffer{}
+				opts.Log, opts.Out = errLog, out
+				opts.DryRun, opts.OutputFormat = true, format
+				if found, err := DryRunResume(envFor(t, opts, f), opts.Export); !found || err != nil {
+					t.Fatalf("found=%v err=%v\n%s", found, err, errLog)
+				}
+				var rep Report
+				var err error
+				if format == "json" {
+					err = json.Unmarshal([]byte(out.String()), &rep)
+				} else {
+					var doc struct {
+						Resumed *ResumedProgress `yaml:"resumed"`
+						Rows    []Row            `yaml:"rows"`
+					}
+					err = yaml.Unmarshal([]byte(out.String()), &doc)
+					rep.Resumed, rep.Rows = doc.Resumed, doc.Rows
+				}
+				if err != nil {
+					t.Fatalf("%v:\n%s", err, out)
+				}
+				if len(rep.Rows) != 0 || rep.Resumed == nil || rep.Resumed.Done != tc.done {
+					t.Fatalf("want no rows and resumed done=%d, got %+v:\n%s", tc.done, rep, out)
+				}
+				if !strings.Contains(out.String(), "rows: []") && !strings.Contains(out.String(), `"rows": []`) {
+					t.Fatalf("the rows are an empty list:\n%s", out)
+				}
+			})
+		}
+	}
+	t.Run("table prints nothing", func(t *testing.T) {
+		f, opts := allDoneProgress(t)
+		errLog, out := &syncBuffer{}, &syncBuffer{}
+		opts.Log, opts.Out = errLog, out
+		opts.DryRun = true
+		if _, err := DryRunResume(envFor(t, opts, f), opts.Export); err != nil || out.String() != "" {
+			t.Fatalf("err=%v out=%q", err, out)
+		}
+	})
+}
+
+// What the earlier runs had in flight is not carried into this run's progress file.
+func TestResume_ClearsTheInflightUnitsOfEarlierRuns(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	editState(t, &opts, func(s *exportProgress) {
+		s.Inflight = map[string]inflightUnit{"ghost:1": {Unit: "stream/old/hot/20260101", StartedAt: time.Now()}}
+	})
+	saved := writeProgress
+	t.Cleanup(func() { writeProgress = saved })
+	var mu sync.Mutex
+	var written []*exportProgress
+	writeProgress = func(path string, v any) error {
+		state := v.(*exportProgress)
+		mu.Lock()
+		written = append(written, &exportProgress{Inflight: maps.Clone(state.Inflight)})
+		mu.Unlock()
+		return saved(path, v)
+	}
+	log, err := resumeRun(t, f, opts)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(written) == 0 {
+		t.Fatal("the resume wrote no progress file")
+	}
+	for _, s := range written {
+		if _, ok := s.Inflight["ghost:1"]; ok {
+			t.Fatalf("an earlier run's in-flight unit is carried on: %v", s.Inflight)
+		}
+	}
+}
+
+// A plan with no unit left needs no node to hold the session: the read is not sent with an empty
+// required_nodes, which the liaison takes for every node.
+func TestResume_PlanWithoutUnitsSendsNoEmptyRequiredNodes(t *testing.T) {
+	saved := writeProgress
+	var mu sync.Mutex
+	var last, plan []byte
+	writeProgress = func(path string, v any) error {
+		if err := saved(path, v); err != nil {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		side, _ := os.ReadFile(resume.SidePath(path, planSide))
+		mu.Lock()
+		last, plan = body, side
+		mu.Unlock()
+		return err
+	}
+	f := exportFake()
+	f.planFrames = nil
+	opts, log := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	writeProgress = saved
+	if err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	path := ProgressPath(opts.Export)
+	for p, body := range map[string][]byte{path: last, resume.SidePath(path, planSide): plan} {
+		if err = os.WriteFile(p, body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err = os.Remove(filepath.Join(opts.Output, manifest.FileName)); err != nil {
+		t.Fatal(err)
+	}
+	rlog, err := resumeRun(t, f, opts)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, rlog)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, p := range f.plans {
+		if p.GetRead() != nil && len(p.GetRead().GetRequiredNodes()) == 0 {
+			t.Fatalf("a read of the session names no required node: %v", p)
+		}
+	}
+}
+
+// The left-shard count of the summary counts a shard of a group once, however many nodes hold a
+// replica of it.
+func TestLeftShards_CountsEachShardOnce(t *testing.T) {
+	unit := func(done bool, shards ...uint32) *plannedUnit {
+		inv := &transferv1.SegmentInventory{Unit: &transferv1.SegmentUnit{SegmentSuffix: "20260101", ShardIds: shards}}
+		for _, s := range shards {
+			inv.Shards = append(inv.Shards, &transferv1.ShardStat{ShardId: s})
+		}
+		return &plannedUnit{segment: inv, done: done}
+	}
+	jobs := []*nodeJob{
+		{nodeID: "a", units: []*plannedUnit{unit(false, 0, 1), unit(true, 7)}},
+		{nodeID: "b", units: []*plannedUnit{unit(false, 1, 2)}},
+	}
+	if got := leftShards(jobs); got != 3 {
+		t.Fatalf("shards 0, 1 and 2 are left, got %d", got)
+	}
+	if got := leftShards(nil); got != 0 {
+		t.Fatalf("no plan, no shards, got %d", got)
+	}
+}
+
+// A refusal marks a value "(default)" against the defaults of the export's format: a native export
+// is not compressed, so none is its default compression.
+func TestDefaultOptions_FollowTheFormat(t *testing.T) {
+	if got := defaultOptions(transferv1.Format_FORMAT_NATIVE)["compress"]; got != "none" {
+		t.Fatalf("native compress default = %q", got)
+	}
+	if got := defaultOptions(transferv1.Format_FORMAT_CSV)["compress"]; got != "gzip" {
+		t.Fatalf("csv compress default = %q", got)
+	}
+}
+
+// The resume summary is a block, then a blank line, then the table of what is left, which does
+// not repeat the SNAPSHOT line of a plan: the first run pinned the snapshot already.
+func TestResume_LogSeparatesTheSummaryFromTheTableAndSaysNothingOfTheSnapshot(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	log, err := resumeRun(t, f, opts)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	text := log.String()
+	i := strings.Index(text, "\nNODE ")
+	if i < 0 || !strings.Contains(text[:i+1], "est. ") || !strings.HasSuffix(text[:i+1], "\n\n") {
+		t.Fatalf("a blank line sets the table off from the summary:\n%s", text)
+	}
+	if strings.Contains(text, "SNAPSHOT") {
+		t.Fatalf("a resume does not say how much room a snapshot needs:\n%s", text)
+	}
+}
+
+// The times of a resume are shown in the operator's time zone (the process's, which differs from
+// UTC under TZ=Asia/Tokyo); the manifest keeps UTC.
+func TestResume_ShowsLocalTimeAndKeepsUTCInTheManifest(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	state := readState(t, ProgressPath(opts.Export))
+	log, err := resumeRun(t, f, opts)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, log)
+	}
+	m, err := manifest.Read(filepath.Join(opts.Output, manifest.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(m.ExportedAt, "Z") || m.ExportedAt != state.StartedAt.UTC().Format(time.RFC3339) {
+		t.Fatalf("exportedAt = %s, want the first run's start in UTC", m.ExportedAt)
+	}
+	if want := "the first started at " + state.StartedAt.Local().Format(time.RFC3339); !strings.Contains(log.String(), want) {
+		t.Fatalf("the summary lacks %q:\n%s", want, log)
+	}
+	if want := "last updated " + state.UpdatedAt.Local().Format(time.RFC3339); !strings.Contains(log.String(), want) {
+		t.Fatalf("the resume summary lacks %q:\n%s", want, log)
 	}
 }

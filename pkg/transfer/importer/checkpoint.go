@@ -36,6 +36,8 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 )
@@ -43,7 +45,7 @@ import (
 const (
 	// ProgressFileName is the default progress file of an import, below its artifact directory;
 	// --checkpoint names another path, such as one per target cluster.
-	ProgressFileName = config.ImportProgressFileName
+	ProgressFileName = ".import-progress.json"
 	// cursorSide names the side file of a CSV import's cursors (resume.SidePath).
 	cursorSide = "cursor"
 	// planSide names the side file of the plan the first run recorded and of its baseline
@@ -68,6 +70,62 @@ func ProgressPath(opts config.Import) string {
 		return opts.Checkpoint
 	}
 	return filepath.Join(opts.Input, ProgressFileName)
+}
+
+// CheckResume refuses, before anything is contacted, a --checkpoint that cannot be a progress
+// file: a directory, such as the artifact directory itself, a file of the artifact, which
+// --restart would move aside, or a name that ends in that of a side file ("-plan.json",
+// "-cursor.json"). Every failure is a usage error (exit 1). A schema-only import uses no
+// progress file and is not checked.
+func CheckResume(sources config.Sources, opts *config.Import) error {
+	if opts.SchemaOnly {
+		return nil
+	}
+	if err := config.CheckCheckpoint(sources, &opts.Checkpoint, opts.Input, ProgressFileName); err != nil {
+		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
+	}
+	if opts.Checkpoint == "" {
+		return nil
+	}
+	if err := resume.CheckSideCollision(opts.Checkpoint); err != nil {
+		return exitcode.Exit(exitcode.ExitUsage, "%s %w", sources.Label(&opts.Checkpoint), err)
+	}
+	if opts.Input != "" && isArtifactFile(opts.Input, opts.Checkpoint) {
+		return exitcode.Exit(exitcode.ExitUsage, "%s %s is a file of the artifact %s; it names the progress file, such as %s",
+			sources.Label(&opts.Checkpoint), opts.Checkpoint, opts.Input, filepath.Join(opts.Input, ProgressFileName))
+	}
+	return nil
+}
+
+// isArtifactFile tells whether path is the manifest.json of the artifact at dir or a file the
+// manifest lists, in the schema or the data.
+func isArtifactFile(dir, path string) bool {
+	absDir, errDir := filepath.Abs(dir)
+	absPath, errPath := filepath.Abs(path)
+	if errDir != nil || errPath != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absDir, absPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == manifest.FileName {
+		return true
+	}
+	m, err := manifest.Read(filepath.Join(dir, manifest.FileName))
+	if err != nil {
+		return false
+	}
+	if slices.ContainsFunc(m.SchemaFiles, func(f manifest.File) bool { return f.Path == rel }) {
+		return true
+	}
+	for files := range m.FileSets() {
+		if slices.ContainsFunc(files, func(f manifest.File) bool { return f.Path == rel }) {
+			return true
+		}
+	}
+	return false
 }
 
 // progressState is the progress file of an import: what the first run decided and counted,

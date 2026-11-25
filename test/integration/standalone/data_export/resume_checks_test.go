@@ -204,7 +204,7 @@ var _ = ginkgo.Describe("Export lock and resume checks on a standalone process",
 		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring("the schema changed after 1 unit(s) were exported with the first one, " +
 			"so this export cannot be resumed; nothing was deleted"))
 		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring(kind + " " + group + "/resume_check_added: added"))
-		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring("to start over: bydbctl data release-session --id " + id))
+		gomega.Expect(refused.Err.Error()).To(gomega.ContainSubstring("to start over: release the session with: bydbctl data release-session --id " + id))
 		gomega.Expect(tree(out)).To(gomega.Equal(before), "nothing is deleted or written, the progress file included")
 		expectSingleSession(id)
 

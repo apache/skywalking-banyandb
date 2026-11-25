@@ -46,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
@@ -209,7 +210,7 @@ func requireKept(t *testing.T, f *fakeLiaison, log *syncBuffer) {
 	}
 	if !strings.Contains(log.String(), "export session feedfeed and the progress file ") ||
 		!strings.Contains(log.String(), "are kept\n  to resume: run the same command again (add --resume when not at a terminal)\n"+
-			"  to give up: bydbctl data release-session --id feedfeed, then delete ") {
+			"  to give up: release the session with: bydbctl data release-session --id feedfeed; then delete ") {
 		t.Fatalf("the resume hint is missing:\n%s", log)
 	}
 }
@@ -584,7 +585,7 @@ func TestRunExport_HeartbeatLostAborts(t *testing.T) {
 	opts, log := exportOptions(t, f)
 	shortHeartbeat(t, 20*time.Millisecond)
 	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "export session feedfeed lost")
-	if got := f.releasedIDs(); len(got) != 0 || !strings.Contains(log.String(), "release it with: bydbctl data release-session --id feedfeed") {
+	if got := f.releasedIDs(); len(got) != 0 || !strings.Contains(log.String(), "release the session with: bydbctl data release-session --id feedfeed") {
 		t.Fatalf("a lost session is not released, the operator is told how to: released %v\n%s", got, log)
 	}
 }
@@ -1316,5 +1317,66 @@ func TestStartFile_RefusesAnExistingTmp(t *testing.T) {
 	p.abandon()
 	if info, statErr := os.Stat(p.tmp); statErr != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("a new .tmp is 0600: %v %v", info, statErr)
+	}
+}
+
+// An interrupt reports the cause of the cancellation for the bare error of a node stream it
+// canceled, and keeps every error that says more.
+func TestRunErr_KeepsWhatSaysMoreThanACancellation(t *testing.T) {
+	cause := errors.New("signal: interrupt")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(cause)
+	for _, tc := range []struct {
+		err  error
+		name string
+		want string
+	}{
+		{name: "context error", err: context.Canceled, want: "export interrupted: " + cause.Error()},
+		{name: "grpc cancellation", err: status.Error(codes.Canceled, "context canceled"), want: "export interrupted: " + cause.Error()},
+		{name: "session lost", err: sessionLostError{errors.New("session abc lost")}, want: "export interrupted: session abc lost"},
+		{name: "schema changed", err: schemaChangedError{errors.New("schema changed")}, want: "export interrupted: schema changed"},
+		{name: "announced", err: &announcedError{err: context.Canceled, hints: "release it"}, want: "a session that was announced may still be held"},
+		{name: "ordinary failure", err: errors.New("snapshot unit missing"), want: "export interrupted: snapshot unit missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runErr(ctx, context.Background(), tc.err)
+			if got == nil || !strings.Contains(got.Error(), tc.want) {
+				t.Fatalf("runErr = %v, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A create given up after several attempts announced a session each releases every one of them,
+// not only the last the progress file records.
+func TestRunExport_CreateRetriesExhaustedReleaseEveryAnnouncedSession(t *testing.T) {
+	orig := createRetryBase
+	createRetryBase = time.Millisecond
+	t.Cleanup(func() { createRetryBase = orig })
+	f := exportFake()
+	f.failAfterFirstFrame = true
+	f.idFor = func(attempt int) string { return fmt.Sprintf("feed%04d", attempt) }
+	opts, _ := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	requireExit(t, err, exitcode.ExitRuntime, "creating export sessions feed0001, feed0002, feed0003 failed after they were announced")
+	got := f.releasedIDs()
+	slices.Sort(got)
+	if want := []string{"feed0001", "feed0002", "feed0003"}; !slices.Equal(got, want) {
+		t.Fatalf("released %v, want every announced session %v", got, want)
+	}
+	if resume.Exists(ProgressPath(opts.Export)) {
+		t.Fatal("no progress file is left")
+	}
+}
+
+// A fresh export refused for its selectors leaves nothing behind, not even the empty output
+// directory the lock would create.
+func TestRunExport_RefusedSelectorsLeaveNoOutputDirectory(t *testing.T) {
+	f := exportFake()
+	opts, _ := exportOptions(t, f)
+	opts.Selectors = []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"no_such_group"}}}
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "no_such_group")
+	if _, err := os.Stat(opts.Output); !os.IsNotExist(err) {
+		t.Fatalf("the output directory is not created: %v", err)
 	}
 }

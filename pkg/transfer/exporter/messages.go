@@ -50,22 +50,37 @@ func warnPreempted(w io.Writer, sessions []string) {
 	fmt.Fprintf(w, "WARN ⚠ this export preempted the existing export session(s) %v: an export still running on them fails on its next read\n", sessions)
 }
 
+// releaseCommand is the command that releases the export session id; "<id>" stands for one that
+// is not known.
+func releaseCommand(id string) string {
+	if id == "" {
+		id = "<id>"
+	}
+	return "bydbctl data release-session --id " + id
+}
+
+// giveUpSteps is how to give up an export and begin again: release its session (id, "" when it is
+// not known), delete files and export again.
+func giveUpSteps(id, files string) string {
+	return "release the session with: " + releaseCommand(id) + "; then delete " + files + " and export again"
+}
+
 func sessionLostHint(w io.Writer, sessID, files string) {
-	fmt.Fprintf(w, "export session %s is lost, so this export cannot be resumed: if it is still held anywhere, release it with: "+
-		"bydbctl data release-session --id %s; then delete %s and export again\n", sessID, sessID, files)
+	fmt.Fprintf(w, "export session %s is lost, so this export cannot be resumed: if it is still held anywhere, %s\n",
+		sessID, giveUpSteps(sessID, files))
 }
 
 func schemaChangedHint(w io.Writer, done int, sessID, files string) {
-	fmt.Fprintf(w, "the schema changed after %d unit(s) were exported with the first one, so this export cannot be resumed: "+
-		"release the session with: bydbctl data release-session --id %s, then delete %s and export again\n", done, sessID, files)
+	fmt.Fprintf(w, "the schema changed after %d unit(s) were exported with the first one, so this export cannot be resumed: %s\n",
+		done, giveUpSteps(sessID, files))
 }
 
 // keptHint names the session and the progress file a failed export keeps, and the two ways on.
 func keptHint(w io.Writer, sessID, path, outputDir string) {
 	fmt.Fprintf(w, "export session %s and the progress file %s are kept\n"+
 		"  to resume: run the same command again (add --resume when not at a terminal)\n"+
-		"  to give up: bydbctl data release-session --id %s, then delete %s; a released session cannot be resumed\n",
-		sessID, path, sessID, giveUpFiles(path, outputDir))
+		"  to give up: %s; a released session cannot be resumed\n",
+		sessID, path, giveUpSteps(sessID, giveUpFiles(path, outputDir)))
 }
 
 func warnReleaseFailed(w io.Writer, sessID string, err error) {
@@ -77,7 +92,7 @@ func warnReleaseFailedOn(w io.Writer, sessID, node, reason string) {
 }
 
 func releaseHint(w io.Writer, sessID string) {
-	fmt.Fprintf(w, "release it with: bydbctl data release-session --id %s\n", sessID)
+	fmt.Fprintf(w, "release it with: %s\n", releaseCommand(sessID))
 }
 
 func warnProgressNotDeleted(w io.Writer, err error, path, side string) {

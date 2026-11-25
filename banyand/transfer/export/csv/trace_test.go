@@ -15,7 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-package rowsrc
+package csv
 
 import (
 	"testing"
@@ -24,15 +24,8 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
-
-func traceTagsOf(names ...string) []*databasev1.TraceTagSpec {
-	out := []*databasev1.TraceTagSpec{{Name: "tid", Type: databasev1.TagType_TAG_TYPE_STRING}, {Name: "sid", Type: databasev1.TagType_TAG_TYPE_STRING}}
-	for _, n := range names {
-		out = append(out, &databasev1.TraceTagSpec{Name: n, Type: databasev1.TagType_TAG_TYPE_STRING})
-	}
-	return out
-}
 
 func TestTraceResolver_SupersetFallback(t *testing.T) {
 	newTrace := func(name string, tags ...string) *databasev1.Trace {
@@ -41,7 +34,9 @@ func TestTraceResolver_SupersetFallback(t *testing.T) {
 		}
 	}
 	traces := []*databasev1.Trace{newTrace("segment", "a", "b", "c"), newTrace("zipkin", "a", "d")}
-	resolver, err := NewTraceResolver("g", traces)
+	layout, err := csvfmt.TraceLayout(traces)
+	require.NoError(t, err)
+	resolver, _, err := newTraceResolver("g", traces, layout)
 	require.NoError(t, err)
 	row := func(names ...string) map[string][]byte {
 		out := map[string][]byte{}
@@ -50,26 +45,26 @@ func TestTraceResolver_SupersetFallback(t *testing.T) {
 		}
 		return out
 	}
-	nameOf := func(res *TraceResource) string {
+	nameOf := func(res *traceResource) string {
 		if res == nil {
 			return ""
 		}
-		return res.Name
+		return res.name
 	}
-	require.Equal(t, "segment", nameOf(resolver.Resolve(row("a", "b", "c"))), "exact match")
-	require.Equal(t, "zipkin", nameOf(resolver.Resolve(row("a", "d"))), "exact match")
+	require.Equal(t, "segment", nameOf(resolver.resolve(row("a", "b", "c"))), "exact match")
+	require.Equal(t, "zipkin", nameOf(resolver.resolve(row("a", "d"))), "exact match")
 	// A row written before c was added to segment: only segment holds {a, b}.
-	require.Equal(t, "segment", nameOf(resolver.Resolve(row("a", "b"))), "unique superset")
-	require.Equal(t, "segment", nameOf(resolver.Resolve(row("b", "a"))), "cached superset")
-	require.Equal(t, "zipkin", nameOf(resolver.Resolve(row("d"))), "unique superset")
+	require.Equal(t, "segment", nameOf(resolver.resolve(row("a", "b"))), "unique superset")
+	require.Equal(t, "segment", nameOf(resolver.resolve(row("b", "a"))), "cached superset")
+	require.Equal(t, "zipkin", nameOf(resolver.resolve(row("d"))), "unique superset")
 	// Both traces hold {a}; no trace holds x.
-	require.Nil(t, resolver.Resolve(row("a")), "ambiguous superset")
-	require.Nil(t, resolver.Resolve(row("b", "d")), "no superset")
+	require.Nil(t, resolver.resolve(row("a")), "ambiguous superset")
+	require.Nil(t, resolver.resolve(row("b", "d")), "no superset")
 	// x was deleted from the schema: it does not keep the row from its trace.
-	require.Equal(t, "segment", nameOf(resolver.Resolve(row("a", "b", "c", "x"))), "deleted tag ignored")
-	require.Nil(t, resolver.Resolve(row("a", "x")), "deleted tag ignored, ambiguous superset")
+	require.Equal(t, "segment", nameOf(resolver.resolve(row("a", "b", "c", "x"))), "deleted tag ignored")
+	require.Nil(t, resolver.resolve(row("a", "x")), "deleted tag ignored, ambiguous superset")
 	// A merge renamed b to b#str and b#int: both still hold tag b.
-	require.Equal(t, "segment", nameOf(resolver.Resolve(row("a", "b#str", "b#int", "c"))), "typed columns")
+	require.Equal(t, "segment", nameOf(resolver.resolve(row("a", "b#str", "b#int", "c"))), "typed columns")
 }
 
 func TestTraceSignature(t *testing.T) {

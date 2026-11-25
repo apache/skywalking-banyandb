@@ -30,7 +30,6 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpstream "github.com/apache/skywalking-banyandb/banyand/internal/dump/stream"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
@@ -131,29 +130,24 @@ func writeStreamShard(run *unitRun, fw *fileWriter, shardDir string, resolver *d
 		return snapshot.ReadError("list parts of "+shardDir, err)
 	}
 	cells := layout.NewRow()
-	var series rowsrc.SeriesDecoder
+	var series seriesDecoder
 	for _, id := range partIDs {
-		rofs := rowsrc.NewReadOnlyFS()
-		part, openErr := dumpstream.OpenPart(id, shardDir, rofs)
-		if openErr == nil && rofs.Err() != nil {
-			_ = part.Close()
-			openErr = rofs.Err()
-		}
+		part, openErr := openSnapshotPart(dumpstream.OpenPart, id, shardDir)
 		if openErr != nil {
-			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return openErr
 		}
 		part.SetIndexResolver(resolver)
 		part.SetReuseBuffers(true)
 		it := part.Iterator()
 		for it.Next() {
 			row := it.Row()
-			subject, entityValues, ok := rowsrc.SubjectOf(run, &series, "stream", row.EntityValues)
+			subject, entityValues, ok := subjectOf(run, &series, "stream", row.EntityValues)
 			if !ok {
 				continue
 			}
 			res, known := resources[subject]
 			if !known {
-				run.DropRow("stream " + subject + " is not in the schema registry")
+				run.dropRow("stream " + subject + " is not in the schema registry")
 				continue
 			}
 			resetRow(cells)

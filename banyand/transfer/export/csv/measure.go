@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"cmp"
 	"container/heap"
+	"context"
 	"fmt"
 	"maps"
 	"path/filepath"
@@ -35,7 +36,8 @@ import (
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
 	dumpmeasure "github.com/apache/skywalking-banyandb/banyand/internal/dump/measure"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
+	"github.com/apache/skywalking-banyandb/banyand/metadata"
+	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
@@ -47,7 +49,7 @@ import (
 // TopNMerger is implemented by the measure backend. A query and a part merge combine the
 // versions of one data point of the internal Top-N result measure instead of keeping the
 // latest one; MergeTopNResults combines two stored field values of such a data point, whose
-// entity values are entity. Like rowsrc.IndexModeReader, it lives behind an interface; the backend
+// entity values are entity. Like IndexModeReader, it lives behind an interface; the backend
 // asserts both in banyand/measure/export_part_reader_test.go.
 type TopNMerger interface {
 	MergeTopNResults(entity []*modelv1.TagValue, timestamp, leftVersion, rightVersion int64, left, right []byte) ([]byte, error)
@@ -79,7 +81,7 @@ type measureGroup struct {
 }
 
 func loadMeasureGroup(run *unitRun, group string) (*measureGroup, error) {
-	schemas, err := rowsrc.LoadMeasureSchemas(run.ctx, run.meta, group)
+	schemas, err := loadMeasureSchemas(run.ctx, run.meta, group)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +221,7 @@ func multiTagRuleWarnings(measures []*databasev1.Measure, rules []*databasev1.In
 	return out
 }
 
-func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string, indexMode rowsrc.IndexModeReader) error {
+func produceMeasureCSV(run *unitRun, unit *transferv1.SegmentUnit, segDir string, indexMode IndexModeReader) error {
 	g, err := loadMeasureGroup(run, unit.GetGroup())
 	if err != nil {
 		return err
@@ -273,14 +275,9 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 	cursors := &measureCursors{}
 	defer cursors.close()
 	for _, id := range partIDs {
-		rofs := rowsrc.NewReadOnlyFS()
-		part, openErr := dumpmeasure.OpenPart(id, shardDir, rofs)
-		if openErr == nil && rofs.Err() != nil {
-			_ = part.Close()
-			openErr = rofs.Err()
-		}
+		part, openErr := openSnapshotPart(dumpmeasure.OpenPart, id, shardDir)
 		if openErr != nil {
-			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return openErr
 		}
 		// The resolver recovers both the entity values of parts without smeta.bin and the
 		// indexed tags, which the write path never stores as columns.
@@ -297,7 +294,7 @@ func writeMeasureShard(run *unitRun, fw *fileWriter, shardDir string, resolver *
 	heap.Init(cursors)
 	cells := g.layout.NewRow()
 	fixed := fixedColumns(g.layout)
-	var series rowsrc.SeriesDecoder
+	var series seriesDecoder
 	for cursors.Len() > 0 {
 		// Parts are sorted by series and timestamp, so every version of a data point comes off
 		// the heap in a row, the highest first; like a query, the export keeps that version
@@ -381,16 +378,16 @@ func (m *topNMerge) add(merger TopNMerger, entity []*modelv1.TagValue, timestamp
 
 // fillMeasureRow lays one data point of a measure part out in cells and returns its measure
 // and entity values, or "" for a row that is not exported.
-func fillMeasureRow(run *unitRun, series *rowsrc.SeriesDecoder, g *measureGroup, cells []string,
+func fillMeasureRow(run *unitRun, series *seriesDecoder, g *measureGroup, cells []string,
 	fixed map[csvfmt.ColumnKind]int, row dumpmeasure.Row,
 ) (string, []*modelv1.TagValue) {
-	subject, entityValues, ok := rowsrc.SubjectOf(run, series, "measure", row.EntityValues)
+	subject, entityValues, ok := subjectOf(run, series, "measure", row.EntityValues)
 	if !ok {
 		return "", nil
 	}
 	res, known := g.resources[subject]
 	if !known {
-		run.DropRow("measure " + subject + " is not in the schema registry")
+		run.dropRow("measure " + subject + " is not in the schema registry")
 		return "", nil
 	}
 	resetRow(cells)
@@ -553,7 +550,7 @@ func fillIndexed(cells []string, res *measureResource, indexed map[uint32][][]by
 
 // writeIndexModeSegment writes the rows of the group's index-mode measures, which live in
 // the segment-level series index, as the segment-level file of the unit.
-func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir string, g *measureGroup, reader rowsrc.IndexModeReader) error {
+func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir string, g *measureGroup, reader IndexModeReader) error {
 	if reader == nil {
 		return status.Errorf(codes.Internal, "group %s holds index-mode measures but the measure backend cannot read them", unit.GetGroup())
 	}
@@ -568,7 +565,7 @@ func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir st
 		func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error {
 			res, known := g.resources[subject]
 			if !known {
-				run.DropRow("measure " + subject + " is not in the schema registry")
+				run.dropRow("measure " + subject + " is not in the schema registry")
 				return nil
 			}
 			if unknownFields > 0 {
@@ -591,4 +588,36 @@ func writeIndexModeSegment(run *unitRun, unit *transferv1.SegmentUnit, segDir st
 		return snapshot.ReadError("finish "+sidxDir, err)
 	}
 	return nil
+}
+
+// measureSchemas are the schemas of a measure group the readers need.
+type measureSchemas struct {
+	Measures []*databasev1.Measure
+	Rules    []*databasev1.IndexRule
+	Bindings []*databasev1.IndexRuleBinding
+	// IndexMode holds the index-mode measures of Measures, whose rows live in the series index.
+	IndexMode []*databasev1.Measure
+}
+
+// loadMeasureSchemas lists the measures, index rules and index rule bindings of a group.
+func loadMeasureSchemas(ctx context.Context, meta metadata.Repo, group string) (*measureSchemas, error) {
+	measures, err := meta.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: group})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list measures of group %s: %v", group, err)
+	}
+	rules, err := meta.IndexRuleRegistry().ListIndexRule(ctx, schema.ListOpt{Group: group})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list index rules of group %s: %v", group, err)
+	}
+	bindings, err := meta.IndexRuleBindingRegistry().ListIndexRuleBinding(ctx, schema.ListOpt{Group: group})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "list index rule bindings of group %s: %v", group, err)
+	}
+	s := &measureSchemas{Measures: measures, Rules: rules, Bindings: bindings}
+	for _, m := range measures {
+		if m.GetIndexMode() {
+			s.IndexMode = append(s.IndexMode, m)
+		}
+	}
+	return s, nil
 }

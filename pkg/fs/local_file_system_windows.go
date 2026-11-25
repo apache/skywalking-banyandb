@@ -19,7 +19,6 @@ package fs
 
 import (
 	"errors"
-	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -28,39 +27,13 @@ import (
 )
 
 // localFileSystem is the implementation of FileSystem interface.
-func (*localFileSystem) CreateLockFile(name string, permission Mode) (File, error) {
-	file, err := os.OpenFile(name, os.O_RDWR|os.O_CREATE|os.O_TRUNC, os.FileMode(permission))
-	switch {
-	case err == nil:
+func (*localFileSystem) CreateLockFile(name string, permission Mode, opts ...LockOption) (File, error) {
+	return createLockFile(name, permission, opts, func(file *os.File) (bool, error) {
 		lockFlags := uint32(windows.LOCKFILE_FAIL_IMMEDIATELY)
 		lockFlags |= uint32(windows.LOCKFILE_EXCLUSIVE_LOCK)
-		if err = windows.LockFileEx(windows.Handle(file.Fd()), lockFlags, 0, 1, 0, &windows.Overlapped{}); err != nil {
-			_ = file.Close()
-			return nil, &FileSystemError{
-				Code:    lockError,
-				Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
-				held:    errors.Is(err, windows.ERROR_LOCK_VIOLATION),
-			}
-		}
-		return &LocalFile{
-			file: file, locked: true,
-		}, nil
-	case os.IsExist(err):
-		return nil, &FileSystemError{
-			Code:    isExistError,
-			Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
-		}
-	case os.IsPermission(err):
-		return nil, &FileSystemError{
-			Code:    permissionError,
-			Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
-		}
-	default:
-		return nil, &FileSystemError{
-			Code:    otherError,
-			Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
-		}
-	}
+		err := windows.LockFileEx(windows.Handle(file.Fd()), lockFlags, 0, 1, 0, &windows.Overlapped{})
+		return errors.Is(err, windows.ERROR_LOCK_VIOLATION), err
+	})
 }
 
 func (fs *localFileSystem) SyncPath(_ string) {}

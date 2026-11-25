@@ -37,6 +37,7 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
+	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 )
 
@@ -123,7 +124,7 @@ func Export(ctx context.Context, conn *grpc.ClientConn, groups []*commonv1.Group
 		}
 		res.Files = append(res.Files, f)
 	}
-	if err := syncDir(schemaDir); err != nil {
+	if err := fs.SyncDirIfSupported(schemaDir); err != nil {
 		return nil, err
 	}
 	return res, nil
@@ -235,22 +236,6 @@ func compareByMetadata(a, b proto.Message) int {
 	ma := a.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
 	mb := b.(interface{ GetMetadata() *commonv1.Metadata }).GetMetadata()
 	return cmp.Or(cmp.Compare(ma.GetGroup(), mb.GetGroup()), cmp.Compare(ma.GetName(), mb.GetName()))
-}
-
-// syncDir makes the directory's new entries durable.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("sync %s: %w", dir, err)
-	}
-	err = d.Sync()
-	if closeErr := d.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil {
-		return fmt.Errorf("sync %s: %w", dir, err)
-	}
-	return nil
 }
 
 // ListGroup lists every resource of a group through conn, only the kinds its catalog can hold,

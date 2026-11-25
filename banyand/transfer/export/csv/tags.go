@@ -19,7 +19,6 @@ package csv
 
 import (
 	"github.com/apache/skywalking-banyandb/banyand/internal/dump"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 )
@@ -46,7 +45,7 @@ func setStoredTags(cells []string, layout *csvfmt.Layout, tags map[string][]byte
 		if raw == nil {
 			continue
 		}
-		tag := rowsrc.StoredTagName(key)
+		tag := storedTagName(key)
 		idx, ok := columns[tag]
 		if !ok {
 			run.dropTag(resource, key)

@@ -34,7 +34,6 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
@@ -51,14 +50,14 @@ const segmentFileName = "segment"
 type Producer struct {
 	ctx       context.Context
 	meta      metadata.Repo
-	indexMode rowsrc.IndexModeReader
+	indexMode IndexModeReader
 	settings  *streamSettings
 }
 
 // NewProducer creates the CSV producer of one Export stream. init carries the stream
 // settings (compression, file size, annotations and rate limit); send writes a frame to
 // the stream. indexMode reads index-mode measure rows and may be nil.
-func NewProducer(ctx context.Context, meta metadata.Repo, indexMode rowsrc.IndexModeReader, init *transferv1.ExportRequest_Init,
+func NewProducer(ctx context.Context, meta metadata.Repo, indexMode IndexModeReader, init *transferv1.ExportRequest_Init,
 	send func(*transferv1.ExportResponse) error,
 ) *Producer {
 	limit := init.GetRateLimit()
@@ -158,8 +157,8 @@ func (r *unitRun) dropTagN(resource, tag string, n uint64) {
 	r.dropped[resource][tag] += n
 }
 
-// DropRow counts a row whose resource cannot be determined or is not in the schema.
-func (r *unitRun) DropRow(reason string) {
+// dropRow counts a row whose resource cannot be determined or is not in the schema.
+func (r *unitRun) dropRow(reason string) {
 	r.unknown[reason]++
 }
 

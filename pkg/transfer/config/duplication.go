@@ -18,43 +18,35 @@
 package config
 
 import (
-	"cmp"
 	"fmt"
 	"strings"
 )
 
-// Resume duplication policies of an import: what a resumed import does with a stream or trace
-// payload that may have landed already and that count reconciliation cannot decide. Measure and
-// property payloads are always pushed again: a second copy converges to the first.
+// DuplicationPolicy is what a resumed import does with a stream or trace payload that may have
+// landed already and that count reconciliation cannot decide. Measure and property payloads are
+// always pushed again: a second copy converges to the first.
+type DuplicationPolicy string
+
+// The resume duplication policies of an import.
 const (
 	// DuplicationBlock pushes nothing, lists the payloads and halts (exit 7).
-	DuplicationBlock = "block"
+	DuplicationBlock DuplicationPolicy = "block"
 	// DuplicationWarn pushes the payload again with a warning naming what it may duplicate.
-	DuplicationWarn = "warn"
+	DuplicationWarn DuplicationPolicy = "warn"
 	// DuplicationPush pushes the payload again silently.
-	DuplicationPush = "push"
+	DuplicationPush DuplicationPolicy = "push"
 	// DuplicationSkip leaves the payload out and forces --verify on.
-	DuplicationSkip = "skip"
+	DuplicationSkip DuplicationPolicy = "skip"
 )
 
-// ParseDuplicationPolicy accepts block, warn, push, skip, or "" for the default, warn.
-func ParseDuplicationPolicy(raw string) (string, error) {
-	switch p := strings.TrimSpace(raw); p {
-	case "", DuplicationBlock, DuplicationWarn, DuplicationPush, DuplicationSkip:
+// ParseDuplicationPolicy accepts block, warn, push or skip.
+func ParseDuplicationPolicy(raw string) (DuplicationPolicy, error) {
+	switch p := DuplicationPolicy(strings.TrimSpace(raw)); p {
+	case DuplicationBlock, DuplicationWarn, DuplicationPush, DuplicationSkip:
 		return p, nil
 	default:
 		return "", fmt.Errorf("unsupported resume duplication policy %q (block|warn|push|skip)", raw)
 	}
-}
-
-// ResolveDuplicationPolicy is the policy of a stream or trace payload, and where it comes from:
-// the policy set (by the flag, plan.yaml or the variable), else warn, the default. label names what
-// set the policy (Sources.Label; "" is the flag).
-func (i *Import) ResolveDuplicationPolicy(label string) (policy, source string) {
-	if i.DuplicationPolicy != "" {
-		return i.DuplicationPolicy, cmp.Or(label, "--resume-duplication-policy")
-	}
-	return DuplicationWarn, "default"
 }
 
 // HasDuplicationSkip tells whether the policy is skip: a resume may then leave payloads out,

@@ -19,6 +19,7 @@ package exporter
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -47,7 +48,7 @@ func interruptWithCheckpointElsewhere(t *testing.T) (*fakeLiaison, testOptions) 
 	opts.Parallelism = 1
 	f.exportScript = unitBudget(1, true, nil)
 	interrupted(context.Background(), t, f, opts, log)
-	want := "then delete " + opts.Checkpoint + ", " + resume.SidePath(opts.Checkpoint, planSide) + " and what is in " + opts.Output + "; a released session"
+	want := "then delete " + opts.Checkpoint + ", " + resume.SidePath(opts.Checkpoint, planSide) + " and what is in " + opts.Output + " and export again; a released session"
 	if !strings.Contains(log.String(), want) {
 		t.Fatalf("the give-up hint does not name the progress file outside the output directory, want %q:\n%s", want, log)
 	}
@@ -114,10 +115,11 @@ func writeProgressBody(body string) func(*testing.T, *fakeLiaison, *testOptions)
 // directory, releases no session and does not offer itself again; only a refusal that needs the
 // session's answer reads it, and no other renews its lease. The error says how to start over.
 func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
-	unusable := "nothing was deleted. To start over: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete what is in "
+	unusable := "nothing was deleted. To start over: if it records an export session, " +
+		"release the session with: bydbctl data release-session --id <id>; then delete what is in "
 	// A progress file of another version that records no session names the general way to give up.
 	otherVersion := "so it cannot be resumed; nothing was deleted. Resume it with the bydbctl version that wrote it; " +
-		"or to give up: if it records an export session, release it with: bydbctl data release-session --id <id>; then delete what is in "
+		"or to give up: if it records an export session, release the session with: bydbctl data release-session --id <id>; then delete what is in "
 	noHint := func(string, testOptions) string { return "" }
 	schemaChanged := "the schema changed after 1 unit(s) were exported with the first one"
 	for _, tc := range []struct {
@@ -235,7 +237,7 @@ func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
 		{
 			name: "no session recorded", want: []string{"records no export session"},
 			hint: func(output string, _ testOptions) string {
-				return "to start over: delete what is in " + output + ", then export again"
+				return "to start over: delete " + giveUpFiles(filepath.Join(output, ProgressFileName), output) + ", then export again"
 			},
 			change: func(t *testing.T, _ *fakeLiaison, o *testOptions) {
 				editState(t, o, func(s *exportProgress) { s.Session.ID = "" })
@@ -261,13 +263,13 @@ func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
 		{name: "progress file of an import", hint: noHint, want: []string{"progress file", unusable}, change: writeProgressBody(`{"kind":"import-progress","version":1}`)},
 		{
 			name: "progress file of the previous version", hint: noHint,
-			want:   []string{"an earlier export left the progress file", "(progress file version 1, this bydbctl reads version 2)", otherVersion},
+			want:   []string{"an earlier export left the progress file", "(progress file version 1, this bydbctl reads version 3)", otherVersion},
 			change: writeProgressBody(`{"kind":"export-progress","version":1}`),
 		},
 		{
 			name: "progress file of a later version", hint: noHint,
-			want:   []string{"an earlier export left the progress file", "(progress file version 3, this bydbctl reads version 2)", otherVersion},
-			change: writeProgressBody(`{"kind":"export-progress","version":3}`),
+			want:   []string{"an earlier export left the progress file", "(progress file version 4, this bydbctl reads version 3)", otherVersion},
+			change: writeProgressBody(`{"kind":"export-progress","version":4}`),
 		},
 		{
 			name: "schema-only", code: exitcode.ExitUsage, hint: noHint, want: []string{"a schema-only export needs a new or empty directory"},
@@ -355,7 +357,8 @@ func TestResume_RefusalsExit6AndDeleteNothing(t *testing.T) {
 			for _, w := range tc.want {
 				requireExit(t, err, code, w)
 			}
-			hint := "to start over: bydbctl data release-session --id feedfeed, then delete what is in " + output + " and export again"
+			hint := "to start over: release the session with: bydbctl data release-session --id feedfeed; then delete " +
+				giveUpFiles(filepath.Join(output, ProgressFileName), output) + " and export again"
 			if tc.hint != nil {
 				hint = tc.hint(output, opts)
 			}
@@ -434,7 +437,7 @@ func TestCleanNodes(t *testing.T) {
 		if err := os.Symlink(t.TempDir(), filepath.Join(node, "link")); err != nil {
 			t.Fatal(err)
 		}
-		err := cleanNodes(dir, filepath.Join(dir, ProgressFileName), nil, "HOW TO START OVER")
+		err := walkAndClean(dir, filepath.Join(dir, ProgressFileName), nil, "HOW TO START OVER")
 		requireExit(t, err, exitcode.ExitResume, "nothing was deleted. HOW TO START OVER")
 	})
 	t.Run("a directory named like a pattern", func(t *testing.T) {
@@ -448,7 +451,7 @@ func TestCleanNodes(t *testing.T) {
 			writeFile(t, filepath.Join(d, tmpName), "x")
 		}
 		writeFile(t, filepath.Join(dir, ".manifest.json.tmp"), "not one of manifest.Write's")
-		if err := cleanNodes(dir, filepath.Join(dir, ProgressFileName), nil, ""); err != nil {
+		if err := walkAndClean(dir, filepath.Join(dir, ProgressFileName), nil, ""); err != nil {
 			t.Fatal(err)
 		}
 		if resume.Exists(filepath.Join(dir, tmpName)) {
@@ -618,4 +621,35 @@ func TestRunExport_RefusedBeforeTheClusterIsAsked(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A directory under nodes/ that cannot be read refuses the resume with exit 6, like the
+// symlinks it does not follow, instead of failing with a bare error.
+func TestResume_UnreadableNodesDirectoryExits6(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	dir := filepath.Join(opts.Output, nodesDir, "locked")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	if _, err := os.ReadDir(dir); err == nil {
+		t.Skip("the directory can be read anyway (running as root)")
+	}
+	log, err := resumeRun(t, f, opts)
+	requireExit(t, err, exitcode.ExitResume, "nothing was deleted")
+	requireExit(t, err, exitcode.ExitResume, dir)
+	_ = log
+}
+
+// The progress file of the previous version is refused with exit 6 and named by its version.
+func TestResume_ProgressFileOfThePreviousVersionExits6(t *testing.T) {
+	f, opts := interruptAfterOne(t)
+	editState(t, &opts, func(s *exportProgress) { s.Version = progressVersion - 1 })
+	opts.Resume = true
+	err := runExport(t, f, opts)
+	requireExit(t, err, exitcode.ExitResume, fmt.Sprintf("(progress file version %d, this bydbctl reads version %d)", progressVersion-1, progressVersion))
+	requireExit(t, err, exitcode.ExitResume, "nothing was deleted")
 }

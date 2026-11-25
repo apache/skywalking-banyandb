@@ -270,56 +270,33 @@ func (r *reconciler) isTainted(k targetKey) bool {
 // count) is undecidable without a read; so is every key left when the reads fail, keep moving
 // or ctx is canceled.
 func (r *reconciler) decideAll(ctx context.Context, queries []reconcileQuery) []reconcileDecision {
-	out := make([]reconcileDecision, len(queries))
-	decided := make([]bool, len(queries))
-	byKey := map[targetKey][]int{}
-	var keys []targetKey
+	ds := &decisionSet{
+		r: r, out: make([]reconcileDecision, len(queries)), decided: make([]bool, len(queries)),
+		byKey: map[targetKey][]int{}, before: map[targetKey]pushActivity{},
+	}
 	for i, q := range queries {
 		if reason := r.untrusted(q.Key); reason != "" {
-			out[i], decided[i] = reconcileDecision{Outcome: reconcileUndecidable, Expected: r.expected(q.Key), Reason: reason}, true
+			ds.out[i], ds.decided[i] = reconcileDecision{Outcome: reconcileUndecidable, Expected: r.expected(q.Key), Reason: reason}, true
 			continue
 		}
-		if byKey[q.Key] == nil {
-			keys = append(keys, q.Key)
+		if ds.byKey[q.Key] == nil {
+			ds.keys = append(ds.keys, q.Key)
 		}
-		byKey[q.Key] = append(byKey[q.Key], i)
+		ds.byKey[q.Key] = append(ds.byKey[q.Key], i)
 	}
-	left := func() []targetKey {
-		var l []targetKey
-		for _, k := range keys {
-			if !decided[byKey[k][0]] {
-				l = append(l, k)
-			}
-		}
-		return l
-	}
-	undecidable := func(k targetKey, reason string) {
-		for _, i := range byKey[k] {
-			out[i], decided[i] = reconcileDecision{Outcome: reconcileUndecidable, Expected: r.expected(k), Reason: reason}, true
-		}
-	}
-	type activity struct {
-		active  []string
-		started uint64
-	}
-	before := map[targetKey]activity{}
-	for _, k := range keys {
+	for _, k := range ds.keys {
 		started, active := r.otherPushes(k)
-		before[k] = activity{active: active, started: started}
-	}
-	// note prefixes the reason a key's counts did not settle with the pushes of its shard meanwhile.
-	note := func(k targetKey, reason string) string {
-		return r.concurrentNote(k, before[k].started, before[k].active) + reason
+		ds.before[k] = pushActivity{active: active, started: started}
 	}
 	var prev *Counts
 	var lastErr error
-	for read := 0; read <= r.attempts && len(left()) > 0; read++ {
+	for read := 0; read <= r.attempts && len(ds.left()) > 0; read++ {
 		if read > 0 {
 			if err := transfer.SleepCtx(ctx, r.interval); err != nil {
-				for _, k := range left() {
-					undecidable(k, fmt.Sprintf("interrupted: %v", err))
+				for _, k := range ds.left() {
+					ds.undecidable(k, fmt.Sprintf("interrupted: %v", err))
 				}
-				return out
+				return ds.out
 			}
 		}
 		cur, err := r.snapshot(ctx)
@@ -329,30 +306,76 @@ func (r *reconciler) decideAll(ctx context.Context, queries []reconcileQuery) []
 		}
 		lastErr = nil
 		if prev != nil {
-			for _, k := range left() {
-				if stableAt(prev, cur, k) {
-					r.evaluateKey(cur, k, queries, byKey[k], out, decided)
-					for _, i := range byKey[k] {
-						if out[i].Outcome == reconcileUndecidable && out[i].Reason != "" {
-							out[i].Reason = note(k, out[i].Reason)
-						}
-					}
-				}
-			}
+			ds.settle(prev, cur, queries)
 		}
 		prev = cur
 	}
-	for _, k := range left() {
+	for _, k := range ds.left() {
 		switch {
 		case lastErr != nil:
-			undecidable(k, fmt.Sprintf("the Plan failed: %v", lastErr))
+			ds.undecidable(k, fmt.Sprintf("the Plan failed: %v", lastErr))
 		case prev != nil && sampleReason(prev, k) != "":
-			undecidable(k, sampleReason(prev, k))
+			ds.undecidable(k, sampleReason(prev, k))
 		default:
-			undecidable(k, note(k, fmt.Sprintf("the counts did not read the same twice in %d reads %s apart", r.attempts+1, r.interval)))
+			ds.undecidable(k, ds.note(k, fmt.Sprintf("the counts did not read the same twice in %d reads %s apart", r.attempts+1, r.interval)))
 		}
 	}
-	return out
+	return ds.out
+}
+
+// pushActivity is what the other pushes of a key's shard were when decideAll began.
+type pushActivity struct {
+	active  []string
+	started uint64
+}
+
+// decisionSet is what decideAll has decided so far: the decision of every query, the queries of
+// each target key and the pushes of the key's shard going on when the reads began.
+type decisionSet struct {
+	r       *reconciler
+	byKey   map[targetKey][]int
+	before  map[targetKey]pushActivity
+	out     []reconcileDecision
+	decided []bool
+	keys    []targetKey
+}
+
+// left are the keys with queries not decided yet.
+func (ds *decisionSet) left() []targetKey {
+	var l []targetKey
+	for _, k := range ds.keys {
+		if !ds.decided[ds.byKey[k][0]] {
+			l = append(l, k)
+		}
+	}
+	return l
+}
+
+// undecidable decides every query at k as undecidable for reason.
+func (ds *decisionSet) undecidable(k targetKey, reason string) {
+	for _, i := range ds.byKey[k] {
+		ds.out[i], ds.decided[i] = reconcileDecision{Outcome: reconcileUndecidable, Expected: ds.r.expected(k), Reason: reason}, true
+	}
+}
+
+// note prefixes the reason a key's counts did not settle with the pushes of its shard meanwhile.
+func (ds *decisionSet) note(k targetKey, reason string) string {
+	return ds.r.concurrentNote(k, ds.before[k].started, ds.before[k].active) + reason
+}
+
+// settle decides the queries of every undecided key whose counts read the same in prev and cur.
+func (ds *decisionSet) settle(prev, cur *Counts, queries []reconcileQuery) {
+	for _, k := range ds.left() {
+		if !stableAt(prev, cur, k) {
+			continue
+		}
+		ds.r.evaluateKey(cur, k, queries, ds.byKey[k], ds.out, ds.decided)
+		for _, i := range ds.byKey[k] {
+			if ds.out[i].Outcome == reconcileUndecidable && ds.out[i].Reason != "" {
+				ds.out[i].Reason = ds.note(k, ds.out[i].Reason)
+			}
+		}
+	}
 }
 
 // untrusted says why the counts of k cannot decide a part there, "" when they can.

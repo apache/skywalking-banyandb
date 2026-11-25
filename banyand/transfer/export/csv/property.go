@@ -31,7 +31,6 @@ import (
 	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
-	"github.com/apache/skywalking-banyandb/banyand/transfer/export/rowsrc"
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
@@ -120,9 +119,9 @@ func (pw *propertyShardWriter) write(doc native.StoredDocument) error {
 	corruptLen := -1
 	if err := doc.VisitStoredFields(func(name string, value []byte) bool {
 		switch name {
-		case rowsrc.PropertySourceField:
+		case propertySourceField:
 			pw.source = append(pw.source, value...)
-		case rowsrc.PropertyDeleteField:
+		case propertyDeleteField:
 			if len(value) != 8 {
 				corruptLen = len(value)
 				return true
@@ -147,13 +146,13 @@ func (pw *propertyShardWriter) write(doc native.StoredDocument) error {
 		return nil // not a property document
 	}
 	if malformed {
-		pw.run.DropRow("property documents with a malformed _source")
+		pw.run.dropRow("property documents with a malformed _source")
 		return nil
 	}
 	name := p.GetMetadata().GetName()
 	tags, known := pw.resources[name]
 	if !known {
-		pw.run.DropRow("property " + name + " is not in the schema registry")
+		pw.run.dropRow("property " + name + " is not in the schema registry")
 		return nil
 	}
 	cells := pw.cells

@@ -15,9 +15,7 @@
 // specific language governing permissions and limitations
 // under the License.
 
-// Package exporttest holds the test fixtures of the export tests: standalone storage
-// engines with sharded groups, the writes the tests make into them, and snapshots of them.
-package exporttest
+package csv
 
 import (
 	"context"
@@ -64,7 +62,7 @@ import (
 // to the export unit.
 type IndexModeWalker struct{}
 
-// ExportIndexModeRows implements rowsrc.IndexModeReader with the measure backend's walk.
+// ExportIndexModeRows implements IndexModeReader with the measure backend's walk.
 func (IndexModeWalker) ExportIndexModeRows(ctx context.Context, sidxDir string, measures []*databasev1.Measure, rules []*databasev1.IndexRule,
 	visit func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error,
 ) error {

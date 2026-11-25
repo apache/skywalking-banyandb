@@ -69,11 +69,8 @@ func renderTable(out io.Writer, p *Plan) error {
 	fmt.Fprintln(tw, "CATALOG\tGROUP\tSTAGE\tUNITS\tSOURCES\tROWS\tSCHEMA\tCHANNEL\tTARGET-NODES\tSTATUS\tTIME-RANGE(UTC)")
 	rewritten := rewrittenGroups(p.Schema)
 	for _, r := range rows {
-		targets := joinSet(r.targets)
-		if len(r.targets) == 0 && !h.Standalone && rewritten[r.group] {
-			// The liaison routes a group by its stored schema, which the import writes first.
-			targets, afterSchema = "after-schema", true
-		}
+		targets, after := targetsLabel(r, p, rewritten)
+		afterSchema = afterSchema || after
 		channel := "row replay"
 		switch {
 		case h.Format == manifest.FormatNative && r.catalog == "property":
@@ -113,8 +110,7 @@ func renderTable(out io.Writer, p *Plan) error {
 	renderSchema(w, p)
 	renderProblems(w, p)
 	if afterSchema {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
+		renderAfterSchemaNote(w)
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "RESULT    %s\n", result(p))
@@ -153,10 +149,8 @@ func renderLeft(out io.Writer, p *Plan) error {
 	rewritten := rewrittenGroups(p.Schema)
 	afterSchema := false
 	for _, r := range rows {
-		targets := joinSet(r.targets)
-		if len(r.targets) == 0 && !p.Header.Standalone && rewritten[r.group] {
-			targets, afterSchema = "after-schema", true
-		}
+		targets, after := targetsLabel(r, p, rewritten)
+		afterSchema = afterSchema || after
 		line := fmt.Sprintf("%s\t%s\t%s\t%d\t%s\t%s\t%s", r.catalog, r.group, stageLabel(r.stage), r.items,
 			output.HumanCount(r.rows), output.HumanBytes(r.bytes), targets)
 		if status {
@@ -172,10 +166,25 @@ func renderLeft(out io.Writer, p *Plan) error {
 	})
 	renderProblems(w, p)
 	if afterSchema {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
+		renderAfterSchemaNote(w)
 	}
 	return w.Flush()
+}
+
+// targetsLabel is the TARGET-NODES cell of a row: its target nodes, or after-schema, reported
+// as true, for a group of a cluster import whose schema the import writes first, since the
+// liaison routes a group by its stored schema.
+func targetsLabel(r *tableRow, p *Plan, rewritten map[string]bool) (string, bool) {
+	if len(r.targets) == 0 && !p.Header.Standalone && rewritten[r.group] {
+		return "after-schema", true
+	}
+	return joinSet(r.targets), false
+}
+
+// renderAfterSchemaNote explains the after-schema TARGET-NODES cells.
+func renderAfterSchemaNote(w io.Writer) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
 }
 
 // renderMultiSource lists the work items exported from more than one node: replicas of one

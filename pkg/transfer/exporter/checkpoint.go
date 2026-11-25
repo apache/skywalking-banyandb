@@ -52,7 +52,7 @@ const (
 	// that version covers the side file too; a progress file of another version is refused
 	// (exit 6) before the side file is read, and resumes only with the bydbctl that wrote it or
 	// is given up (the session released, the directory emptied).
-	progressVersion = 2
+	progressVersion = 3
 	// planSide names the side file of the progress file that holds the plan (resume.SidePath).
 	planSide = "plan"
 )
@@ -139,18 +139,15 @@ type progressSession struct {
 }
 
 // exportBindings are what must not change between the run that wrote a progress file and the
-// run that resumes it: digests, with the normalized values they digest so that a refusal can
-// say what differs. The source nodes are the exception, recorded only: the data nodes with units
-// left must still be members of the cluster (checkMembers), which may have gained nodes. The
-// options are compared by value, without maxFileSize (boundOptions), so their digest is recorded
-// only too.
+// run that resumes it: the selectors' digest, with the normalized selectors it digests so that a
+// refusal can say what differs, and the options, compared by value without maxFileSize
+// (boundOptions). The source nodes are the exception, recorded only: the data nodes with units
+// left must still be members of the cluster (checkMembers), which may have gained nodes.
 type exportBindings struct {
-	Options           map[string]string `json:"options"`
-	SelectorsDigest   string            `json:"selectorsDigest"`
-	SourceNodesDigest string            `json:"sourceNodesDigest"` // recorded only
-	OptionsDigest     string            `json:"optionsDigest"`     // recorded only
-	Selectors         []string          `json:"selectors"`
-	SourceNodes       []string          `json:"sourceNodes"`
+	Options         map[string]string `json:"options"`
+	SelectorsDigest string            `json:"selectorsDigest"`
+	Selectors       []string          `json:"selectors"`
+	SourceNodes     []string          `json:"sourceNodes"`
 }
 
 // recordedPlan is the folded PlanResult of the session, each units frame as protojson.
@@ -219,14 +216,11 @@ func bindingsOf(opts config.Export, info *cluster.Info) exportBindings {
 		"csvAnnotations": strconv.FormatBool(opts.CSVAnnotations),
 		"includeSchema":  strconv.FormatBool(opts.IncludeSchema),
 	}
-	nodes := info.DataNodeNames()
 	return exportBindings{
-		Selectors:         transfer.UniqueSorted(selectors),
-		SelectorsDigest:   resume.DigestSet(selectors),
-		SourceNodes:       nodes,
-		SourceNodesDigest: resume.DigestSet(nodes),
-		Options:           options,
-		OptionsDigest:     resume.DigestOptions(options),
+		Selectors:       transfer.UniqueSorted(selectors),
+		SelectorsDigest: resume.DigestSet(selectors),
+		SourceNodes:     info.DataNodeNames(),
+		Options:         options,
 	}
 }
 
@@ -285,7 +279,7 @@ func rebindMaxFileSize(w io.Writer, state *exportProgress, opts config.Export, l
 		options = map[string]string{}
 	}
 	options[maxFileSizeOption] = current
-	state.Bindings.Options, state.Bindings.OptionsDigest = options, resume.DigestOptions(options)
+	state.Bindings.Options = options
 }
 
 // planNodes names the data nodes of a plan: those that answered and those that hold units.

@@ -15,11 +15,12 @@
 // specific language governing permissions and limitations
 // under the License.
 
-//go:build windows
+//go:build !windows
 
-package resume
+package fs
 
-// SyncDir does nothing on Windows: a directory cannot be fsynced there (FlushFileBuffers on a
-// directory handle opened for reading is refused), and NTFS makes a rename durable through
-// its journal.
-func SyncDir(string) error { return nil }
+import "syscall"
+
+// preservedLockOpenFlags keep CreateLockFile with PreserveUntilLocked from following a symbolic
+// link or waiting to open a FIFO.
+const preservedLockOpenFlags = syscall.O_NOFOLLOW | syscall.O_NONBLOCK

@@ -243,7 +243,7 @@ retry:
 		// on after the id was announced may stand: name how to release it.
 		hints := make([]string, len(announced))
 		for i, id := range announced {
-			hints[i] = "bydbctl data release-session --id " + id
+			hints[i] = releaseCommand(id)
 		}
 		return nil, nil, exitcode.Exit(code, "create export session: %w", &announcedError{err: errors.Join(errs...), hints: strings.Join(hints, "; ")})
 	}
@@ -294,7 +294,7 @@ func refusedByOccupant(ctx context.Context, conn *grpc.ClientConn, errs []error,
 	if len(own) > 0 {
 		hints := make([]string, len(own))
 		for i, id := range own {
-			hints[i] = "bydbctl data release-session --id " + id
+			hints[i] = releaseCommand(id)
 		}
 		return nil, exitcode.Exit(exitcode.ExitRuntime, "create export session: %w; an earlier attempt announced a session that may still be held, release it with: %s",
 			errors.Join(errs...), strings.Join(hints, "; "))
@@ -313,7 +313,7 @@ func refusedByOccupant(ctx context.Context, conn *grpc.ClientConn, errs []error,
 func declinedTakeover(occupants *Classification) error {
 	hints := make([]string, 0, len(occupants.Occupants))
 	for _, o := range occupants.Occupants {
-		hints = append(hints, "bydbctl data release-session --id "+o.Lease.GetSessionId())
+		hints = append(hints, releaseCommand(o.Lease.GetSessionId()))
 	}
 	return exitcode.Exit(exitcode.ExitPreflight, "the export session(s) above are left as they are; give --preempt to take them over, or release them with: %s",
 		strings.Join(hints, "; "))
@@ -368,8 +368,8 @@ func createOnce(ctx context.Context, conn *grpc.ClientConn, req *transferv1.Plan
 			for _, f := range released.Failed {
 				nodes = append(nodes, f.GetNodeId())
 			}
-			err = errors.Join(err, fmt.Errorf("export session %s could not be released on %v; release it with: bydbctl data release-session --id %s",
-				sess.ID, nodes, sess.ID))
+			err = errors.Join(err, fmt.Errorf("export session %s could not be released on %v; release it with: %s",
+				sess.ID, nodes, releaseCommand(sess.ID)))
 		}
 		return sess, nil, err
 	}
@@ -380,13 +380,26 @@ func createOnce(ctx context.Context, conn *grpc.ClientConn, req *transferv1.Plan
 // heartbeatInterval is HeartbeatInterval, shortened by tests.
 var heartbeatInterval = HeartbeatInterval
 
+// RequiredNodes names the data nodes that must hold an export session: every data node of the
+// cluster (AllNodes), or the given ones (OnlyNodes), which may be none.
+type RequiredNodes struct {
+	nodes []string
+	all   bool
+}
+
+// AllNodes requires every data node of the cluster.
+func AllNodes() RequiredNodes { return RequiredNodes{all: true} }
+
+// OnlyNodes requires the given data nodes; with none, no node needs the session.
+func OnlyNodes(nodes []string) RequiredNodes { return RequiredNodes{nodes: slices.Clone(nodes)} }
+
 // StartHeartbeat sends ACTION_HEARTBEAT for the session every interval until stop is called
 // (0 means HeartbeatInterval). holders, asked before every tick, names the data nodes that must
-// still hold the session (nil func: every node), see HeartbeatOnce. A transport failure or an
+// still hold the session, see HeartbeatOnce. A transport failure or an
 // error frame of a holder is a WARN line on warn, not fatal: the lease outlives several missed
 // heartbeats, so the next tick retries. FAILED_PRECONDITION means the session expired or its
 // lease is unreadable on a holder; it is sent on lost once and the heartbeat stops.
-func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders func() []string, interval time.Duration, l *logger.Logger, warn io.Writer,
+func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders func() RequiredNodes, interval time.Duration, l *logger.Logger, warn io.Writer,
 ) (stop func(), lost <-chan error) {
 	if interval <= 0 {
 		interval = heartbeatInterval
@@ -403,11 +416,7 @@ func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				var nodes []string
-				if holders != nil {
-					nodes = holders()
-				}
-				err := HeartbeatOnce(ctx, conn, sessionID, nodes)
+				err := HeartbeatOnce(ctx, conn, sessionID, holders())
 				switch {
 				case err == nil, ctx.Err() != nil:
 				case heartbeatLost(err):
@@ -427,28 +436,27 @@ func StartHeartbeat(ctx context.Context, conn *grpc.ClientConn, sessionID string
 
 func heartbeatLost(err error) bool { return status.Code(err) == codes.FailedPrecondition }
 
-// HeartbeatOnce sends one ACTION_HEARTBEAT and fails if any of holders (nil: any data node) did
-// not take it: a node that was unreachable or no longer holds the session answers an error
+// HeartbeatOnce sends one ACTION_HEARTBEAT and fails if any of holders did not take it: a node that was unreachable or no longer holds the session answers an error
 // frame, which is a coverage gap; a node outside holders, which never held the session or has
 // no unit left to export, answers one too and is ignored. holders go to the liaison as
 // required_nodes, so the lease of a node outside them expiring is such an error frame too, while
-// an expired session on a holder fails the call itself with FAILED_PRECONDITION. With holders
-// empty but not nil no node needs the session any more and nothing is sent.
-func HeartbeatOnce(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders []string) error {
-	if holders != nil && len(holders) == 0 {
+// an expired session on a holder fails the call itself with FAILED_PRECONDITION. With no holder
+// no node needs the session any more and nothing is sent.
+func HeartbeatOnce(ctx context.Context, conn *grpc.ClientConn, sessionID string, holders RequiredNodes) error {
+	if !holders.all && len(holders.nodes) == 0 {
 		// An empty required_nodes would mean every node to the liaison.
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, sessionsCallTimeout)
 	defer cancel()
 	frames, err := sessions(ctx, conn, &transferv1.SessionsRequest{
-		Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: sessionID, RequiredNodes: holders,
+		Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: sessionID, RequiredNodes: holders.nodes,
 	})
 	if err != nil {
 		return err
 	}
-	if holders != nil {
-		frames = slices.DeleteFunc(slices.Clone(frames), func(f *transferv1.SessionsResponse) bool { return !slices.Contains(holders, f.GetNodeId()) })
+	if !holders.all {
+		frames = slices.DeleteFunc(slices.Clone(frames), func(f *transferv1.SessionsResponse) bool { return !slices.Contains(holders.nodes, f.GetNodeId()) })
 	}
 	if nodes, errs := failedNodes(frames); len(nodes) > 0 {
 		return fmt.Errorf("heartbeat did not reach %v: %s", nodes, strings.Join(errs, "; "))

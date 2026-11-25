@@ -76,7 +76,7 @@ type Env struct {
 	// stderr when that is one, after the lines written so far are shown there too.
 	Confirm func(ctx context.Context, question string) bool
 	// DuplicationSource names where resumeDuplicationPolicy was set, for the messages: the flag,
-	// the plan file or the variable; "" is taken as the flag.
+	// the plan file, the variable or "default"; "" is taken as the flag.
 	DuplicationSource string
 	// VerifyExplicit records that --verify was given on the command line: only then is a finished
 	// import verified again. plan.yaml and BYDBCTL_IMPORT_VERIFY set a default, not a request.

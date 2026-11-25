@@ -92,10 +92,10 @@ func TestClassify_SkipIsRefusedWhereVerifyCannotCheck(t *testing.T) {
 			amb := classify(state, []Entry{tc.entry}, &opts, tc.sampled, "")
 			require.Len(t, amb, 1)
 			if tc.want == "" {
-				assert.Equal(t, config.DuplicationSkip, amb[0].action, "a group that keeps its spans may be skipped")
+				assert.Equal(t, policyAction(config.DuplicationSkip), amb[0].action, "a group that keeps its spans may be skipped")
 				return
 			}
-			assert.Equal(t, config.DuplicationBlock, amb[0].action)
+			assert.Equal(t, policyAction(config.DuplicationBlock), amb[0].action)
 			assert.Contains(t, amb[0].source, tc.want)
 			err := checkBlocked(&bytes.Buffer{}, amb)
 			require.Error(t, err)
