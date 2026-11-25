@@ -82,6 +82,14 @@ type writeErrClient struct {
 	recv      func() error
 }
 
+// recvUntilEnd reads replies until the stream ends.
+func (c writeErrClient) recvUntilEnd() {
+	err := c.recv()
+	for err == nil {
+		err = c.recv()
+	}
+}
+
 // writeErrService starts the real write handler of one service against fake data nodes, with its metrics replaced by m,
 // and returns the fake data nodes and a function that opens a client stream.
 type writeErrService struct {
@@ -236,8 +244,7 @@ func TestWriteStreamErrByService(t *testing.T) {
 				defer cancel()
 				client := open(ctx)
 				require.NoError(t, client.send(1, true))
-				for client.recv() == nil {
-				}
+				client.recvUntilEnd()
 			},
 		},
 		{
@@ -247,8 +254,7 @@ func TestWriteStreamErrByService(t *testing.T) {
 				defer cancel()
 				client := open(ctx)
 				require.NoError(t, client.send(1, true))
-				for client.recv() == nil {
-				}
+				client.recvUntilEnd()
 			},
 		},
 		{
