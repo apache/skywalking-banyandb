@@ -85,14 +85,15 @@ type localSyncSession struct {
 	handler  ChunkedSyncHandler
 	metadata *clusterv1.SyncMetadata
 	partCtx  *ChunkedSyncPartContext
+	pending  PendingParts
 	chunks   uint32
 }
 
 // serve is the receive side of one in-process SyncPart stream. It follows the
 // data node receiver: the first frame carries the metadata, every chunk is acknowledged once
-// its files reached the handlers, a part id change finishes the previous part, a part type
-// change on the same id opens a secondary part, and the completion finishes the last part
-// before SYNC_STATUS_SYNC_COMPLETE is sent. Chunks must arrive in order. A refused frame (an
+// its files reached the handlers, a part id change seals the previous part, a part type
+// change on the same id opens a secondary part, and the completion introduces every part
+// before SYNC_STATUS_SYNC_COMPLETE is sent; a session that ends without it introduces none. Chunks must arrive in order. A refused frame (an
 // unreadable version, no metadata yet, an out of order chunk, a checksum mismatch or a busy
 // receiver) is answered with the SyncStatus the data node sends and then ends the session.
 func (l *localChunkedSync) serve(stream grpc.BidiStreamingServer[clusterv1.SyncPartRequest, clusterv1.SyncPartResponse]) (err error) {
@@ -101,10 +102,8 @@ func (l *localChunkedSync) serve(stream grpc.BidiStreamingServer[clusterv1.SyncP
 		return stream.Send(&clusterv1.SyncPartResponse{SessionId: req.GetSessionId(), ChunkIndex: req.GetChunkIndex(), Status: st, Error: msg})
 	}
 	defer func() {
-		if session.partCtx != nil {
-			if closeErr := session.partCtx.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
+		if discardErr := session.pending.Discard(session.partCtx); discardErr != nil && err == nil {
+			err = discardErr
 		}
 	}()
 	for {
@@ -256,22 +255,22 @@ func (s *localSyncSession) chunk(ctx context.Context, req *clusterv1.SyncPartReq
 
 // switchPart moves the session to the part info describes.
 func (s *localSyncSession) switchPart(ctx context.Context, info *clusterv1.PartInfo) (err error) {
-	s.partCtx, err = SwitchPart(ctx, s.partCtx, s.metadata, info, s.handler)
+	s.partCtx, err = SwitchPart(ctx, s.partCtx, &s.pending, s.metadata, info, s.handler)
 	return err
 }
 
-// finishPart finishes the open part, if any.
+// finishPart introduces the open part, if any, and every part the session sealed before it.
 func (s *localSyncSession) finishPart() error {
-	return FinishPart(s.partCtx)
+	return s.pending.Commit(s.partCtx)
 }
 
 // SwitchPart returns the context of the part info describes, the one chunked sync receiver step
 // shared by the cluster receiver and the in-process relay. A frame continuing the open part cur
 // returns cur, telling its handler about a new part type when the type changes; a frame starting
-// another part finishes cur and creates the new part's handler. On an error the returned context
-// is the one to close: cur when it could not be finished, the new one when its handler could not
-// be created.
-func SwitchPart(ctx context.Context, cur *ChunkedSyncPartContext, md *clusterv1.SyncMetadata,
+// another part finishes cur into pending (see PendingParts.Finish) and creates the new part's
+// handler. On an error the returned context is the one to close: cur when it could not be
+// finished, the new one when its handler could not be created.
+func SwitchPart(ctx context.Context, cur *ChunkedSyncPartContext, pending *PendingParts, md *clusterv1.SyncMetadata,
 	info *clusterv1.PartInfo, handler ChunkedSyncHandler,
 ) (*ChunkedSyncPartContext, error) {
 	if cur != nil && cur.ID == info.GetId() {
@@ -284,7 +283,7 @@ func SwitchPart(ctx context.Context, cur *ChunkedSyncPartContext, md *clusterv1.
 		}
 		return cur, nil
 	}
-	if err := FinishPart(cur); err != nil {
+	if err := pending.Finish(cur); err != nil {
 		return cur, err
 	}
 	next := &ChunkedSyncPartContext{
@@ -312,6 +311,94 @@ func FinishPart(c *ChunkedSyncPartContext) error {
 	}
 	c.Handler = nil
 	return nil
+}
+
+// PartSealer is a PartHandler whose part can be completed on disk without being introduced.
+// A chunked sync session seals every part it finishes before the sender's completion arrives,
+// so a session that fails midway leaves none of its parts in the receiver: the sender resends
+// every part of a failed session, and parts introduced before the failure would be stored twice.
+type PartSealer interface {
+	// SealSync writes what remains of the part, as FinishSync does, without introducing it.
+	// FinishSync of a sealed part only introduces it; Close of a sealed part removes it.
+	SealSync() error
+}
+
+// PendingParts holds the parts of a chunked sync session that are sealed but not introduced
+// yet. A nil PendingParts finishes every part at once.
+type PendingParts struct {
+	sealed []*ChunkedSyncPartContext
+}
+
+// Finish finishes the part c holds, if any, and drops it from c. A part whose handler is a
+// PartSealer is sealed and kept until Commit or Discard; any other part is finished at once.
+func (p *PendingParts) Finish(c *ChunkedSyncPartContext) error {
+	if c == nil || c.Handler == nil {
+		return nil
+	}
+	sealer, ok := c.Handler.(PartSealer)
+	if p == nil || !ok {
+		return FinishPart(c)
+	}
+	if err := sealer.SealSync(); err != nil {
+		return fmt.Errorf("failed to seal part %d: %w", c.ID, err)
+	}
+	held := *c
+	p.sealed = append(p.sealed, &held)
+	c.Handler = nil
+	return nil
+}
+
+// Commit completes the session: it finishes the open part c into p, then introduces every part p
+// holds in the order they were finished.
+//
+// When c cannot be sealed, Commit returns the error at once and introduces nothing: c and every
+// part p holds are left for the caller to Discard. When a held part cannot be introduced, the
+// parts before it stay introduced, that part and every part after it are discarded, and the
+// error is returned.
+func (p *PendingParts) Commit(c *ChunkedSyncPartContext) error {
+	if err := p.Finish(c); err != nil {
+		return err
+	}
+	if p == nil {
+		return nil
+	}
+	sealed := p.sealed
+	p.sealed = nil
+	for i, held := range sealed {
+		if err := FinishPart(held); err != nil {
+			return errors.Join(err, discard(sealed[i:]))
+		}
+	}
+	return nil
+}
+
+// Discard abandons the session: it closes the open part c, if any, and removes every part p
+// holds, so none of them is introduced. It is the counterpart of Commit, and every path that
+// ends a session without its completion calls it once with the session's open part. It
+// returns the errors the parts reported while closing.
+func (p *PendingParts) Discard(c *ChunkedSyncPartContext) error {
+	var openErr error
+	if c != nil {
+		if err := c.Close(); err != nil {
+			openErr = fmt.Errorf("failed to close the open part %d: %w", c.ID, err)
+		}
+	}
+	if p == nil {
+		return openErr
+	}
+	sealed := p.sealed
+	p.sealed = nil
+	return errors.Join(openErr, discard(sealed))
+}
+
+func discard(parts []*ChunkedSyncPartContext) error {
+	var firstErr error
+	for _, held := range parts {
+		if err := held.Close(); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("failed to discard part %d: %w", held.ID, err)
+		}
+	}
+	return firstErr
 }
 
 // FillPartContext copies the description of a part from the sync protocol into c.

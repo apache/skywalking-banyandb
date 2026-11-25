@@ -416,15 +416,15 @@ func TestSwitchPart(t *testing.T) {
 	ctx := context.Background()
 
 	h := &recSyncHandler{}
-	p1, err := SwitchPart(ctx, nil, md, &clusterv1.PartInfo{Id: 1, MinTimestamp: 10}, h)
+	p1, err := SwitchPart(ctx, nil, nil, md, &clusterv1.PartInfo{Id: 1, MinTimestamp: 10}, h)
 	require.NoError(t, err)
-	same, err := SwitchPart(ctx, p1, md, &clusterv1.PartInfo{Id: 1, MinTimestamp: 10}, h)
+	same, err := SwitchPart(ctx, p1, nil, md, &clusterv1.PartInfo{Id: 1, MinTimestamp: 10}, h)
 	require.NoError(t, err)
 	assert.Same(t, p1, same, "a frame continuing the part keeps its context")
-	same, err = SwitchPart(ctx, p1, md, &clusterv1.PartInfo{Id: 1, PartType: "idx"}, h)
+	same, err = SwitchPart(ctx, p1, nil, md, &clusterv1.PartInfo{Id: 1, PartType: "idx"}, h)
 	require.NoError(t, err)
 	assert.Same(t, p1, same, "a new part type keeps the part's context")
-	p2, err := SwitchPart(ctx, p1, md, &clusterv1.PartInfo{Id: 2, MinTimestamp: 20}, h)
+	p2, err := SwitchPart(ctx, p1, nil, md, &clusterv1.PartInfo{Id: 2, MinTimestamp: 20}, h)
 	require.NoError(t, err)
 	assert.Nil(t, p1.Handler, "the finished part drops its handler")
 	require.NoError(t, FinishPart(p2))
@@ -439,16 +439,16 @@ func TestSwitchPart(t *testing.T) {
 
 	errHandler := errors.New("disk full")
 	h = &recSyncHandler{failFinish: errHandler}
-	p1, err = SwitchPart(ctx, nil, md, &clusterv1.PartInfo{Id: 1}, h)
+	p1, err = SwitchPart(ctx, nil, nil, md, &clusterv1.PartInfo{Id: 1}, h)
 	require.NoError(t, err)
-	got, err := SwitchPart(ctx, p1, md, &clusterv1.PartInfo{Id: 2}, h)
+	got, err := SwitchPart(ctx, p1, nil, md, &clusterv1.PartInfo{Id: 2}, h)
 	require.ErrorIs(t, err, errHandler)
 	assert.Equal(t, "failed to complete part 1: disk full", err.Error())
 	assert.Same(t, p1, got, "the part that could not be finished is the one to close")
 	assert.NotNil(t, got.Handler)
 
 	h = &recSyncHandler{failCreate: errHandler}
-	got, err = SwitchPart(ctx, nil, md, &clusterv1.PartInfo{Id: 5}, h)
+	got, err = SwitchPart(ctx, nil, nil, md, &clusterv1.PartInfo{Id: 5}, h)
 	require.ErrorIs(t, err, errHandler)
 	assert.Equal(t, uint64(5), got.ID, "the new part is the one to close")
 	assert.Nil(t, got.Handler)
