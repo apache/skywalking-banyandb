@@ -22,7 +22,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
+	"net"
+	"slices"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -181,19 +182,33 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 		}
 		return ids, nil
 	}
+	// port is the port of a node address. setup returns a data node's address under its own host
+	// name while the node registers itself under 127.0.0.1, so nodes are matched by port.
+	port := func(addr string) string {
+		_, p, err := net.SplitHostPort(addr)
+		Expect(err).NotTo(HaveOccurred())
+		return p
+	}
+	// rowsByNode returns how many rows of group each data node stores, by the node's port.
+	rowsByNode := func(group string) map[string]int64 {
+		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: group})
+		Expect(err).NotTo(HaveOccurred())
+		rows := map[string]int64{}
+		for _, info := range resp.GetDataInfo() {
+			for _, segment := range info.GetSegmentInfo() {
+				for _, shard := range segment.GetShardInfo() {
+					rows[port(info.GetNode().GetGrpcAddress())] += shard.GetDataCount()
+				}
+			}
+		}
+		return rows
+	}
 	rowIDs := func(group string, from, to int) []string {
 		ids := make([]string, 0, to-from)
 		for i := from; i < to; i++ {
 			ids = append(ids, rowID(group, i))
 		}
 		return ids
-	}
-	reversed := func(ids []string) []string {
-		out := make([]string, len(ids))
-		for i, id := range ids {
-			out[len(ids)-1-i] = id
-		}
-		return out
 	}
 
 	BeforeAll(func() {
@@ -224,6 +239,10 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(ids).To(Equal(rowIDs(knownGroup, 0, knownRows)))
 		}, flags.EventuallyTimeout).Should(Succeed())
+		rows := rowsByNode(knownGroup)
+		Expect(rows).To(HaveLen(dataNodeCount), "every node owns a shard of the known group: %v", rows)
+		Expect(rows[port(missingNode)]).To(BeNumerically(">", 0),
+			"the node to pause must hold rows of the known group, or the multi-group spec proves nothing: %v", rows)
 
 		By("Pausing one data node's schema watch, then creating a group that node never hears of")
 		pause(missingNode)
@@ -237,22 +256,25 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 			g.Expect(err).NotTo(HaveOccurred(), "a node missing the schema must not fail the query")
 			g.Expect(ids).To(Equal(rowIDs(missingGroup, 0, missingRows)))
 		}, flags.EventuallyTimeout).Should(Succeed())
+		_, inspectErr := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: missingGroup})
+		Expect(inspectErr).To(MatchError(ContainSubstring("group %s not found", missingGroup)),
+			"the paused node must still lack the group, or the query above did not meet a missing schema")
 
 		ids, err := query(request([]string{missingGroup}, 5, modelv1.Sort_SORT_ASC))
 		Expect(err).NotTo(HaveOccurred())
 		Expect(ids).To(Equal(rowIDs(missingGroup, 0, 5)), "the first rows by time")
 		ids, err = query(request([]string{missingGroup}, 5, modelv1.Sort_SORT_DESC))
 		Expect(err).NotTo(HaveOccurred())
-		Expect(ids).To(Equal(reversed(rowIDs(missingGroup, missingRows-5, missingRows))), "the last rows by time")
+		last := rowIDs(missingGroup, missingRows-5, missingRows)
+		slices.Reverse(last)
+		Expect(ids).To(Equal(last), "the last rows by time")
 	})
 
 	It("still returns the other group's rows from the node missing this group's schema", func() {
 		ids, err := query(request([]string{missingGroup, knownGroup}, missingRows+knownRows+1, modelv1.Sort_SORT_ASC))
 		Expect(err).NotTo(HaveOccurred())
 		want := append(rowIDs(missingGroup, 0, missingRows), rowIDs(knownGroup, 0, knownRows)...)
-		sort.Strings(want)
-		sort.Strings(ids)
-		Expect(ids).To(Equal(want), "the paused node owns a shard of the known group and must still answer for it")
+		Expect(ids).To(ConsistOf(want), "the paused node owns a shard of the known group and must still answer for it")
 	})
 
 	It("reports a stream the liaison does not know as an error", func() {
