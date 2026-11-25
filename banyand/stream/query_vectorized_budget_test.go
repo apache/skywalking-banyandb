@@ -101,21 +101,29 @@ func (l *peakLease) Charge(bytes uint64) error {
 // has a single correct answer.
 func buildBudgetStream(t *testing.T) (*stream, timestamp.TimeRange, []budgetRow, [][]*modelv1.TagValue) {
 	t.Helper()
+	return buildBudgetStreamOf(t, budgetSegments, budgetSeriesPerSeg, budgetRowsPerSeries, budgetPayloadBytes)
+}
+
+// buildBudgetStreamOf is buildBudgetStream for a chosen number of segments, series per segment, rows per series and
+// payload bytes per row.
+func buildBudgetStreamOf(t *testing.T, segments, seriesPerSeg, rowsPerSeries, payloadBytes int,
+) (*stream, timestamp.TimeRange, []budgetRow, [][]*modelv1.TagValue) {
+	t.Helper()
 	require.NoError(t, logger.Init(logger.Logging{Env: "dev", Level: flags.LogLevel}))
 	base := time.Now().Add(-time.Hour).Truncate(time.Hour)
-	db := openDatabaseWithTTLDays(t, t.TempDir(), 2*budgetSegments)
+	db := openDatabaseWithTTLDays(t, t.TempDir(), 2*segments)
 	t.Cleanup(func() { _ = db.Close() })
 
-	padding := strings.Repeat("x", budgetPayloadBytes)
+	padding := strings.Repeat("x", payloadBytes)
 	var rows []budgetRow
 	var entities [][]*modelv1.TagValue
 	var minTS, maxTS int64
 	position := 0
-	for segIdx := 0; segIdx < budgetSegments; segIdx++ {
+	for segIdx := 0; segIdx < segments; segIdx++ {
 		segBase := base.Add(-time.Duration(segIdx) * 24 * time.Hour).UnixNano()
 		elems := &elements{}
 		var entityDocs index.Documents
-		for k := 0; k < budgetSeriesPerSeg; k++ {
+		for k := 0; k < seriesPerSeg; k++ {
 			entityName := fmt.Sprintf("%s-%d-%d", entityTagValuePrefix, segIdx, k)
 			series := &pbv1.Series{
 				Subject:      "benchmark",
@@ -124,8 +132,8 @@ func buildBudgetStream(t *testing.T) (*stream, timestamp.TimeRange, []budgetRow,
 			require.NoError(t, series.Marshal())
 			entities = append(entities, series.EntityValues)
 			entityDocs = append(entityDocs, index.Document{DocID: uint64(series.ID), EntityValues: series.Buffer})
-			for j := 0; j < budgetRowsPerSeries; j++ {
-				ts := segBase + int64(k*budgetRowsPerSeries+j)*int64(time.Millisecond)
+			for j := 0; j < rowsPerSeries; j++ {
+				ts := segBase + int64(k*rowsPerSeries+j)*int64(time.Millisecond)
 				rank := fmt.Sprintf("%08d", position*budgetRankMultiplier%budgetRankModulus)
 				elementID := convert.HashStr(fmt.Sprintf("budget-%d-%d-%d", segIdx, k, j))
 				position++
@@ -320,7 +328,7 @@ func scanLeakCheck(t *testing.T, lease *peakLease) func(scan *streamVecScan) {
 	scanBatches := pool.AllRefsCount()["stream-blockScannerBatch"]
 	return func(scan *streamVecScan) {
 		t.Helper()
-		require.Empty(t, scan.pending, "pending cursors left")
+		require.Nil(t, scan.batch, "pulled scanner batch left")
 		require.Nil(t, scan.cur.bc, "current cursor left")
 		require.Nil(t, scan.scanCh, "scanner still attached")
 		require.Zero(t, scan.mem.Used(), "soft memory reservation left")
@@ -360,7 +368,7 @@ func TestQueryVectorized_ScanReleaseLeavesNothingHeld(t *testing.T) {
 				require.NotNil(t, batch)
 			}
 			if batchesBeforeRelease > 0 {
-				require.NotEmpty(t, scan.pending, "the scan should have decoded ahead of the consumer")
+				require.NotNil(t, scan.batch, "the scan should hold a pulled scanner batch")
 				require.NotNil(t, scan.scanCh, "the scanner should still be running")
 			}
 			scan.Release()
@@ -418,4 +426,40 @@ func TestQueryVectorized_ScanOfBlocksWithoutProjectedFamilyRefundsEverything(t *
 	require.Nil(t, batch)
 	scan.Release()
 	check(scan)
+}
+
+// TestQueryVectorized_LimitScanOfHotSeriesHoldsOneBlock is the regression for a hot series whose blocks are large: a
+// scanner batch of blockScannerBatchSize blocks of about 2 MiB each is several times the per-query allowance, so a scan
+// that charged every block of the batch when it pulled it failed with "query memory pool exhausted" although the limit
+// needs a few rows. The scan must charge the block it decodes, one at a time.
+func TestQueryVectorized_LimitScanOfHotSeriesHoldsOneBlock(t *testing.T) {
+	const (
+		rowsPerSeries = 400
+		payloadBytes  = 128 << 10
+	)
+	s, tr, _, entities := buildBudgetStreamOf(t, 1, 1, rowsPerSeries, payloadBytes)
+	for _, tc := range []struct {
+		order *index.OrderBy
+		name  string
+		desc  bool
+	}{
+		{name: "time-asc", order: &index.OrderBy{Sort: modelv1.Sort_SORT_ASC}},
+		{name: "time-desc", order: &index.OrderBy{Sort: modelv1.Sort_SORT_DESC}, desc: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, lease, release := admitBudgetLease(t)
+			defer release()
+			base := lease.Used()
+			total := uint64(rowsPerSeries * payloadBytes)
+			require.Greater(t, total, 4*(lease.Limit()-base), "the hot series must hold much more than the allowance")
+
+			got := runBudgetPipeline(ctx, t, s, budgetQuery(tr, entities, tc.order), tc.desc)
+			require.Len(t, got, budgetLimit)
+
+			peakHeld := lease.peak.Load() - base
+			t.Logf("%s: allowance=%d series_bytes=%d peak_held=%d", tc.name, lease.Limit()-base, total, peakHeld)
+			require.Less(t, peakHeld, total/4, "the scan must hold a few blocks, not a scanner batch of them")
+			require.Equal(t, base+lease.lookup.Load(), lease.Used(), "every charge must be refunded once the query is closed")
+		})
+	}
 }
