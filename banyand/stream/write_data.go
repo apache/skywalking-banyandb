@@ -48,23 +48,43 @@ type syncPartContext struct {
 	tagTypeBuffer []byte
 	partMeta      partMetadata
 	partID        uint64
+	// sealed is set once SealSync wrote the part; FinishSync then only introduces it.
+	sealed bool
 }
 
 func (s *syncPartContext) NewPartType(ctx *queue.ChunkedSyncPartContext) error {
 	return fmt.Errorf("a stream part does not support part type %q", ctx.PartType)
 }
 
-func (s *syncPartContext) FinishSync() error {
+// A chunked sync session seals a part only if its handler is a queue.PartSealer; one that is not
+// is introduced at once, before the session completes, so the assertion keeps that from
+// happening silently.
+var _ queue.PartSealer = (*syncPartContext)(nil)
+
+// SealSync implements queue.PartSealer: it completes the part on disk without introducing it,
+// so Close still removes the part until FinishSync introduces it.
+func (s *syncPartContext) SealSync() error {
+	if s.sealed {
+		return nil
+	}
 	// Close writers first so file data is flushed before we write metadata.
 	s.releaseCoreWriters()
 
 	if len(s.tagTypeBuffer) > 0 {
 		fs.MustFlushAtomic(s.fileSystem, s.tagTypeBuffer, filepath.Join(s.partPath, tagTypeFilename), storage.FilePerm)
 	}
+	s.tagTypeBuffer = nil
 	s.partMeta.mustWriteMetadata(s.fileSystem, s.partPath)
 	// No SyncPath: mustWriteMetadata goes through WriteAtomic which already
 	// fsyncs the parent directory after rename.
+	s.sealed = true
+	return nil
+}
 
+func (s *syncPartContext) FinishSync() error {
+	if err := s.SealSync(); err != nil {
+		return err
+	}
 	s.tsTable.mustAddFilePart(s.partID)
 	s.partPath = ""
 	return s.Close()
