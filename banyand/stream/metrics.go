@@ -18,7 +18,9 @@
 package stream
 
 import (
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
@@ -69,6 +71,8 @@ type metrics struct {
 	totalMergedParts  meter.Counter
 	totalMergeLatency meter.Counter
 	totalMerged       meter.Counter
+
+	totalSyncFailedParts meter.Counter
 
 	tbMetrics
 	fileSyncTargets sync.Map
@@ -304,6 +308,9 @@ func (m *metrics) DeleteAll() {
 	m.totalSyncLoopErr.Delete()
 	m.totalSyncLoopLatency.Delete()
 	m.totalSyncLoopBytes.Delete()
+	if m.totalSyncFailedParts != nil {
+		m.totalSyncFailedParts.Delete()
+	}
 	m.fileSyncTargets.Range(func(target, _ any) bool {
 		node := target.(string)
 		m.fileSyncQueueLatency.Delete(node)
@@ -375,7 +382,7 @@ func (s *supplier) newMetrics(p common.Position) storage.Metrics {
 
 func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(tbScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
-	return &metrics{
+	m := &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
 		totalBatch:                 factory.NewCounter("total_batch"),
 		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
@@ -403,6 +410,7 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
 		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalSyncFailedParts:       factory.NewCounter("total_sync_failed_parts"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -415,9 +423,15 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			unsyncedParts:                  factory.NewGauge("unsynced_parts", common.ShardLabelNames()...),
+			unsyncedPartBytes:              factory.NewGauge("unsynced_part_bytes", common.ShardLabelNames()...),
+			oldestUnsyncedPartAgeSeconds:   factory.NewGauge("oldest_unsynced_part_age_seconds", common.ShardLabelNames()...),
 		},
 		indexMetrics: idxmetrics.NewMetrics(factory, common.SegLabelNames()...),
-	}, factory
+	}
+	// Create the series at zero so increase() sees the first failure.
+	m.totalSyncFailedParts.Inc(0)
+	return m, factory
 }
 
 func (tst *tsTable) Collect(m storage.Metrics) {
@@ -479,6 +493,12 @@ func (tst *tsTable) deleteMetrics() {
 	tst.metrics.tbMetrics.totalFilePartBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.totalFilePartUncompressedBytes.Delete(tst.p.ShardLabelValues()...)
 	tst.metrics.tbMetrics.pendingDataCount.Delete(tst.p.ShardLabelValues()...)
+	if tst.metrics.tbMetrics.unsyncedParts != nil {
+		labels := tst.unsyncedLabelValues()
+		tst.metrics.tbMetrics.unsyncedParts.Delete(labels...)
+		tst.metrics.tbMetrics.unsyncedPartBytes.Delete(labels...)
+		tst.metrics.tbMetrics.oldestUnsyncedPartAgeSeconds.Delete(labels...)
+	}
 	tst.metrics.indexMetrics.DeleteAll(tst.p.SegLabelValues()...)
 }
 
@@ -496,4 +516,62 @@ type tbMetrics struct {
 	totalFilePartUncompressedBytes meter.Gauge
 
 	pendingDataCount meter.Gauge
+
+	unsyncedParts                meter.Gauge
+	unsyncedPartBytes            meter.Gauge
+	oldestUnsyncedPartAgeSeconds meter.Gauge
+}
+
+func (tst *tsTable) incTotalSyncFailedParts(delta int) {
+	if tst == nil || tst.metrics == nil || tst.metrics.totalSyncFailedParts == nil || delta <= 0 {
+		return
+	}
+	tst.metrics.totalSyncFailedParts.Inc(float64(delta))
+}
+
+// unsyncedLabelValues keys the unsynced gauges by this table's own shard ID: a liaison hands the same
+// Position, whose Shard is empty, to every shard's table.
+func (tst *tsTable) unsyncedLabelValues() []string {
+	return []string{tst.p.Segment, strconv.Itoa(int(tst.shardID))}
+}
+
+// collectUnsynced reports the parts still waiting in the liaison write queue.
+// Parts that are already synced are removed from the snapshot, so every part in it that the syncer would pick is unsynced.
+// A file part the syncer never picks (no rows) is skipped: it would keep the age growing forever.
+func (tst *tsTable) collectUnsynced() {
+	m := tst.metrics
+	if m == nil || m.unsyncedParts == nil {
+		return
+	}
+	snp := tst.currentSnapshot()
+	if snp == nil {
+		return
+	}
+	defer snp.decRef()
+
+	var partCount, partBytes uint64
+	var oldestQueuedAt int64
+	for _, pw := range snp.parts {
+		// A mem part is always waiting for sync; a file part only when the syncer would pick it.
+		if pw.mp == nil && !isFilePartToSync(pw) {
+			continue
+		}
+		pm := pw.p.partMetadata
+		partCount++
+		partBytes += pm.CompressedSizeBytes
+		if pm.QueuedAtUnixNano == 0 {
+			continue
+		}
+		if oldestQueuedAt == 0 || pm.QueuedAtUnixNano < oldestQueuedAt {
+			oldestQueuedAt = pm.QueuedAtUnixNano
+		}
+	}
+	var ageSeconds float64
+	if oldestQueuedAt > 0 {
+		ageSeconds = max(time.Since(time.Unix(0, oldestQueuedAt)).Seconds(), 0)
+	}
+	labels := tst.unsyncedLabelValues()
+	m.unsyncedParts.Set(float64(partCount), labels...)
+	m.unsyncedPartBytes.Set(float64(partBytes), labels...)
+	m.oldestUnsyncedPartAgeSeconds.Set(ageSeconds, labels...)
 }

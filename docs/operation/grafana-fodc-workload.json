@@ -82,7 +82,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total write rate (measure + stream + trace).",
+      "description": "Total points / elements / span rows written per second (measure + stream + trace). Client writes are counted on the liaison only; every node (liaison included) also counts its _monitoring_log stream and, in native mode, the _monitoring measure.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -149,7 +149,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "gRPC query request rate.",
+      "description": "Group-query rate: a measure, stream, trace or TopN query spanning several groups is counted once per group, a property or BydbQL query once; a BydbQL request is also counted under the service it is dispatched to.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -272,7 +272,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "(sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0))",
+          "expr": "(sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", error_type!~\"canceled|stream_canceled\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\"}[$__rate_interval])*60) or vector(0))",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -300,7 +300,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "gRPC query rate by service (measure / stream / property).",
+      "description": "gRPC query rate by service (measure / stream / trace / property / topn / bydbql).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -386,9 +386,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", method=\"query\"}[$__rate_interval])) by (service)",
           "instant": false,
-          "legendFormat": "{{group}}",
+          "legendFormat": "{{service}}",
           "range": true,
           "refId": "A"
         }
@@ -401,7 +401,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Average query latency per group.",
+      "description": "Average query latency per group, plus the p99 over query requests that were not canceled.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -492,6 +492,18 @@
           "legendFormat": "{{group}}",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum(rate(banyandb_liaison_grpc_query_latency_seconds_bucket{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", status!=\"canceled\"}[$__rate_interval])) by (le))",
+          "instant": false,
+          "legendFormat": "p99 (excl. canceled)",
+          "range": true,
+          "refId": "B"
         }
       ],
       "title": "Query Latency",
@@ -502,7 +514,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "gRPC error rates (request errors, registry errors, stream receive errors).",
+      "description": "gRPC error rates (request errors, registry errors, stream receive errors, write streams ended with an error). stream_err has no group label and is split by service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -588,7 +600,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group|\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "err {{group}}",
           "range": true,
@@ -600,7 +612,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_registry_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group|\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "registry_err {{group}}",
           "range": true,
@@ -612,11 +624,23 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group|\"}[$__rate_interval])) by (group)",
           "instant": false,
           "legendFormat": "stream_recv_err {{group}}",
           "range": true,
           "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_liaison_grpc_total_stream_err{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (service)",
+          "instant": false,
+          "legendFormat": "stream_err {{service}}",
+          "range": true,
+          "refId": "D"
         }
       ],
       "title": "gRPC Error Rate",
@@ -865,7 +889,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Liaison publish success rate by operation and file-sync byte throughput by group.",
+      "description": "Liaison publish success rate by operation and file-sync byte throughput by group. For batch-write with remote_role=liaison, finished means sent, not succeeded.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -991,7 +1015,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Liaison write-ahead queue backlog: on-disk part folders + in-memory parts + pending items. >0 = data nodes slow/unreachable. (file_parts/mem_part appear only when the queue is non-empty; pending_data_count is the always-present anchor.)",
+      "description": "Liaison write queue: parts not yet synced to data nodes (includes in-memory parts), the age of the oldest part with an enqueue time (right axis, max across seg and shard), and parts dropped after their sync retries (increase). A rising age means the shard has no data node to sync to or the sync is stuck; a part that fails to sync is retried for about 7 seconds and then dropped.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1042,7 +1066,24 @@
           },
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "^oldest age.*"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 7,
@@ -1077,9 +1118,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_measure_unsynced_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
-          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "legendFormat": "unsynced parts measure {{pod_name}} {{group}}",
           "range": true,
           "refId": "A"
         },
@@ -1089,9 +1130,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_stream_tst_unsynced_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
-          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "legendFormat": "unsynced parts stream {{pod_name}} {{group}}",
           "range": true,
           "refId": "B"
         },
@@ -1101,9 +1142,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_file_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "sum(banyandb_trace_tst_unsynced_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
           "instant": false,
-          "legendFormat": "file_parts {{pod_name}} {{group}}",
+          "legendFormat": "unsynced parts trace {{pod_name}} {{group}}",
           "range": true,
           "refId": "C"
         },
@@ -1113,9 +1154,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "round(sum(increase(banyandb_measure_total_sync_failed_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (pod_name, group))",
           "instant": false,
-          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "legendFormat": "sync failed measure {{pod_name}} {{group}}",
           "range": true,
           "refId": "D"
         },
@@ -1125,9 +1166,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "round(sum(increase(banyandb_stream_tst_total_sync_failed_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (pod_name, group))",
           "instant": false,
-          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "legendFormat": "sync failed stream {{pod_name}} {{group}}",
           "range": true,
           "refId": "E"
         },
@@ -1137,9 +1178,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_total_mem_part{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "round(sum(increase(banyandb_trace_tst_total_sync_failed_parts{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (pod_name, group))",
           "instant": false,
-          "legendFormat": "mem_part {{pod_name}} {{group}}",
+          "legendFormat": "sync failed trace {{pod_name}} {{group}}",
           "range": true,
           "refId": "F"
         },
@@ -1149,9 +1190,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_measure_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "max by (pod_name, group) (banyandb_measure_oldest_unsynced_part_age_seconds{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"})",
           "instant": false,
-          "legendFormat": "pending {{pod_name}} {{group}}",
+          "legendFormat": "oldest age measure {{pod_name}} {{group}}",
           "range": true,
           "refId": "G"
         },
@@ -1161,9 +1202,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_stream_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "max by (pod_name, group) (banyandb_stream_tst_oldest_unsynced_part_age_seconds{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"})",
           "instant": false,
-          "legendFormat": "pending {{pod_name}} {{group}}",
+          "legendFormat": "oldest age stream {{pod_name}} {{group}}",
           "range": true,
           "refId": "H"
         },
@@ -1173,9 +1214,9 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_trace_tst_pending_data_count{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"}) by (pod_name, group)",
+          "expr": "max by (pod_name, group) (banyandb_trace_tst_oldest_unsynced_part_age_seconds{job=~\"$job\", container_name=\"liaison\", pod_name=~\"$pod\", group=~\"$group\"})",
           "instant": false,
-          "legendFormat": "pending {{pod_name}} {{group}}",
+          "legendFormat": "oldest age trace {{pod_name}} {{group}}",
           "range": true,
           "refId": "I"
         }
@@ -1851,7 +1892,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Inverted index update rate (measure + stream storage). Trace has no storage inverted index.",
+      "description": "Inverted index update rate (measure + stream + trace storage).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1954,6 +1995,18 @@
           "legendFormat": "stream {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_storage_inverted_index_total_updates{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "trace {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Series Write Rate",
@@ -2067,6 +2120,18 @@
           "legendFormat": "stream {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(banyandb_trace_storage_inverted_index_total_term_searchers_started{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}[$__rate_interval])) by (group)",
+          "instant": false,
+          "legendFormat": "trace {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Series Term Search Rate",
@@ -2180,6 +2245,18 @@
           "legendFormat": "stream {{group}}",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "sum(banyandb_trace_storage_inverted_index_total_doc_count{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", group=~\"$group\"}) by (group)",
+          "instant": false,
+          "legendFormat": "trace {{group}}",
+          "range": true,
+          "refId": "C"
         }
       ],
       "title": "Total Series",

@@ -30,6 +30,7 @@ import (
 	"github.com/shirou/gopsutil/v3/net"
 
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/pkg/cgroups"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
 )
@@ -52,6 +53,7 @@ var gaugesMu sync.RWMutex
 var (
 	cpuStateGauge    meter.Gauge
 	cpuNumGauge      meter.Gauge
+	cpuLimitGauge    meter.Gauge
 	memoryStateGauge meter.Gauge
 	netStateGauge    meter.Gauge
 	upTimeGauge      meter.Gauge
@@ -94,6 +96,7 @@ func (p *metricService) initMetrics() {
 	defer gaugesMu.Unlock()
 	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
 	cpuNumGauge = factory.NewGauge("cpu_num")
+	cpuLimitGauge = factory.NewGauge("cpu_limit_cores")
 	memoryStateGauge = factory.NewGauge("memory_state", "kind")
 	netStateGauge = factory.NewGauge("net_state", "kind", "name")
 	upTimeGauge = factory.NewGauge("up_time")
@@ -122,10 +125,11 @@ func collectCPU() {
 		allStat.Softirq + allStat.Steal + allStat.Guest + allStat.GuestNice
 	gaugesMu.RLock()
 	defer gaugesMu.RUnlock()
-	if cpuNumGauge == nil || cpuStateGauge == nil {
+	if cpuNumGauge == nil || cpuLimitGauge == nil || cpuStateGauge == nil {
 		return
 	}
 	cpuNumGauge.Set(float64(cpuCount))
+	cpuLimitGauge.Set(float64(cgroups.CPUs()))
 	cpuStateGauge.Set(allStat.User/total, "user")
 	cpuStateGauge.Set(allStat.System/total, "system")
 	cpuStateGauge.Set(allStat.Idle/total, "idle")
