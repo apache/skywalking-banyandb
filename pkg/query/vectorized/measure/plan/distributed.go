@@ -507,10 +507,10 @@ func (p *DistributedPlan) Execute(ctx context.Context) (executor.MIterator, erro
 // cancels the scans on the data nodes.
 func (p *DistributedPlan) ExecuteBatches(ctx context.Context) (result *BatchResult, err error) {
 	queryRequest := proto.Clone(p.queryTemplate).(*measurev1.QueryRequest)
-	if p.streamsBuckets(queryRequest) {
-		// A bucket's state is returned when the bucket is emitted, so the lease follows what is held now.
-		ctx = vectorized.WithLiveLeaseAccounting(ctx)
-	}
+	// The lease follows what the query holds now: the frames of a chunk are decoded and released one chunk at a time, a
+	// bucket's state is returned when the bucket is emitted, and the serialized rows replace the decoded ones. A lease that
+	// only accumulated charged every stage of a row query in full, about three times the memory it ever held at once.
+	ctx = vectorized.WithLiveLeaseAccounting(ctx)
 	ctx = vectorized.WithQueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	tracker := vectorized.QueryMemoryTracker(ctx, int64(p.cfg.QueryMemoryMiB)*1024*1024)
 	if err = ctx.Err(); err != nil {

@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -479,4 +480,31 @@ func TestProjectedRowBytesFollowsTheColumnTypes(t *testing.T) {
 	require.EqualValues(t, 6*cursorRowColumnBytes, budget.perRowBytes(), "without column types the count is used")
 	budget.rowBytes = projectedRowBytes(schema)
 	require.EqualValues(t, (16+24+8)*cursorRowFactor, budget.perRowBytes())
+}
+
+// A pull of index-sorted rows reserves workspace for the rows it can emit, not for a full batch: a limit of one row used to
+// reserve the workspace of 4096 rows, which a small query allowance could not hold.
+func TestIndexBatchWorkspaceFollowsTheRowsLeft(t *testing.T) {
+	const columns = 6
+	one, fits := indexBatchWorkspaceBytes(columns, 1)
+	require.True(t, fits)
+	few, _ := indexBatchWorkspaceBytes(columns, 50)
+	full, _ := indexBatchWorkspaceBytes(columns, 100*mergeBatchMaxRows)
+	tooFew, _ := indexBatchWorkspaceBytes(columns, 0)
+	require.Equal(t, one, tooFew, "no row left still reserves for one")
+	require.Less(t, one, few)
+	require.Less(t, few, full)
+	require.Less(t, one, uint64(300<<10), "a limit of one reserves little more than the fixed part")
+	require.Greater(t, full, uint64(3<<20), "a full batch keeps the room it needs")
+	capped, _ := indexBatchWorkspaceBytes(columns, mergeBatchMaxRows)
+	require.Equal(t, full, capped, "more rows left than a batch holds reserve for one batch")
+	_, fits = indexBatchWorkspaceBytes(math.MaxInt64/64, 1)
+	require.False(t, fits, "an overflowing size is reported")
+
+	result := &indexSortResult{}
+	result.segResults.results = []*segResult{
+		{SeriesData: storage.SeriesData{SeriesList: make(pbv1.SeriesList, 7)}, i: 2},
+		{SeriesData: storage.SeriesData{SeriesList: make(pbv1.SeriesList, 4)}},
+	}
+	require.Equal(t, 9, result.remainingRows())
 }
