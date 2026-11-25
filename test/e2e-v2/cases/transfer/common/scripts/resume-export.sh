@@ -249,7 +249,7 @@ case "$2" in
       echo "interruptExitCode: $int_rc"
       echo "releaseExitCode: $rel_rc"
       echo "resumeExitCode: $rc"
-      echo "exportAgainHint: $(bool grep -qF "to start over: release the session with: bydbctl data release-session --id $session; then delete what is in $EXPORT_L and export again" "$CASE_DIR/stderr")"
+      echo "exportAgainHint: $(bool grep -qF "to start over: release the session with: bydbctl data release-session --id $session; then delete what is in $EXPORT_L (the progress file $EXPORT_L/.export-progress.json included) and export again" "$CASE_DIR/stderr")"
     } >"$report"
     finish_case "$case_name" "$report" true
     ;;
