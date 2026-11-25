@@ -78,7 +78,7 @@ type streamVecScan struct {
 	scanCancel     context.CancelFunc
 	segments       []storage.Segment[*tsTable, option]
 	series         []*pbv1.Series
-	pending        []heldCursor
+	batch          *blockScanResultBatch
 	cur            heldCursor
 	orderTagFamily string
 	orderTagName   string
@@ -86,6 +86,7 @@ type streamVecScan struct {
 	qo             queryOptions
 	batchSize      int
 	curOff         int
+	batchIdx       int
 	asc            bool
 	indexOrder     bool
 	budgetEngaged  bool
@@ -158,21 +159,21 @@ func (v *streamVecScan) releaseHeld(held heldCursor) {
 // row (asc) or last row (desc); the caller must releaseHeld it.
 func (v *streamVecScan) nextCursor(ctx context.Context) (heldCursor, error) {
 	for {
-		if len(v.pending) > 0 {
-			held := v.pending[0]
-			v.pending[0] = heldCursor{}
-			v.pending = v.pending[1:]
-			return held, nil
-		}
-		// A soft-budget or scan failure surfaces after the already-loaded cursors
-		// drain, rather than returning a partial result (row-path parity — the row
-		// path errors under memory pressure via the protector).
+		// A scan failure surfaces once the cursor in hand drains, rather than returning a partial result (row-path
+		// parity: the row path errors under memory pressure via the protector).
 		if v.failErr != nil {
 			return heldCursor{}, v.failErr
 		}
+		held, err := v.loadNextHeld(ctx)
+		if err != nil {
+			return heldCursor{}, err
+		}
+		if held.bc != nil {
+			return held, nil
+		}
 		if v.scanCh != nil {
-			if err := v.pullScanBatch(ctx); err != nil {
-				return heldCursor{}, err
+			if pullErr := v.pullScanBatch(ctx); pullErr != nil {
+				return heldCursor{}, pullErr
 			}
 			continue
 		}
@@ -241,8 +242,8 @@ func (v *streamVecScan) stopScanner() {
 	v.scanCh, v.scanDone, v.scanCancel = nil, nil, nil
 }
 
-// pullScanBatch takes one result batch from the running scanner and decodes its
-// blocks into v.pending. When the scanner has no more batches it is stopped, which
+// pullScanBatch takes one result batch from the running scanner and keeps it for loadNextHeld. Its
+// blocks as v.batch. When the scanner has no more batches it is stopped, which
 // lets the caller move on to the next part group.
 func (v *streamVecScan) pullScanBatch(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
@@ -262,23 +263,44 @@ func (v *streamVecScan) pullScanBatch(ctx context.Context) error {
 		v.stopScanner()
 		return scanErr
 	}
+	v.batch, v.batchIdx = batch, 0
+	return nil
+}
+
+// loadNextHeld decodes the next block of the pulled scanner batch that has a matching row, and charges only that block.
+// The scan holds one decoded block at a time, so a limited query pays for the blocks it consumes, not for a whole batch
+// of them: a batch of blockScannerBatchSize blocks of several MiB each would overrun the per-query budget on its own.
+// It returns a zero cursor once the batch is exhausted.
+func (v *streamVecScan) loadNextHeld(ctx context.Context) (heldCursor, error) {
+	if v.batch == nil {
+		return heldCursor{}, nil
+	}
 	is := v.sm.indexSchema.Load().(indexSchema)
-	for i := range batch.bss {
-		bs := &batch.bss[i]
+	for v.batchIdx < len(v.batch.bss) {
+		bs := &v.batch.bss[v.batchIdx]
+		v.batchIdx++
 		held, err := v.loadHeld(ctx, bs, is)
 		if err != nil {
 			v.failErr = err
-			break
+			v.dropBatch()
+			v.stopScanner()
+			return heldCursor{}, err
 		}
 		if held.bc != nil {
-			v.pending = append(v.pending, held)
+			return held, nil
 		}
 	}
-	releaseBlockScanResultBatch(batch)
-	if v.failErr != nil {
-		v.stopScanner()
+	v.dropBatch()
+	return heldCursor{}, nil
+}
+
+// dropBatch releases the pulled scanner batch and the blocks of it that were not decoded.
+func (v *streamVecScan) dropBatch() {
+	if v.batch != nil {
+		releaseBlockScanResultBatch(v.batch)
+		v.batch = nil
 	}
-	return nil
+	v.batchIdx = 0
 }
 
 // loadHeld charges, soft-reserves and decodes one scanned block. A failure returns
@@ -432,10 +454,7 @@ func (v *streamVecScan) Release() {
 		v.releaseHeld(v.cur)
 		v.cur = heldCursor{}
 	}
-	for _, held := range v.pending {
-		v.releaseHeld(held)
-	}
-	v.pending = nil
+	v.dropBatch()
 	if v.ts != nil {
 		v.ts.close()
 		v.ts = nil

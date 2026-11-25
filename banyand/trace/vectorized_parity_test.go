@@ -99,6 +99,7 @@ func pullLookupResult(
 	maxTraceSize int,
 ) (*vectorizedTraceQueryResult, error) {
 	qo.traceIDs = traceIDs
+	qo.maxTraces = maxTraceSize // what Query sets from the request's offset plus limit
 	batch, batchErr := tr.buildVectorizedPhase1TraceBatch(ctx, qo, nil, sidx.QueryRequest{}, false, maxTraceSize)
 	if batchErr != nil {
 		return nil, batchErr
@@ -153,6 +154,28 @@ func TestVectorizedLookup(t *testing.T) {
 		{name: "all traces", traceIDs: []string{"trace1", "trace2", "trace3"}, tagProjection: allTagProjections, wantCount: 3},
 		{name: "maxTraceSize=2", traceIDs: []string{"trace1", "trace2", "trace3"}, maxTraceSize: 2, tagProjection: allTagProjections, wantCount: 2},
 		{name: "missing trace", traceIDs: []string{"trace-not-exist"}, tagProjection: allTagProjections, wantCount: 0},
+		// The cap counts the traces that exist: an ID that is missing or repeated inside the window must not take the
+		// place of a trace the limit allows.
+		{
+			name: "a missing ID before the others does not use up the cap", maxTraceSize: 2, tagProjection: allTagProjections,
+			traceIDs: []string{"a-trace-that-does-not-exist", "trace1", "trace2", "trace3"}, wantCount: 2,
+		},
+		{
+			name: "a missing ID among the others does not use up the cap", maxTraceSize: 2, tagProjection: allTagProjections,
+			traceIDs: []string{"trace1", "not-here", "trace2", "trace3"}, wantCount: 2,
+		},
+		{
+			name: "a repeated ID does not use up the cap", maxTraceSize: 2, tagProjection: allTagProjections,
+			traceIDs: []string{"trace1", "trace1", "trace2", "trace3"}, wantCount: 2,
+		},
+		{
+			name: "the cap is not reached when too few of the IDs exist", maxTraceSize: 3, tagProjection: allTagProjections,
+			traceIDs: []string{"gone-1", "trace1", "gone-2", "trace2"}, wantCount: 2,
+		},
+		{
+			name: "no cap returns every trace that exists", tagProjection: allTagProjections,
+			traceIDs: []string{"gone", "trace1", "trace1", "trace2", "trace3"}, wantCount: 3,
+		},
 		// AC8: identity-only projection → after omitIdentityTagProjection strips identity tags the
 		// storage-level projection is nil or empty; both push and pull must produce r.Tags == nil.
 		{name: "nil projection (identity-stripped)", traceIDs: []string{"trace1"}, tagProjection: nil, wantCount: 1, wantNilTags: true},
@@ -287,8 +310,9 @@ func TestVectorizedOrderMode(t *testing.T) {
 }
 
 // TestVectorizedOverScanBound verifies AC3: with a MaxTraceSize cap, the pull path
-// builds a phase-1 batch limited to MaxTraceSize trace IDs, so the phase-2 cursor
-// count is strictly less than the uncapped cursor count on the same dataset.
+// scans the IDs in windows and stops once it has found MaxTraceSize traces, so the
+// phase-2 cursor count is strictly less than the uncapped cursor count on the same
+// dataset.
 func TestVectorizedOverScanBound(t *testing.T) {
 	tst, cleanup := newParityTSTable(t, tsTS1, tsTS2)
 	defer cleanup()
@@ -304,6 +328,7 @@ func TestVectorizedOverScanBound(t *testing.T) {
 	buildCursorCount := func(traceIDs []string, maxSize int) int {
 		localQO := qo
 		localQO.traceIDs = traceIDs
+		localQO.maxTraces = maxSize // what Query sets from the request's offset plus limit
 		batch, batchErr := tr.buildVectorizedPhase1TraceBatch(ctx, localQO, nil, sidx.QueryRequest{}, false, maxSize)
 		require.NoError(t, batchErr)
 		sb, sbErr := tr.buildVectorizedScanBatch(ctx, tables, localQO, batch)
