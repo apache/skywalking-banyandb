@@ -486,7 +486,7 @@ func TestDecideStandaloneTargetVerifiesTheHotCounts(t *testing.T) {
 	require.Equal(t, map[PushKey]uint64{pushKey(stream, "sw_stream", "hot", ShardItem): 2000}, pushed)
 	post := emptyCounts().set(stream, "sw_stream", "hot", standaloneNode, 0, "20261018", 2000)
 	routeMap := map[RouteKey]*transferv1.TargetsResponse{NewRouteKey("sw_stream", "hot"): routes[1]}
-	r := evaluate(emptyCounts(), post, routeMap, pushed)
+	r := evaluate(emptyCounts(), post, routeMap, pushed, nil, nil)
 	assert.False(t, r.Failed(), r.Mismatches)
 }
 

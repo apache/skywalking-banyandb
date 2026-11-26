@@ -18,8 +18,6 @@
 package cmd
 
 import (
-	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -30,8 +28,6 @@ import (
 	"golang.org/x/term"
 
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
-	"github.com/apache/skywalking-banyandb/pkg/logger"
-	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/config"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
@@ -68,32 +64,33 @@ func newDataExportCmd() *cobra.Command {
 // The artifact format is checked in both modes: a native export defaults to no compression
 // and refuses gzip or a volume limit too small for a container, with or without --dry-run.
 func validateExport(sources config.Sources, opts *config.Export) error {
-	if err := validateOutputFormat(sources, opts.OutputFormat); err != nil {
+	if err := validateOutputFormat(sources, &opts.OutputFormat); err != nil {
 		return err
 	}
 	if opts.Format == transferv1.Format_FORMAT_NATIVE {
 		// A setting a native export does not use is refused when given as a flag or in
 		// plan.yaml, and is ignored when it comes from the environment.
 		for _, s := range []struct {
-			reset     func()
-			flag, why string
-			set       bool
+			setting any
+			reset   func()
+			why     string
+			set     bool
 		}{
 			{
-				func() { opts.Compress = transferv1.Compress_COMPRESS_NONE }, "compress", "a native export is not compressed; use --compress none",
+				&opts.Compress, func() { opts.Compress = transferv1.Compress_COMPRESS_NONE }, "a native export is not compressed; use --compress none",
 				opts.Compress != transferv1.Compress_COMPRESS_NONE,
 			},
 			{
-				func() { opts.NodeRowRateLimit = 0 }, "node-row-rate-limit",
+				&opts.NodeRowRateLimit, func() { opts.NodeRowRateLimit = 0 },
 				"a native export moves part bytes and has no rows to limit; it applies to --format csv only", opts.NodeRowRateLimit > 0,
 			},
-			{func() { opts.CSVAnnotations = false }, "csv-annotations", "a native export has no CSV headers; it applies to --format csv only", opts.CSVAnnotations},
+			{&opts.CSVAnnotations, func() { opts.CSVAnnotations = false }, "a native export has no CSV headers; it applies to --format csv only", opts.CSVAnnotations},
 		} {
 			if !s.set {
 				continue
 			}
-			if sources.FromFlag(s.flag) || sources.FromPlan(s.flag) {
-				return exitcode.Exit(exitcode.ExitUsage, "%s: %s", sources.Label(s.flag), s.why)
+			if sources.Explicit(s.setting) {
+				return exitcode.Exit(exitcode.ExitUsage, "%s: %s", sources.Label(s.setting), s.why)
 			}
 			s.reset()
 		}
@@ -101,35 +98,39 @@ func validateExport(sources config.Sources, opts *config.Export) error {
 	if err := exporter.CheckFormat(opts); err != nil {
 		return err
 	}
+	if err := exporter.CheckResume(sources, opts); err != nil {
+		return err
+	}
 	if opts.DryRun {
 		// A real-export setting given explicitly, as a flag or in plan.yaml, contradicts a
 		// dry run; one from the environment is simply unused.
 		for _, s := range []struct {
-			flag string
-			set  bool
-		}{{"output", opts.Output != ""}, {"preempt", opts.Preempt}, {"schema-only", opts.SchemaOnly}} {
-			if sources.FromFlag(s.flag) || (sources.FromPlan(s.flag) && s.set) {
-				return exitcode.Exit(exitcode.ExitUsage, "%s cannot be combined with --dry-run, which writes nothing", sources.Label(s.flag))
+			setting *bool
+			set     bool
+		}{{&opts.Preempt, opts.Preempt}, {&opts.SchemaOnly, opts.SchemaOnly}} {
+			if sources.FromFlag(s.setting) || (sources.FromPlan(s.setting) && s.set) {
+				return exitcode.Exit(exitcode.ExitUsage, "%s cannot be combined with --dry-run, which writes nothing", sources.Label(s.setting))
 			}
 		}
 		return nil
 	}
-	if sources.FromFlag("strict-coverage") {
+	if sources.FromFlag(&opts.StrictCoverage) {
 		return exitcode.Exit(exitcode.ExitUsage, "--strict-coverage applies to --dry-run only; a real export fails on any unreachable node")
 	}
-	if err := config.CheckSchemaOnly(sources, opts.SchemaOnly, opts.IncludeSchema); err != nil {
+	if err := config.CheckSchemaOnly(sources, &opts.SchemaOnly, &opts.IncludeSchema); err != nil {
 		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
-	return exporter.CheckOutputDir(opts.Output)
+	return exporter.CheckOutputDir(opts.Output, exporter.ProgressPath(*opts))
 }
 
 // runRealExport connects, lists the groups and hands over to exporter.RunExport. No overall
 // deadline applies: progress is bounded by --node-idle-timeout instead.
 func runRealExport(cmd *cobra.Command, conn *config.Connection, opts *config.Export) error {
 	// Ctrl-C or SIGTERM cancels the export so that it stops cleanly and prints how to release
-	// the session it keeps.
+	// the session it keeps. Everything but the explanation of a failure and its error goes to
+	// stdout, the questions too.
 	out := cmd.OutOrStdout()
-	lc, err := connectLiaisons(cmd, conn, 3*time.Minute, out)
+	lc, err := connectLiaisons(cmd, conn, 3*time.Minute, dataStreams{info: out, hints: out, out: out})
 	if err != nil {
 		return err
 	}
@@ -138,14 +139,13 @@ func runRealExport(cmd *cobra.Command, conn *config.Connection, opts *config.Exp
 	if err != nil {
 		return err
 	}
-	if err = exporter.ValidateSelectors(groups, opts.Selectors); err != nil {
-		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
-	}
+	ask, wrap := terminalConfirm(cmd.InOrStdin(), out, cmd.ErrOrStderr())
 	return exporter.RunExport(lc.ctx, exporter.Env{
-		Log:      cmd.ErrOrStderr(),
-		Out:      out,
+		Log:      wrap(out),
+		Out:      wrap(out),
+		Err:      cmd.ErrOrStderr(),
 		Terminal: terminalSize(out),
-		Confirm:  terminalConfirm(cmd.InOrStdin(), out),
+		Confirm:  ask,
 		Cluster:  lc.cluster,
 		Liaisons: lc.liaisons,
 		Groups:   groups,
@@ -167,44 +167,10 @@ func terminalSize(w io.Writer) func() (width, height int) {
 	}
 }
 
-// terminalConfirm returns the question asker of an operator at a terminal, or nil when the
-// input or the output is not a terminal: a script or a pipe is never asked.
-func terminalConfirm(in io.Reader, out io.Writer) func(context.Context, string) bool {
-	inFile, inOK := in.(*os.File)
-	outFile, outOK := out.(*os.File)
-	if !inOK || !outOK || !term.IsTerminal(int(inFile.Fd())) || !term.IsTerminal(int(outFile.Fd())) {
-		return nil
-	}
-	return func(ctx context.Context, question string) bool { return askYes(ctx, in, out, question) }
-}
-
-// askYes prints question and reads one line: y or yes, in any case, is a yes; anything else,
-// the end of the input, or ctx ending first (Ctrl-C while asked) is a no.
-func askYes(ctx context.Context, in io.Reader, out io.Writer, question string) bool {
-	fmt.Fprint(out, question)
-	answer := make(chan string, 1)
-	// The read cannot be interrupted; once ctx ends the process exits and the reader with it.
-	run.Go(ctx, "bydbctl-export-confirm", logger.GetLogger("bydbctl"), func(context.Context) {
-		line, _ := bufio.NewReader(in).ReadString('\n')
-		answer <- line
-	})
-	select {
-	case <-ctx.Done():
-		fmt.Fprintln(out)
-		return false
-	case line := <-answer:
-		switch strings.ToLower(strings.TrimSpace(line)) {
-		case "y", "yes":
-			return true
-		}
-		return false
-	}
-}
-
 // runDryRun is the read-only inventory of `data export --dry-run`.
 func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export) error {
-	errOut := cmd.ErrOrStderr()
-	lc, err := connectLiaisons(cmd, conn, 10*time.Minute, errOut)
+	s := streamsOf(cmd, opts.OutputFormat)
+	lc, err := connectLiaisons(cmd, conn, 10*time.Minute, s)
 	if err != nil {
 		return err
 	}
@@ -215,6 +181,14 @@ func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export)
 	if err != nil {
 		return err
 	}
+	resumed, err := exporter.DryRunResume(exporter.Env{
+		Log: s.info, Out: s.out, Cluster: info, Liaisons: lc.liaisons, Groups: groups,
+	}, *opts)
+	if resumed || err != nil {
+		return err
+	}
+	// A preview of a resume does not check the selectors: the resume compares them with the
+	// recorded ones.
 	if err = exporter.ValidateSelectors(groups, opts.Selectors); err != nil {
 		return exitcode.Exit(exitcode.ExitUsage, "%w", err)
 	}
@@ -224,18 +198,18 @@ func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export)
 	}
 	report := exporter.BuildReport(info, result)
 	for _, w := range exporter.StageWarnings(groups, result) {
-		fmt.Fprintln(errOut, "WARN "+w)
+		fmt.Fprintln(s.info, "WARN "+w)
 	}
 
 	if len(report.AnsweredNodes) > 0 {
 		effective, clamped := config.ClampParallelism(opts.Parallelism, len(report.AnsweredNodes))
 		if clamped {
-			fmt.Fprintf(errOut, "parallelism: %s -> %d (clamped by node count)\n", config.FormatParallelism(opts.Parallelism), effective)
+			fmt.Fprintf(s.hints, "parallelism: %s -> %d (clamped by node count)\n", config.FormatParallelism(opts.Parallelism), effective)
 		} else {
-			fmt.Fprintf(errOut, "parallelism: %d\n", effective)
+			fmt.Fprintf(s.hints, "parallelism: %d\n", effective)
 		}
 	}
-	if err = exporter.Render(cmd.OutOrStdout(), opts.OutputFormat, report); err != nil {
+	if err = exporter.Render(s.out, opts.OutputFormat, report); err != nil {
 		return exitcode.Exit(exitcode.ExitRuntime, "render report: %w", err)
 	}
 	if len(report.MissingNodes) > 0 {
@@ -243,7 +217,7 @@ func runDryRun(cmd *cobra.Command, conn *config.Connection, opts *config.Export)
 		if opts.StrictCoverage {
 			return exitcode.Exit(exitcode.ExitPreflight, "coverage gap: %s", msg)
 		}
-		fmt.Fprintln(errOut, "WARN "+msg)
+		fmt.Fprintln(s.info, "WARN "+msg)
 	}
 	return nil
 }

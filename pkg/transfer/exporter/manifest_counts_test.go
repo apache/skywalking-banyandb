@@ -231,7 +231,7 @@ func countsManifest(t *testing.T) (*manifest.Manifest, []*nodeJob) {
 		{Metadata: &commonv1.Metadata{Name: nodeA}, TzName: "Asia/Shanghai"},
 		{Metadata: &commonv1.Metadata{Name: nodeB}, TzName: "UTC"},
 	}}
-	fillManifest(m, info, jobs)
+	fillManifest(m, nodeTimezones(info, nil), jobs)
 	return m, jobs
 }
 
@@ -490,7 +490,7 @@ func TestRenderSummary_CountsAndTimesOfTheManifest(t *testing.T) {
 		t.Fatal("elapsed is keyed by the manifest catalog label, not the lower-case name")
 	}
 	var out bytes.Buffer
-	if err := renderSummary(&out, "/out", m, elapsed, 3*time.Minute+4960*time.Millisecond); err != nil {
+	if err := renderSummary(&out, "/out", m, elapsed, 3*time.Minute+4960*time.Millisecond, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := fieldsOf(out.String()); !reflect.DeepEqual(got, countsSummary) {
@@ -499,7 +499,7 @@ func TestRenderSummary_CountsAndTimesOfTheManifest(t *testing.T) {
 
 	// Without any elapsed entry every row shows no time, and the counts do not change.
 	out.Reset()
-	if err := renderSummary(&out, "/out", m, nil, 0); err != nil {
+	if err := renderSummary(&out, "/out", m, nil, 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	for i, line := range fieldsOf(out.String()) {
@@ -533,7 +533,7 @@ func TestManifestCounts_SurviveWriteAndRead(t *testing.T) {
 		t.Fatalf("read back differs:\ngot  %+v\nwant %+v", got, m)
 	}
 	var out bytes.Buffer
-	if err = renderSummary(&out, "/out", got, elapsedOf(jobs), 3*time.Minute+4960*time.Millisecond); err != nil {
+	if err = renderSummary(&out, "/out", got, elapsedOf(jobs), 3*time.Minute+4960*time.Millisecond, nil); err != nil {
 		t.Fatal(err)
 	}
 	if lines := fieldsOf(out.String()); !reflect.DeepEqual(lines, countsSummary) {

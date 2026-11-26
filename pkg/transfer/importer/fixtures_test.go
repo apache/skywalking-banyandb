@@ -191,3 +191,9 @@ func restamp(m proto.Message) proto.Message {
 	meta.Id, meta.CreateRevision, meta.ModRevision = meta.Id+7, 500, 600
 	return out
 }
+
+// testBindings are bindings of a target with one liaison and the data nodes d1 and d2, so that a
+// progress file written with them reads back with them.
+func testBindings() importBindings {
+	return importBindings{Liaisons: []string{"liaison-0"}, TargetNodes: []string{"d1", "d2"}}
+}

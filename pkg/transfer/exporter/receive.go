@@ -38,11 +38,13 @@ import (
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
+	pkgfs "github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
@@ -55,6 +57,8 @@ type plannedUnit struct {
 	files    []receivedFile
 	warnings []string
 	elapsed  time.Duration
+	// done marks a unit a previous run finished; it is not exported again.
+	done bool
 }
 
 // receivedFile is one file written and verified, with where it belongs in the manifest.
@@ -128,7 +132,7 @@ func (u *plannedUnit) shardIDs() []uint32 {
 
 // pathPrefix is the prefix every relative path of this unit must start with.
 func (u *plannedUnit) pathPrefix() string {
-	return transfer.CatalogName(u.catalog()) + "/" + csvfmt.EscapePathComponent(u.group()) + "/"
+	return transfer.CatalogName(u.catalog()) + "/" + artifactpath.EscapeComponent(u.group()) + "/"
 }
 
 // nodeJob is everything one worker exports from one data node.
@@ -146,6 +150,7 @@ type nodeExport struct {
 	schema   *schemasync.Result // nil when the schema is not exported
 	idle     *idleTimer
 	progress *nodeProgress
+	track    *tracker // records the units in the progress file; nil records nothing
 	log      io.Writer
 	root     string // <output>/nodes/<node-dir>
 	relRoot  string // nodes/<node-dir>
@@ -169,7 +174,21 @@ func (n *nodeExport) run(ctx context.Context) error {
 	if err != nil && context.Cause(streamCtx) == errIdle { //nolint:errorlint // identity of our own sentinel
 		return exitcode.Exit(exitcode.ExitRuntime, "%w", errIdle)
 	}
+	if status.Code(err) == codes.FailedPrecondition && n.sessionGone(ctx) {
+		// The node no longer holds the session (released, preempted or expired), at the init of
+		// the stream or while it read a unit: the session is lost like one the heartbeat finds gone.
+		return exitcode.Exit(exitcode.ExitRuntime, "%w", sessionLostError{err})
+	}
 	return err
+}
+
+// sessionGone asks the node's session with a heartbeat after its stream failed with
+// FAILED_PRECONDITION, which a node answers for other reasons than a lost session too (a catalog
+// the format cannot encode, say): only a heartbeat that finds the session gone says it is. A
+// heartbeat that fails otherwise settles nothing, and the stream's own error stands.
+func (n *nodeExport) sessionGone(ctx context.Context) bool {
+	err := HeartbeatOnce(ctx, n.liaisons[0].Conn, n.init.GetSessionId(), OnlyNodes([]string{n.job.nodeID}))
+	return heartbeatLost(err)
 }
 
 func (n *nodeExport) export(ctx context.Context) error {
@@ -199,9 +218,11 @@ func (n *nodeExport) export(ctx context.Context) error {
 			}
 		}
 		n.idle.touch()
+		n.track.unitStarted(n.job.nodeID, u)
 		if err = n.receiveUnit(stream, u); err != nil {
 			return err
 		}
+		n.track.unitFinished(n.job.nodeID, u)
 	}
 	if err = stream.CloseSend(); err != nil {
 		return fmt.Errorf("node %s: close the export stream: %w", n.job.nodeID, err)
@@ -247,7 +268,7 @@ func (n *nodeExport) open(ctx context.Context) (transferv1.ExportService_ExportC
 			return nil, err
 		}
 		n.next++
-		fmt.Fprintf(n.log, "node %s is busy or unreachable via %s (%s); retrying via %s in %s\n", n.job.nodeID, via.Addr, code, n.liaison().Addr, backoff)
+		nodeRetry(n.log, n.job.nodeID, via.Addr, code.String(), n.liaison().Addr, backoff)
 		n.idle.pause()
 		if err = transfer.SleepCtx(ctx, backoff); err != nil {
 			return nil, fmt.Errorf("node %s: waiting to retry the export stream: %w", n.job.nodeID, err)
@@ -416,7 +437,9 @@ func (n *nodeExport) startFile(u *plannedUnit, fs *transferv1.FileStarted) (*par
 	if _, statErr := os.Lstat(final); !errors.Is(statErr, os.ErrNotExist) {
 		return nil, exitcode.Exit(exitcode.ExitRuntime, "node %s unit %s: %s already exists", n.job.nodeID, u.label(), final)
 	}
-	if err = os.MkdirAll(filepath.Dir(final), 0o700); err != nil {
+	// The new directories are made durable with their parents: the unit is recorded done once
+	// its files are, and a resume finds them where it recorded them.
+	if err = resume.MkdirAll(filepath.Dir(final), 0o700); err != nil {
 		return nil, fmt.Errorf("node %s: %w", n.job.nodeID, err)
 	}
 	tmp := final + ".tmp"
@@ -448,7 +471,7 @@ func (n *nodeExport) finishFile(u *plannedUnit, p *partialFile, ff *transferv1.F
 		err = os.Rename(p.tmp, p.final)
 	}
 	if err == nil {
-		err = syncDir(filepath.Dir(p.final))
+		err = pkgfs.SyncDirIfSupported(filepath.Dir(p.final))
 	}
 	if err != nil {
 		return receivedFile{}, fmt.Errorf("node %s: persist %s: %w", n.job.nodeID, p.rel, err)
@@ -487,9 +510,9 @@ func (n *nodeExport) checkSchemaRevisions(u *plannedUnit, p *partialFile, ff *tr
 		if exported && encoded && wantRev == gotRev {
 			continue
 		}
-		return exitcode.Exit(exitcode.ExitRuntime,
+		return exitcode.Exit(exitcode.ExitRuntime, "%w", schemaChangedError{fmt.Errorf(
 			"schema of %s %s/%s changed during export: the node encoded %s with mod revision %s, the exported schema has %s; export again",
-			transfer.CatalogName(u.catalog()), u.group(), name, p.rel, revisionLabel(gotRev, encoded), revisionLabel(wantRev, exported))
+			transfer.CatalogName(u.catalog()), u.group(), name, p.rel, revisionLabel(gotRev, encoded), revisionLabel(wantRev, exported))})
 	}
 	return nil
 }
@@ -500,19 +523,6 @@ func revisionLabel(rev int64, ok bool) string {
 		return "missing"
 	}
 	return strconv.FormatInt(rev, 10)
-}
-
-// syncDir makes a directory's new entries durable.
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	err = d.Sync()
-	if closeErr := d.Close(); err == nil {
-		err = closeErr
-	}
-	return err
 }
 
 // idleTimer fires when no frame was received for its duration (--node-idle-timeout). The

@@ -448,6 +448,34 @@ func TestExportPlan_NodeErrorIsFatalNotUnreachable(t *testing.T) {
 	}
 }
 
+// A ReadSession naming required_nodes degrades an expired lease on any other node to
+// unreachable_nodes, while one on a required node still fails the whole call.
+func TestExportPlan_RequiredNodesDegradeExpiredLeaseElsewhere(t *testing.T) {
+	svc := newFanOut(t, map[string]*fakeDataNode{
+		testNodeA: {groups: []string{"g"}, occupant: testSessionAbcdID},
+		testNodeB: {expired: map[string]bool{testSessionAbcdID: true}},
+	})
+	req := transfer.ReadRequest(testSessionAbcdID)
+	req.GetRead().RequiredNodes = []string{testNodeA}
+	stream := &recordingStream{ctx: context.Background()}
+	if err := svc.Plan(req, stream); err != nil {
+		t.Fatalf("an expired lease outside required_nodes must not fail the read: %v", err)
+	}
+	last := lastSummary(t, stream.frames)
+	if got := last.GetUnreachableNodes(); len(got) != 1 || got[0] != testNodeB {
+		t.Fatalf("unreachable = %v, want [%s]", got, testNodeB)
+	}
+	if got := last.GetAnsweredNodes(); len(got) != 1 || got[0] != testNodeA {
+		t.Fatalf("answered = %v, want [%s]", got, testNodeA)
+	}
+
+	req.GetRead().RequiredNodes = []string{testNodeA, testNodeB}
+	err := svc.Plan(req, &recordingStream{ctx: context.Background()})
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), testNodeB) {
+		t.Fatalf("an expired lease on a required node must fail the read naming it, got %v", err)
+	}
+}
+
 // A failed Plan leaves no goroutine behind: the sender of the downstream frames ends with
 // the call, also when it was idle on an empty queue.
 func TestExportPlan_FailedPlanLeavesNoGoroutine(t *testing.T) {
@@ -1157,6 +1185,26 @@ func TestExportPlan_CreateSessionAbortNamesPreempted(t *testing.T) {
 	}
 	if got := a.releasedIDs(); len(got) != 1 || got[0] != testSessionFeedID {
 		t.Fatalf("the failed create must be rolled back, got %v", got)
+	}
+}
+
+// ACTION_HEARTBEAT naming required_nodes answers an expired lease on any other node with an
+// error frame, while one on a required node still fails the whole call.
+func TestExportSessions_HeartbeatRequiredNodes(t *testing.T) {
+	const id = "abcd01efabcd01efabcd01efabcd01ef"
+	a, b := &fakeDataNode{occupant: id}, &fakeDataNode{occupant: id, expired: map[string]bool{id: true}}
+	svc := newFanOut(t, map[string]*fakeDataNode{testNodeA: a, testNodeB: b})
+	req := heartbeatReq(id)
+	req.RequiredNodes = []string{testNodeA}
+	got := errorsByNode(t, sessions(t, svc, req))
+	if len(got) != 2 || got[testNodeA] != "" || !strings.Contains(got[testNodeB], "export session "+id+" expired") {
+		t.Fatalf("heartbeat frames = %v, want an expired error frame only for %s", got, testNodeB)
+	}
+
+	req.RequiredNodes = []string{testNodeB}
+	err := svc.Sessions(req, &recordingSessionsStream{ctx: context.Background()})
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "data node data-b: export session "+id+" expired") {
+		t.Fatalf("an expired lease on a required node must fail the heartbeat naming it, got %v", err)
 	}
 }
 

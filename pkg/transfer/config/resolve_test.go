@@ -69,7 +69,7 @@ func resolve(t *testing.T, fs *pflag.FlagSet, planFile string, env map[string]st
 func TestResolve_Defaults(t *testing.T) {
 	conn, exp, sources, err := resolve(t, bound(t), "", nil)
 	require.NoError(t, err)
-	assert.Empty(t, sources)
+	assert.Empty(t, labelsOf(sources))
 	assert.Equal(t, Connection{LoggingLevel: "info", LoggingEnv: "prod"}, *conn)
 	assert.Equal(t, Export{
 		OutputFormat: "table", MaxFileSize: 512 << 20, NodeIdleTimeout: 10 * time.Minute, SendRetryTimeout: 15 * time.Minute,
@@ -105,8 +105,8 @@ func TestResolve_DryRunPlan(t *testing.T) {
 	assert.Equal(t, []string{"sw_record", "sw_log"}, exp.Selectors[0].GetGroups())
 	assert.Equal(t, commonv1.Catalog_CATALOG_PROPERTY, exp.Selectors[2].GetCatalog())
 	assert.Empty(t, exp.Selectors[2].GetGroups())
-	assert.True(t, sources.FromPlan("nodes"))
-	assert.Equal(t, "plan.yaml export.selectors", sources.Label("selector"))
+	assert.True(t, sources.FromPlan(&conn.Nodes))
+	assert.Equal(t, "plan.yaml export.selectors", sources.Label(&exp.Selectors))
 }
 
 // exportPlanYAML carries every export field of plan.yaml.
@@ -151,10 +151,10 @@ func TestResolve_Precedence(t *testing.T) {
 	assert.Equal(t, transferv1.Compress_COMPRESS_NONE, exp.Compress, "plan.yaml beats the environment")
 	assert.Equal(t, "/env", exp.Output, "the environment beats the default")
 	assert.Equal(t, math.MaxInt, exp.Parallelism, "an empty variable counts as unset")
-	assert.True(t, sources.FromFlag("max-file-size"))
-	assert.True(t, sources.FromPlan("compress"))
-	assert.Equal(t, "BYDBCTL_OUTPUT", sources.Label("output"))
-	assert.Equal(t, "--parallelism", sources.Label("parallelism"), "a default is labeled by its flag")
+	assert.True(t, sources.FromFlag(&exp.MaxFileSize))
+	assert.True(t, sources.FromPlan(&exp.Compress))
+	assert.Equal(t, "BYDBCTL_OUTPUT", sources.Label(&exp.Output))
+	assert.Equal(t, "--parallelism", sources.Label(&exp.Parallelism), "a default is labeled by its flag")
 
 	// An explicit false flag beats a true plan.yaml value.
 	_, exp, _, err = resolve(t, bound(t, "--schema-only=false"), writePlan(t, "export:\n  schemaOnly: true\n"), nil)
@@ -209,11 +209,13 @@ func TestResolve_ErrorsNameTheSource(t *testing.T) {
 }
 
 func TestLoadPlan_RejectsUnknownFields(t *testing.T) {
-	// A misspelled field, and the plan fields the export or import does not implement, are
-	// all unknown to the strict parser.
+	// A misspelled field, the switches that are never plan fields, and the plan fields the
+	// export and import do not implement are all unknown to the strict parser.
 	for _, body := range []string{
 		"connection:\n  nodes: [a:17912]\nexport:\n  outpt: ./x\n",
+		"export:\n  resume: true\n",
 		"connection:\n  nodes: [a:17912]\nexport:\n  archive: tar\n",
+		"import:\n  resume: true\n",
 		"import:\n  input: ./x\n  workDir: /tmp/x\n",
 		"import:\n  archive: tar\n",
 		"import:\n  schemaConflictPolicy:\n    unknown: x\n",
@@ -243,10 +245,10 @@ func TestResolve_PlanDurationZero(t *testing.T) {
 	_, exp, sources, err := resolve(t, bound(t), writePlan(t, "export:\n  nodeIdleTimeout: 0\n"), nil)
 	require.NoError(t, err, "0 disables the idle timeout in plan.yaml as on the command line")
 	assert.Zero(t, exp.NodeIdleTimeout)
-	assert.True(t, sources.FromPlan("node-idle-timeout"))
+	assert.True(t, sources.FromPlan(&exp.NodeIdleTimeout))
 	_, _, sources, err = resolve(t, bound(t), writePlan(t, "export:\n  nodeIdleTimeout: 10\n"), nil)
 	require.Error(t, err, "a bare non-zero number has no unit")
-	assert.Nil(t, sources)
+	assert.Zero(t, sources)
 }
 
 func TestBind_UsageNamesPlanKeyAndVariable(t *testing.T) {
@@ -281,4 +283,12 @@ func TestParseParallelism(t *testing.T) {
 	if got, _ := ClampParallelism(math.MaxInt, 0); got != 1 {
 		t.Fatalf("clamp with no nodes = %d, want 1", got)
 	}
+}
+
+func TestResolve_ExportCheckpointAndResume(t *testing.T) {
+	_, exp, sources, err := resolve(t, bound(t), writePlan(t, "export:\n  checkpoint: ./p.json\n"), map[string]string{"BYDBCTL_RESUME": "true"})
+	require.NoError(t, err)
+	assert.Equal(t, "./p.json", exp.Checkpoint)
+	assert.True(t, sources.FromPlan(&exp.Checkpoint))
+	assert.True(t, exp.Resume, "--resume has a variable, BYDBCTL_RESUME")
 }

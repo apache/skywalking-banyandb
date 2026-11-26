@@ -500,14 +500,35 @@ func (b *rowBuilder) scanFile(ctx context.Context, dir string, f manifest.File, 
 	}
 }
 
-// scanSources scans every file of every source of item in order.
-func (b *rowBuilder) scanSources(ctx context.Context, dir string, item *WorkItem, visit func(file string, record uint64, cells []csvfmt.Value) error) error {
+// scanSources scans every file of every source of item in order. With a cursor from that names
+// a file, the files before it are not opened and its records up to the cursor's are skipped.
+func (b *rowBuilder) scanSources(ctx context.Context, dir string, item *WorkItem, from *csvCursor,
+	visit func(file string, record uint64, cells []csvfmt.Value) error,
+) error {
+	started := from == nil || from.File == ""
 	for _, src := range item.Sources {
 		for _, f := range src.Files {
-			if err := b.scanFile(ctx, dir, f, visit); err != nil {
+			fileVisit := visit
+			if !started {
+				if f.Path != from.File {
+					continue
+				}
+				started = true
+				last := from.Record
+				fileVisit = func(file string, record uint64, cells []csvfmt.Value) error {
+					if record <= last {
+						return nil
+					}
+					return visit(file, record, cells)
+				}
+			}
+			if err := b.scanFile(ctx, dir, f, fileVisit); err != nil {
 				return err
 			}
 		}
+	}
+	if !started {
+		return fmt.Errorf("the progress file's cursor names file %s, which work item %s does not hold", from.File, item.Key())
 	}
 	return nil
 }
@@ -521,9 +542,9 @@ func (b *rowBuilder) buildRow(file string, record uint64, cells []csvfmt.Value, 
 	return visit(row{msg: msg, file: file, record: record})
 }
 
-// readSources assembles every record of every source of item in order.
-func (b *rowBuilder) readSources(ctx context.Context, dir string, item *WorkItem, visit func(row) error) error {
-	return b.scanSources(ctx, dir, item, func(file string, record uint64, cells []csvfmt.Value) error {
+// readSources assembles every record of every source of item in order, after the cursor from.
+func (b *rowBuilder) readSources(ctx context.Context, dir string, item *WorkItem, from *csvCursor, visit func(row) error) error {
+	return b.scanSources(ctx, dir, item, from, func(file string, record uint64, cells []csvfmt.Value) error {
 		return b.buildRow(file, record, cells, visit)
 	})
 }
@@ -534,11 +555,12 @@ func (b *rowBuilder) readSources(ctx context.Context, dir string, item *WorkItem
 // file order too: the target's repair refuses a revision older than the newest one an entity
 // holds and resolves a same-revision conflict deterministically (a tombstone wins, then the
 // smaller delete time), so every entity ends at its latest revision whatever the order.
-func (b *rowBuilder) itemRows(ctx context.Context, dir string, item *WorkItem, emit func(row) error) error {
+// A resumed item starts after the cursor from (nil from its first row).
+func (b *rowBuilder) itemRows(ctx context.Context, dir string, item *WorkItem, from *csvCursor, emit func(row) error) error {
 	if item.Kind == SegmentItem {
-		return b.segmentRows(ctx, dir, item, emit)
+		return b.segmentRows(ctx, dir, item, from, emit)
 	}
-	return b.readSources(ctx, dir, item, emit)
+	return b.readSources(ctx, dir, item, from, emit)
 }
 
 // rowPos is where a row sits in the artifact.
@@ -552,10 +574,11 @@ type rowPos struct {
 // of each (name, entity), the larger timestamp on a version tie and the first seen on a full
 // tie, and the second sends the rows at those positions, so memory holds the max-version
 // table rather than the rows. The target keeps one document per series and the last write
-// wins, so sending one row per series keeps arrival order from deciding the result.
-func (b *rowBuilder) segmentRows(ctx context.Context, dir string, item *WorkItem, emit func(row) error) error {
+// wins, so sending one row per series keeps arrival order from deciding the result. A resumed
+// item still reads every row in the first pass and skips those up to the cursor in the second.
+func (b *rowBuilder) segmentRows(ctx context.Context, dir string, item *WorkItem, from *csvCursor, emit func(row) error) error {
 	if b.catalog != commonv1.Catalog_CATALOG_MEASURE || len(item.Sources) <= 1 {
-		return b.readSources(ctx, dir, item, emit)
+		return b.readSources(ctx, dir, item, from, emit)
 	}
 	type winner struct {
 		pos     rowPos
@@ -564,7 +587,7 @@ func (b *rowBuilder) segmentRows(ctx context.Context, dir string, item *WorkItem
 	}
 	winners := map[string]winner{}
 	var key []byte
-	err := b.scanSources(ctx, dir, item, func(file string, record uint64, cells []csvfmt.Value) error {
+	err := b.scanSources(ctx, dir, item, nil, func(file string, record uint64, cells []csvfmt.Value) error {
 		var v, ts int64
 		var keyErr error
 		if key, v, ts, keyErr = b.measureKey(key[:0], cells); keyErr != nil {
@@ -583,7 +606,7 @@ func (b *rowBuilder) segmentRows(ctx context.Context, dir string, item *WorkItem
 		keep[w.pos] = struct{}{}
 	}
 	clear(winners)
-	return b.scanSources(ctx, dir, item, func(file string, record uint64, cells []csvfmt.Value) error {
+	return b.scanSources(ctx, dir, item, from, func(file string, record uint64, cells []csvfmt.Value) error {
 		if _, ok := keep[rowPos{file: file, record: record}]; !ok {
 			return nil
 		}

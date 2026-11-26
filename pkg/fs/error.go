@@ -19,6 +19,7 @@
 package fs
 
 import (
+	"errors"
 	"fmt"
 	iofs "io/fs"
 )
@@ -38,10 +39,16 @@ const (
 	otherError
 )
 
+// ErrLockHeld matches, through errors.Is, the error of CreateLockFile when another open file
+// holds the lock. Any other failure to open or lock the file does not match it.
+var ErrLockHeld = errors.New("the file is locked by another process")
+
 // FileSystemError implements the Error interface.
 type FileSystemError struct {
 	Message string
 	Code    int
+	// held marks a lockError whose lock another open file holds.
+	held bool
 }
 
 func (err *FileSystemError) Error() string {
@@ -50,7 +57,8 @@ func (err *FileSystemError) Error() string {
 
 // Is reports whether the error matches one of the standard io/fs sentinel
 // errors, so callers can use errors.Is with iofs.ErrNotExist, iofs.ErrExist
-// and iofs.ErrPermission regardless of the underlying OS error wrapping.
+// and iofs.ErrPermission regardless of the underlying OS error wrapping,
+// and with ErrLockHeld for a lock another open file holds.
 // The target is compared directly (no recursive errors.Is) to mirror the
 // convention used by syscall.Errno.Is in the standard library.
 func (err *FileSystemError) Is(target error) bool {
@@ -61,6 +69,8 @@ func (err *FileSystemError) Is(target error) bool {
 		return err.Code == isExistError
 	case iofs.ErrPermission:
 		return err.Code == permissionError
+	case ErrLockHeld:
+		return err.Code == lockError && err.held
 	}
 	return false
 }

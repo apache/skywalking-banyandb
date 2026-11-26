@@ -65,6 +65,11 @@ func StageWarnings(groups []*commonv1.Group, result *cluster.PlanResult) []strin
 	for _, g := range groups {
 		declared[g.GetMetadata().GetName()] = StageNames(g)
 	}
+	return stageWarnings(declared, result)
+}
+
+// stageWarnings is StageWarnings over the stage names each group declares.
+func stageWarnings(declared map[string][]string, result *cluster.PlanResult) []string {
 	var warnings []string
 	for _, f := range result.Frames {
 		stage := f.GetStage() // cluster.RunPlan already normalized it

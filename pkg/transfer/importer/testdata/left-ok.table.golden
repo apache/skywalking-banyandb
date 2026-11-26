@@ -1,0 +1,5 @@
+CATALOG   GROUP      STAGE  ITEMS  ROWS  EST-SIZE  TARGET-NODES  TIME-RANGE(UTC)
+measure   sw_metric  hot    3      164   40 B      data-a        10-18 ~ 10-18
+measure   sw_metric  warm   1      80    10 B      data-a        10-10 ~ 10-12
+property  sw_prop    -      2      10    30 B      data-a        -
+stream    sw_stream  hot    1      2.0K  10 B      data-a        10-18 ~ 10-18

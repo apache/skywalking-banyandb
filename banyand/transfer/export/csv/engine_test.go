@@ -20,7 +20,6 @@ package csv
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,46 +63,6 @@ const (
 	engTraceGroup   = "exp_trace"
 )
 
-// indexModeWalker reads index-mode measure rows the way the measure backend exposes them
-// to the export unit.
-type indexModeWalker struct{}
-
-func (indexModeWalker) ExportIndexModeRows(ctx context.Context, sidxDir string, measures []*databasev1.Measure, rules []*databasev1.IndexRule,
-	visit func(subject string, timestamp, version int64, tags map[string]*modelv1.TagValue, unknownFields int) error,
-) error {
-	return measure.WalkIndexModeRows(ctx, sidxDir, measures, rules, func(r *measure.IndexModeRow) error {
-		return visit(r.Subject, r.Timestamp, r.Version, r.Tags, r.UnknownFields)
-	})
-}
-
-// unmergeableTopN is a Top-N result value the fake merger refuses, like a corrupt one.
-const unmergeableTopN = "unmergeable"
-
-// MergeTopNResults stands in for the measure backend's merge of Top-N result versions: the
-// test values are not engine encodings, so it joins them, the latest first.
-func (indexModeWalker) MergeTopNResults(entity []*modelv1.TagValue, _, _, _ int64, left, right []byte) ([]byte, error) {
-	if len(entity) != 4 {
-		return nil, fmt.Errorf("unexpected Top-N entity %v", entity)
-	}
-	if string(left) == unmergeableTopN || string(right) == unmergeableTopN {
-		return nil, errors.New("cannot merge a corrupt Top-N result")
-	}
-	return []byte(string(left) + "+" + string(right)), nil
-}
-
-// snapshotter is the part of a storage service that takes export snapshots.
-type snapshotter interface {
-	GetExportSnapshotDir() string
-	TakeExportSnapshot(ctx context.Context, name string, groups []string) error
-}
-
-// engineGroup is a group of a storage service.
-type engineGroup struct {
-	svc     snapshotter
-	name    string
-	catalog commonv1.Catalog
-}
-
 // producedUnit is one segment unit and what producing it returned.
 type producedUnit struct {
 	unit     *transferv1.SegmentUnit
@@ -111,33 +70,13 @@ type producedUnit struct {
 	warnings []string
 }
 
-func strTV(s string) *modelv1.TagValue {
-	return &modelv1.TagValue{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: s}}}
-}
-
-func intTV(v int64) *modelv1.TagValue {
-	return &modelv1.TagValue{Value: &modelv1.TagValue_Int{Int: &modelv1.Int{Value: v}}}
-}
-
-func dayGroup(name string, catalog commonv1.Catalog) *commonv1.Group {
-	return &commonv1.Group{
-		Metadata: &commonv1.Metadata{Name: name},
-		Catalog:  catalog,
-		ResourceOpts: &commonv1.ResourceOpts{
-			ShardNum:        1,
-			SegmentInterval: &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 1},
-			Ttl:             &commonv1.IntervalRule{Unit: commonv1.IntervalRule_UNIT_DAY, Num: 7},
-		},
-	}
-}
-
 func registerEngineSchemas(t *testing.T, metaSvc metadataservice.Service) {
 	reg := metaSvc.SchemaRegistry()
 	ctx := context.Background()
 	for _, g := range []*commonv1.Group{
-		dayGroup(engStreamGroup, commonv1.Catalog_CATALOG_STREAM),
-		dayGroup(engMeasureGroup, commonv1.Catalog_CATALOG_MEASURE),
-		dayGroup(engTraceGroup, commonv1.Catalog_CATALOG_TRACE),
+		DayGroup(engStreamGroup, commonv1.Catalog_CATALOG_STREAM),
+		DayGroup(engMeasureGroup, commonv1.Catalog_CATALOG_MEASURE),
+		DayGroup(engTraceGroup, commonv1.Catalog_CATALOG_TRACE),
 	} {
 		_, err := reg.CreateGroup(ctx, g)
 		require.NoError(t, err)
@@ -256,7 +195,7 @@ func unitWarnings(units []*producedUnit) []string {
 // topNPoint is a version of the data point of the Top-N aggregation name in the group's
 // internal _top_n_result measure.
 func topNPoint(base time.Time, name string, version int64, value string) *measurev1.InternalWriteRequest {
-	topNTags := []*modelv1.TagValue{strTV(name), intTV(1), strTV(engMeasureGroup), strTV("{}")}
+	topNTags := []*modelv1.TagValue{StrTV(name), IntTV(1), StrTV(engMeasureGroup), StrTV("{}")}
 	return &measurev1.InternalWriteRequest{
 		EntityValues: topNTags,
 		Request: &measurev1.WriteRequest{
@@ -278,18 +217,18 @@ func writeSecondBatch(t *testing.T, pipeline queue.Queue, base time.Time) {
 	bp := pipeline.NewBatchPublisher(5 * time.Second)
 	_, err := bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(999), topNPoint(base, "cpm_top", 1, "older")))
 	require.NoError(t, err)
-	_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(998), topNPoint(base, "cpm_bad", 1, unmergeableTopN)))
+	_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(998), topNPoint(base, "cpm_bad", 1, UnmergeableTopN)))
 	require.NoError(t, err)
 	for i := 0; i < 3; i++ {
 		svc := "svc" + strconv.Itoa(i)
 		_, err = bp.Publish(context.Background(), data.TopicMeasureWrite, bus.NewMessage(bus.MessageID(1000+i), &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{strTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "cpm", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: timestamppb.New(base.Add(time.Duration(i) * time.Second)),
 					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
-						strTV(svc), strTV("stale"), strTV("GENERAL"), strTV("zone"), strTV("rack"),
+						StrTV(svc), StrTV("stale"), StrTV("GENERAL"), StrTV("zone"), StrTV("rack"),
 					}}},
 					Fields: []*modelv1.FieldValue{
 						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: 900}}},
@@ -332,23 +271,24 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 		ts := timestamppb.New(base.Add(time.Duration(i) * time.Second))
 		svc := "svc" + strconv.Itoa(i)
 		publish(data.TopicStreamWrite, &streamv1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{strTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &streamv1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "log", Group: engStreamGroup},
 				Element: &streamv1.ElementValue{
 					Timestamp: ts, ElementId: "log" + strconv.Itoa(i),
-					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{strTV(svc), strTV(`\N,` + svc), intTV(int64(200 + i))}}},
+					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV(svc), StrTV(`\N,` + svc), IntTV(int64(200 + i))}}},
 				},
 			},
 		})
 		publish(data.TopicMeasureWrite, &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{strTV(svc)},
+			EntityValues: []*modelv1.TagValue{StrTV(svc)},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "cpm", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp: ts,
 					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{
-						strTV(svc), strTV("plain" + strconv.Itoa(i)), strTV("GENERAL"), strTV("zone" + strconv.Itoa(i)), strTV("rack" + strconv.Itoa(i)),
+						StrTV(svc), StrTV("plain" + strconv.Itoa(i)), StrTV("GENERAL"),
+						StrTV("zone" + strconv.Itoa(i)), StrTV("rack" + strconv.Itoa(i)),
 					}}},
 					Fields: []*modelv1.FieldValue{
 						{Value: &modelv1.FieldValue_Int{Int: &modelv1.Int{Value: int64(100 + i)}}},
@@ -362,23 +302,23 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_top", 2, "latest"))
 	publish(data.TopicMeasureWrite, topNPoint(base, "cpm_bad", 2, "bad-latest"))
 	publish(data.TopicStreamWrite, &streamv1.InternalWriteRequest{
-		EntityValues: []*modelv1.TagValue{strTV("svc9")},
+		EntityValues: []*modelv1.TagValue{StrTV("svc9")},
 		Request: &streamv1.WriteRequest{
 			Metadata: &commonv1.Metadata{Name: "event", Group: engStreamGroup},
 			Element: &streamv1.ElementValue{
 				Timestamp: timestamppb.New(base), ElementId: "event0",
-				TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{strTV("svc9"), strTV("")}}},
+				TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV("svc9"), StrTV("")}}},
 			},
 		},
 	})
 	for i := 0; i < 2; i++ {
 		publishTo("index-mode", data.TopicMeasureWrite, &measurev1.InternalWriteRequest{
-			EntityValues: []*modelv1.TagValue{strTV("id" + strconv.Itoa(i))},
+			EntityValues: []*modelv1.TagValue{StrTV("id" + strconv.Itoa(i))},
 			Request: &measurev1.WriteRequest{
 				Metadata: &commonv1.Metadata{Name: "traffic", Group: engMeasureGroup},
 				DataPoint: &measurev1.DataPointValue{
 					Timestamp:   timestamppb.New(base),
-					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{strTV("id" + strconv.Itoa(i)), strTV("name" + strconv.Itoa(i))}}},
+					TagFamilies: []*modelv1.TagFamilyForWrite{{Tags: []*modelv1.TagValue{StrTV("id" + strconv.Itoa(i)), StrTV("name" + strconv.Itoa(i))}}},
 					Version:     1,
 				},
 			},
@@ -387,14 +327,14 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 	tsTag := &modelv1.TagValue{Value: &modelv1.TagValue_Timestamp{Timestamp: timestamppb.New(base)}}
 	publish(data.TopicTraceWrite, &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
 		Metadata: &commonv1.Metadata{Name: "segment", Group: engTraceGroup},
-		Tags:     []*modelv1.TagValue{strTV("t1"), strTV("s1"), tsTag, strTV("checkout")},
+		Tags:     []*modelv1.TagValue{StrTV("t1"), StrTV("s1"), tsTag, StrTV("checkout")},
 		Span:     []byte("span-one"),
 		TagSpec:  &tracev1.TagSpec{TagNames: []string{"trace_id", "span_id", "timestamp", "service"}},
 		Version:  1,
 	}})
 	publish(data.TopicTraceWrite, &tracev1.InternalWriteRequest{Request: &tracev1.WriteRequest{
 		Metadata: &commonv1.Metadata{Name: "zipkin", Group: engTraceGroup},
-		Tags:     []*modelv1.TagValue{strTV("t2"), strTV("s2"), tsTag, strTV(""), intTV(15)},
+		Tags:     []*modelv1.TagValue{StrTV("t2"), StrTV("s2"), tsTag, StrTV(""), IntTV(15)},
 		Span:     []byte("span-two"),
 		TagSpec:  &tracev1.TagSpec{TagNames: []string{"trace_id", "span_id", "timestamp", "endpoint", "latency"}},
 		Version:  1,
@@ -408,24 +348,24 @@ func writeEngineData(t *testing.T, pipeline queue.Queue, base time.Time) {
 
 // produceAll snapshots every group's service as name and produces each segment of
 // it as one unit holding every shard; it returns the units per catalog.
-func produceAll(t *testing.T, meta metadata.Repo, groups []engineGroup, name string) map[commonv1.Catalog][]*producedUnit {
+func produceAll(t *testing.T, meta metadata.Repo, groups []EngineGroup, name string) map[commonv1.Catalog][]*producedUnit {
 	t.Helper()
 	ctx := context.Background()
 	out := map[commonv1.Catalog][]*producedUnit{}
 	for _, g := range groups {
-		catalog := g.catalog
-		root := filepath.Join(g.svc.GetExportSnapshotDir(), name)
+		catalog := g.Catalog
+		root := filepath.Join(g.Svc.GetExportSnapshotDir(), name)
 		require.NoError(t, os.MkdirAll(root, 0o755))
-		require.NoError(t, g.svc.TakeExportSnapshot(ctx, name, []string{g.name}))
+		require.NoError(t, g.Svc.TakeExportSnapshot(ctx, name, []string{g.Name}))
 		before := hashTree(t, root)
-		groupDir := filepath.Join(root, g.name)
+		groupDir := filepath.Join(root, g.Name)
 		segs, err := os.ReadDir(groupDir)
 		require.NoError(t, err)
 		for _, seg := range segs {
 			if !seg.IsDir() || !strings.HasPrefix(seg.Name(), nativefmt.SegDirPrefix) {
 				continue
 			}
-			unit := &transferv1.SegmentUnit{Catalog: catalog, Group: g.name, SegmentSuffix: strings.TrimPrefix(seg.Name(), nativefmt.SegDirPrefix)}
+			unit := &transferv1.SegmentUnit{Catalog: catalog, Group: g.Name, SegmentSuffix: strings.TrimPrefix(seg.Name(), nativefmt.SegDirPrefix)}
 			segDir := filepath.Join(groupDir, seg.Name())
 			shards, readErr := os.ReadDir(segDir)
 			require.NoError(t, readErr)
@@ -442,7 +382,7 @@ func produceAll(t *testing.T, meta metadata.Repo, groups []engineGroup, name str
 				}
 			}
 			var sent []*transferv1.ExportResponse
-			p := NewProducer(ctx, meta, indexModeWalker{}, &transferv1.ExportRequest_Init{Compress: transferv1.Compress_COMPRESS_GZIP},
+			p := NewProducer(ctx, meta, IndexModeWalker{}, &transferv1.ExportRequest_Init{Compress: transferv1.Compress_COMPRESS_GZIP},
 				func(r *transferv1.ExportResponse) error {
 					sent = append(sent, r)
 					return nil
@@ -549,10 +489,10 @@ func TestProducer_RealEngineData(t *testing.T) {
 	base := time.Now().Truncate(time.Hour)
 	writeEngineData(t, pipeline, base)
 
-	groups := []engineGroup{
-		{catalog: commonv1.Catalog_CATALOG_STREAM, name: engStreamGroup, svc: streamSvc.(snapshotter)},
-		{catalog: commonv1.Catalog_CATALOG_MEASURE, name: engMeasureGroup, svc: measureSvc.(snapshotter)},
-		{catalog: commonv1.Catalog_CATALOG_TRACE, name: engTraceGroup, svc: traceSvc.(snapshotter)},
+	groups := []EngineGroup{
+		{Catalog: commonv1.Catalog_CATALOG_STREAM, Name: engStreamGroup, Svc: streamSvc.(Snapshotter)},
+		{Catalog: commonv1.Catalog_CATALOG_MEASURE, Name: engMeasureGroup, Svc: measureSvc.(Snapshotter)},
+		{Catalog: commonv1.Catalog_CATALOG_TRACE, Name: engTraceGroup, Svc: traceSvc.(Snapshotter)},
 	}
 
 	// Parts flush asynchronously: produce until every written row is there.

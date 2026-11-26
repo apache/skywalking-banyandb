@@ -18,6 +18,7 @@
 package snapshot
 
 import (
+	"errors"
 	"fmt"
 	iofs "io/fs"
 	"os"
@@ -119,4 +120,30 @@ func TestSessionPartIDs(t *testing.T) {
 	write("0000000000000007.snp", `["0000000000000009"]`)
 	_, err = SessionPartIDs(dir)
 	require.ErrorIs(t, err, iofs.ErrNotExist, "a snapshot holding none of its parts")
+}
+
+// LiveRows sums the rows of the live parts, skips a part merged away since the listing, and
+// stops at any other read error.
+func TestLiveRows(t *testing.T) {
+	dir := t.TempDir()
+	for _, part := range []string{"0000000000000001", "0000000000000002", "0000000000000003"} {
+		require.NoError(t, os.Mkdir(filepath.Join(dir, part), 0o755))
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "0000000000000004.snp"),
+		[]byte(`["0000000000000001","0000000000000002","0000000000000003"]`), 0o600))
+	rowsOf := map[string]uint64{"0000000000000001": 5, "0000000000000003": 7}
+
+	rows, err := LiveRows(dir, func(partDir string) (uint64, error) {
+		n, ok := rowsOf[filepath.Base(partDir)]
+		if !ok {
+			return 0, iofs.ErrNotExist
+		}
+		return n, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(12), rows)
+
+	boom := errors.New("boom")
+	_, err = LiveRows(dir, func(string) (uint64, error) { return 0, boom })
+	require.ErrorIs(t, err, boom)
 }
