@@ -1,8 +1,8 @@
 # Design Documents
 
-Design documents are grouped by the milestone in which they were introduced. The current
-milestone sits directly under this directory and holds live working documents; new design work
-must be added there when it is introduced. When a milestone ships, its directory moves into
+Design documents are grouped by the milestone in which they were introduced. Live working documents
+sit directly under this directory, grouped by milestone; new design work must be added under the
+milestone it targets. When a milestone ships, its directory moves into
 [`archive/`](archive/README.md).
 
 ## Current milestone — 0.12.0
@@ -23,6 +23,10 @@ The native inverted-index replacement design shipped and its legacy engine
 dependency has since been fully removed; see
 [`archive/0.12.0/native-inverted-index/README.md`](archive/0.12.0/native-inverted-index/README.md)
 (archived ahead of the rest of 0.12.0, which has not shipped yet).
+
+## Next milestone — 0.13.0
+
+- [Document Index: a first-class document model](0.13.0/document-index/README.md)
 
 ## Shipped milestones
 
