@@ -133,7 +133,7 @@ func TestResolveResume_SkipOfARetryInFlightIsDoneInOneWrite(t *testing.T) {
 	var err error
 	state.PlanDigest, err = writePlan(path, nil, nil)
 	require.NoError(t, err)
-	writes := countingWrites(t)
+	writes := countingFoldWrites(t)
 	track, err := startTracker(context.Background(), path, state, 1, nil)
 	require.NoError(t, err)
 	defer func() { _ = track.close() }()
