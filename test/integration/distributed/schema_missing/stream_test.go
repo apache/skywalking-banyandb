@@ -19,11 +19,10 @@ package schema_missing_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"net"
 	"slices"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -36,6 +35,7 @@ import (
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
 	"github.com/apache/skywalking-banyandb/pkg/test/flags"
 	"github.com/apache/skywalking-banyandb/pkg/test/setup"
+	casesstreamdata "github.com/apache/skywalking-banyandb/test/cases/stream/data"
 )
 
 const streamName = "sw"
@@ -111,7 +111,9 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 	// was just given; a refused row stores nothing, so the whole batch is written again then.
 	write := func(group string, rows int) {
 		Eventually(func(g Gomega) {
-			wc, err := queryClient.Write(ctx)
+			writeCtx, cancel := context.WithTimeout(ctx, flags.EventuallyTimeout)
+			defer cancel()
+			wc, err := queryClient.Write(writeCtx)
 			g.Expect(err).NotTo(HaveOccurred())
 			for i := 0; i < rows; i++ {
 				g.Expect(wc.Send(&streamv1.WriteRequest{
@@ -128,25 +130,7 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 				})).To(Succeed())
 			}
 			g.Expect(wc.CloseSend()).To(Succeed())
-			var statuses []string
-			for {
-				resp, recvErr := wc.Recv()
-				if errors.Is(recvErr, io.EOF) {
-					break
-				}
-				g.Expect(recvErr).NotTo(HaveOccurred())
-				statuses = append(statuses, resp.GetStatus())
-			}
-			succeeded := 0
-			for _, st := range statuses {
-				if st == modelv1.Status_STATUS_SUCCEED.String() {
-					succeeded++
-				}
-			}
-			if succeeded > 0 && succeeded < rows {
-				StopTrying(fmt.Sprintf("the write to %s was partly refused: %v", group, statuses)).Now()
-			}
-			g.Expect(succeeded).To(Equal(rows), "the write to %s was refused: %v", group, statuses)
+			g.Expect(casesstreamdata.ExpectWriteSucceeded(g, wc)).To(HaveLen(rows), "every row of %s is acknowledged", group)
 		}, flags.EventuallyTimeout).Should(Succeed())
 	}
 
@@ -190,9 +174,9 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 		return p
 	}
 	// rowsByNode returns how many rows of group each data node stores, by the node's port.
-	rowsByNode := func(group string) map[string]int64 {
+	rowsByNode := func(g Gomega, group string) map[string]int64 {
 		resp, err := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: group})
-		Expect(err).NotTo(HaveOccurred())
+		g.Expect(err).NotTo(HaveOccurred())
 		rows := map[string]int64{}
 		for _, info := range resp.GetDataInfo() {
 			for _, segment := range info.GetSegmentInfo() {
@@ -239,7 +223,7 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(ids).To(Equal(rowIDs(knownGroup, 0, knownRows)))
 		}, flags.EventuallyTimeout).Should(Succeed())
-		rows := rowsByNode(knownGroup)
+		rows := rowsByNode(Default, knownGroup)
 		Expect(rows).To(HaveLen(dataNodeCount), "every node owns a shard of the known group: %v", rows)
 		Expect(rows[port(missingNode)]).To(BeNumerically(">", 0),
 			"the node to pause must hold rows of the known group, or the multi-group spec proves nothing: %v", rows)
@@ -281,7 +265,7 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 		req := request([]string{missingGroup}, 10, modelv1.Sort_SORT_ASC)
 		req.Name = "not_registered"
 		_, err := query(req)
-		Expect(err).To(HaveOccurred(), "only a data node skips a schema it lacks; the liaison still reports it")
+		Expect(err).To(MatchError(ContainSubstring("stream %s", req.Name)), "only a data node skips a schema it lacks; the liaison still reports it")
 	})
 
 	It("returns an empty result when every data node misses the schema", func() {
@@ -300,6 +284,11 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 			g.Expect(err).NotTo(HaveOccurred(), "the liaison knows the stream, so the query succeeds")
 			g.Expect(ids).To(BeEmpty())
 		}, flags.EventuallyTimeout).Should(Succeed())
+		// Inspect reports one error for each node lacking the group.
+		_, inspectErr := groupClient.Inspect(ctx, &databasev1.GroupRegistryServiceInspectRequest{Group: allMissing})
+		Expect(inspectErr).To(HaveOccurred(), "the data nodes must lack the group, or the empty result proves nothing")
+		Expect(strings.Count(inspectErr.Error(), fmt.Sprintf("group %s not found", allMissing))).To(Equal(dataNodeCount),
+			"every data node must lack the group: %v", inspectErr)
 		for _, addr := range dataNodeAddrs {
 			if addr != missingNode {
 				resume(addr)
@@ -310,6 +299,9 @@ var _ = Describe("Stream query with a data node missing the schema", Ordered, fu
 	It("answers with the same rows once the node catches up", func() {
 		resume(missingNode)
 		Eventually(func(g Gomega) {
+			// The other replicas answer alone until the part sync reaches the resumed node.
+			rows := rowsByNode(g, missingGroup)
+			g.Expect(rows[port(missingNode)]).To(BeNumerically("==", missingRows), "the resumed node must hold the rows: %v", rows)
 			ids, err := query(request([]string{missingGroup}, missingRows+1, modelv1.Sort_SORT_ASC))
 			g.Expect(err).NotTo(HaveOccurred())
 			g.Expect(ids).To(Equal(rowIDs(missingGroup, 0, missingRows)), "replicas are merged into one row each")
