@@ -192,6 +192,9 @@ func TestSeriesIndex_SeriesOrderLimitMatchesFullSearch(t *testing.T) {
 // A criteria that keeps a tiny share of the candidates makes the chunks grow past the descent's fetch cap, where the search
 // ranks the whole filtered universe instead; the result must not change.
 func TestSeriesIndex_SeriesOrderLimitFallsBackPastFetchCap(t *testing.T) {
+	// The default cap is far larger than a unit test can fill, so pin the cap this test exists to cross.
+	defer func(previous int) { topFetchCap = previous }(topFetchCap)
+	topFetchCap = 1 << 15
 	docs := seriesOrderDocs(2, topFetchCap/2+1500, 3000, 7)
 	si := newEmptyOrderIndex(t)
 	insertSeriesOrderDocs(t, si, docs, true)

@@ -231,8 +231,8 @@ func (pmi *partMergeIter) loadBlockMetadata() error {
 	return nil
 }
 
-func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer) {
-	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm)
+func (pmi *partMergeIter) mustLoadBlockData(decoder *encoding.BytesBlockDecoder, block *blockPointer, mergeArrays bool) {
+	block.block.mustSeqReadFrom(decoder, &pmi.seqReaders, pmi.block.bm, mergeArrays)
 }
 
 func generatePartMergeIter() *partMergeIter {

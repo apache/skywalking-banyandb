@@ -23,11 +23,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	"github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
+	"github.com/apache/skywalking-banyandb/pkg/meter/prom"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	resourceSchema "github.com/apache/skywalking-banyandb/pkg/schema"
 )
@@ -505,4 +509,36 @@ func TestDiskMonitor_cleanupSnapshots(t *testing.T) {
 		err := dm.cleanupSnapshots("test-service")
 		assert.Error(t, err)
 	})
+}
+
+type promMetricsRegistry struct {
+	observability.MetricsRegistry
+	reg *prometheus.Registry
+}
+
+func (r *promMetricsRegistry) With(scope meter.Scope) observability.Factory {
+	return services.NewFactory(prom.NewProvider(scope, r.reg), nil, nil)
+}
+
+// TestNewDiskMonitorCreatesSegmentsDeletedAtZero asserts that the forced-retention deletion counter exists at zero
+// before any deletion, so that increase() sees the first one.
+func TestNewDiskMonitorCreatesSegmentsDeletedAtZero(t *testing.T) {
+	service := NewMockRetentionService()
+	service.serviceName = "measure"
+	reg := prometheus.NewRegistry()
+
+	NewDiskMonitor(service, RetentionConfig{CheckInterval: time.Minute}, &promMetricsRegistry{MetricsRegistry: observability.BypassRegistry, reg: reg})
+
+	families, err := reg.Gather()
+	require.NoError(t, err)
+	values := make(map[string]float64)
+	for _, family := range families {
+		if family.GetName() != "banyandb_storage_retention_measure_forced_retention_segments_deleted_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			values[metric.GetLabel()[0].GetValue()] = metric.GetCounter().GetValue()
+		}
+	}
+	require.Equal(t, map[string]float64{"measure": 0}, values)
 }

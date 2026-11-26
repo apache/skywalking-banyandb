@@ -101,6 +101,15 @@ jobs:
             config: test/e2e-v2/cases/transfer/native/e2e.yaml
             # The same cases as Transfer CSV in the native format; it needs the same artifacts.
             download-artifacts: 'true'
+          - name: Transfer Resume CSV
+            config: test/e2e-v2/cases/transfer/resume-csv/e2e.yaml
+            # Interrupted, killed and resumed exports and imports; builds bydbctl and the export
+            # checker on the host like Transfer CSV, so it needs the same artifacts.
+            download-artifacts: 'true'
+          - name: Transfer Resume Native
+            config: test/e2e-v2/cases/transfer/resume-native/e2e.yaml
+            # The same cases as Transfer Resume CSV in the native format, plus reconciliation.
+            download-artifacts: 'true'
     env:
       TAG: ${{ github.sha }}
     steps:
@@ -124,7 +133,7 @@ jobs:
           docker load --input /tmp/banyandb-testing-image.tar.gz
           docker image ls
       - name: Login to ghcr
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
@@ -146,7 +155,7 @@ jobs:
         run: |
           bash test/e2e-v2/cases/lifecycle/data-generator/gen.sh
       - name: ${{ matrix.test.name }}
-        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
+        uses: apache/skywalking-infra-e2e@7268db19f49b0b88554ba2c255361b9fc1d7d7bc
         with:
           e2e-file: $GITHUB_WORKSPACE/${{ matrix.test.config }}
       - name: Fix directory permissions
@@ -207,7 +216,7 @@ jobs:
       - name: Load docker image
         run: docker load --input /tmp/banyandb-testing-image.tar.gz
       - name: Run nightly RBAC cluster stress
-        uses: apache/skywalking-infra-e2e@56ac8befeb5f910f2dc9339e65d07cd18953f90e
+        uses: apache/skywalking-infra-e2e@7268db19f49b0b88554ba2c255361b9fc1d7d7bc
         with:
           e2e-file: $GITHUB_WORKSPACE/test/e2e-v2/cases/rbac-cluster/e2e-stress.yaml
       - if: ${{ failure() }}

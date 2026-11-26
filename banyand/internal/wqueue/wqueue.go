@@ -32,6 +32,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
@@ -69,6 +70,7 @@ type Opts[S SubQueue, O any] struct {
 	SubQueueCreatorWithLease SubQueueCreatorWithLease[S, O]
 	RootLeaseFactory         storage.RootLeaseFactory
 	GetNodes                 func(common.ShardID) []string
+	Collect                  func(S)
 	Metrics                  storage.Metrics
 	MetricsFactory           observability.Factory
 	Option                   O
@@ -120,6 +122,10 @@ func (q *Queue[S, O]) Close() error {
 		return nil
 	}
 	q.closed.Store(true)
+	// Unregister before closing shards so no collection runs against closed sub-queues.
+	if q.opts.Collect != nil {
+		obsservice.MetricsCollector.Unregister(q.location)
+	}
 	q.Lock()
 	defer q.Unlock()
 	for _, shard := range q.sLst {
@@ -184,6 +190,13 @@ func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Q
 			panic(fmt.Errorf("create root lease: %w", leaseErr))
 		}
 		q.rootLease = rootLease
+	}
+	if opts.Collect != nil {
+		obsservice.MetricsCollector.Register(location, func() {
+			for _, sq := range q.SubQueues() {
+				q.opts.Collect(sq)
+			}
+		})
 	}
 	return q, nil
 }

@@ -24,8 +24,9 @@ import (
 	"fmt"
 	"iter"
 	"os"
-	"path/filepath"
 	"strings"
+
+	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 )
 
 // ArtifactVersion is the artifact layout version written by this package.
@@ -227,51 +228,7 @@ func Write(path string, m *Manifest) (err error) {
 	if out.Source.Nodes == nil {
 		out.Source.Nodes = []Node{}
 	}
-	data, err := json.MarshalIndent(&out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-	data = append(data, '\n')
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create temp manifest: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() {
-		if err != nil {
-			_ = tmp.Close()
-			_ = os.Remove(tmpName)
-		}
-	}()
-	if err = tmp.Chmod(0o600); err != nil {
-		return fmt.Errorf("chmod temp manifest: %w", err)
-	}
-	if _, err = tmp.Write(data); err != nil {
-		return fmt.Errorf("write temp manifest: %w", err)
-	}
-	if err = tmp.Sync(); err != nil {
-		return fmt.Errorf("sync temp manifest: %w", err)
-	}
-	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("close temp manifest: %w", err)
-	}
-	if err = os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename manifest: %w", err)
-	}
-	return syncDir(dir)
-}
-
-func syncDir(dir string) error {
-	d, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("open manifest dir: %w", err)
-	}
-	defer d.Close()
-	if err = d.Sync(); err != nil {
-		return fmt.Errorf("sync manifest dir: %w", err)
-	}
-	return nil
+	return resume.WriteFile(path, &out)
 }
 
 // Read loads a manifest written by Write.

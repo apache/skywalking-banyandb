@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -85,7 +86,17 @@ type TransformResult struct {
 	QueryRequest proto.Message
 	Original     *Grammar
 	Type         QueryType
+	// Offset is how many leading rows of the response to skip, for a query whose native request has no offset of its own
+	// (a property query): the request then asks for offset+limit rows and the caller drops the first Offset.
+	Offset uint32
+	// Empty is set when a stream, trace or property statement asks for no row at all (LIMIT 0). Measure keeps its pinned
+	// legacy contract, where LIMIT 0 is the default page. The request must not be executed as it is: a native
+	// request reads a limit of 0 as "the default limit" and would return a full default page.
+	Empty bool
 }
+
+// defaultPropertyLimit is the limit a property query gets when it names none; the liaison applies the same default.
+const defaultPropertyLimit = 100
 
 // Transformer transforms a Grammar into a native query request.
 type Transformer struct {
@@ -296,6 +307,7 @@ func (r *transformRun) transformStreamQuery(ctx context.Context, grammar *Gramma
 
 	return &TransformResult{
 		Type:     QueryTypeStream,
+		Empty:    statement.Limit != nil && limit == 0,
 		Original: grammar,
 		QueryRequest: &streamv1.QueryRequest{
 			Groups:     groups,
@@ -509,6 +521,7 @@ func (r *transformRun) transformTraceQuery(ctx context.Context, grammar *Grammar
 
 	return &TransformResult{
 		Type:     QueryTypeTrace,
+		Empty:    statement.Limit != nil && limit == 0,
 		Original: grammar,
 		QueryRequest: &tracev1.QueryRequest{
 			Groups:        groups,
@@ -599,10 +612,22 @@ func (r *transformRun) transformPropertyQuery(ctx context.Context, grammar *Gram
 		}
 	}
 
-	// handle limit
-	var limit uint32
+	// handle limit and offset: a property request has no offset, so a query that pages asks for offset+limit rows and the
+	// caller skips the first offset of them.
+	var limit, offset uint32
 	if statement.Limit != nil {
 		limit = uint32(r.resolveCount(statement.Limit.Value, statement.Limit.Param, statement.Limit.ParamIndex))
+	}
+	empty := statement.Limit != nil && limit == 0
+	if statement.Offset != nil {
+		offset = uint32(r.resolveCount(statement.Offset.Value, statement.Offset.Param, statement.Offset.ParamIndex))
+	}
+	if offset > 0 && !empty {
+		page := limit
+		if page == 0 {
+			page = defaultPropertyLimit
+		}
+		limit = uint32(min(uint64(offset)+uint64(page), uint64(math.MaxUint32)))
 	}
 
 	// handle ORDER BY
@@ -619,6 +644,8 @@ func (r *transformRun) transformPropertyQuery(ctx context.Context, grammar *Gram
 
 	return &TransformResult{
 		Type:     QueryTypeProperty,
+		Offset:   offset,
+		Empty:    empty,
 		Original: grammar,
 		QueryRequest: &propertyv1.QueryRequest{
 			Groups:        groups,

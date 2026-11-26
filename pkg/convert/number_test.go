@@ -32,6 +32,7 @@ func TestInt64ToBytes(t *testing.T) {
 		expected []byte
 		input    int64
 	}{
+		{[]byte{0, 0, 0, 0, 0, 0, 0, 0}, math.MinInt64},
 		{[]byte{127, 255, 255, 255, 255, 255, 255, 156}, -100},
 		{[]byte{127, 255, 255, 255, 255, 255, 255, 254}, -2},
 		{[]byte{127, 255, 255, 255, 255, 255, 255, 255}, -1},
@@ -39,6 +40,7 @@ func TestInt64ToBytes(t *testing.T) {
 		{[]byte{128, 0, 0, 0, 0, 0, 0, 1}, 1},
 		{[]byte{128, 0, 0, 0, 0, 0, 0, 2}, 2},
 		{[]byte{128, 0, 0, 0, 0, 0, 0, 100}, 100},
+		{[]byte{255, 255, 255, 255, 255, 255, 255, 255}, math.MaxInt64},
 	}
 
 	for _, tc := range testCases {
@@ -47,8 +49,24 @@ func TestInt64ToBytes(t *testing.T) {
 			if !bytes.Equal(result, tc.expected) {
 				t.Errorf("Expected %v, got %v", tc.expected, result)
 			}
+			require.Equal(t, tc.input, BytesToInt64(result))
+			dst := make([]byte, 2, 10)
+			copy(dst, []byte{0x01, 0x02})
+			appended := AppendInt64Bytes(dst, tc.input)
+			require.Same(t, &dst[0], &appended[0], "should use the provided storage")
+			require.Equal(t, []byte{0x01, 0x02}, appended[:2], "should preserve the prefix")
+			require.Equal(t, tc.expected, appended[2:])
 		})
 	}
+}
+
+func TestAppendInt64BytesDoesNotAllocateWithCapacity(t *testing.T) {
+	dst := make([]byte, 0, 8)
+	allocations := testing.AllocsPerRun(100, func() {
+		dst = AppendInt64Bytes(dst[:0], math.MinInt64)
+	})
+	require.Zero(t, allocations)
+	require.Equal(t, int64(math.MinInt64), BytesToInt64(dst))
 }
 
 func TestFloat64ToOrderedBytes_Roundtrip(t *testing.T) {

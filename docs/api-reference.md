@@ -572,6 +572,7 @@
     - [TargetsResponse.Shard](#banyandb-transfer-v1-TargetsResponse-Shard)
   
     - [ImportPartsRequest.Kind](#banyandb-transfer-v1-ImportPartsRequest-Kind)
+    - [ImportPartsResponse.FailureCause](#banyandb-transfer-v1-ImportPartsResponse-FailureCause)
   
     - [ImportService](#banyandb-transfer-v1-ImportService)
   
@@ -8099,7 +8100,7 @@ PlanSummary closes the stream.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | preempted_session_ids | [string](#string) | repeated | Sessions removed while creating because preempt was set (deduplicated, sorted). |
-| unreachable_nodes | [string](#string) | repeated | Data nodes the liaison could not plan (live directories and ReadSession only; CreateSession treats any of these as a failure instead): a transport failure, no next frame within the liaison&#39;s maximum wait for a node&#39;s Plan, NotFound (the node no longer holds the requested session), or a data node without ExportService (UNIMPLEMENTED, an older version during a rolling upgrade). Unit frames already stamped with such a node_id are partial and must be dropped. |
+| unreachable_nodes | [string](#string) | repeated | Data nodes the liaison could not plan (live directories and ReadSession only; CreateSession treats any of these as a failure instead): a transport failure, no next frame within the liaison&#39;s maximum wait for a node&#39;s Plan, NotFound (the node no longer holds the requested session), FAILED_PRECONDITION on a node outside a non-empty ReadSession.required_nodes (its lease expired or is unreadable), or a data node without ExportService (UNIMPLEMENTED, an older version during a rolling upgrade). Unit frames already stamped with such a node_id are partial and must be dropped. |
 | answered_nodes | [string](#string) | repeated | Data nodes whose Plan stream completed normally, whether or not they held any unit. Every node the liaison planned is in exactly one of answered_nodes and unreachable_nodes, so unreachable_nodes is the coverage gap a client must report. |
 
 
@@ -8169,6 +8170,7 @@ so the result is the same frozen view CreateSession returned.
 | Field | Type | Label | Description |
 | ----- | ---- | ----- | ----------- |
 | id | [string](#string) |  |  |
+| required_nodes | [string](#string) | repeated | The data nodes that must still hold a readable lease of the session: the nodes the client has units left to export from. Empty: every node. A node outside the list whose lease expired or is unreadable (FAILED_PRECONDITION) is reported in unreachable_nodes like one that no longer holds the session, as the client needs nothing more from it; on a listed node, or with the list empty, it fails the whole call. A liaison that predates the field ignores it and fails the call for any node. |
 
 
 
@@ -8293,6 +8295,7 @@ streams back one SessionsResponse per node.
 | ----- | ---- | ----- | ----------- |
 | action | [SessionsRequest.Action](#banyandb-transfer-v1-SessionsRequest-Action) |  |  |
 | session_id | [string](#string) |  | Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST. |
+| required_nodes | [string](#string) | repeated | ACTION_HEARTBEAT only, ignored by the other actions: the data nodes that must still hold a readable lease of the session, the nodes the client has units left to export from. Empty: every node. A node outside the list whose lease expired or is unreadable (FAILED_PRECONDITION) answers an `error` frame instead of failing the call, as the client needs nothing more from it; on a listed node, or with the list empty, it fails the whole call. A liaison that predates the field ignores it and fails the call for any node. |
 
 
 
@@ -8311,7 +8314,7 @@ SessionsResponse is one data node&#39;s answer.
 | session | [SessionLease](#banyandb-transfer-v1-SessionLease) |  | ACTION_LIST: the session this node holds. One session id covers the whole cluster, so a node reports at most one: the newest when leftovers of older sessions exist. |
 | none | [Ack](#banyandb-transfer-v1-Ack) |  | ACTION_LIST: the node holds no session. ACTION_RELEASE: the node did not hold session_id, so there was nothing to delete; this is still a success. |
 | done | [Ack](#banyandb-transfer-v1-Ack) |  | ACTION_HEARTBEAT: the node renewed the lease. ACTION_RELEASE: the node held the session and deleted it. |
-| error | [string](#string) |  | ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is still sent so the client can tell which nodes failed. ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data node without ExportService. An expired or unreadable lease, or any other node error, fails the whole call instead (FAILED_PRECONDITION for the lease). ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data node without ExportService. A node that does not hold the session answers `none`. |
+| error | [string](#string) |  | ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is still sent so the client can tell which nodes failed. ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data node without ExportService, or (only for a node outside a non-empty required_nodes) its lease expired or is unreadable. An expired or unreadable lease on any other node, or any other node error, fails the whole call instead (FAILED_PRECONDITION for the lease). ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data node without ExportService. A node that does not hold the session answers `none`. |
 
 
 
@@ -8647,7 +8650,8 @@ TargetResult is the result of one target data node.
 | node | [string](#string) |  |  |
 | success | [bool](#bool) |  |  |
 | error | [string](#string) |  |  |
-| completion_sent | [bool](#bool) |  | completion_sent tells that the completion reached this target and its failure came after it (the stream broke before the answer), so the target may have committed the payload. A client must not push such a payload again when storing it twice duplicates data. |
+| completion_sent | [bool](#bool) |  | completion_sent tells that the completion reached this target and the target failed without answering it, so it may have committed the payload. A client must not push such a payload again when storing it twice duplicates data. It is false with FAILURE_CAUSE_REFUSED: an answer, even a refusal, is a definite outcome. |
+| failure_cause | [ImportPartsResponse.FailureCause](#banyandb-transfer-v1-ImportPartsResponse-FailureCause) |  | failure_cause tells why the target failed; it is FAILURE_CAUSE_UNSPECIFIED on a success. A client takes a value it does not know as FAILURE_CAUSE_UNSPECIFIED. |
 
 
 
@@ -8955,6 +8959,22 @@ listed below with INVALID_ARGUMENT.
 | KIND_SERIES_INDEX | 2 | KIND_SERIES_INDEX is the series index segments of one segment; it is sent to the union of the nodes of the shards in Init.shard_ids (stream, measure, trace). |
 | KIND_ELEMENT_INDEX | 3 | KIND_ELEMENT_INDEX is the element index segments of one stream shard (stream only). |
 | KIND_PROPERTY | 4 | KIND_PROPERTY is the native index files of one property shard (property only). |
+
+
+
+<a name="banyandb-transfer-v1-ImportPartsResponse-FailureCause"></a>
+
+### ImportPartsResponse.FailureCause
+FailureCause tells why a target failed; TargetResult.completion_sent tells when. A client
+takes a value it does not know as FAILURE_CAUSE_UNSPECIFIED.
+
+| Name | Number | Description |
+| ---- | ------ | ----------- |
+| FAILURE_CAUSE_UNSPECIFIED | 0 | FAILURE_CAUSE_UNSPECIFIED is a success, or a failure from a liaison that reports no cause. |
+| FAILURE_CAUSE_UNREACHABLE | 1 | FAILURE_CAUSE_UNREACHABLE is a target whose stream could not be opened: nothing was sent. |
+| FAILURE_CAUSE_REFUSED | 2 | FAILURE_CAUSE_REFUSED is a target that answered a frame with a SyncStatus other than the expected one: a definite outcome. A stream the target ended with a gRPC error status is FAILURE_CAUSE_STREAM_BROKEN. |
+| FAILURE_CAUSE_STREAM_BROKEN | 3 | FAILURE_CAUSE_STREAM_BROKEN is a target whose stream broke: sending or receiving failed. |
+| FAILURE_CAUSE_NO_ANSWER | 4 | FAILURE_CAUSE_NO_ANSWER is a target the liaison stopped waiting for: it answered nothing to one frame within the liaison&#39;s wait. With completion_sent it may still be committing the payload, so a count read soon after cannot tell that it did not land. |
 
 
  

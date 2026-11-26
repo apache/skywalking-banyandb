@@ -71,7 +71,7 @@ func runMultiGroupAgg(t *testing.T, req *measurev1.QueryRequest, groups []*mgBat
 	}
 	collected := make([]*GroupBatches, 0, len(groups))
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, true, true)
 		var group *GroupBatches
 		if dispatchErr == nil {
@@ -330,7 +330,7 @@ func TestMultiGroupAggReduce_ReleasesOnFailure(t *testing.T) {
 	}
 	collected := make([]*GroupBatches, 0, len(groups))
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, true, true)
 		var group *GroupBatches
 		if dispatchErr == nil {
@@ -407,7 +407,7 @@ func TestMultiGroupAggReduce_CancelAtEveryCheckpoint(t *testing.T) {
 		}
 		collected := make([]*GroupBatches, 0, len(groups))
 		for i, g := range groups {
-			result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+			result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 				&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, true, true)
 			var group *GroupBatches
 			if dispatchErr == nil {
@@ -453,7 +453,7 @@ func TestMultiGroupAggConcat_DataNodeKeepsPartials(t *testing.T) {
 	}
 	collected := make([]*GroupBatches, 0, len(groups))
 	for i, g := range groups {
-		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequest(),
+		result, planStr, dispatchErr := DispatchBatches(context.Background(), merge.GroupRequestFor(g.schema.GetMetadata().GetGroup()),
 			&commonv1.Metadata{Name: "demo", Group: g.schema.GetMetadata().GetGroup()}, g.schema, schemas[i], g, cfg, true, true)
 		var group *GroupBatches
 		if dispatchErr == nil {

@@ -25,6 +25,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -34,6 +36,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
 
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
@@ -337,5 +340,165 @@ func TestCompareByMetadataOrdersByGroupThenName(t *testing.T) {
 	}
 	if want := []string{"/a", "/b", "g1/z", "g2/a"}; strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func TestLoad_RebuildsTheExportResult(t *testing.T) {
+	r, groups := registry()
+	dir := t.TempDir()
+	want, err := Export(context.Background(), serve(t, r), groups, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want.Files, got.Files) || !reflect.DeepEqual(want.revisions, got.revisions) {
+		t.Fatalf("Load = %+v %v, Export = %+v %v", got.Files, got.revisions, want.Files, want.revisions)
+	}
+	// Export lists the measures group by group, Load reads them in file order.
+	byName := func(ms []*databasev1.Measure) []*databasev1.Measure {
+		out := slices.Clone(ms)
+		slices.SortFunc(out, func(a, b *databasev1.Measure) int { return compareByMetadata(a, b) })
+		return out
+	}
+	wantMeasures, gotMeasures := byName(want.Measures), byName(got.Measures)
+	if len(wantMeasures) == 0 || !slices.EqualFunc(wantMeasures, gotMeasures, func(a, b *databasev1.Measure) bool { return proto.Equal(a, b) }) {
+		t.Fatalf("measures: loaded %v, exported %v", gotMeasures, wantMeasures)
+	}
+	for _, g := range groups {
+		if !reflect.DeepEqual(want.GroupRevisions(g.GetCatalog(), g.GetMetadata().GetName()), got.GroupRevisions(g.GetCatalog(), g.GetMetadata().GetName())) {
+			t.Fatalf("group %s revisions differ", g.GetMetadata().GetName())
+		}
+	}
+	if err = os.Remove(filepath.Join(dir, Dir, KindTrace+".jsonl")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = Load(dir); err == nil {
+		t.Fatal("a missing schema file must fail the load")
+	}
+}
+
+func TestFingerprints_ExportLoadAndLiveAgree(t *testing.T) {
+	r, groups := registry()
+	dir := t.TempDir()
+	conn := serve(t, r)
+	exported, err := Export(context.Background(), conn, groups, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := Live(context.Background(), conn, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(exported.Fingerprints()) != 4+2+1+1+1+3+1+1 {
+		t.Fatalf("every resource has a fingerprint: %v", exported.Fingerprints())
+	}
+	if !maps.Equal(exported.Fingerprints(), loaded.Fingerprints()) || !maps.Equal(exported.Fingerprints(), live) {
+		t.Fatalf("fingerprints differ:\nexport %v\nload   %v\nlive   %v", exported.Fingerprints(), loaded.Fingerprints(), live)
+	}
+	if got := exported.Fingerprints()["measure sw_metric/service_cpm"]; got != "revision 7" {
+		t.Fatalf("a measure is told apart by its revision, got %q", got)
+	}
+
+	r.mu.Lock()
+	r.measures[0] = &databasev1.Measure{Metadata: md("sw_metric", "service_cpm", 70)}
+	// The registry gives a changed resource a new revision.
+	r.rules[0] = &databasev1.IndexRule{Metadata: md("sw_metric", "r1", 2), Tags: []string{"x"}}
+	r.bindings = nil
+	r.topNs = append(r.topNs, &databasev1.TopNAggregation{Metadata: md("sw_metric", "top2", 1)})
+	r.mu.Unlock()
+	live, err = Live(context.Background(), conn, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diff := DiffFingerprints(loaded.Fingerprints(), live)
+	if len(diff) != 4 || diff[0] != "indexRule sw_metric/r1: recorded revision 1, now revision 2" ||
+		diff[1] != "indexRuleBinding sw_record/b1: removed" || diff[2] != "measure sw_metric/service_cpm: recorded revision 7, now revision 70" ||
+		diff[3] != "topNAggregation sw_metric/top2: added" {
+		t.Fatalf("diff = %q", diff)
+	}
+	if DiffFingerprints(live, live) != nil {
+		t.Fatal("equal fingerprints have no diff")
+	}
+}
+
+// A server newer than this bydbctl sends fields it does not know. The schema file, written as
+// protojson, loses them; the resource listed again keeps them. The same resource must still have
+// the same fingerprint, of every kind.
+func TestFingerprints_UnknownFieldsOfANewerServerDoNotCount(t *testing.T) {
+	r, groups := registry()
+	unknown := protowire.AppendVarint(protowire.AppendTag(nil, 999, protowire.VarintType), 1)
+	withUnknown := func(m proto.Message) { m.ProtoReflect().SetUnknown(unknown) }
+	for _, g := range groups {
+		withUnknown(g)
+	}
+	for _, m := range r.measures {
+		withUnknown(m)
+	}
+	for _, m := range r.rules {
+		withUnknown(m)
+	}
+	for _, m := range r.bindings {
+		withUnknown(m)
+	}
+	for _, m := range r.topNs {
+		withUnknown(m)
+	}
+	dir := t.TempDir()
+	conn := serve(t, r)
+	if _, err := Export(context.Background(), conn, groups, dir); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live, err := Live(context.Background(), conn, groups)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := DiffFingerprints(loaded.Fingerprints(), live); diff != nil {
+		t.Fatalf("unknown fields changed the fingerprints: %q", diff)
+	}
+}
+
+func TestSelect_KeepsTheDataKindsOfTheGivenGroups(t *testing.T) {
+	fp := map[string]string{
+		"group sw_metric":                "revision 1",
+		"measure sw_metric/cpm":          "revision 2",
+		"topNAggregation sw_metric/top":  "revision 3",
+		"indexRule sw_metric/r1":         "revision 4",
+		"indexRuleBinding sw_metric/b1":  "revision 5",
+		"stream sw_record/log":           "revision 6",
+		"property ui/template":           "revision 7",
+		"trace other/segment":            "revision 8",
+		"measure sw_metric_other/cpm":    "revision 9",
+		"stream sw_record_other/log_two": "revision 10",
+	}
+	got := Select(fp, DataKinds, []string{"sw_metric", "ui"})
+	want := map[string]string{"measure sw_metric/cpm": "revision 2", "property ui/template": "revision 7"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Select = %v, want %v", got, want)
+	}
+	if got := Select(fp, DataKinds, nil); len(got) != 0 {
+		t.Fatalf("no group selects nothing: %v", got)
+	}
+}
+
+func TestRestrict_SplitsOffTheAddedResources(t *testing.T) {
+	recorded := map[string]string{"measure g/a": "revision 1", "indexRule g/r": "revision 2", "stream g/gone": "revision 3"}
+	live := map[string]string{"measure g/a": "revision 1", "indexRule g/r": "revision 20", "measure g/new": "revision 4", "indexRuleBinding g/b": "revision 5"}
+	known, added := Restrict(live, recorded)
+	if want := []string{"indexRuleBinding g/b", "measure g/new"}; !reflect.DeepEqual(added, want) {
+		t.Fatalf("added = %v, want %v", added, want)
+	}
+	if want := []string{"indexRule g/r: recorded revision 2, now revision 20", "stream g/gone: removed"}; !reflect.DeepEqual(DiffFingerprints(recorded, known), want) {
+		t.Fatalf("what is left to compare: %v", DiffFingerprints(recorded, known))
 	}
 }

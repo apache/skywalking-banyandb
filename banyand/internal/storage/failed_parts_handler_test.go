@@ -572,3 +572,26 @@ func TestRetryFailedParts_ExponentialBackoff(t *testing.T) {
 	expectedMinDuration := 50*time.Millisecond + 100*time.Millisecond + 200*time.Millisecond
 	assert.GreaterOrEqual(t, totalDuration, expectedMinDuration, "should use exponential backoff")
 }
+
+// A part whose retries are exhausted is reported as permanently failed even when it cannot be copied to
+// failed-parts: the caller counts it either way.
+func TestRetryFailedParts_PermanentlyFailedIncludesUncopiedParts(t *testing.T) {
+	root := t.TempDir()
+	handler := NewFailedPartsHandler(fs.NewLocalFileSystem(), root, logger.GetLogger("test"), 0)
+	handler.initialRetryDelay = time.Millisecond
+	attempts := 0
+	syncFunc := func([]uint64) ([]queue.FailedPart, error) {
+		attempts++
+		return []queue.FailedPart{{PartID: "7", Error: "still failing"}}, nil
+	}
+	partsInfo := map[uint64][]*PartInfo{
+		7: {{PartID: 7, SourcePath: filepath.Join(root, "missing-part"), PartType: "core"}},
+	}
+
+	result, err := handler.RetryFailedParts(context.Background(), []queue.FailedPart{{PartID: "7", Error: "boom"}}, partsInfo, syncFunc)
+
+	require.NoError(t, err)
+	require.Equal(t, []uint64{7}, result)
+	require.Equal(t, handler.maxRetries, attempts)
+	require.Empty(t, fs.NewLocalFileSystem().ReadDir(filepath.Join(root, FailedPartsDirName)), "nothing was copied")
+}

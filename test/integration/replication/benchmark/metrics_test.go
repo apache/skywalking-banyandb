@@ -26,7 +26,7 @@ import (
 func TestParsePromMetrics(t *testing.T) {
 	data := strings.NewReader(`process_cpu_seconds_total 12
 process_resident_memory_bytes 2048
-banyandb_system_cpu_num 4
+banyandb_system_cpu_limit_cores 4
 banyandb_system_memory_state{kind="total"} 8192
 `)
 	metrics, err := parsePromMetrics(data)

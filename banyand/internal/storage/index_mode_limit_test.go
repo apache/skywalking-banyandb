@@ -18,6 +18,7 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -41,23 +42,33 @@ type limitTestRow struct {
 
 func newIndexModeSegment(t *testing.T, rows []limitTestRow) *seriesIndex {
 	t.Helper()
+	return newIndexModeSegmentWith(t, len(rows), func(i int) (string, int64, []index.Field) {
+		return rows[i].service, rows[i].timestamp, nil
+	})
+}
+
+// newIndexModeSegmentWith writes one index-mode segment of count documents. build gives the i-th document's service (its
+// entity value), its timestamp and the fields it carries beside the subject field every index-mode document has.
+func newIndexModeSegmentWith(t *testing.T, count int, build func(i int) (service string, timestamp int64, fields []index.Field)) *seriesIndex {
+	t.Helper()
 	dir, fn := setUp(require.New(t))
 	t.Cleanup(fn)
 	si, err := newSeriesIndex(context.Background(), dir, 0, 0, nil, &testRootLease{})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, si.Close()) })
 	var docs index.Documents
-	for _, row := range rows {
+	for i := 0; i < count; i++ {
+		service, timestamp, fields := build(i)
 		var series pbv1.Series
 		series.Subject = "idx_measure"
-		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: row.service}}}}
+		series.EntityValues = []*modelv1.TagValue{{Value: &modelv1.TagValue_Str{Str: &modelv1.Str{Value: service}}}}
 		require.NoError(t, series.Marshal())
 		subjectField := index.NewStringField(index.FieldKey{TagName: index.IndexModeName}, "idx_measure")
 		subjectField.Index, subjectField.NoSort = true, true
 		docs = append(docs, index.Document{
 			EntityValues: append([]byte(nil), series.Buffer...),
-			Fields:       []index.Field{subjectField},
-			Timestamp:    row.timestamp,
+			Fields:       append([]index.Field{subjectField}, fields...),
+			Timestamp:    timestamp,
 			Version:      1,
 		})
 	}
@@ -201,12 +212,78 @@ func TestSeriesIndex_IndexModeLimitProjectsOnlyTheLimit(t *testing.T) {
 	require.True(t, sd.LimitApplied)
 }
 
-// An index order and an unordered search ignore the limit: they return every row and never ask about shadowing.
-func TestSeriesIndex_IndexModeLimitIgnoredWithoutTimeOrder(t *testing.T) {
+// A limit with no order returns any Limit rows that nothing shadows and reads the stored fields of only those.
+func TestSeriesIndex_IndexModeLimitWithoutOrder(t *testing.T) {
+	var rows []limitTestRow
+	for i := 0; i < 2000; i++ {
+		rows = append(rows, limitTestRow{service: fmt.Sprintf("svc-%04d", i), timestamp: 1000})
+	}
+	si := newIndexModeSegment(t, rows)
+	asked := false
+	sd, sortedValues, err := si.SearchWithoutSeries(context.Background(), IndexSearchOpts{
+		IndexModeSubject: "idx_measure", Limit: 3, TimeRange: limitTestAllTime(),
+		IsShadowed: func(context.Context, [][]byte) (map[string]struct{}, error) { asked = true; return nil, nil },
+	})
+	require.NoError(t, err)
+	require.Len(t, sd.SeriesList, 3)
+	require.Empty(t, sortedValues)
+	require.True(t, sd.LimitApplied)
+	require.True(t, asked)
+}
+
+// A limit with no order skips the rows a newer segment shadows, and lists more candidates while the prefix it listed
+// leaves fewer than Limit rows.
+func TestSeriesIndex_IndexModeLimitWithoutOrderSkipsShadowed(t *testing.T) {
+	var rows []limitTestRow
+	for i := 0; i < 400; i++ {
+		rows = append(rows, limitTestRow{service: fmt.Sprintf("svc-%04d", i), timestamp: 1000})
+	}
+	si := newIndexModeSegment(t, rows)
+	all, _, err := si.SearchWithoutSeries(context.Background(), IndexSearchOpts{IndexModeSubject: "idx_measure", TimeRange: limitTestAllTime()})
+	require.NoError(t, err)
+	require.Len(t, all.SeriesList, 400)
+	// The search lists candidates in this order: shadow the first 300, so a prefix of a few rows holds no survivor.
+	nameOf := func(series *pbv1.Series) string { return series.EntityValues[0].GetStr().GetValue() }
+	shadowedNames := map[string]struct{}{}
+	for _, series := range all.SeriesList[:300] {
+		shadowedNames[nameOf(series)] = struct{}{}
+	}
+	shadowedBy := func(_ context.Context, identifiers [][]byte) (map[string]struct{}, error) {
+		found := map[string]struct{}{}
+		for _, identifier := range identifiers {
+			for name := range shadowedNames {
+				if bytes.Contains(identifier, []byte(name)) {
+					found[string(identifier)] = struct{}{}
+					break
+				}
+			}
+		}
+		return found, nil
+	}
+	sd, _, err := si.SearchWithoutSeries(context.Background(), IndexSearchOpts{
+		IndexModeSubject: "idx_measure", Limit: 4, TimeRange: limitTestAllTime(), IsShadowed: shadowedBy,
+	})
+	require.NoError(t, err)
+	require.Len(t, sd.SeriesList, 4)
+	require.True(t, sd.LimitApplied)
+	for _, series := range sd.SeriesList {
+		_, isShadowed := shadowedNames[nameOf(series)]
+		require.False(t, isShadowed, nameOf(series))
+	}
+
+	sd, _, err = si.SearchWithoutSeries(context.Background(), IndexSearchOpts{
+		IndexModeSubject: "idx_measure", Limit: 1000, TimeRange: limitTestAllTime(), IsShadowed: shadowedBy,
+	})
+	require.NoError(t, err)
+	require.Len(t, sd.SeriesList, 100, "fewer unshadowed rows than the limit returns them all")
+}
+
+// An index order ignores the limit: it returns every row and never asks about shadowing.
+func TestSeriesIndex_IndexModeLimitIgnoredWithIndexOrderWithoutRule(t *testing.T) {
 	si := newIndexModeSegment(t, []limitTestRow{{"a", 1000}, {"b", 2000}, {"c", 3000}})
 	asked := false
 	sd, _, err := si.SearchWithoutSeries(context.Background(), IndexSearchOpts{
-		IndexModeSubject: "idx_measure", Limit: 1,
+		IndexModeSubject: "idx_measure", Limit: 1, Order: &index.OrderBy{Type: index.OrderByTypeIndex},
 		IsShadowed: func(context.Context, [][]byte) (map[string]struct{}, error) { asked = true; return nil, nil },
 	})
 	require.NoError(t, err)

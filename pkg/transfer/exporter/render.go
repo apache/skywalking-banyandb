@@ -48,7 +48,8 @@ func renderTable(w io.Writer, rep *Report) error {
 			len(rep.DataNodes), rep.DataNodes, rep.MissingNodes)
 	case rep.Standalone:
 		fmt.Fprintf(w, "NODES     standalone process %v\n", rep.DataNodes)
-	default:
+	case rep.Resumed == nil:
+		// The nodes of a resume answered when the plan was recorded: nothing to say unless one is missing.
 		fmt.Fprintf(w, "NODES     %d data node(s) %v, all answered\n", len(rep.DataNodes), rep.DataNodes)
 	}
 	if len(rep.MultiSource) > 0 {
@@ -61,7 +62,10 @@ func renderTable(w io.Writer, rep *Report) error {
 			fmt.Fprintf(w, "          %s  <- %s\n", m.Key, strings.Join(parts, " + "))
 		}
 	}
-	fmt.Fprintln(w)
+	// A resumed report with nothing to warn about has no lines above the table to set it off from.
+	if len(rep.MissingNodes) > 0 || rep.Standalone || rep.Resumed == nil || len(rep.MultiSource) > 0 {
+		fmt.Fprintln(w)
+	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "NODE\tCATALOG\tGROUP\tSTAGE\tSEGMENTS\tSHARDS\tPARTS\tEST-ROWS\tEST-SIZE\tTIME-RANGE")
 	for _, r := range rep.Rows {
@@ -76,6 +80,10 @@ func renderTable(w io.Writer, rep *Report) error {
 	}
 	if err := tw.Flush(); err != nil {
 		return err
+	}
+	if rep.Resumed != nil {
+		// A resumed export reads the session's snapshot, which the first run pinned.
+		return nil
 	}
 	node, size := rep.LargestNodeCompressedBytes()
 	if node == "" {
@@ -102,8 +110,9 @@ func elapsedKey(node, catalog, group string) string {
 
 // renderSummary prints what a finished export wrote, from its manifest: one row per node,
 // catalog, group and stage with the time its units took (elapsed, keyed by elapsedKey),
-// then the totals line with the time of the whole export.
-func renderSummary(w io.Writer, dir string, m *manifest.Manifest, elapsed map[string]time.Duration, total time.Duration) error {
+// then the totals line with the time of this run. prev, set for a resumed export, adds the
+// units the previous runs finished and the time all runs took.
+func renderSummary(w io.Writer, dir string, m *manifest.Manifest, elapsed map[string]time.Duration, total time.Duration, prev *resumedRun) error {
 	byKey := map[string]*summaryRow{}
 	var rows []*summaryRow
 	for _, u := range m.Units {
@@ -143,7 +152,19 @@ func renderSummary(w io.Writer, dir string, m *manifest.Manifest, elapsed map[st
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\nexport written to %s: %d unit(s), %d file(s), %s, %d warning(s) in %s\n",
-		dir, len(m.Units), files, output.HumanBytes(bytes), len(m.Warnings), output.FormatElapsed(total))
+	if prev == nil {
+		_, err := fmt.Fprintf(w, "\nexport written to %s: %d unit(s), %d file(s), %s, %d warning(s) in %s\n",
+			dir, len(m.Units), files, output.HumanBytes(bytes), len(m.Warnings), output.FormatElapsed(total))
+		return err
+	}
+	if prev.units > 0 {
+		if _, err := fmt.Fprintf(w, "\nRESUMED %d unit(s) from the previous run(s)", prev.units); err != nil {
+			return err
+		}
+	}
+	_, err := fmt.Fprintf(w, "\nexport written to %s: %d unit(s), %d file(s), %s, %d warning(s) in %s (this run)\n"+
+		"cumulative time %s over every run, the first started at %s\n",
+		dir, len(m.Units), files, output.HumanBytes(bytes), len(m.Warnings), output.FormatElapsed(total),
+		output.FormatElapsed(prev.prior+total), prev.startedAt.Local().Format(time.RFC3339))
 	return err
 }
