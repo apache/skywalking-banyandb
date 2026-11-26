@@ -40,8 +40,8 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/transfer/export/snapshot"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
 )
 
@@ -119,7 +119,7 @@ func (p *Producer) Property(unit *transferv1.PropertyUnit, groupDir string) ([]s
 
 // planSegment lists what a segment unit produces.
 func planSegment(unit *transferv1.SegmentUnit, segDir string) (*unitPlan, error) {
-	prefix := fmt.Sprintf("%s/%s/%s%s", transfer.CatalogName(unit.GetCatalog()), csvfmt.EscapePathComponent(unit.GetGroup()),
+	prefix := fmt.Sprintf("%s/%s/%s%s", transfer.CatalogName(unit.GetCatalog()), artifactpath.EscapeComponent(unit.GetGroup()),
 		nativefmt.SegDirPrefix, unit.GetSegmentSuffix())
 	plan := &unitPlan{totalShards: uint32(len(unit.GetShardIds()))}
 	metaPath := filepath.Join(segDir, nativefmt.SegmentMetaFile)
@@ -156,7 +156,7 @@ func planSegment(unit *transferv1.SegmentUnit, segDir string) (*unitPlan, error)
 
 // planProperty lists what a property unit produces.
 func planProperty(unit *transferv1.PropertyUnit, groupDir string) (*unitPlan, error) {
-	prefix := fmt.Sprintf("%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), csvfmt.EscapePathComponent(unit.GetGroup()))
+	prefix := fmt.Sprintf("%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), artifactpath.EscapeComponent(unit.GetGroup()))
 	plan := &unitPlan{totalShards: uint32(len(unit.GetShardIds()))}
 	for i, shard := range unit.GetShardIds() {
 		shardDir := filepath.Join(groupDir, nativefmt.ShardDir(shard))

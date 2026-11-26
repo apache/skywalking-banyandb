@@ -35,14 +35,9 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/convert"
 	"github.com/apache/skywalking-banyandb/pkg/index/native"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
-)
-
-// Stored fields of a property document (banyand/property/db/shard.go buildUpdateDocument).
-const (
-	propertySourceField = "_source"
-	propertyDeleteField = "_deleted"
 )
 
 func producePropertyCSV(run *unitRun, unit *transferv1.PropertyUnit, groupDir string) error {
@@ -71,7 +66,7 @@ func producePropertyCSV(run *unitRun, unit *transferv1.PropertyUnit, groupDir st
 	fixed := fixedColumns(layout)
 	for i, shard := range unit.GetShardIds() {
 		shardDir := filepath.Join(groupDir, nativefmt.ShardDir(shard))
-		prefix := fmt.Sprintf("%s/%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), csvfmt.EscapePathComponent(group), nativefmt.ShardDir(shard))
+		prefix := fmt.Sprintf("%s/%s/%s", transfer.CatalogName(commonv1.Catalog_CATALOG_PROPERTY), artifactpath.EscapeComponent(group), nativefmt.ShardDir(shard))
 		fw := run.newWriter(layout, prefix, shard, uint32(i), false, revisions)
 		if err = writePropertyShard(run, fw, shardDir, layout, fixed, resources); err != nil {
 			return err

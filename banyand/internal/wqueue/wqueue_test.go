@@ -20,6 +20,7 @@ package wqueue
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -194,4 +196,82 @@ func TestQueue_GetOrCreateShardConcurrent(t *testing.T) {
 		assert.Equal(t, common.ShardID(caller%shardCount), shard.id)
 		assert.Same(t, results[caller%shardCount], shard)
 	}
+}
+
+type collectSubQueue struct {
+	id     common.ShardID
+	closed atomic.Bool
+}
+
+func (c *collectSubQueue) Close() error {
+	c.closed.Store(true)
+	return nil
+}
+
+func openCollectQueue(t *testing.T, collect func(*collectSubQueue)) *Queue[*collectSubQueue, mockSubQueueOption] {
+	t.Helper()
+	opts := Opts[*collectSubQueue, mockSubQueueOption]{
+		Group:    "test-group",
+		Location: t.TempDir(),
+		GetNodes: func(common.ShardID) []string { return nil },
+		SubQueueCreator: func(_ fs.FileSystem, _ string, _ common.Position, _ *logger.Logger,
+			_ mockSubQueueOption, _ any, _ string, shardID common.ShardID, _ func() []string,
+		) (*collectSubQueue, error) {
+			return &collectSubQueue{id: shardID}, nil
+		},
+		Collect: collect,
+	}
+	q, err := Open(context.Background(), opts, "test-group")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = q.Close() })
+	return q
+}
+
+func TestQueue_CollectRegistersAndUnregisters(t *testing.T) {
+	collected := make(map[common.ShardID]int)
+	q := openCollectQueue(t, func(sq *collectSubQueue) { collected[sq.id]++ })
+
+	_, err := q.GetOrCreateShard(0)
+	require.NoError(t, err)
+	_, err = q.GetOrCreateShard(1)
+	require.NoError(t, err)
+	obsservice.MetricsCollector.Collect()
+	require.Equal(t, map[common.ShardID]int{0: 1, 1: 1}, collected)
+
+	require.NoError(t, q.Close())
+	require.NoError(t, q.Close(), "closing twice is a no-op")
+	obsservice.MetricsCollector.Collect()
+	require.Equal(t, map[common.ShardID]int{0: 1, 1: 1}, collected, "collection must stop after Close")
+}
+
+func TestQueue_CloseStopsConcurrentCollect(t *testing.T) {
+	var afterClose atomic.Int64
+	q := openCollectQueue(t, func(sq *collectSubQueue) {
+		if sq.closed.Load() {
+			afterClose.Add(1)
+		}
+	})
+	_, err := q.GetOrCreateShard(0)
+	require.NoError(t, err)
+
+	var rounds atomic.Int64
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				obsservice.MetricsCollector.Collect()
+				rounds.Add(1)
+			}
+		}
+	}()
+	require.Eventually(t, func() bool { return rounds.Load() > 0 }, 5*time.Second, time.Millisecond)
+	require.NoError(t, q.Close())
+	close(stop)
+	<-done
+	require.Zero(t, afterClose.Load(), "a collection ran against a closed sub-queue")
 }

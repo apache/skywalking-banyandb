@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 )
@@ -119,7 +120,8 @@ type FileSystem interface {
 	// Create and open the file by specified name and mode.
 	CreateFile(name string, permission Mode) (File, error)
 	// Create and open lock file by specified name and mode.
-	CreateLockFile(name string, permission Mode) (File, error)
+	// With PreserveUntilLocked the file is emptied only once its lock is held.
+	CreateLockFile(name string, permission Mode, opts ...LockOption) (File, error)
 	// Open the file by specified name and mode.
 	OpenFile(name string) (File, error)
 	// Flush mode, which flushes all data to one file.
@@ -251,6 +253,38 @@ func SyncDir(path string) error {
 		}
 	}
 	return nil
+}
+
+// SyncDirIfSupported is SyncDir for callers that run on any file system: a file system that cannot
+// fsync a directory (EINVAL or ENOTSUP, as some FUSE and 9p mounts answer) is not an error, there
+// is nothing more to do there. Any other failure wraps the underlying error, so errors.Is still
+// finds os.ErrNotExist.
+func SyncDirIfSupported(path string) error {
+	err := syncDir(path)
+	if err == nil || dirSyncUnsupported(err) {
+		return nil
+	}
+	return fmt.Errorf("sync directory %s: %w", path, err)
+}
+
+// dirSyncUnsupported reports whether a directory fsync failed only because the file system cannot
+// fsync a directory.
+func dirSyncUnsupported(err error) bool {
+	return errors.Is(err, syscall.EINVAL) || errors.Is(err, syscall.ENOTSUP) || errors.Is(err, syscall.EOPNOTSUPP)
+}
+
+// LockOption adjusts CreateLockFile.
+type LockOption func(*lockOptions)
+
+type lockOptions struct {
+	preserve bool
+}
+
+// PreserveUntilLocked makes CreateLockFile open an existing file without emptying it, without
+// following a symbolic link or waiting for a FIFO, and refuse a file that is not a regular one: the
+// file is emptied only once its lock is held, so a refused attempt leaves the holder's content.
+func PreserveUntilLocked() LockOption {
+	return func(o *lockOptions) { o.preserve = true }
 }
 
 // MustFlush flushes all data to one file and panics if it cannot write all data.

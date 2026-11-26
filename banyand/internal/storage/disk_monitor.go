@@ -132,6 +132,8 @@ func NewDiskMonitor(service RetentionService, config RetentionConfig, omr observ
 
 	// Initialize cooldown metric
 	metrics.forcedRetentionCooldownSeconds.Set(config.Cooldown.Seconds(), serviceName)
+	// Create the series at zero so increase() sees the first forced deletion.
+	metrics.forcedRetentionSegmentsDeleted.Inc(0, serviceName)
 
 	return &DiskMonitor{
 		service:        service,

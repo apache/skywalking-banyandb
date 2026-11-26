@@ -34,15 +34,32 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/grpchelper"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	"github.com/apache/skywalking-banyandb/pkg/run"
+	"github.com/apache/skywalking-banyandb/pkg/transfer"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 )
 
 // Info is what the connection preflight learned about the source cluster from the
 // primary liaison.
 type Info struct {
-	Liaison    string
-	DataNodes  []*databasev1.Node
+	Liaison   string
+	DataNodes []*databasev1.Node
+	// Liaisons are the names of the liaisons the cluster has registered (route table tire1) and
+	// the primary liaison's own name, sorted; a standalone server's own name.
+	Liaisons   []string
 	Standalone bool
+}
+
+// DataNodeNames names the data nodes of the cluster, sorted and without duplicates; nil for a
+// nil Info.
+func (i *Info) DataNodeNames() []string {
+	if i == nil {
+		return nil
+	}
+	nodes := make([]string, 0, len(i.DataNodes))
+	for _, n := range i.DataNodes {
+		nodes = append(nodes, n.GetMetadata().GetName())
+	}
+	return transfer.UniqueSorted(nodes)
 }
 
 // ConnectOptions are the dial parameters shared by every liaison candidate.
@@ -197,7 +214,7 @@ func Preflight(ctx context.Context, candidates []string, opts ConnectOptions) (*
 		if !errors.As(r.err, &skip) {
 			return nil, nil, fail(r.err)
 		}
-		fmt.Fprintf(warn, "WARN liaison %s is not usable, skipped: %v\n", addr, skip.err)
+		warnLiaisonSkipped(warn, addr, skip.err)
 		errs = append(errs, skip.err)
 	}
 	if primary == nil {
@@ -280,12 +297,26 @@ func describe(ctx context.Context, conn *grpc.ClientConn, addr string) (*Info, e
 	info := &Info{Liaison: addr}
 	if tire2 := state.GetRouteTables()["tire2"]; len(tire2.GetRegistered()) > 0 {
 		info.DataNodes = tire2.GetRegistered()
+		info.Liaisons = liaisonNames(self, state.GetRouteTables()["tire1"].GetRegistered())
 		return info, nil
 	}
 	if slices.Contains(self.GetRoles(), databasev1.Role_ROLE_DATA) {
 		info.Standalone = true
 		info.DataNodes = []*databasev1.Node{self}
+		info.Liaisons = liaisonNames(self, nil)
 		return info, nil
 	}
 	return nil, fmt.Errorf("%s %w", addr, errNoDataNode)
+}
+
+// liaisonNames are the names of the registered liaisons and of self, sorted and without
+// duplicates or empty names.
+func liaisonNames(self *databasev1.Node, registered []*databasev1.Node) []string {
+	names := make([]string, 0, len(registered)+1)
+	for _, n := range append([]*databasev1.Node{self}, registered...) {
+		if name := n.GetMetadata().GetName(); name != "" {
+			names = append(names, name)
+		}
+	}
+	return transfer.UniqueSorted(names)
 }

@@ -51,11 +51,13 @@ fi
 work="$IMPORT_WORK/dryrun"
 mkdir -p "$work"
 plan="$DIR/../plan-dst.yaml"
+# The real import leaves its progress file here; the dry run before it finds none.
+progress="$work/progress.json"
 
 before="$(dst_schema_digest "$work/schema-before")"
 ttl_before="$(export-checker ttl-rows "$ARTIFACT_IN")"
 dry_rc=0
-bydbctl data import --dry-run --plan "$plan" --input "$ARTIFACT_IN" --force-ttl >"$work/dryrun.stdout" 2>"$work/dryrun.stderr" || dry_rc=$?
+bydbctl data import --dry-run --plan "$plan" --input "$ARTIFACT_IN" --checkpoint "$progress" --force-ttl >"$work/dryrun.stdout" 2>"$work/dryrun.stderr" || dry_rc=$?
 after="$(dst_schema_digest "$work/schema-after")"
 dry_rows="$(dst_data_rows)"
 # Taken last, right before the real import, so the window in which a unit can cross the TTL
@@ -77,7 +79,7 @@ if [ "$ttl_before" != "$ttl_after" ]; then
 fi
 
 rc=0
-bydbctl data import --plan "$plan" --input "$ARTIFACT_IN" --force-ttl >"$work/import.stdout" 2>"$work/import.stderr" || rc=$?
+bydbctl data import --plan "$plan" --input "$ARTIFACT_IN" --checkpoint "$progress" --force-ttl >"$work/import.stdout" 2>"$work/import.stderr" || rc=$?
 # Diagnostic only: a failure here must not stop the script before a successful import is marked done.
 ttl_import="$(export-checker ttl-rows "$ARTIFACT_IN")" || ttl_import="unknown"
 echo "import exited $rc" >&2

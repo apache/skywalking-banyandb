@@ -181,9 +181,9 @@ func defaultImport(t *testing.T, dir string) config.Import {
 	opts.Input = dir
 	opts.Verify = false
 	opts.SendRetryTimeout = time.Second
-	wait := schemaWaitTimeout
-	schemaWaitTimeout = time.Second
-	t.Cleanup(func() { schemaWaitTimeout = wait })
+	wait, baseline, drain := schemaWaitTimeout, baselineRetryTimeout, drainTimeout
+	schemaWaitTimeout, baselineRetryTimeout, drainTimeout = time.Second, time.Second, 5*time.Second
+	t.Cleanup(func() { schemaWaitTimeout, baselineRetryTimeout, drainTimeout = wait, baseline, drain })
 	return opts
 }
 

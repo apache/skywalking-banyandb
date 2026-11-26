@@ -31,9 +31,12 @@ type Metrics struct {
 
 // NewMetrics creates a new Metrics.
 func NewMetrics(factory observability.Factory) *Metrics {
-	return &Metrics{
+	m := &Metrics{
 		totalErrs:    factory.NewCounter("total_err"),
 		totalRetries: factory.NewCounter("total_retries"),
 		totalPanics:  factory.NewCounter("total_panics"),
 	}
+	// Create the series at zero so increase() sees the first panic.
+	m.totalPanics.Inc(0)
+	return m
 }

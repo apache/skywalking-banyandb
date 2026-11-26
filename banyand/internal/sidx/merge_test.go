@@ -852,3 +852,45 @@ func TestMergePartsWithKeepPredicatePreservesInterleavedInt64Tags(t *testing.T) 
 	require.NoError(t, reader.error())
 	require.Equal(t, map[string]int64{"traceA": 1, "traceC": 3, "traceD": 4}, actual)
 }
+
+func TestMergePrunedRowsSumsAllInputParts(t *testing.T) {
+	instance := createTestSIDX(t)
+	t.Cleanup(func() { require.NoError(t, instance.Close()) })
+	writeTestData(t, instance, []WriteRequest{createTestWriteRequest(1, 1, "drop"), createTestWriteRequest(1, 2, "keep")}, 1, 1)
+	writeTestData(t, instance, []WriteRequest{createTestWriteRequest(1, 3, "drop"), createTestWriteRequest(1, 4, "drop")}, 2, 2)
+	waitForIntroducerLoop()
+	partIDs := map[uint64]struct{}{1: {}, 2: {}}
+	flushIntroduction, flushErr := instance.Flush(nil, partIDs)
+	require.NoError(t, flushErr)
+	instance.IntroduceFlushed(flushIntroduction)
+	flushIntroduction.Release()
+
+	mergeIntroduction, mergeErr := instance.Merge(nil, partIDs, 10, func(data []byte) bool { return string(data) != "drop" })
+	require.NoError(t, mergeErr)
+	defer mergeIntroduction.Release()
+	require.Equal(t, uint64(3), mergeIntroduction.PrunedRows())
+}
+
+func TestMergePrunedRowsNotUnderflowWhenOutputExceedsInput(t *testing.T) {
+	instance := createTestSIDX(t)
+	t.Cleanup(func() { require.NoError(t, instance.Close()) })
+	writeTestData(t, instance, []WriteRequest{createTestWriteRequest(1, 1, "keep"), createTestWriteRequest(1, 2, "keep")}, 1, 1)
+	waitForIntroducerLoop()
+	partIDs := map[uint64]struct{}{1: {}}
+	flushIntroduction, flushErr := instance.Flush(nil, partIDs)
+	require.NoError(t, flushErr)
+	instance.IntroduceFlushed(flushIntroduction)
+	flushIntroduction.Release()
+
+	snap := instance.(*sidx).currentSnapshot()
+	require.NotNil(t, snap)
+	for _, pw := range snap.parts {
+		pw.p.partMetadata.TotalCount = 0
+	}
+	snap.decRef()
+
+	mergeIntroduction, mergeErr := instance.Merge(nil, partIDs, 10, func([]byte) bool { return true })
+	require.NoError(t, mergeErr)
+	defer mergeIntroduction.Release()
+	require.Equal(t, uint64(0), mergeIntroduction.PrunedRows())
+}

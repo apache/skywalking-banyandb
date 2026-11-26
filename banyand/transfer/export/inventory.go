@@ -154,19 +154,8 @@ func statSegment(segDir, suffix string, catalog commonv1.Catalog, group string, 
 // parts is added to both byte estimates: a stream's idx/ is copied as-is, so its size counts
 // on both sides; a trace's sidx/<rule>/<part> carries its own manifest.json sizes.
 func statShard(shardDir string, shardID uint32, catalog commonv1.Catalog, read partReadFunc) (*transferv1.ShardStat, error) {
-	partIDs, err := snapshot.LivePartIDs(shardDir)
-	if err != nil {
-		return nil, err
-	}
 	stat := &transferv1.ShardStat{ShardId: shardID}
-	for _, id := range partIDs {
-		pm, readErr := read(filepath.Join(shardDir, fmt.Sprintf("%016x", id)))
-		if readErr != nil {
-			if errors.Is(readErr, fs.ErrNotExist) {
-				continue // part merged away between ReadDir and ReadFile
-			}
-			return nil, readErr
-		}
+	err := snapshot.ForEachLivePart(shardDir, read, func(id uint64, pm queue.StreamingPartData) {
 		if stat.PartsCount == 0 || pm.MinTimestamp < stat.MinTimestamp {
 			stat.MinTimestamp = pm.MinTimestamp
 		}
@@ -180,6 +169,9 @@ func statShard(shardDir string, shardID uint32, catalog commonv1.Catalog, read p
 		stat.Parts = append(stat.Parts, &transferv1.PartStat{
 			Id: id, MinTimestamp: pm.MinTimestamp, MaxTimestamp: pm.MaxTimestamp, TotalCount: pm.TotalCount,
 		})
+	})
+	if err != nil {
+		return nil, err
 	}
 	switch catalog {
 	case commonv1.Catalog_CATALOG_STREAM:

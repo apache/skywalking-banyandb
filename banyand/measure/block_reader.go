@@ -209,7 +209,10 @@ func (br *blockReader) nextMetadata() error {
 }
 
 func (br *blockReader) loadBlockData(decoder *encoding.BytesBlockDecoder) {
-	br.pih[0].mustLoadBlockData(decoder, br.block)
+	// TopN consumes byte-backed metadata and binary values. Ordinary merging
+	// keeps compressed numeric columns typed through row selection and encoding.
+	_, topN := br.block.bm.tagFamilies[TopNTagFamily]
+	br.block.block.mustSeqReadFrom(decoder, &br.pih[0].seqReaders, br.block.bm, !topN)
 }
 
 func (br *blockReader) error() error {

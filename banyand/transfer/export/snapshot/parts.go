@@ -53,6 +53,36 @@ func LivePartIDs(shardDir string) ([]uint64, error) {
 	return ids, err
 }
 
+// ForEachLivePart calls visit with the id and the metadata of each part LivePartIDs lists for
+// shardDir, in id order. The metadata comes from read, which is given the part directory
+// (shardDir/<id as %016x>); a part whose read reports fs.ErrNotExist was merged away after the
+// listing and is skipped. Any other error stops the walk and is returned as is.
+func ForEachLivePart[M any](shardDir string, read func(partDir string) (M, error), visit func(id uint64, meta M)) error {
+	ids, err := LivePartIDs(shardDir)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		meta, readErr := read(filepath.Join(shardDir, fmt.Sprintf("%016x", id)))
+		if readErr != nil {
+			if errors.Is(readErr, iofs.ErrNotExist) {
+				continue
+			}
+			return readErr
+		}
+		visit(id, meta)
+	}
+	return nil
+}
+
+// LiveRows sums the rows of the parts ForEachLivePart walks in shardDir; rows returns the row
+// count of the part in the given directory.
+func LiveRows(shardDir string, rows func(partDir string) (uint64, error)) (uint64, error) {
+	var total uint64
+	err := ForEachLivePart(shardDir, rows, func(_ uint64, n uint64) { total += n })
+	return total, err
+}
+
 // SessionPartIDs returns the sorted ids of the parts an export session's snapshot holds in
 // shardDir; see SessionParts.
 func SessionPartIDs(shardDir string) ([]uint64, error) {

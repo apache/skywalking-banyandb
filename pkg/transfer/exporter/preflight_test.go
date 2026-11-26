@@ -20,10 +20,12 @@ package exporter
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/cluster"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
@@ -39,6 +41,33 @@ func TestPreflight_PicksFirstReachableLiaison(t *testing.T) {
 	defer conn.Close()
 	if info.Liaison != addr || info.Standalone || len(info.DataNodes) != 2 || info.DataNodes[0].GetMetadata().GetName() != "data-a:17912" {
 		t.Fatalf("info = %+v", info)
+	}
+}
+
+func TestPreflight_ReportsTheLiaisons(t *testing.T) {
+	f := newFakeLiaison()
+	addr := serveLiaison(t, f)
+	conn, info, err := cluster.Preflight(context.Background(), []string{addr}, cluster.ConnectOptions{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if !slices.Equal(info.Liaisons, []string{"liaison-1:17912"}) {
+		t.Fatalf("without registered liaisons the primary names itself: %v", info.Liaisons)
+	}
+
+	f.liaisons = []*databasev1.Node{
+		{Metadata: &commonv1.Metadata{Name: "liaison-2:17912"}, Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}},
+		{Metadata: &commonv1.Metadata{Name: "liaison-1:17912"}, Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}},
+		{Metadata: &commonv1.Metadata{Name: "liaison-0:17912"}, Roles: []databasev1.Role{databasev1.Role_ROLE_LIAISON}},
+	}
+	conn, info, err = cluster.Preflight(context.Background(), []string{addr}, cluster.ConnectOptions{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.Close()
+	if want := []string{"liaison-0:17912", "liaison-1:17912", "liaison-2:17912"}; !slices.Equal(info.Liaisons, want) {
+		t.Fatalf("liaisons = %v, want %v", info.Liaisons, want)
 	}
 }
 
@@ -65,6 +94,9 @@ func TestPreflight_StandaloneFallback(t *testing.T) {
 	defer conn.Close()
 	if !info.Standalone || len(info.DataNodes) != 1 || info.DataNodes[0].GetMetadata().GetName() != "liaison-1:17912" {
 		t.Fatalf("standalone fallback must use the process itself: %+v", info)
+	}
+	if !slices.Equal(info.Liaisons, []string{"liaison-1:17912"}) {
+		t.Fatalf("a standalone server is its own liaison: %v", info.Liaisons)
 	}
 }
 

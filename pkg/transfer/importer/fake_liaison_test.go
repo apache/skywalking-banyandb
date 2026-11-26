@@ -18,6 +18,7 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -58,9 +59,11 @@ type fakeLiaison struct {
 	// importErr, when set, is asked before every batch with the stream's context; a non-nil
 	// error ends the stream.
 	importErr func(ctx context.Context, init *transferv1.ImportRowsRequest_Init, seq uint64) error
-	// ackGate, when set, is called before the acknowledgement of every batch is sent; the fake
+	// ackGate, when set, is called with the stream's context before the acknowledgement of every
+	// batch is sent; it is guarded by mu (setAckGate), as a test changes it while a handler of a
+	// stream canceled meanwhile may still be acknowledging; the fake
 	// keeps receiving and applying batches meanwhile, and acknowledges them in order.
-	ackGate func(init *transferv1.ImportRowsRequest_Init, seq uint64)
+	ackGate func(ctx context.Context, init *transferv1.ImportRowsRequest_Init, seq uint64)
 	// onPlan, when set, is called on every Plan request, under mu.
 	onPlan func()
 	// awaitAnswer, when set, replaces the barrier answer.
@@ -68,6 +71,9 @@ type fakeLiaison struct {
 	// targetsHook, when set, may edit every Targets answer; via names the serving fake
 	// ("" for the one serve returns, otherwise the serveAs name).
 	targetsHook func(via string, resp *transferv1.TargetsResponse)
+	// reroute, when set, may edit every route the fake places a group by, for its Targets answers
+	// and for where it stores rows alike; it is called under mu.
+	reroute func(group string, r *transferv1.TargetsResponse)
 	// routeErr, when set, is asked for every Targets key; a non-nil error is the answer.
 	routeErr func(req *transferv1.TargetsRequest) error
 	// revisionAnswer, when set, answers the probe-th AwaitRevisionApplied (1-based).
@@ -82,7 +88,9 @@ type fakeLiaison struct {
 	counts     map[CountKey]int64
 	properties map[CountKey]int64
 	// dropNode, when set, names a node that acknowledges rows without storing them.
-	dropNode    string
+	dropNode string
+	// segment, when set, is the suffix the Plan reports every segment under instead of fakeSegment.
+	segment     string
 	inits       []*transferv1.ImportRowsRequest_Init
 	batches     []*transferv1.ImportRowsRequest_RowBatch
 	writes      []string
@@ -145,6 +153,9 @@ func (f *fakeLiaison) route(g *commonv1.Group, stage string) *transferv1.Targets
 			ids = append(ids, f.nodes[(int(s)+rep)%len(f.nodes)])
 		}
 		r.Shards = append(r.Shards, &transferv1.TargetsResponse_Shard{ShardId: s, NodeIds: ids})
+	}
+	if f.reroute != nil {
+		f.reroute(g.GetMetadata().GetName(), r)
 	}
 	return r
 }
@@ -242,14 +253,24 @@ func (f *fakeLiaison) ImportRows(stream transferv1.ImportService_ImportRowsServe
 		if o.err != nil {
 			return o.err
 		}
-		if f.ackGate != nil {
-			f.ackGate(init, o.resp.GetBatchSeq())
+		f.mu.Lock()
+		gate := f.ackGate
+		f.mu.Unlock()
+		if gate != nil {
+			gate(ctx, init, o.resp.GetBatchSeq())
 		}
 		if err = stream.Send(o.resp); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// setAckGate sets ackGate under mu; nil removes it.
+func (f *fakeLiaison) setAckGate(gate func(ctx context.Context, init *transferv1.ImportRowsRequest_Init, seq uint64)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ackGate = gate
 }
 
 func (f *fakeLiaison) apply(init *transferv1.ImportRowsRequest_Init, b *transferv1.ImportRowsRequest_RowBatch) error {
@@ -309,7 +330,7 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 		}
 		fr := frame(k.Node, stage)
 		fr.Units = append(fr.Units, &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Segment{Segment: &transferv1.SegmentInventory{
-			Unit:   &transferv1.SegmentUnit{Catalog: k.Catalog, Group: k.Group, SegmentSuffix: fakeSegment, ShardIds: []uint32{k.Shard}},
+			Unit:   &transferv1.SegmentUnit{Catalog: k.Catalog, Group: k.Group, SegmentSuffix: cmp.Or(f.segment, fakeSegment), ShardIds: []uint32{k.Shard}},
 			Shards: []*transferv1.ShardStat{{ShardId: k.Shard, TotalCount: uint64(n), PartsCount: 1}},
 		}}})
 	}
@@ -645,7 +666,7 @@ func (f *fakeLiaison) serveAs(t *testing.T, name string, withImport bool) *clust
 
 // clusterOf is the preflight answer for the fake's data nodes.
 func clusterOf(f *fakeLiaison, addr string) *cluster.Info {
-	info := &cluster.Info{Liaison: addr}
+	info := &cluster.Info{Liaison: addr, Liaisons: []string{"liaison-0"}}
 	for _, n := range f.nodes {
 		info.DataNodes = append(info.DataNodes, &databasev1.Node{Metadata: &commonv1.Metadata{Name: n}, Roles: []databasev1.Role{databasev1.Role_ROLE_DATA}})
 	}

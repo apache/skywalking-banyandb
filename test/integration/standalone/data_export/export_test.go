@@ -19,6 +19,7 @@ package data_export_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/test/transfer/topncheck"
 	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/exporter"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/bnc"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/nativefmt"
@@ -49,6 +51,30 @@ func streamRows() uint64 {
 		{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{transfertest.StreamGroup}},
 	}})
 	return transfertest.GroupRows(frames, commonv1.Catalog_CATALOG_STREAM, transfertest.StreamGroup)
+}
+
+// doneUnitFiles counts the units the export progress file at path records as done and maps their
+// files to their state now, keyed by path, so a test can tell they are not written again.
+func doneUnitFiles(path string) (int, map[string]os.FileInfo) {
+	data, err := os.ReadFile(path)
+	gomega.ExpectWithOffset(1, err).NotTo(gomega.HaveOccurred())
+	var p struct {
+		Done []struct {
+			Files []struct {
+				Path string `json:"path"`
+			} `json:"files"`
+		} `json:"done"`
+	}
+	gomega.ExpectWithOffset(1, json.Unmarshal(data, &p)).To(gomega.Succeed())
+	out := map[string]os.FileInfo{}
+	for _, d := range p.Done {
+		for _, f := range d.Files {
+			info, statErr := os.Stat(filepath.Join(filepath.Dir(path), f.Path))
+			gomega.ExpectWithOffset(1, statErr).NotTo(gomega.HaveOccurred())
+			out[f.Path] = info
+		}
+	}
+	return len(p.Done), out
 }
 
 // expectNoSession asserts that the process holds no export session and no snapshot.
@@ -157,6 +183,74 @@ var _ = ginkgo.Describe("CSV export on a standalone process", ginkgo.Ordered, fu
 		run := transfertest.RunExport(context.Background(), grpcAddr, transfertest.DefaultExportOptions(out), nil)
 		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), run.Log)
 		expectNoSession()
+	})
+
+	// Before the spec that writes late rows: those reuse element ids, which any later export of
+	// the live data would see as duplicates.
+	ginkgo.It("resumes an export canceled after its first unit against the same session", func() {
+		out := filepath.Join(ginkgo.GinkgoT().TempDir(), "export")
+		opts := transfertest.DefaultExportOptions(out)
+		opts.Parallelism = 1
+		opts.CSVAnnotations = true
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		run := transfertest.RunExport(ctx, grpcAddr, opts, func(line string) {
+			if strings.HasPrefix(line, "✓ ") && strings.Contains(line, "] ") {
+				cancel()
+			}
+		})
+		gomega.Expect(run.ExitCode()).To(gomega.Equal(exitcode.ExitRuntime), run.Log)
+		id := run.SessionID()
+		gomega.Expect(id).NotTo(gomega.BeEmpty())
+		// A failed expectation below must not leave the session to the specs after this one.
+		ginkgo.DeferCleanup(func() {
+			_, _ = transfertest.Sessions(conn, &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_RELEASE, SessionId: id})
+		})
+		expectSingleSession(id)
+		progressFile := filepath.Join(out, exporter.ProgressFileName)
+		gomega.Expect(progressFile).To(gomega.BeAnExistingFile())
+		unitsBefore, doneBefore := doneUnitFiles(progressFile)
+		gomega.Expect(unitsBefore).To(gomega.BeNumerically(">", 0), "the canceled run finished a unit")
+
+		ginkgo.By("Refusing to resume without --resume when nobody can be asked")
+		refused := transfertest.RunExport(context.Background(), grpcAddr, opts, nil)
+		gomega.Expect(refused.ExitCode()).To(gomega.Equal(exitcode.ExitUsage), refused.Log)
+		gomega.Expect(refused.Err).To(gomega.MatchError(gomega.ContainSubstring("add --resume to continue")))
+		gomega.Expect(refused.Log).To(gomega.MatchRegexp(`(?m)^DONE +\d+ group\(s\), 1 unit\(s\)`))
+		expectSingleSession(id)
+
+		ginkgo.By("Resuming with --resume")
+		opts.Resume = true
+		resumed := transfertest.RunExport(context.Background(), grpcAddr, opts, nil)
+		gomega.Expect(resumed.Err).NotTo(gomega.HaveOccurred(), resumed.Log)
+		gomega.Expect(resumed.Log).To(gomega.ContainSubstring("RESUME   "))
+		gomega.Expect(resumed.Log).To(gomega.ContainSubstring("session " + id + " (export)"))
+		gomega.Expect(resumed.Out + resumed.Log).To(gomega.MatchRegexp(`(?m)^RESUMED +%d `, unitsBefore))
+		gomega.Expect(filepath.Join(out, exporter.ProgressFileName)).NotTo(gomega.BeAnExistingFile())
+		expectNoSession()
+
+		a := transfertest.ReadArtifact(out, true)
+		a.VerifyManifest()
+		ginkgo.By("Exporting only the units the canceled run left")
+		m, err := manifest.Read(filepath.Join(out, manifest.FileName))
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		unitLines := 0
+		for _, line := range strings.Split(resumed.Out+resumed.Log, "\n") {
+			if strings.HasPrefix(line, "✓ ") && strings.Contains(line, "] ") {
+				unitLines++
+			}
+		}
+		gomega.Expect(unitLines).To(gomega.Equal(len(m.Units)-unitsBefore), resumed.Log)
+		for path, before := range doneBefore {
+			info, statErr := os.Stat(filepath.Join(out, path))
+			gomega.Expect(statErr).NotTo(gomega.HaveOccurred())
+			gomega.Expect(info.ModTime()).To(gomega.Equal(before.ModTime()), "%s of a unit done before the resume is not written again", path)
+			gomega.Expect(info.Size()).To(gomega.Equal(before.Size()), path)
+			// A file written again under the same name within the timestamp granularity keeps its
+			// size and may keep its modification time, but not its inode.
+			gomega.Expect(os.SameFile(info, before)).To(gomega.BeTrue(), "%s of a unit done before the resume is not replaced", path)
+		}
+		a.VerifySuiteData(suiteData(), allOnOneNode)
 	})
 
 	ginkgo.It("exports the session snapshot and leaves out data written after the session was created", func() {
