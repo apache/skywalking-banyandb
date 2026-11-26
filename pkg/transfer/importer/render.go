@@ -46,7 +46,8 @@ type tableRow struct {
 	targets        map[string]struct{}
 	catalog, group string
 	stage, key     string
-	rows           uint64
+	rows, bytes    uint64
+	items          int
 	lo, hi         int64
 	blocked, ttl   bool
 }
@@ -61,18 +62,15 @@ func renderTable(out io.Writer, p *Plan) error {
 	}
 	fmt.Fprintf(w, "SOURCE    %s  %s  artifactVersion=%d  exported at %s\n", h.Input, h.Format, h.ArtifactVersion, h.ExportedAt)
 	renderMultiSource(w, p)
-	fmt.Fprintln(w)
 	rows := tableRows(p)
+	afterSchema := false
+	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "CATALOG\tGROUP\tSTAGE\tUNITS\tSOURCES\tROWS\tSCHEMA\tCHANNEL\tTARGET-NODES\tSTATUS\tTIME-RANGE(UTC)")
 	rewritten := rewrittenGroups(p.Schema)
-	afterSchema := false
 	for _, r := range rows {
-		targets := joinSet(r.targets)
-		if len(r.targets) == 0 && !h.Standalone && rewritten[r.group] {
-			// The liaison routes a group by its stored schema, which the import writes first.
-			targets, afterSchema = "after-schema", true
-		}
+		targets, after := targetsLabel(r, p, rewritten)
+		afterSchema = afterSchema || after
 		channel := "row replay"
 		switch {
 		case h.Format == manifest.FormatNative && r.catalog == "property":
@@ -112,12 +110,81 @@ func renderTable(out io.Writer, p *Plan) error {
 	renderSchema(w, p)
 	renderProblems(w, p)
 	if afterSchema {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
+		renderAfterSchemaNote(w)
 	}
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "RESULT    %s\n", result(p))
 	return w.Flush()
+}
+
+// renderResumed writes the plan of a resume as json, yaml or, for any other format, the table
+// of what is left (renderLeft).
+func renderResumed(w io.Writer, format string, p *Plan) error {
+	return output.RenderAs(w, format, p, func(tw io.Writer) error { return renderLeft(tw, p) })
+}
+
+// renderLeft is the table of a resume, which follows the resume summary: per (catalog, group,
+// target stage) left, its work items, rows, size on disk, target nodes and time range. With nothing
+// left, only the problems and the result of a refused plan. A STATUS column comes only when a row is not ok, the SCHEMA table only with the
+// groups whose schema is not ok, and the problems and the after-schema note only when there are.
+func renderLeft(out io.Writer, p *Plan) error {
+	rows := tableRows(p)
+	w := bufio.NewWriter(out)
+	if len(rows) == 0 {
+		// Nothing is left, but a plan refused for its schema, a blocker or a gate says why.
+		renderProblems(w, p)
+		if p.refusedForProblems() {
+			fmt.Fprintln(w)
+			fmt.Fprintf(w, "RESULT    %s\n", result(p))
+		}
+		return w.Flush()
+	}
+	status := slices.ContainsFunc(rows, func(r *tableRow) bool { return r.gate() != "ok" })
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	header := "CATALOG\tGROUP\tSTAGE\tITEMS\tROWS\tEST-SIZE\tTARGET-NODES"
+	if status {
+		header += "\tSTATUS"
+	}
+	fmt.Fprintln(tw, header+"\tTIME-RANGE(UTC)")
+	rewritten := rewrittenGroups(p.Schema)
+	afterSchema := false
+	for _, r := range rows {
+		targets, after := targetsLabel(r, p, rewritten)
+		afterSchema = afterSchema || after
+		line := fmt.Sprintf("%s\t%s\t%s\t%d\t%s\t%s\t%s", r.catalog, r.group, stageLabel(r.stage), r.items,
+			output.HumanCount(r.rows), output.HumanBytes(r.bytes), targets)
+		if status {
+			line += "\t" + r.gate()
+		}
+		fmt.Fprintln(tw, line+"\t"+output.TimeRange(r.lo, r.hi))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	renderSchemaOf(w, p, func(labels map[string]int) bool {
+		return len(labels) > 1 || labels["ok"] == 0
+	})
+	renderProblems(w, p)
+	if afterSchema {
+		renderAfterSchemaNote(w)
+	}
+	return w.Flush()
+}
+
+// targetsLabel is the TARGET-NODES cell of a row: its target nodes, or after-schema, reported
+// as true, for a group of a cluster import whose schema the import writes first, since the
+// liaison routes a group by its stored schema.
+func targetsLabel(r *tableRow, p *Plan, rewritten map[string]bool) (string, bool) {
+	if len(r.targets) == 0 && !p.Header.Standalone && rewritten[r.group] {
+		return "after-schema", true
+	}
+	return joinSet(r.targets), false
+}
+
+// renderAfterSchemaNote explains the after-schema TARGET-NODES cells.
+func renderAfterSchemaNote(w io.Writer) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "NOTE      TARGET-NODES after-schema: the import creates or overwrites these groups, so their data nodes are routed once their schema is written")
 }
 
 // renderMultiSource lists the work items exported from more than one node: replicas of one
@@ -173,6 +240,12 @@ var dispositionOrder = []Disposition{
 // from the identical ones; a compatible _top_n_result, which the target creates with its group,
 // is not counted.
 func renderSchema(w io.Writer, p *Plan) {
+	renderSchemaOf(w, p, nil)
+}
+
+// renderSchemaOf is renderSchema of the groups keep accepts (every group when nil), given the
+// count of each result label of the group; nothing when it accepts none.
+func renderSchemaOf(w io.Writer, p *Plan, keep func(labels map[string]int) bool) {
 	if len(p.Schema) == 0 {
 		return
 	}
@@ -189,6 +262,12 @@ func renderSchema(w io.Writer, p *Plan) {
 			counts[a.Group] = map[string]int{}
 		}
 		counts[a.Group][label]++
+	}
+	if keep != nil {
+		maps.DeleteFunc(counts, func(_ string, labels map[string]int) bool { return !keep(labels) })
+		if len(counts) == 0 {
+			return
+		}
 	}
 	labels := make([]string, 0, len(dispositionOrder)+1)
 	for _, d := range dispositionOrder {
@@ -336,8 +415,12 @@ func tableRows(p *Plan) []*tableRow {
 			rows = append(rows, r)
 		}
 		r.units[unitKey(item)] = struct{}{}
+		r.items++
 		for _, s := range item.Sources {
 			r.nodes[s.Node] = struct{}{}
+			for _, f := range s.Files {
+				r.bytes += f.Bytes
+			}
 		}
 		lo, hi := item.DisplayRange()
 		transfer.MergeRange(&r.lo, &r.hi, lo, hi)

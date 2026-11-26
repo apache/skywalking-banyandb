@@ -294,15 +294,37 @@ message ImportPartsRequest {
 
 // ImportPartsResponse reports every target of one payload.
 message ImportPartsResponse {
+  // FailureCause tells why a target failed; TargetResult.completion_sent tells when. A client
+  // takes a value it does not know as FAILURE_CAUSE_UNSPECIFIED.
+  enum FailureCause {
+    // FAILURE_CAUSE_UNSPECIFIED is a success, or a failure from a liaison that reports no cause.
+    FAILURE_CAUSE_UNSPECIFIED = 0;
+    // FAILURE_CAUSE_UNREACHABLE is a target whose stream could not be opened: nothing was sent.
+    FAILURE_CAUSE_UNREACHABLE = 1;
+    // FAILURE_CAUSE_REFUSED is a target that answered a frame with a SyncStatus other than the
+    // expected one: a definite outcome. A stream the target ended with a gRPC error status is
+    // FAILURE_CAUSE_STREAM_BROKEN.
+    FAILURE_CAUSE_REFUSED = 2;
+    // FAILURE_CAUSE_STREAM_BROKEN is a target whose stream broke: sending or receiving failed.
+    FAILURE_CAUSE_STREAM_BROKEN = 3;
+    // FAILURE_CAUSE_NO_ANSWER is a target the liaison stopped waiting for: it answered nothing
+    // to one frame within the liaison's wait. With completion_sent it may still be committing
+    // the payload, so a count read soon after cannot tell that it did not land.
+    FAILURE_CAUSE_NO_ANSWER = 4;
+  }
   // TargetResult is the result of one target data node.
   message TargetResult {
     string node = 1;
     bool success = 2;
     string error = 3;
-    // completion_sent tells that the completion reached this target and its failure came after
-    // it (the stream broke before the answer), so the target may have committed the payload. A
-    // client must not push such a payload again when storing it twice duplicates data.
+    // completion_sent tells that the completion reached this target and the target failed
+    // without answering it, so it may have committed the payload. A client must not push such a
+    // payload again when storing it twice duplicates data. It is false with
+    // FAILURE_CAUSE_REFUSED: an answer, even a refusal, is a definite outcome.
     bool completion_sent = 4;
+    // failure_cause tells why the target failed; it is FAILURE_CAUSE_UNSPECIFIED on a success.
+    // A client takes a value it does not know as FAILURE_CAUSE_UNSPECIFIED.
+    FailureCause failure_cause = 5;
   }
   // requested_copies is the copies the target stage asks for per shard (replicas + 1). For
   // KIND_SERIES_INDEX, whose targets are the union of several shards' nodes, it is not

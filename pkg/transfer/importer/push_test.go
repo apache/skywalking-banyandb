@@ -475,7 +475,7 @@ func streamRows(t *testing.T, p *pushFixture) (*Entry, []row) {
 		}
 		var rows []row
 		b := newRowBuilder(layoutOf(t, &p.art.Schemas, e.Item.Catalog, e.Item.Group), &p.dec.state.Schemas, e.Item.Catalog, e.Item.Group)
-		require.NoError(t, b.itemRows(context.Background(), p.art.Dir, &e.Item, func(r row) error {
+		require.NoError(t, b.itemRows(context.Background(), p.art.Dir, &e.Item, nil, func(r row) error {
 			rows = append(rows, r)
 			return nil
 		}))
@@ -550,6 +550,10 @@ func TestPushFailureCancelsOtherWorkers(t *testing.T) {
 		}
 		return nil
 	}
+	// The stopped workers wait this long for the acknowledgements in flight.
+	drain := drainTimeout
+	drainTimeout = 500 * time.Millisecond
+	t.Cleanup(func() { drainTimeout = drain })
 	var log bytes.Buffer
 	opts := pushOpts(&log)
 	opts.Parallelism = len(p.entries)
@@ -659,7 +663,7 @@ func TestPushSendsTheNextBatchBeforeTheAck(t *testing.T) {
 				wait = 5 * time.Second
 			}
 			// The fake holds the acknowledgement of stream batch 1 until batch 2 arrives.
-			p.f.ackGate = func(init *transferv1.ImportRowsRequest_Init, seq uint64) {
+			p.f.setAckGate(func(_ context.Context, init *transferv1.ImportRowsRequest_Init, seq uint64) {
 				if init.GetCatalog() != commonv1.Catalog_CATALOG_STREAM || seq != 1 {
 					return
 				}
@@ -671,7 +675,7 @@ func TestPushSendsTheNextBatchBeforeTheAck(t *testing.T) {
 					}
 					time.Sleep(5 * time.Millisecond)
 				}
-			}
+			})
 			var log bytes.Buffer
 			opts := pushOpts(&log)
 			opts.Parallelism = 1

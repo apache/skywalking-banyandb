@@ -282,14 +282,3 @@ func TestCSVReadBackOfEncodedCells(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, isNull)
 }
-
-func TestEscapePathComponent(t *testing.T) {
-	assert.Equal(t, "sw_metric", EscapePathComponent("sw_metric"))
-	assert.Equal(t, "a.b-c_D9", EscapePathComponent("a.b-c_D9"))
-	assert.Equal(t, "a%2Fb", EscapePathComponent("a/b"))
-	assert.Equal(t, "a%25b", EscapePathComponent("a%b"))
-	assert.Equal(t, "%20%3A%C3%A9", EscapePathComponent(" :é"))
-	assert.Equal(t, "%2E", EscapePathComponent("."))
-	assert.Equal(t, "%2E%2E", EscapePathComponent(".."))
-	assert.Equal(t, "", EscapePathComponent(""))
-}

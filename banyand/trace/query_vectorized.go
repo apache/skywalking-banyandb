@@ -373,13 +373,12 @@ func (t *trace) buildVectorizedPhase1TraceBatch(
 	}
 	switch {
 	case len(qo.traceIDs) > 0:
-		// Mirror the push path: truncate the raw list to maxTraceSize first (preserving
-		// duplicates), then let Phase-1's DistinctTraceID deduplicate within that window.
-		ids := qo.traceIDs
-		if maxRows > 0 && int(maxRows) < len(ids) {
-			ids = ids[:maxRows]
-		}
-		plan, buildErr := vtrace.BuildStaticPhase1(ids, nil, 0, batchSize)
+		// The whole list goes to Phase 1, not its first maxTraceSize entries: the limit counts the traces that exist, and
+		// nothing here knows which IDs those are. A list is sorted, so cutting it first drops the IDs that sort last whether
+		// or not they exist, and an ID that is missing or repeated inside the window leaves fewer traces than the limit asks
+		// for; on a cluster every data node would cut a list it holds only some of. Phase 1 deduplicates the IDs, and the
+		// limit is applied to the traces that come back, so the work is bounded by the list the caller sent.
+		plan, buildErr := vtrace.BuildStaticPhase1(qo.traceIDs, nil, 0, batchSize)
 		if buildErr != nil {
 			return traceBatch{}, fmt.Errorf("build static vectorized trace phase1: %w", buildErr)
 		}
@@ -619,12 +618,7 @@ func (t *trace) buildVectorizedScanBatch(ctx context.Context, tables []*tsTable,
 		return &scanBatch{traceBatch: batch}, nil
 	}
 
-	partSelectionCtx, finishPartSelection := startPartSelectionSpan(ctx, &batch, snapshots)
-	parts, groupedIDs, metrics := selectVectorizedTraceParts(batch, snapshots)
-	if finishPartSelection != nil {
-		finishPartSelection(metrics, len(parts))
-	}
-	cursors, scanErr := t.scanPartsInlineSync(partSelectionCtx, parts, groupedIDs, qo)
+	cursors, scanErr := t.scanVectorizedTraceIDs(ctx, snapshots, qo, batch)
 	if scanErr != nil {
 		for _, s := range snapshots {
 			s.decRef()
@@ -636,6 +630,53 @@ func (t *trace) buildVectorizedScanBatch(ctx context.Context, tables []*tsTable,
 		cursors:    cursors,
 		snapshots:  snapshots,
 	}, nil
+}
+
+// scanVectorizedTraceIDs scans the parts of the snapshots for the traces of the batch and returns a cursor for each block it
+// finds. A query by trace ID that has a cap does not scan every ID: the IDs are scanned in windows of as many IDs as traces
+// are still wanted, and the scan stops once the traces found reach the cap. An ID that is missing, or the second of two
+// that name one trace, only costs the next window, and the work stays proportional to the traces wanted instead of to the
+// list the caller sent.
+func (t *trace) scanVectorizedTraceIDs(ctx context.Context, snapshots []*snapshot, qo queryOptions, batch traceBatch) ([]*blockCursor, error) {
+	scanWindow := func(window traceBatch) ([]*blockCursor, error) {
+		partSelectionCtx, finishPartSelection := startPartSelectionSpan(ctx, &window, snapshots)
+		parts, groupedIDs, metrics := selectVectorizedTraceParts(window, snapshots)
+		if finishPartSelection != nil {
+			finishPartSelection(metrics, len(parts))
+		}
+		return t.scanPartsInlineSync(partSelectionCtx, parts, groupedIDs, qo)
+	}
+	if len(qo.traceIDs) == 0 || qo.maxTraces <= 0 || len(batch.traceIDsOrder) <= qo.maxTraces {
+		return scanWindow(batch)
+	}
+	var cursors []*blockCursor
+	found := make(map[string]struct{}, qo.maxTraces)
+	ids := batch.traceIDsOrder
+	for start := 0; start < len(ids) && len(found) < qo.maxTraces; {
+		end := min(start+qo.maxTraces-len(found), len(ids))
+		window := traceBatch{
+			seq:           batch.seq,
+			traceIDs:      map[uint64][]string{0: ids[start:end]},
+			traceIDsOrder: ids[start:end],
+			keys:          make(map[string]int64, end-start),
+		}
+		for _, id := range ids[start:end] {
+			window.keys[id] = batch.keys[id]
+		}
+		windowCursors, err := scanWindow(window)
+		if err != nil {
+			for _, cursor := range cursors {
+				releaseBlockCursor(cursor)
+			}
+			return nil, err
+		}
+		for _, cursor := range windowCursors {
+			found[cursor.bm.traceID] = struct{}{}
+		}
+		cursors = append(cursors, windowCursors...)
+		start = end
+	}
+	return cursors, nil
 }
 
 func selectVectorizedTraceParts(batch traceBatch, snapshots []*snapshot) ([]*part, [][]string, *partSelectionMetrics) {

@@ -205,10 +205,57 @@ type fakePartsLiaison struct {
 	answer func(n int, p *recordedPayload) (*transferv1.ImportPartsResponse, error)
 	// early, when it returns a response, answers right after the init frame without reading the
 	// rest of the stream, as a liaison whose targets all failed does.
-	early      func(init *transferv1.ImportPartsRequest_Init) *transferv1.ImportPartsResponse
+	early func(init *transferv1.ImportPartsRequest_Init) *transferv1.ImportPartsResponse
+	// plan, when set, scripts the counts its Plan reports on the n-th call; without it Plan is
+	// not served.
+	plan func(n int) *Counts
+	// onChunk, when set, is called on every chunk frame received.
+	onChunk    func()
 	payloads   []*recordedPayload
 	serverOpts []grpc.ServerOption
+	planCalls  int
 	mu         sync.Mutex
+}
+
+// partsPlanServer serves the Plan of a fakePartsLiaison.
+type partsPlanServer struct {
+	transferv1.UnimplementedExportServiceServer
+	f *fakePartsLiaison
+}
+
+// Plan reports the scripted counts: one unit per (key, segment), the default stage as "".
+func (s partsPlanServer) Plan(_ *transferv1.PlanRequest, stream transferv1.ExportService_PlanServer) error {
+	s.f.mu.Lock()
+	n := s.f.planCalls
+	s.f.planCalls++
+	s.f.mu.Unlock()
+	c := s.f.plan(n)
+	var answered []string
+	for k, segs := range c.Shards {
+		stage := k.Stage
+		if stage == transfer.DefaultStageName {
+			stage = ""
+		}
+		if !slices.Contains(answered, k.Node) && !slices.Contains(c.Unreachable, k.Node) {
+			answered = append(answered, k.Node)
+		}
+		if slices.Contains(c.Unreachable, k.Node) {
+			continue
+		}
+		fr := &transferv1.UnitFrame{NodeId: k.Node, Stage: stage}
+		for seg, rows := range segs {
+			fr.Units = append(fr.Units, &transferv1.UnitInventory{Kind: &transferv1.UnitInventory_Segment{Segment: &transferv1.SegmentInventory{
+				Unit:   &transferv1.SegmentUnit{Catalog: k.Catalog, Group: k.Group, SegmentSuffix: seg, ShardIds: []uint32{k.Shard}},
+				Shards: []*transferv1.ShardStat{{ShardId: k.Shard, TotalCount: uint64(rows), PartsCount: 1}},
+			}}})
+		}
+		if err := stream.Send(&transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Units{Units: fr}}); err != nil {
+			return err
+		}
+	}
+	return stream.Send(&transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Summary{Summary: &transferv1.PlanSummary{
+		AnsweredNodes: answered, UnreachableNodes: c.Unreachable,
+	}}})
 }
 
 func (f *fakePartsLiaison) ImportParts(stream transferv1.ImportService_ImportPartsServer) error {
@@ -238,6 +285,9 @@ func (f *fakePartsLiaison) ImportParts(stream transferv1.ImportService_ImportPar
 		case *transferv1.ImportPartsRequest_Chunk_:
 			if len(fr.Chunk.GetData()) > config.MaxPartChunkSize {
 				return status.Errorf(codes.InvalidArgument, "a chunk of %d bytes is over %d", len(fr.Chunk.GetData()), config.MaxPartChunkSize)
+			}
+			if f.onChunk != nil {
+				f.onChunk()
 			}
 			p.chunks++
 			gotBytes += uint64(len(fr.Chunk.GetData()))
@@ -283,6 +333,9 @@ func (f *fakePartsLiaison) serve(t *testing.T) *cluster.Liaison {
 	require.NoError(t, err)
 	srv := grpc.NewServer(f.serverOpts...)
 	transferv1.RegisterImportServiceServer(srv, f)
+	if f.plan != nil {
+		transferv1.RegisterExportServiceServer(srv, partsPlanServer{f: f})
+	}
 	//panicdiag:allow-rawgo test server
 	go func() { _ = srv.Serve(lis) }()
 	t.Cleanup(srv.Stop)
@@ -569,6 +622,8 @@ func TestRetryablePayload(t *testing.T) {
 	}
 }
 
+// A stream that breaks after the completion names no target, so there is nothing to reconcile,
+// even with a reconciler: the failure is final.
 func TestPushParts_StreamPartBrokenAfterCompletionIsNotResent(t *testing.T) {
 	shortenPartRetries(t)
 	art, entries := nativeArtifact(t)
@@ -579,12 +634,15 @@ func TestPushParts_StreamPartBrokenAfterCompletionIsNotResent(t *testing.T) {
 		}
 		return okTargets("d1"), nil
 	}}
+	f.plan = func(int) *Counts { return emptyCounts() }
 	var log bytes.Buffer
-	opts := nativePushOptions()
+	li := f.serve(t)
+	opts := reconcilingOptions(li, emptyCounts())
 	opts.Log = &log
-	res, err := PushParts(context.Background(), []*cluster.Liaison{f.serve(t)}, art, entries, opts)
+	res, err := PushParts(context.Background(), []*cluster.Liaison{li}, art, entries, opts)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "may be stored on its targets already")
+	assert.Zero(t, f.planCalls, "nothing is reconciled")
 	assert.Equal(t, []string{"stream/sg/hot/20261018/segment"}, res.Done)
 	assert.Contains(t, log.String(), "work items not done (1)")
 	var parts int
@@ -596,6 +654,8 @@ func TestPushParts_StreamPartBrokenAfterCompletionIsNotResent(t *testing.T) {
 	assert.Equal(t, 1, parts, "a stream part that may have been committed is not sent again")
 }
 
+// Without a reconciler (no baseline), a stream part a target failed after its completion is not
+// reconciled: the failure is final.
 func TestPushParts_TargetFailedAfterCompletionIsNotResent(t *testing.T) {
 	shortenPartRetries(t)
 	art, entries := nativeArtifact(t)
