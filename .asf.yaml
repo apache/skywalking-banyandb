@@ -45,4 +45,5 @@ github:
         required_approving_review_count: 1
     # Protect release branches
     v0.7.x: {}
+    v0.10.x: {}
     v0.11.x: {}
