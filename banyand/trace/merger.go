@@ -1079,8 +1079,19 @@ func (tst *tsTable) mergePartsThenIntroduceAttempt(creator snapshotCreator, part
 		}
 		return mergeAttemptResult{}, mi.resultErr
 	}
+	// The introducer can still reject the output at publication, so rows are counted only once it is published.
+	tst.incPipelineSidxPruned(prunedSidxRows(mergerIntroductionMap))
 	operation.publishAttempt(attempt)
 	return mergeAttemptResult{part: newPart}, nil
+}
+
+// prunedSidxRows sums the rows the drop set removed across all sidx merges.
+func prunedSidxRows(introductions map[string]*sidx.MergerIntroduction) int {
+	var rows uint64
+	for _, introduction := range introductions {
+		rows += introduction.PrunedRows()
+	}
+	return int(rows)
 }
 
 func (tst *tsTable) freeDiskSpace(path string) uint64 {

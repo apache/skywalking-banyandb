@@ -201,7 +201,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_cpu_num{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
+          "expr": "sum(banyandb_system_cpu_limit_cores{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -216,7 +216,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total used physical memory across the selected nodes.",
+      "description": "Total resident memory (RSS) across the selected nodes.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -268,7 +268,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_memory_state{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"})",
+          "expr": "sum(process_resident_memory_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,
@@ -363,7 +363,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Per-node health snapshot: role, uptime, CPU cores used, RSS, system memory %, and disk % (across all paths).",
+      "description": "Per-node health snapshot: role, uptime, CPU cores used, RSS, system memory %, and disk % (the fullest storage path).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -436,7 +436,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "percent"
+                "value": "percentunit"
               },
               {
                 "id": "thresholds",
@@ -449,7 +449,7 @@
                     },
                     {
                       "color": "red",
-                      "value": 80
+                      "value": 0.8
                     }
                   ]
                 }
@@ -591,7 +591,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "max by (pod_name) (  banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}  / on (pod_name, path)   banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"})",
+          "expr": "max by (pod_name) (banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used_percent\"})",
           "instant": true,
           "legendFormat": "",
           "range": false,
@@ -1094,7 +1094,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "CPU cores used per node (rate of process_cpu_seconds_total).",
+      "description": "CPU used per node as a fraction of its CPU limit (rate of process_cpu_seconds_total ÷ banyandb_system_cpu_limit_cores).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1180,7 +1180,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(rate(process_cpu_seconds_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (pod_name)",
+          "expr": "sum(rate(process_cpu_seconds_total{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}[$__rate_interval])) by (pod_name) / max by (pod_name) (banyandb_system_cpu_limit_cores{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
           "instant": false,
           "legendFormat": "{{pod_name}}",
           "range": true,
@@ -1345,11 +1345,11 @@
               },
               {
                 "color": "red",
-                "value": 80
+                "value": 0.8
               }
             ]
           },
-          "unit": "percent"
+          "unit": "percentunit"
         },
         "overrides": []
       },
@@ -1401,7 +1401,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Disk used / total per node (aggregated across all storage paths).",
+      "description": "Disk used percent per node (the fullest storage path).",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1491,7 +1491,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}) by (pod_name) / sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"}) by (pod_name)",
+          "expr": "max by (pod_name) (banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", kind=\"used_percent\"})",
           "instant": false,
           "legendFormat": "{{pod_name}}",
           "range": true,
@@ -1924,7 +1924,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"used\"}) by (pod_name, path) / sum(banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\",kind=\"total\"}) by (pod_name, path)",
+          "expr": "max by (pod_name, path) (banyandb_system_disk{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\", kind=\"used_percent\"})",
           "instant": false,
           "legendFormat": "{{pod_name}} {{path}}",
           "range": true,

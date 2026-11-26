@@ -590,7 +590,7 @@ describe('/monitor/snapshot', () => {
   const metrics = (cpuSeconds: number, started: number, latencySeconds: number, finished = started) => [
     '# TYPE process_cpu_seconds_total counter',
     `process_cpu_seconds_total ${cpuSeconds}`,
-    'banyandb_system_cpu_num 8',
+    'banyandb_system_cpu_limit_cores 8',
     'banyandb_system_up_time 29.3',
     'banyandb_system_memory_state{kind="used_percent"} 0.6',
     'banyandb_system_disk{kind="used",path="/data/measure"} 400',

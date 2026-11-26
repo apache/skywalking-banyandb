@@ -148,6 +148,7 @@ func (ms *measureService) Write(measure measurev1.MeasureService_WriteServer) er
 	if dl := ms.l.Debug(); dl.Enabled() {
 		dl.Int("total_requests", requestCount).Msg("completed measure write stream")
 	}
+	recordWriteStreamErr(ms.metrics, "measure", err, finishErr)
 	ms.metrics.totalStreamFinished.Inc(1, "measure", "write")
 	ms.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "measure", "write")
 	return err
@@ -683,9 +684,19 @@ func (ms *measureService) TopN(ctx context.Context, topNRequest *measurev1.TopNR
 			ms.groupRepo.releaseRequest(g)
 		}
 	}()
+	for _, g := range topNRequest.GetGroups() {
+		ms.metrics.totalStarted.Inc(1, g, "topn", "query")
+	}
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start)
+		for _, g := range topNRequest.GetGroups() {
+			ms.metrics.totalFinished.Inc(1, g, "topn", "query")
+			if err != nil {
+				ms.metrics.totalErr.Inc(1, g, "topn", "query")
+			}
+			ms.metrics.totalLatency.Inc(duration.Seconds(), g, "topn", "query")
+		}
 		// Log query with timing information at the end
 		if ms.queryAccessLog != nil {
 			if errAccessLog := ms.queryAccessLog.WriteQuery("measure", start, duration, topNRequest, err); errAccessLog != nil {

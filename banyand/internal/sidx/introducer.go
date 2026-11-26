@@ -71,8 +71,14 @@ func releaseFlusherIntroduction(i *FlusherIntroduction) {
 
 // MergerIntroduction represents the introduction of a merger operation.
 type MergerIntroduction struct {
-	merged  map[uint64]struct{}
-	newPart *partWrapper
+	merged     map[uint64]struct{}
+	newPart    *partWrapper
+	prunedRows uint64
+}
+
+// PrunedRows returns the number of rows the merge's keep predicate removed.
+func (i *MergerIntroduction) PrunedRows() uint64 {
+	return i.prunedRows
 }
 
 // Release releases the MergerIntroduction back to the pool.
@@ -94,6 +100,7 @@ func (i *MergerIntroduction) reset() {
 		delete(i.merged, k)
 	}
 	i.newPart = nil
+	i.prunedRows = 0
 }
 
 var mergerIntroductionPool = pool.Register[*MergerIntroduction]("sidx-merger-introduction")

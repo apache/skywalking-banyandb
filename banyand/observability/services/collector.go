@@ -36,18 +36,25 @@ type Collector struct {
 	gMux    sync.RWMutex
 }
 
-// Register registers a metrics getter.
+// Register registers a metrics getter. The getter runs while the collector holds its read lock,
+// so it must not call any method of the Collector.
 func (c *Collector) Register(name string, getter MetricsGetter) {
 	c.gMux.Lock()
 	defer c.gMux.Unlock()
 	c.getters[name] = getter
 }
 
-// Unregister unregisters a metrics getter.
+// Unregister unregisters a metrics getter. It waits for a collection in progress to finish,
+// so the getter is not called again once Unregister returns.
 func (c *Collector) Unregister(name string) {
 	c.gMux.Lock()
 	defer c.gMux.Unlock()
 	delete(c.getters, name)
+}
+
+// Collect runs every registered getter once, as the periodic collection does.
+func (c *Collector) Collect() {
+	c.collect()
 }
 
 func (c *Collector) collect() {

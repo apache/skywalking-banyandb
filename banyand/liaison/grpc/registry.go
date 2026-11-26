@@ -33,6 +33,15 @@ import (
 	"github.com/apache/skywalking-banyandb/banyand/metadata/schema"
 )
 
+// recordRegistryErr counts a failed registry call in total_registry_err. A missing resource is not counted: it is
+// the normal answer to a client that looks an object up before creating it.
+func recordRegistryErr(m *metrics, err error, g, service, method string) {
+	if isGroupNotFound(err) {
+		return
+	}
+	m.totalRegistryErr.Inc(1, g, service, method)
+}
+
 type streamRegistryServer struct {
 	databasev1.UnimplementedStreamRegistryServiceServer
 	schemaRegistry metadata.Repo
@@ -51,7 +60,7 @@ func (rs *streamRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.StreamRegistry().CreateStream(ctx, req.GetStream())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "stream", "create")
+		recordRegistryErr(rs.metrics, err, g, "stream", "create")
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceCreateResponse{
@@ -71,7 +80,7 @@ func (rs *streamRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.StreamRegistry().UpdateStream(ctx, req.GetStream())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "stream", "update")
+		recordRegistryErr(rs.metrics, err, g, "stream", "update")
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceUpdateResponse{
@@ -91,7 +100,7 @@ func (rs *streamRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := rs.schemaRegistry.StreamRegistry().DeleteStream(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "stream", "delete")
+		recordRegistryErr(rs.metrics, err, g, "stream", "delete")
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceDeleteResponse{
@@ -112,7 +121,7 @@ func (rs *streamRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := rs.schemaRegistry.StreamRegistry().GetStream(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "stream", "get")
+		recordRegistryErr(rs.metrics, err, g, "stream", "get")
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceGetResponse{
@@ -132,7 +141,7 @@ func (rs *streamRegistryServer) List(ctx context.Context,
 	}()
 	entities, err := rs.schemaRegistry.StreamRegistry().ListStream(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "stream", "list")
+		recordRegistryErr(rs.metrics, err, g, "stream", "list")
 		return nil, err
 	}
 	return &databasev1.StreamRegistryServiceListResponse{
@@ -199,7 +208,7 @@ func (rs *indexRuleBindingRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.IndexRuleBindingRegistry().CreateIndexRuleBinding(ctx, req.GetIndexRuleBinding())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRuleBinding", "create")
+		recordRegistryErr(rs.metrics, err, g, "indexRuleBinding", "create")
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceCreateResponse{ModRevision: modRevision}, nil
@@ -218,7 +227,7 @@ func (rs *indexRuleBindingRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.IndexRuleBindingRegistry().UpdateIndexRuleBinding(ctx, req.GetIndexRuleBinding())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRuleBinding", "update")
+		recordRegistryErr(rs.metrics, err, g, "indexRuleBinding", "update")
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceUpdateResponse{ModRevision: modRevision}, nil
@@ -237,7 +246,7 @@ func (rs *indexRuleBindingRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := rs.schemaRegistry.IndexRuleBindingRegistry().DeleteIndexRuleBinding(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRuleBinding", "delete")
+		recordRegistryErr(rs.metrics, err, g, "indexRuleBinding", "delete")
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceDeleteResponse{
@@ -259,7 +268,7 @@ func (rs *indexRuleBindingRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := rs.schemaRegistry.IndexRuleBindingRegistry().GetIndexRuleBinding(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRuleBinding", "get")
+		recordRegistryErr(rs.metrics, err, g, "indexRuleBinding", "get")
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceGetResponse{
@@ -281,7 +290,7 @@ func (rs *indexRuleBindingRegistryServer) List(ctx context.Context,
 	entities, err := rs.schemaRegistry.IndexRuleBindingRegistry().
 		ListIndexRuleBinding(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRuleBinding", "list")
+		recordRegistryErr(rs.metrics, err, g, "indexRuleBinding", "list")
 		return nil, err
 	}
 	return &databasev1.IndexRuleBindingRegistryServiceListResponse{
@@ -333,7 +342,7 @@ func (rs *indexRuleRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.IndexRuleRegistry().CreateIndexRule(ctx, req.GetIndexRule())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRule", "create")
+		recordRegistryErr(rs.metrics, err, g, "indexRule", "create")
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceCreateResponse{ModRevision: modRevision}, nil
@@ -352,7 +361,7 @@ func (rs *indexRuleRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.IndexRuleRegistry().UpdateIndexRule(ctx, req.GetIndexRule())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRule", "update")
+		recordRegistryErr(rs.metrics, err, g, "indexRule", "update")
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceUpdateResponse{ModRevision: modRevision}, nil
@@ -371,7 +380,7 @@ func (rs *indexRuleRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := rs.schemaRegistry.IndexRuleRegistry().DeleteIndexRule(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRule", "delete")
+		recordRegistryErr(rs.metrics, err, g, "indexRule", "delete")
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceDeleteResponse{
@@ -393,7 +402,7 @@ func (rs *indexRuleRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := rs.schemaRegistry.IndexRuleRegistry().GetIndexRule(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRule", "get")
+		recordRegistryErr(rs.metrics, err, g, "indexRule", "get")
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceGetResponse{
@@ -414,7 +423,7 @@ func (rs *indexRuleRegistryServer) List(ctx context.Context,
 	}()
 	entities, err := rs.schemaRegistry.IndexRuleRegistry().ListIndexRule(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "indexRule", "list")
+		recordRegistryErr(rs.metrics, err, g, "indexRule", "list")
 		return nil, err
 	}
 	return &databasev1.IndexRuleRegistryServiceListResponse{
@@ -466,7 +475,7 @@ func (rs *measureRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.MeasureRegistry().CreateMeasure(ctx, req.GetMeasure())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "create")
+		recordRegistryErr(rs.metrics, err, g, "measure", "create")
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceCreateResponse{
@@ -487,7 +496,7 @@ func (rs *measureRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.MeasureRegistry().UpdateMeasure(ctx, req.GetMeasure())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "update")
+		recordRegistryErr(rs.metrics, err, g, "measure", "update")
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceUpdateResponse{
@@ -508,7 +517,7 @@ func (rs *measureRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := rs.schemaRegistry.MeasureRegistry().DeleteMeasure(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "delete")
+		recordRegistryErr(rs.metrics, err, g, "measure", "delete")
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceDeleteResponse{
@@ -530,7 +539,7 @@ func (rs *measureRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := rs.schemaRegistry.MeasureRegistry().GetMeasure(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "get")
+		recordRegistryErr(rs.metrics, err, g, "measure", "get")
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceGetResponse{
@@ -551,7 +560,7 @@ func (rs *measureRegistryServer) List(ctx context.Context,
 	}()
 	entities, err := rs.schemaRegistry.MeasureRegistry().ListMeasure(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "measure", "list")
+		recordRegistryErr(rs.metrics, err, g, "measure", "list")
 		return nil, err
 	}
 	return &databasev1.MeasureRegistryServiceListResponse{
@@ -604,7 +613,7 @@ func (rs *groupRegistryServer) Create(ctx context.Context, req *databasev1.Group
 	}()
 	modRevision, err := rs.schemaRegistry.GroupRegistry().CreateGroup(ctx, req.GetGroup())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "create")
+		recordRegistryErr(rs.metrics, err, g, "group", "create")
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceCreateResponse{
@@ -624,7 +633,7 @@ func (rs *groupRegistryServer) Update(ctx context.Context, req *databasev1.Group
 	}()
 	modRevision, err := rs.schemaRegistry.GroupRegistry().UpdateGroup(ctx, req.GetGroup())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "update")
+		recordRegistryErr(rs.metrics, err, g, "group", "update")
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceUpdateResponse{
@@ -647,7 +656,7 @@ func (rs *groupRegistryServer) Delete(ctx context.Context, req *databasev1.Group
 		return nil, status.Errorf(codes.PermissionDenied, "cannot delete internal system group %s", g)
 	}
 	if _, getErr := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, g); getErr != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "delete")
+		recordRegistryErr(rs.metrics, getErr, g, "group", "delete")
 		return nil, getErr
 	}
 	if req.GetDryRun() {
@@ -697,7 +706,7 @@ func (rs *groupRegistryServer) Get(ctx context.Context, req *databasev1.GroupReg
 	}()
 	group, err := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, req.GetGroup())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "get")
+		recordRegistryErr(rs.metrics, err, g, "group", "get")
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceGetResponse{
@@ -717,7 +726,7 @@ func (rs *groupRegistryServer) List(ctx context.Context, _ *databasev1.GroupRegi
 	}()
 	groups, err := rs.schemaRegistry.GroupRegistry().ListGroup(ctx)
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "list")
+		recordRegistryErr(rs.metrics, err, g, "group", "list")
 		return nil, err
 	}
 	return &databasev1.GroupRegistryServiceListResponse{
@@ -762,7 +771,7 @@ func (rs *groupRegistryServer) Inspect(ctx context.Context, req *databasev1.Grou
 	}()
 	group, err := rs.schemaRegistry.GroupRegistry().GetGroup(ctx, g)
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "group", "inspect")
+		recordRegistryErr(rs.metrics, err, g, "group", "inspect")
 		return nil, err
 	}
 	schemaInfo, schemaErr := rs.collectSchemaInfo(ctx, g)
@@ -900,7 +909,7 @@ func (ts *topNAggregationRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := ts.schemaRegistry.TopNAggregationRegistry().CreateTopNAggregation(ctx, req.GetTopNAggregation())
 	if err != nil {
-		ts.metrics.totalRegistryErr.Inc(1, g, "topn_aggregation", "create")
+		recordRegistryErr(ts.metrics, err, g, "topn_aggregation", "create")
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceCreateResponse{
@@ -920,7 +929,7 @@ func (ts *topNAggregationRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := ts.schemaRegistry.TopNAggregationRegistry().UpdateTopNAggregation(ctx, req.GetTopNAggregation())
 	if err != nil {
-		ts.metrics.totalRegistryErr.Inc(1, g, "topn_aggregation", "update")
+		recordRegistryErr(ts.metrics, err, g, "topn_aggregation", "update")
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceUpdateResponse{
@@ -940,7 +949,7 @@ func (ts *topNAggregationRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := ts.schemaRegistry.TopNAggregationRegistry().DeleteTopNAggregation(ctx, req.GetMetadata())
 	if err != nil {
-		ts.metrics.totalRegistryErr.Inc(1, g, "topn_aggregation", "delete")
+		recordRegistryErr(ts.metrics, err, g, "topn_aggregation", "delete")
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceDeleteResponse{
@@ -961,7 +970,7 @@ func (ts *topNAggregationRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := ts.schemaRegistry.TopNAggregationRegistry().GetTopNAggregation(ctx, req.GetMetadata())
 	if err != nil {
-		ts.metrics.totalRegistryErr.Inc(1, g, "topn_aggregation", "get")
+		recordRegistryErr(ts.metrics, err, g, "topn_aggregation", "get")
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceGetResponse{
@@ -981,7 +990,7 @@ func (ts *topNAggregationRegistryServer) List(ctx context.Context,
 	}()
 	entities, err := ts.schemaRegistry.TopNAggregationRegistry().ListTopNAggregation(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		ts.metrics.totalRegistryErr.Inc(1, g, "topn_aggregation", "list")
+		recordRegistryErr(ts.metrics, err, g, "topn_aggregation", "list")
 		return nil, err
 	}
 	return &databasev1.TopNAggregationRegistryServiceListResponse{
@@ -1031,7 +1040,7 @@ func (ps *propertyRegistryServer) Create(ctx context.Context, req *databasev1.Pr
 		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "create")
 	}()
 	if err := ps.schemaRegistry.PropertyRegistry().CreateProperty(ctx, req.GetProperty()); err != nil {
-		ps.metrics.totalRegistryErr.Inc(1, g, "property", "create")
+		recordRegistryErr(ps.metrics, err, g, "property", "create")
 		return nil, err
 	}
 	return &databasev1.PropertyRegistryServiceCreateResponse{}, nil
@@ -1048,7 +1057,7 @@ func (ps *propertyRegistryServer) Update(ctx context.Context, req *databasev1.Pr
 		ps.metrics.totalRegistryLatency.Inc(time.Since(start).Seconds(), g, "property", "update")
 	}()
 	if err := ps.schemaRegistry.PropertyRegistry().UpdateProperty(ctx, req.GetProperty()); err != nil {
-		ps.metrics.totalRegistryErr.Inc(1, g, "property", "update")
+		recordRegistryErr(ps.metrics, err, g, "property", "update")
 		return nil, err
 	}
 	return &databasev1.PropertyRegistryServiceUpdateResponse{}, nil
@@ -1066,7 +1075,7 @@ func (ps *propertyRegistryServer) Delete(ctx context.Context, req *databasev1.Pr
 	}()
 	ok, deleteTime, err := ps.schemaRegistry.PropertyRegistry().DeleteProperty(ctx, req.GetMetadata())
 	if err != nil {
-		ps.metrics.totalRegistryErr.Inc(1, g, "property", "delete")
+		recordRegistryErr(ps.metrics, err, g, "property", "delete")
 		return nil, err
 	}
 	return &databasev1.PropertyRegistryServiceDeleteResponse{
@@ -1087,7 +1096,7 @@ func (ps *propertyRegistryServer) Get(ctx context.Context, req *databasev1.Prope
 	}()
 	entity, err := ps.schemaRegistry.PropertyRegistry().GetProperty(ctx, req.GetMetadata())
 	if err != nil {
-		ps.metrics.totalRegistryErr.Inc(1, g, "property", "get")
+		recordRegistryErr(ps.metrics, err, g, "property", "get")
 		return nil, err
 	}
 	return &databasev1.PropertyRegistryServiceGetResponse{
@@ -1107,7 +1116,7 @@ func (ps *propertyRegistryServer) List(ctx context.Context, req *databasev1.Prop
 	}()
 	entities, err := ps.schemaRegistry.PropertyRegistry().ListProperty(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		ps.metrics.totalRegistryErr.Inc(1, g, "property", "list")
+		recordRegistryErr(ps.metrics, err, g, "property", "list")
 		return nil, err
 	}
 	return &databasev1.PropertyRegistryServiceListResponse{
@@ -1158,7 +1167,7 @@ func (rs *traceRegistryServer) Create(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.TraceRegistry().CreateTrace(ctx, req.GetTrace())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "create")
+		recordRegistryErr(rs.metrics, err, g, "trace", "create")
 		return nil, err
 	}
 	return &databasev1.TraceRegistryServiceCreateResponse{
@@ -1178,7 +1187,7 @@ func (rs *traceRegistryServer) Update(ctx context.Context,
 	}()
 	modRevision, err := rs.schemaRegistry.TraceRegistry().UpdateTrace(ctx, req.GetTrace())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "update")
+		recordRegistryErr(rs.metrics, err, g, "trace", "update")
 		return nil, err
 	}
 	return &databasev1.TraceRegistryServiceUpdateResponse{
@@ -1198,7 +1207,7 @@ func (rs *traceRegistryServer) Delete(ctx context.Context,
 	}()
 	ok, deleteTime, err := rs.schemaRegistry.TraceRegistry().DeleteTrace(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "delete")
+		recordRegistryErr(rs.metrics, err, g, "trace", "delete")
 		return nil, err
 	}
 	return &databasev1.TraceRegistryServiceDeleteResponse{
@@ -1219,7 +1228,7 @@ func (rs *traceRegistryServer) Get(ctx context.Context,
 	}()
 	entity, err := rs.schemaRegistry.TraceRegistry().GetTrace(ctx, req.GetMetadata())
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "get")
+		recordRegistryErr(rs.metrics, err, g, "trace", "get")
 		return nil, err
 	}
 	return &databasev1.TraceRegistryServiceGetResponse{
@@ -1239,7 +1248,7 @@ func (rs *traceRegistryServer) List(ctx context.Context,
 	}()
 	entities, err := rs.schemaRegistry.TraceRegistry().ListTrace(ctx, schema.ListOpt{Group: req.GetGroup()})
 	if err != nil {
-		rs.metrics.totalRegistryErr.Inc(1, g, "trace", "list")
+		recordRegistryErr(rs.metrics, err, g, "trace", "list")
 		return nil, err
 	}
 	return &databasev1.TraceRegistryServiceListResponse{
