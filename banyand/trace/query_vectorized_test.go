@@ -73,32 +73,27 @@ func TestDrainVectorizedPhase1(t *testing.T) {
 	require.Equal(t, map[string]int64{"trace-a": 0, "trace-b": 2}, batch.keys)
 }
 
+// A query by trace ID looks up every ID it is given: the limit counts the traces that exist, which Phase 1 cannot know, so it
+// does not cut the list. The cap is applied to the traces that come back (see TestVectorizedLookup).
 func TestBuildVectorizedPhase1TraceBatchStatic(t *testing.T) {
 	tr := &trace{vectorized: vtrace.VectorizedConfig{BatchSize: 1, QueryMemoryMiB: 1}}
 	batch, err := tr.buildVectorizedPhase1TraceBatch(context.Background(), queryOptions{
 		traceIDs: []string{"trace-a", "trace-b"},
 	}, nil, sidx.QueryRequest{}, false, 1)
 	require.NoError(t, err)
-	require.Equal(t, []string{"trace-a"}, batch.traceIDsOrder)
-	require.Equal(t, map[uint64][]string{0: {"trace-a"}}, batch.traceIDs)
-	require.Equal(t, map[string]int64{"trace-a": 0}, batch.keys)
+	require.Equal(t, []string{"trace-a", "trace-b"}, batch.traceIDsOrder, "a limit of 1 must not drop trace-b before it is looked up")
+	require.Equal(t, map[string]int64{"trace-a": 0, "trace-b": 0}, batch.keys)
 }
 
-// TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity guards against the
-// regression where deduplication happened BEFORE limit truncation, causing
-// vectorized to return different results than the push path for duplicate IDs.
-// Push path: traceIDs[:limit] → emit first occurrence only.
-// Vectorized (fixed): same — truncate first, then dedup within the window.
-func TestBuildVectorizedPhase1TraceBatchStaticDedupLimitParity(t *testing.T) {
+// A repeated ID is looked up once, and it does not take the place of another ID: [a, a, b] with a limit of 2 holds two
+// distinct IDs. The old behavior cut the raw list to the limit first, which returned only a.
+func TestBuildVectorizedPhase1TraceBatchStaticDedupsWithoutUsingTheLimit(t *testing.T) {
 	tr := &trace{vectorized: vtrace.VectorizedConfig{BatchSize: 10, QueryMemoryMiB: 1}}
-	// [a, a, b] limit 2: push takes first 2 raw = [a, a], emits a once.
-	// Vectorized must do the same: truncate to [a, a], dedup → [a].
 	batch, err := tr.buildVectorizedPhase1TraceBatch(context.Background(), queryOptions{
 		traceIDs: []string{"a", "a", "b"},
 	}, nil, sidx.QueryRequest{}, false, 2)
 	require.NoError(t, err)
-	require.Equal(t, []string{"a"}, batch.traceIDsOrder,
-		"[a,a,b] limit 2 must yield [a], not [a,b] or [a,a]")
+	require.Equal(t, []string{"a", "b"}, batch.traceIDsOrder, "[a,a,b] has two distinct IDs, and a limit of 2 allows both")
 }
 
 // newScanBatchFromCursors wraps already-scanned cursors in a *scanBatch so the

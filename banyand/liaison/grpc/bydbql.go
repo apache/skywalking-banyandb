@@ -177,8 +177,19 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 	}
 
+	return b.executeNative(ctx, result, rawPlan)
+}
+
+// executeNative runs the native request of a transformed statement.
+func (b *bydbQLService) executeNative(ctx context.Context, result *bydbql.TransformResult, rawPlan *ql.RawPlan) (*bydbqlv1.QueryResponse, error) {
+	// A statement that asks for no row (LIMIT 0) is answered without running its request, which a native backend would read as
+	// the default limit.
+	if result.Empty {
+		return emptyQueryResponse(result.Type), nil
+	}
+
 	// execute native request
-	resp = &bydbqlv1.QueryResponse{}
+	resp := &bydbqlv1.QueryResponse{}
 	switch result.Type {
 	case bydbql.QueryTypeStream:
 		streamResponse, err := b.streamSvc.Query(ctx, result.QueryRequest.(*streamv1.QueryRequest))
@@ -205,7 +216,7 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		}
 		resp.Result = &bydbqlv1.QueryResponse_TopnResult{TopnResult: topNResponse}
 	case bydbql.QueryTypeProperty:
-		propertyResponse, err := b.propertyServer.Query(ctx, result.QueryRequest.(*propertyv1.QueryRequest))
+		propertyResponse, err := b.queryQLProperty(ctx, result)
 		if err != nil {
 			return nil, err
 		}
@@ -214,6 +225,42 @@ func (b *bydbQLService) Query(ctx context.Context, req *bydbqlv1.QueryRequest) (
 		return nil, fmt.Errorf("unknown query type: %v", result.Type)
 	}
 	return resp, nil
+}
+
+// queryQLProperty runs a property query. A property request has no offset: the query asked for offset+limit rows, and the
+// offset is skipped here.
+func (b *bydbQLService) queryQLProperty(ctx context.Context, result *bydbql.TransformResult) (*propertyv1.QueryResponse, error) {
+	response, err := b.propertyServer.Query(ctx, result.QueryRequest.(*propertyv1.QueryRequest))
+	if err != nil {
+		return nil, err
+	}
+	response.Properties = skipProperties(response.Properties, result.Offset)
+	return response, nil
+}
+
+// skipProperties drops the first skip properties, or all of them when there are fewer.
+func skipProperties(properties []*propertyv1.Property, skip uint32) []*propertyv1.Property {
+	if skip == 0 {
+		return properties
+	}
+	return properties[min(uint64(skip), uint64(len(properties))):]
+}
+
+// emptyQueryResponse is the response of a query of the type that selects no row, or nil for a type that never sets TransformResult.Empty.
+func emptyQueryResponse(queryType bydbql.QueryType) *bydbqlv1.QueryResponse {
+	switch queryType {
+	case bydbql.QueryTypeStream:
+		return &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_StreamResult{StreamResult: &streamv1.QueryResponse{}}}
+	case bydbql.QueryTypeMeasure:
+		return &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_MeasureResult{MeasureResult: &measurev1.QueryResponse{}}}
+	case bydbql.QueryTypeTrace:
+		return &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_TraceResult{TraceResult: &tracev1.QueryResponse{}}}
+	case bydbql.QueryTypeProperty:
+		return &bydbqlv1.QueryResponse{Result: &bydbqlv1.QueryResponse_PropertyResult{PropertyResult: &propertyv1.QueryResponse{}}}
+	case bydbql.QueryTypeTopN:
+		return nil
+	}
+	return nil
 }
 
 func (b *bydbQLService) planQuery(ctx context.Context, statement *bydbql.PreparedStatement,
