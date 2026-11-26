@@ -45,7 +45,7 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
 5. **CRC32C Part Checksums & Anti-PUT Compaction**: Local pre-compaction slashes cloud PUT requests by 90%+. Formal durability requires byte-length match and hardware-accelerated CRC32C checksum verification before local NVMe files are unlinked.
 6. **Thanos-Style Crash Recovery Switch**: Checkpoint tracking (`cloud_offload_progress.json`) paired with a 3-mode switch (`auto`, `restart`, `halt-and-alert`) ensures unattended Kubernetes pods never hang on interactive prompts after power cuts or restarts.
 7. **Zero-Staging HTTP Range-GET Query Path**: Data nodes never download multi-gigabyte segment archives. Columnar slices (`timestamps.bin`, `fv.bin`) stream on demand via an L1 RAM / L2 NVMe block cache (`FileCache`).
-8. **Remote Compactor & Delayed GC**: Out-of-band maintenance worker merges small remote parts, swapping manifests atomically via the `manifests/CURRENT` CAS pointer with a 1-hour delayed deletion queue protecting active readers from 404s.
+8. **Cross-Replica Compactor & Delayed GC**: Out-of-band maintenance worker merges parts across replica namespaces using native merge algorithms, publishing consolidated manifests with a 1-hour delayed deletion queue protecting active readers.
 9. **Encapsulated Dual Upload Strategy & Shared Driver Reuse**: Reuses existing `pkg/fs/remote/aws` (`s3FS`) and `config.S3Config`, adding `Endpoint` and `UsePathStyle` for MinIO/Ceph compatibility. Encapsulates the dual upload strategy (single PUT for < 16 MB vs chunked multipart for ≥ 16 MB) completely inside `s3FS.Upload()` via AWS SDK v2 `manager.Uploader`. High-level callers (`backup` and `lifecycle`) stay completely decoupled from MPU state and call `fs.Upload(ctx, path, reader)` uniformly. Extends `remote.FS` with targeted sub-interfaces (`StatFS`, `RangeReaderFS`), omitting `MultipartFS` from public caller interfaces.
 
 ### Unified Storage Hierarchy & Side Residence Mapping
@@ -62,18 +62,18 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
           ├── sidx/<epoch>.snp                                         ├} [PERMANENT CLOUD]
           └── shard-<shard_id>/                                        │
                ├── manifests/                                          │
-               │    ├── CURRENT                     (atomic pointer)   │
-               │    └── <gen>-t<term>-<uuid>.snp    (snapshots)        │
-               └── parts/<part_id>/ ───────────────────────────────────┐
-                    ├── metadata.json           (part summary)         │
-                    ├── meta.bin                (block offsets)        │
-                    ├── primary.bin             (primary keys)         │
-                    ├── tag.type                (tag types)            ├} [CACHED LOCALLY ON DEMAND]
-                    ├── timestamps.bin          [MEASURE/STREAM]       │
-                    ├── fv.bin                  [MEASURE values]       │
-                    ├── spans.bin               [TRACE spans]          │
-                    └── traceID.filter          [TRACE bloom filter]   │
-                    └── (Range-GET block slices in FileCache) ──────────┘
+               │    ├── CURRENT                     (compactor pointer)│
+               │    └── <compaction_id>.snp         (merged manifest)  │
+               ├── replicas/<node_id>/                                 │
+               │    ├── manifests/<snapshot_id>.snp (replica manifest) │
+               │    └── parts/<part_id>/ ──────────────────────────────┤
+               │         ├── metadata.json           (part summary)     │
+               │         ├── meta.bin                (block offsets)    │
+               │         ├── primary.bin             (primary keys)     │
+               │         ├── timestamps.bin          [MEASURE/STREAM]   │
+               │         └── fv.bin                  [MEASURE values]   │
+               └── compacted/                                          │
+                    └── parts/<part_id>/... (merged cross-replica parts)
 ```
 
 ---
@@ -204,7 +204,7 @@ To prevent S3 PUT bill shock, the agent runs BanyanDB's native LSM merger locall
 - **Configurability**: Controlled by `--lifecycle-pre-upload-compact=true` (Default: `true`). If disabled by the operator (`false`), raw parts stream directly to S3 as-is.
 
 #### Step 3: Streamlined Part Streaming via Encapsulated Upload
-The agent streams sealed parts to the remote bucket under `s3://<bucket>/<prefix>/<catalog>/<group>/seg-<suffix>/shard-<shard_id>/`:
+The agent streams sealed parts to the remote bucket under `s3://<bucket>/<prefix>/<catalog>/<group>/seg-<suffix>/shard-<shard_id>/replicas/<node_id>/`:
 - **Caller-Agnostic Upload Primitive**: The offloader caller does not manage multipart upload lifecycles, chunk tokens, or branch between single PUT and MPU. It uniformly calls `fs.Upload(ctx, remotePath, reader)`.
 - **Encapsulated Dual Strategy in `s3FS.Upload()`**:
   - **Lightweight Components (< 16 MB)**: Handled transparently by the driver via single `PutObject` calls (e.g. `meta.bin`, `bloom-0`).
@@ -244,69 +244,26 @@ Formal durability verification is established through a 3-phase CRC32C checksum 
 
 Only after **100% of the parts** in the shard pass their checksum verification does the agent commit the snapshot:
 1. **Pre-Manifest Schema Sync**: The agent verifies that the immutable schema snapshot (`schemas/rev-<revision>.json`) is durable in S3 **before** publishing the manifest, eliminating any crash window with un-decodable data.
-2. **Atomic Manifest Publication via `CURRENT` Pointer**:
-   - The agent writes an immutable shard snapshot file: `manifests/<gen>-t<term>-<uuid>.snp` embedding `schema_revision: <revision>`, `ownership_term: <term>`, and `predecessor_generation: <gen-1>`.
-   - The agent atomically commits the publication by swapping the authoritative pointer `manifests/CURRENT`:
-     - **Initial Generation ($G=1$)**: `s3.PutObject(CURRENT, IfNoneMatch: "*")`
-     - **Subsequent Generations ($G>1$)**: `s3.PutObject(CURRENT, IfMatch: "<ETag_CURRENT>")`
-3. The segment is atomically visible to query readers via `manifests/CURRENT`.
-4. Local NVMe parts are safely pruned (`os.RemoveAll`).
-5. `cloud_offload_progress.json` is deleted from disk.
+2. **Snapshot Manifest Publication**:
+   - The agent writes an immutable snapshot manifest: `shard-<shard_id>/replicas/<node_id>/manifests/<snapshot_id>.snp` (embedding `schema_revision: <revision>`) via `s3.PutObject(..., IfNoneMatch: "*")`.
+3. **Autonomous Local Pruning**:
+   - Each replica verifies that its own snapshot manifest and constituent parts are durably confirmed in S3 before pruning local NVMe files (`os.RemoveAll`).
+4. `cloud_offload_progress.json` is deleted from disk.
 
-#### Replica Ownership, Fencing & Pruning Policy
+#### Independent Replica Offloading & Local Pruning Policy
 
 In multi-replica cluster deployments (`replicas > 0`):
-1. **Designated Upload Owner**:
-   - The primary node assigned by BanyanDB's node registry (`nodes[0]` from `nodeRegistry.Locate(group, name, shardID, 0)`) is the sole upload owner for that shard-segment. Secondary replicas remain idle during offloading.
-2. **Atomic Ownership Fencing & Predecessor Generation Validation**:
-   - **Authoritative Pointer Contract (`manifests/CURRENT`)**:
-     The shard manifest directory contains a single mutable pointer object (`manifests/CURRENT`) containing:
-     ```json
-     {
-       "generation": 2,
-       "manifest_file": "manifests/00000002-t2-a1b2c3d4.snp",
-       "ownership_term": 2,
-       "owner_node": "banyandb-data-1",
-       "predecessor_generation": 1
-     }
-     ```
-   - **Immediate Promotion Fencing Hook**:
-     When failover occurs and BanyanDB's cluster coordinator promotes a secondary replica to Primary for Term $T+1$:
-     - The promoted node executes a synchronous promotion hook (`OnPromote`) **before initiating any data offload or streaming**.
-     - The promoted node issues a conditional write updating `manifests/CURRENT` with `ownership_term: T+1` and `owner_node: <promoted_node_id>` via `s3.PutObject(CURRENT, IfMatch: "<ETag_CURRENT>")`.
-     - *Lean Retry Schedule & Failure Policy*:
-       1. **CAS Precondition Conflicts (`412 Precondition Failed`)**: If a concurrent compactor committed a merged generation at that exact instant, the node immediately re-reads `CURRENT`, updates `ownership_term: T+1`, and retries the CAS with the new ETag (max 3 attempts).
-       2. **Transient Network Errors (`500 / 503 SlowDown / Timeout`)**: To prevent shard failovers from stalling cluster query execution with unbounded waits, the node applies a lean, capped backoff: Attempt 1 (wait 100ms) $\to$ Attempt 2 (wait 300ms) $\to$ Attempt 3 (wait 800ms), bounded by a **strict 3-second hard timeout**.
-       3. **Hard Abort Invariant**: The node aborts immediately if `CURRENT` already holds an `ownership_term >= T+1` (superseded by a newer leader). If the 3-second deadline expires without establishing the fence, the node aborts promotion and refuses to assume shard ownership, allowing the cluster to elect another healthy replica. Once successful, the prior ETag is immediately invalidated in S3.
-   - **Zero Per-File Verification Overhead**:
-     The primary node does **not** prove leadership on every individual data file or chunk upload. It only proves leadership at two critical moments:
-     1. **Once on Promotion (Failover only)**: When first elected, it claims the new term in `CURRENT` once to fence out the old leader.
-     2. **Once on Manifest Commit**: At the very end of offloading a segment, it passes its term and predecessor generation when updating `CURRENT` via `If-Match`.
-     During normal data offloading, the node streams raw part files (`timestamps.bin`, `fv.bin`, etc.) directly to S3 via standard HTTP PUTs without checking locks or touching `CURRENT`.
-   - **Predecessor Generation Assertion**:
-     Every publication asserts that its base state matches `CURRENT.generation`. If another writer advanced the generation in the interim, the publication is rejected.
-   - **Guaranteed Resolution Across Both Failover Completion Orders**:
-     - **Order 1 (Deposed Owner Publishes First - Gao Counterexample)**: Stale Primary A unfreezes and attempts to publish generation 2 under Term 1 via `PutObject(CURRENT, IfMatch: "<ETag_G1>")`. Because Promoted Replica B already claimed Term 2 upon promotion, the ETag in S3 changed. S3 **atomically rejects Primary A with `412 Precondition Failed`**. Primary A inspects `CURRENT`, observes `ownership_term: T+1 > T`, halts immediately, and cleans up local staging state. Promoted Replica B then completes its upload and successfully commits with `If-Match: "<ETag_Term2>"`.
-     - **Order 2 (Promoted Owner Publishes First)**: Promoted Replica B completes its upload and commits generation 2 (`If-Match: "<ETag_Term2>"`), advancing `CURRENT` to `generation: 2` and a new ETag. If stale Primary A unfreezes later, its write fails with `412 Precondition Failed` due to both generation advancement and term obsolescence.
-3. **Reader Manifest Discovery ($O(1)$ Direct Lookup)**:
-   - Query readers fetch `manifests/CURRENT` directly in a single `GetObject` call and open the referenced `.snp` snapshot. This eliminates `ListObjects` latency, pagination overhead, and eventual consistency listing lag across third-party S3-compatible stores.
-4. **Follower Coverage Verification via Replication Boundary**:
-   - Secondary replicas do **not** prune based on record counts or timestamp ranges alone.
-   - **Shared Replication Boundary (`term, write_id`)**: The Shard Primary assigns two numbers to each write: `(term, write_id)`.
-     - `term`: Election term of the primary.
-     - `write_id`: Monotonic write counter for that shard.
-     Together, this pair forms the shared replication boundary, guaranteeing 100% uniqueness across the cluster regardless of front-end Liaison routing.
-   - **S3 Manifest Record**: When the Primary offloads the segment, the manifest records the highest write S3 contains: e.g. `covered_up_to: {"term": 1, "write_id": 500}`.
-   - **Trigger Mechanism**: Follower pruning is triggered reactively when the Primary commits `manifests/CURRENT` (internal event), with a periodic fallback sweep (every 5m).
-   - **Pruning Decision & Delta Upload**:
-     - **Safe to Prune**: The follower checks its local disk. If all local writes are within `term: 1` and `write_id <= 500`, S3 has all its data $\to$ safely delete local NVMe files.
-     - **Divergence Block & Delta Upload**: If the follower holds extra writes outside S3 (like record `C` at `write_id: 501`):
-       1. **Pruning is blocked**, and the follower emits an INFO log:
-          `INFO replica divergence detected; blocking pruning and initiating delta upload group=<group> shard=<shard_id> s3_covered_up_to=500 local_max_write_id=501`
-       2. **Delta Upload**: The follower filters its local files for writes with `write_id > 500`, packages them into a delta part in S3, advances `covered_up_to: 501`, and swaps `manifests/CURRENT` via `If-Match`.
-       3. **Clean Prune**: Once S3 covers up to `501`, the follower logs:
-          `INFO delta reconciled to S3; pruned local replica segment group=<group> shard=<shard_id> pruned_up_to=501`
-          and safely deletes its local NVMe copy. Zero lost data.
+1. **Independent Per-Replica Offloading (Zero Cross-Node Coordination)**:
+   - Each Data Node's lifecycle agent independently uploads its local closed snapshot under its own replica-specific path using its stable node ID:
+     `shard-<id>/replicas/<node_id>/parts/<part_id>/`
+     `shard-<id>/replicas/<node_id>/manifests/<snapshot_id>.snp`
+   - This preserves BanyanDB's existing independent replica model. It eliminates the need for an ingestion primary, primary election, promotion hooks, or cross-node write counters. Replicas never collide in S3 because their namespaces are completely isolated.
+2. **Node Restart & Checkpoint Reconciliation**:
+   - A restarted node continues using the same stable `replicas/<node_id>/` namespace.
+   - It reconciles its local checkpoint (`cloud_offload_progress.json`) with committed remote state in its replica folder, resuming missing part files without re-uploading completed ones.
+3. **Autonomous Local Pruning**:
+   - Each replica verifies that its own snapshot manifest (`replicas/<node_id>/manifests/<snapshot_id>.snp`) and all its constituent parts are durably confirmed in S3 (matching byte count and CRC32C checksums).
+   - Once remote durability of its own snapshot is verified, the replica safely prunes its local NVMe files. Pruning is 100% autonomous per node—no cross-replica coverage checks or sync barriers required.
    - **Configurable Pruning Toggle**: Adhering to Principle 2, pruning is governed by `--lifecycle-prune-local-replicas=true` (Default: `true` to reclaim NVMe disk). Operators can set this to `false` to retain local replica copies on disk alongside S3 for local fallback.
 
 ### 3. Backlog Observability & Backpressure Policy
@@ -356,7 +313,7 @@ Because local segments are strictly retained until full remote manifest commit (
 | **Crash Before `CURRENT` Manifest Swap** | Unreferenced parts resting in S3. | **Zero reader corruption**: Readers resolve active parts strictly via `manifests/CURRENT`. A background garbage collection sweep identifies and deletes prefixes lacking an active manifest reference. |
 | **S3 503 SlowDown / Rate Limiting** | Migration pipeline stalls under S3 request throttling. | Client utilizes AWS SDK v2 full-jitter exponential backoff `(full jitter: randomized sleep between 0 and exponential ceiling to prevent thundering herds)`. |
 | **Prolonged Remote Storage Outage / Slowdown** | Uncommitted segments pile up on local disk, risking disk exhaustion. | Strict FIFO offload with low-speed log warning (2 MB/s for 30s); pauses local compaction at <20% disk to eliminate 2× scratch spike; throttles ingestion at <5% disk to prevent node panics. |
-| **Zombie Primary Resumes After Failover** | Stale primary wakes up after promotion and attempts to commit. | S3 atomically rejects the upload with `412 Precondition Failed` via conditional `If-Match` on `manifests/CURRENT` (term invalidated by new primary). Stale node detects conflict, aborts, and purges local scratch files with zero corruption to the active snapshot. Covered by dedicated failure unit/E2E test. |
+| **Node Crash / Restart Mid-Upload** | Interrupted upload session for a replica. | Restarted node continues using its stable `replicas/<node_id>/` namespace, audits `cloud_offload_progress.json`, and resumes uploading missing parts without re-uploading completed ones. |
 | **Local Disk Exhaustion During Pre-Compaction** | Machine runs out of scratch space before uploading. | Pre-compaction streams with bounded memory (128–256 MB buffer ceiling) or writes to a dedicated scratch volume (`--lifecycle-scratch-dir`) monitored by low-watermark safety checks. |
 | **Schema Deletion During Migration (Orphan Rows)** | Schema removed while segment is queued for S3 upload. | Native orphan handling routes deleted measure/stream rows to the local orphan archive (`--migration-orphan-policy=archive`), allowing remaining valid columnar parts to upload cleanly. |
 
@@ -489,54 +446,54 @@ Subsystem 4 delivers cost-efficient, low-latency historical queries against S3. 
 
 ---
 
-## Subsystem 5: Remote S3 Compactor (`banyand/storage/compactor`)
+## Subsystem 5: Cross-Replica Compactor (`banyand/storage/compactor`)
 
 ### 1. Introduction
-The Remote S3 Compactor is the **out-of-band maintenance engine** responsible for consolidating small remote parts within each S3 shard. It prevents HTTP Range-GET latency explosions and S3 list request amplification by maintaining optimal part sizes and managing delayed garbage collection.
+The Cross-Replica Compactor is an independent background maintenance engine that merges committed parts across replica namespaces (`shard-<id>/replicas/*/`) for the same logical shard and segment. It preserves BanyanDB's existing native compaction algorithms and query deduplication semantics without introducing new record-level deduplication rules.
 
 ### 2. How the Design Actually Works
 
-#### Step 1: Data-Blind Merge Planning
+#### Step 1: Candidate Selection Across Replica Namespaces
 The compactor plans merges without downloading raw columnar data:
-- Downloads only lightweight part `metadata.json` summary files (<1 KB) to memory to inspect timestamps, row counts, and block boundaries. (Binary block descriptors `meta.bin` are accessed only during merge execution).
-- Evaluates BanyanDB's native size-tiered merge ratio math (`mergePolicy.getPartsToMerge`) to select candidates for consolidation.
+- Inspects committed parts across `shard-<shard_id>/replicas/<node_id>/` namespaces for the same logical shard and segment.
+- Evaluates BanyanDB's native size-tiered merge ratio math (`mergePolicy.getPartsToMerge`) to select compatible parts for consolidation.
 
 #### Step 2: K-Way Merge Sort via Local Scratch Buffer
 Once candidate parts are selected:
 - The compactor streams selected parts using bounded RAM buffers (4 MB–8 MB) or a dedicated local scratch volume (`--compactor-scratch-dir=/tmp/banyandb-scratch`).
-- Executes a K-way sorted merge, grouping columnar data into a new consolidated part (`part-<new_id>`).
+- Executes a K-way sorted merge using BanyanDB's existing catalog-specific compaction algorithms, grouping columnar data into new consolidated parts under `shard-<shard_id>/compacted/parts/part-<new_id>`.
 - Regenerates native filters: serializes `traceID.filter` for Trace parts, and merges `primary.bin` alongside columnar files for Measure and Stream parts.
+- **Native Merge Semantics**: Described strictly as cross-replica compaction using native merge semantics rather than guaranteeing "one deduplicated copy." Existing algorithms determine which records are retained; consolidating parts does not alter query processing or deduplication behavior.
 
 #### Step 3: Compaction Priority Scoring & Scheduling
 The compactor schedules work dynamically based on fragmentation severity:
 $$\text{Priority Score} = \frac{\text{Part Count}}{\text{Compaction Level} + 1}$$
-- Shards uploaded with higher part fragmentation carry a higher priority score and are placed into the immediate consolidation queue.
-- Shards pre-compacted by the offloader bypass cumulative merges and wait for macro-level segment consolidation.
+- Shards with higher part fragmentation across replicas carry a higher priority score and are placed into the immediate consolidation queue.
 
-#### Step 4: Atomic Manifest Swap & Predecessor Validation
-- **Concurrency Control**: Shard compaction is allocated deterministically per compactor worker instance (or single-compactor deployment).
-- **Predecessor Validation & Atomic Swap**:
-  1. The compactor reads `manifests/CURRENT` to obtain the baseline snapshot generation ($G_{\text{base}}$), predecessor, and current S3 `ETag`.
-  2. Compactor executes a K-way sorted merge, streams new consolidated parts to S3, and writes an immutable snapshot file `manifests/<gen>-t<term>-<uuid>.snp` declaring `predecessor_generation: G_base`.
-  3. Once new parts pass CRC32C durability verification, the compactor commits the merge by swapping `manifests/CURRENT` via `s3.PutObject(CURRENT, IfMatch: "<ETag_base>")`.
-  4. If an offloader or concurrent compactor updated `manifests/CURRENT` in the interim, S3 rejects the commit with `412 Precondition Failed`. The compactor discards intermediate scratch state, re-reads the latest `CURRENT` manifest, and reconciles. Readers instantly switch to the new manifest on their next query.
+#### Step 4: Atomic Manifest Swap & Input Replacement
+The compactor commits merged parts with the following invariants:
+1. **Input Tracking**: The compactor uploads new consolidated parts under `shard-<shard_id>/compacted/parts/` and publishes a manifest identifying exactly which input snapshots or parts it replaces.
+2. **Atomic Manifest Swap via `CURRENT`**: Atomically updates `shard-<shard_id>/manifests/CURRENT` via conditional CAS (`If-Match: ETag`), pointing to the newly generated manifest.
+3. **Preserve Concurrent Uploads**: New uploads committed while compaction runs are untouched. For example, compacting parts from replicas A and B while replica C finishes an offload leaves `merged(A, B) + C` fully visible to query readers.
+4. **Competing Compactors**: If multiple compactor instances run concurrently on the same shard, the winner's CAS succeeds on `manifests/CURRENT`. Competing losers receive `412 Precondition Failed`, abort cleanly, purge scratch data, and re-read the updated manifest on their next cycle.
 
 #### Step 5: Delayed Garbage Collection Queue
-To prevent active queries reading `<epoch>.snp` from encountering 404 errors:
-- Superseded source parts are not deleted immediately.
+To prevent active queries reading superseded parts from encountering 404 errors:
+- Superseded input parts from replica folders are not deleted immediately.
 - The compactor enqueues superseded part keys into a delayed deletion queue (default: 1 hour).
-- Once the safety window elapses, a background worker issues batch `DeleteObjects` to reclaim remote cloud space.
+- Once the safety window elapses, a background worker issues batch `DeleteObjects` to retire the replaced input parts safely.
 
 ### 3. Theoretical Failures & Edge Cases
 
 | Failure Mode / Edge Case | System Impact | Mitigation & Recovery |
 | :--- | :--- | :--- |
-| **Compactor Crash Mid-Merge** | Staged merged part in S3; local scratch files. | **Zero reader corruption**: Active `<epoch>.snp` still references original source parts. On restart, compactor purges local scratch files and GC sweeps unreferenced remote parts. |
+| **Compactor Crash Mid-Merge** | Staged merged part in S3; local scratch files. | **Zero reader corruption**: Active manifests still reference original replica source parts. On restart, compactor purges local scratch files and GC sweeps unreferenced remote parts. |
 | **Scratch Disk Space Exhaustion** | Merge worker runs out of local scratch capacity. | Scratch volume is monitored by low-watermark safety checks. If disk utilization crosses 80%, compaction throttles or aborts cleanly without data loss. |
-| **Dangling Old Parts After Manifest Swap** | Superseded parts remain in S3 indefinitely if GC crashes. | Background GC periodically scans S3 prefixes for part IDs not referenced in the latest active `<epoch>.snp` snapshot and sweeps them after the safety TTL. |
+| **Dangling Old Parts After Manifest Swap** | Superseded parts remain in S3 indefinitely if GC crashes. | Background GC periodically scans S3 prefixes for part IDs not referenced in the latest active manifests and sweeps them after the safety TTL. |
+| **Concurrent Compaction and Replica Offload** | Compactor merges while a replica uploads new data. | Reader manifest combines compacted parts with uncompacted replica parts (`merged(A, B) + C`); neither upload nor compaction blocks the other. |
 
 ### 4. Conclusion
-Subsystem 5 maintains long-term S3 query efficiency without external consensus overhead. Through data-blind planning, atomic manifest swapping, and delayed garbage collection, it bounds HTTP Range-GET amplification while guaranteeing complete reader isolation.
+Subsystem 5 maintains long-term S3 query efficiency through cross-replica compaction using native merge semantics. Through independent background workers, atomic manifest swapping, and delayed garbage collection, it bounds HTTP Range-GET amplification while guaranteeing complete reader and replica isolation.
 
 ---
 
@@ -729,14 +686,13 @@ Subsystem 7 eliminates external metadata dependencies during catastrophic failur
 
 A dedicated automated E2E test suite running against MinIO is developed simultaneously alongside subsystem implementation to validate failure boundaries, tune thresholds, and confirm production defaults:
 
-1. **Workload Isolation**: Verify cold historical S3 scans do not degrade concurrent hot writes and dashboard query p99 latency by $>10\%$.
-2. **Prolonged Outage & Disk Pressure**: Simulate sustained S3 unavailability to verify multi-tier backpressure (compaction pause, ingestion throttling) prevents local disk exhaustion.
-3. **Replica Ownership & Failover**: Validate single-writer upload via `NodeRegistry.Locate()` and atomic fencing across **both failover completion orders**:
-   - *Scenario A (Deposed Owner First - Gao Counterexample)*: Simulate network partition on Primary A during active part upload. Promote Replica B (Term 2), asserting the immediate S3 fence (`manifests/CURRENT` with `ownership_term: 2`) is committed before offload begins. Resume Primary A to publish first; assert S3 returns `412 Precondition Failed` and Primary A cleanly halts without corrupting remote state. Allow Replica B to complete upload and commit successfully.
-   - *Scenario B (Promoted Owner First)*: Primary A freezes, Replica B commits Term 2. Primary A unfreezes and attempts publication; assert S3 returns `412 Precondition Failed` due to generation advance and aborts.
-4. **Replica Pruning Coverage & Divergence**: Seed Primary with `{A@1, B@2, D@3}` covered up to `(Term 1, Write 3)` and Replica with `{A@1, C@2, D@3}` holding un-synced record `C` at `(Term 1, Write 4)`, creating equal record counts (3) and identical time ranges [1, 3]. Assert that the follower checks the replication boundary, detects that local write 4 exceeds the remote boundary (Write 3), blocks local NVMe pruning, keeps `C` safe on disk, and reconciles `C` to S3 before local deletion.
-5. **Disaster Recovery**: Verify end-to-end cluster restoration and queryability from S3 after total loss of local data nodes and the native metadata registry, asserting query correctness across Measure, Stream, and Trace catalogs with active IndexRuleBindings.
-6. **Cache Exhaustion**: Saturate In-Memory and Local Disk caches to verify isolated LRU eviction under memory pressure with zero OOM panics.
+1. **Independent Uploads from Divergent Replicas**: Multiple replicas holding divergent local data (e.g. `{A, B, D}` on node 1 vs `{A, C, D}` on node 2) independently upload to `shard-<id>/replicas/<node_id>/` and safely prune local files upon remote durability confirmation.
+2. **Node Restart under Same Node ID**: Interrupted upload recovers using `cloud_offload_progress.json` and resumes into the same replica namespace without duplicating or corrupting parts.
+3. **Concurrent Uploads and Compaction**: Background compactor merges replica parts A and B while replica C concurrently offloads; verify query reader sees `merged(A, B) + C`.
+4. **Competing Compactors**: Multiple compactor instances competing on the same shard; verify atomic manifest swap allows only one winner while the loser aborts cleanly and reconciles.
+5. **Interrupted Publication & Safe Retirement**: Crash before manifest swap leaves source parts uncorrupted; superseded input parts are safely retired only after the 1-hour reader safety window.
+6. **Disaster Recovery**: Verify end-to-end cluster restoration and queryability from S3 across Measure, Stream, and Trace catalogs with active IndexRuleBindings.
+7. **Cache Exhaustion & Backpressure**: Saturate In-Memory and Local Disk caches to verify isolated LRU eviction under memory pressure with zero OOM panics.
 
 ---
 
