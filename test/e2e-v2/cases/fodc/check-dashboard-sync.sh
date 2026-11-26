@@ -37,11 +37,19 @@ metrics_dir, dashboards_dir = sys.argv[1], sys.argv[2]
 # Extract all metric identifiers from "expr" fields in dashboard JSON files.
 def expr_metrics(path):
     with open(path) as f:
-        text = f.read()
+        dashboard = json.load(f)
     metrics = set()
-    for expr in re.findall(r'"expr"\s*:\s*"([^"]*)"', text):
-        for m in re.findall(r'\b(banyandb_[a-z_]+|go_[a-z_]+|process_[a-z_]+)', expr):
-            metrics.add(m)
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == 'expr' and isinstance(value, str):
+                    metrics.update(re.findall(r'\b(banyandb_[a-z_]+|go_[a-z_]+|process_[a-z_]+)', value))
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+    walk(dashboard)
     return metrics
 
 import glob, os

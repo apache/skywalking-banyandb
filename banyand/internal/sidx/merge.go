@@ -74,6 +74,14 @@ func (s *sidx) Merge(closeCh <-chan struct{}, partIDtoMerge map[uint64]struct{},
 	}
 
 	mergeIntro.newPart = newPart
+	// The keep predicate is the only step of a merge that removes rows.
+	var inputRows uint64
+	for _, pw := range partsToMerge {
+		inputRows += pw.p.partMetadata.TotalCount
+	}
+	if outputRows := newPart.p.partMetadata.TotalCount; inputRows > outputRows {
+		mergeIntro.prunedRows = inputRows - outputRows
+	}
 	return mergeIntro, nil
 }
 

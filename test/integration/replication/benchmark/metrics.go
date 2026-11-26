@@ -85,7 +85,7 @@ func parsePromMetrics(r io.Reader) (PromMetrics, error) {
 			}
 		}
 	}
-	if mf, ok := families["banyandb_system_cpu_num"]; ok {
+	if mf, ok := families["banyandb_system_cpu_limit_cores"]; ok {
 		for _, m := range mf.Metric {
 			if m.Gauge != nil {
 				metrics.CPUNum = m.Gauge.GetValue()

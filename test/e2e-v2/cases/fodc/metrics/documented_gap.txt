@@ -22,10 +22,14 @@
 # first incremented, so on a healthy run (no gRPC errors, no failed sync loops)
 # these never appear.
 banyandb_liaison_grpc_total_err
+banyandb_liaison_grpc_total_registry_err
 banyandb_liaison_grpc_total_stream_msg_received_err
 banyandb_queue_pub_total_err
 banyandb_queue_pub_batch_admission_timeout_total
 banyandb_queue_sub_total_err
+banyandb_measure_total_sync_loop_err
+banyandb_stream_tst_total_sync_loop_err
+banyandb_trace_tst_total_sync_loop_err
 #
 # Group 2 -- part-merge completion metrics. These increment only when a
 # background part merge actually completes, which requires enough accumulated

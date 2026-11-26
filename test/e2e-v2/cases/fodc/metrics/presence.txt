@@ -14,12 +14,12 @@
 # limitations under the License.
 #
 # PRESENCE: dashboard metrics asserted to have >=1 exported series (the value
-# may legitimately be zero, e.g. *_pending_data_count). These are reliably
+# may legitimately be zero). These are reliably
 # exported by a 1:1 OAP-driven cluster within the verify window. The
 # always-positive core lives in non_empty.txt; metrics that need a specific
 # event to materialise (error counters, completed part-merges) live in
 # documented_gap.txt. The four lists, including optional_plugin.txt, are
-# disjoint and their union is exactly the 106 distinct names referenced by the
+# disjoint and their union is exactly the 125 distinct names referenced by the
 # FODC Grafana dashboards.
 #
 # Calibrated against a live run: OAP writes the BanyanDB trace model, so the
@@ -30,18 +30,16 @@ banyandb_system_disk
 banyandb_system_memory_state
 banyandb_system_net_state
 go_gc_duration_seconds_sum
+go_gc_duration_seconds_count
 go_memstats_alloc_bytes_total
 go_memstats_next_gc_bytes
 banyandb_liaison_grpc_total_latency
-banyandb_liaison_grpc_total_registry_err
 banyandb_liaison_grpc_total_registry_started
+banyandb_liaison_grpc_total_stream_err
 banyandb_measure_inverted_index_total_doc_count
 banyandb_measure_inverted_index_total_term_searchers_started
 banyandb_measure_inverted_index_total_updates
-banyandb_measure_pending_data_count
 banyandb_measure_total_file_elements
-banyandb_measure_total_file_parts
-banyandb_measure_total_mem_part
 banyandb_measure_total_merge_loop_started
 banyandb_queue_pub_sent_bytes
 banyandb_queue_sub_received_bytes
@@ -52,18 +50,24 @@ banyandb_stream_storage_inverted_index_total_updates
 banyandb_stream_tst_inverted_index_total_doc_count
 banyandb_stream_tst_inverted_index_total_term_searchers_started
 banyandb_stream_tst_inverted_index_total_updates
-banyandb_stream_tst_pending_data_count
 banyandb_stream_tst_total_file_elements
-banyandb_stream_tst_total_file_parts
-banyandb_stream_tst_total_mem_part
 banyandb_stream_tst_total_merge_loop_started
 banyandb_stream_tst_total_written
-banyandb_trace_tst_pending_data_count
 banyandb_trace_tst_total_file_elements
-banyandb_trace_tst_total_file_parts
-banyandb_trace_tst_total_mem_part
 banyandb_trace_tst_total_merge_loop_started
 banyandb_trace_tst_total_written
+banyandb_trace_storage_inverted_index_total_doc_count
+banyandb_trace_storage_inverted_index_total_term_searchers_started
+banyandb_trace_storage_inverted_index_total_updates
+banyandb_measure_unsynced_parts
+banyandb_measure_oldest_unsynced_part_age_seconds
+banyandb_measure_total_sync_failed_parts
+banyandb_stream_tst_unsynced_parts
+banyandb_stream_tst_oldest_unsynced_part_age_seconds
+banyandb_stream_tst_total_sync_failed_parts
+banyandb_trace_tst_unsynced_parts
+banyandb_trace_tst_oldest_unsynced_part_age_seconds
+banyandb_trace_tst_total_sync_failed_parts
 banyandb_queue_pub_total_batch_started
 banyandb_queue_pub_total_batch_finished
 banyandb_queue_sub_total_batch_started

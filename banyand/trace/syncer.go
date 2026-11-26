@@ -202,12 +202,23 @@ func (tst *tsTable) syncSnapshot(curSnapshot *snapshot, syncCh chan *syncIntrodu
 	failedPartsHandler := storage.NewFailedPartsHandler(tst.fileSystem, tst.root, tst.l, tst.option.failedPartsMaxTotalSizeBytes)
 
 	// Execute sync operation
-	if err := tst.executeSyncOperation(partsToSync, partIDsToSync, failedPartsHandler); err != nil {
+	failedCount, err := tst.executeSyncOperation(partsToSync, partIDsToSync, failedPartsHandler)
+	if err != nil {
 		return err
 	}
 
 	// Handle sync introductions (includes both successful and permanently failed parts)
-	return tst.handleSyncIntroductions(partsToSync, syncCh)
+	if err = tst.handleSyncIntroductions(partsToSync, syncCh); err != nil {
+		return err
+	}
+	// A failed part counts as dropped only once the introduction has removed it from the queue.
+	tst.incTotalSyncFailedParts(failedCount)
+	return nil
+}
+
+// isFilePartToSync reports whether the syncer picks pw: only flushed file parts that hold rows are synced.
+func isFilePartToSync(pw *partWrapper) bool {
+	return pw.mp == nil && pw.p.partMetadata.TotalCount > 0
 }
 
 // collectPartsToSync collects both core and sidx parts that need to be synchronized.
@@ -216,7 +227,7 @@ func (tst *tsTable) collectPartsToSync(curSnapshot *snapshot) ([]*part, map[uint
 	var partsToSync []*part
 	sidxPartsToSync := make(map[uint64]struct{})
 	for _, pw := range curSnapshot.parts {
-		if pw.mp == nil && pw.p.partMetadata.TotalCount > 0 {
+		if isFilePartToSync(pw) {
 			partsToSync = append(partsToSync, pw.p)
 			sidxPartsToSync[pw.p.partMetadata.ID] = struct{}{}
 		}
@@ -291,7 +302,8 @@ func (tst *tsTable) syncPartsToNodesHelper(
 }
 
 // executeSyncOperation performs the actual synchronization of parts to nodes.
-func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[uint64]struct{}, failedPartsHandler *storage.FailedPartsHandler) error {
+// It returns the number of parts that still failed after all retries.
+func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[uint64]struct{}, failedPartsHandler *storage.FailedPartsHandler) (int, error) {
 	sort.Slice(partsToSync, func(i, j int) bool {
 		return partsToSync[i].partMetadata.ID < partsToSync[j].partMetadata.ID
 	})
@@ -306,7 +318,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 
 	nodes := tst.getNodes()
 	if tst.loopCloser != nil && tst.loopCloser.Closed() {
-		return errClosed
+		return 0, errClosed
 	}
 
 	sidxMap := tst.getAllSidx()
@@ -340,7 +352,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 	perNodeFailures := make(map[string][]queue.FailedPart) // node -> failed parts
 	for _, node := range nodes {
 		if tst.loopCloser != nil && tst.loopCloser.Closed() {
-			return errClosed
+			return 0, errClosed
 		}
 		failedParts, err := tst.syncPartsToNodesHelper(ctx, partsToSync, partIDsToSync, []string{node}, sidxMap, &releaseFuncs)
 		if err != nil {
@@ -365,6 +377,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 	tst.enqueueForOfflineNodes(nodes, partsToSync, partIDsToSync)
 
 	// If there are failed parts, use the retry handler
+	var failedCount int
 	if len(perNodeFailures) > 0 {
 		// Collect all unique failed parts for retry handler
 		allFailedParts := make([]queue.FailedPart, 0)
@@ -444,6 +457,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 			tst.l.Warn().Err(err).Msg("error during retry process")
 		}
 		if len(permanentlyFailedParts) > 0 {
+			failedCount = len(permanentlyFailedParts)
 			tst.l.Error().
 				Uints64("partIDs", permanentlyFailedParts).
 				Int("count", len(permanentlyFailedParts)).
@@ -451,7 +465,7 @@ func (tst *tsTable) executeSyncOperation(partsToSync []*part, partIDsToSync map[
 		}
 	}
 
-	return nil
+	return failedCount, nil
 }
 
 // handleSyncIntroductions creates and processes sync introductions for both core and sidx parts.
