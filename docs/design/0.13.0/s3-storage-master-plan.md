@@ -36,6 +36,7 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
 > 2. *"It should be highly configurable with best defualt configration"*
 > 3. *"should be industry standard mechanism, can als be inspired if 1 and 2 condition is not satisfied."*
 > 4. *"Keep warnings as few and only the necessary ones as possible"*
+> 5. *"Build on existing BYDB design if plausible"*
 
 ### Key Architectural Decisions (Executive Summary / TL;DR)
 1. **Native Metadata Architecture**: All group schemas, retention TTLs, and stage definitions are managed 100% within BanyanDB’s native schema repository (`banyand/metadata`) and node-local configurations with zero external dependencies.
