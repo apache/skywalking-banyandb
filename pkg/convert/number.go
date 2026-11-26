@@ -31,17 +31,12 @@ func Uint64ToBytes(u uint64) []byte {
 
 // Int64ToBytes converts int64 to bytes.
 func Int64ToBytes(i int64) []byte {
-	abs := i
-	if i < 0 {
-		abs = -abs
-	}
-	u := uint64(abs)
-	if i >= 0 {
-		u |= 1 << 63
-	} else {
-		u = 1<<63 - u
-	}
-	return Uint64ToBytes(u)
+	return AppendInt64Bytes(nil, i)
+}
+
+// AppendInt64Bytes appends the order-preserving big-endian representation of i to dst.
+func AppendInt64Bytes(dst []byte, i int64) []byte {
+	return binary.BigEndian.AppendUint64(dst, uint64(i)^(1<<63))
 }
 
 // Uint32ToBytes converts uint32 to bytes.

@@ -218,7 +218,11 @@ func (br *blockReader) nextMetadata() error {
 }
 
 func (br *blockReader) loadBlockData(decoder *encoding.BytesBlockDecoder) {
-	br.pih[0].mustLoadBlockData(decoder, br.block)
+	br.pih[0].mustLoadBlockData(decoder, br.block, false)
+}
+
+func (br *blockReader) loadBlockDataForMerge(decoder *encoding.BytesBlockDecoder) {
+	br.pih[0].mustLoadBlockData(decoder, br.block, true)
 }
 
 func (br *blockReader) error() error {

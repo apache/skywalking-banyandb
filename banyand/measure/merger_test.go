@@ -1684,10 +1684,10 @@ func Test_mergePartsWithConflictingTagTypes(t *testing.T) {
 					tf := &bp.tagFamilies[i]
 					for j := range tf.columns {
 						c := &tf.columns[j]
-						require.NotEmpty(t, c.values, "column %q in family %q should have values", c.name, tf.name)
+						require.Positive(t, c.rowCount(), "column %q in family %q should have values", c.name, tf.name)
 						cc[tf.name+"/"+c.name] = wantColumn{
 							valueType: c.valueType,
-							value:     c.values[0],
+							value:     c.rowBytes(0),
 						}
 					}
 				}

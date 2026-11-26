@@ -185,11 +185,14 @@ func (b *block) uncompressedSizeBytes() uint64 {
 	for tagName, tagData := range b.tags {
 		nameSize := uint64(len(tagName))
 		for _, row := range tagData.values {
-			if row.valueArr != nil {
+			switch {
+			case row.encodedArray != nil:
+				size += row.encodedArray.payloadSize + nameSize*uint64(len(row.encodedArray.values))
+			case row.valueArr != nil:
 				for _, v := range row.valueArr {
 					size += nameSize + uint64(len(v))
 				}
-			} else if row.value != nil {
+			case row.value != nil:
 				size += nameSize + uint64(len(row.value))
 			}
 		}
@@ -265,6 +268,10 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		td.tmpBytes = td.tmpBytes[:len(td.values)]
 	}
 	for i := range td.values {
+		if td.values[i].encodedArray != nil {
+			td.tmpBytes[i] = td.values[i].encodedArray.value
+			continue
+		}
 		td.tmpBytes[i] = marshalTagRow(td.tmpBytes[i][:0], &td.values[i], td.valueType)
 	}
 
@@ -340,21 +347,15 @@ func (b *block) mustWriteTag(tagName string, td *tagData, bm *blockMetadata, ww 
 		uniqueValues[key] = struct{}{}
 	}
 
-	for i := range td.values {
-		if td.values[i].valueArr != nil {
-			for _, v := range td.values[i].valueArr {
-				addUnique(v)
-			}
-			continue
-		}
-		addUnique(td.values[i].value)
+	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
+	if !isDictionaryEncoded || td.valueType == pbv1.ValueTypeInt64 {
+		forEachTagElement(td.values, addUnique)
 	}
 
 	if td.valueType == pbv1.ValueTypeInt64 && hasMinMax {
 		tm.min = convert.Int64ToBytes(minVal)
 		tm.max = convert.Int64ToBytes(maxVal)
 	}
-	isDictionaryEncoded := encodeType == encoding.EncodeTypeDictionary
 	if !isDictionaryEncoded {
 		bf := generateBloomFilter(len(uniqueValues))
 		for v := range uniqueValues {
@@ -577,7 +578,7 @@ func releaseBlockPointer(bi *blockPointer) {
 	blockPointerPool.Put(bi)
 }
 
-func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm blockMetadata) {
+func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm blockMetadata, mergeArrays bool) {
 	b.reset()
 	if err := b.readUserKeys(sr, &bm); err != nil {
 		panic(fmt.Sprintf("failed to read user keys: %v", err))
@@ -585,7 +586,7 @@ func (b *block) mustSeqReadFrom(decoder *encoding.BytesBlockDecoder, sr *seqRead
 	if err := b.readData(decoder, sr, &bm); err != nil {
 		panic(fmt.Sprintf("failed to read data payloads: %v", err))
 	}
-	if err := b.readTagData(decoder, sr, &bm); err != nil {
+	if err := b.readTagData(decoder, sr, &bm, mergeArrays); err != nil {
 		panic(fmt.Sprintf("failed to read tag data: %v", err))
 	}
 }
@@ -635,19 +636,19 @@ func (b *block) readData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm
 	return nil
 }
 
-func (b *block) readTagData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata) error {
+func (b *block) readTagData(decoder *encoding.BytesBlockDecoder, sr *seqReaders, bm *blockMetadata, mergeArrays bool) error {
 	if b.tags == nil {
 		b.tags = make(map[string]*tagData)
 	}
 	for tagName, tagBlock := range bm.tagsBlocks {
-		if err := b.readSingleTag(decoder, sr, tagName, &tagBlock, int(bm.count)); err != nil {
+		if err := b.readSingleTag(decoder, sr, tagName, &tagBlock, int(bm.count), mergeArrays); err != nil {
 			return fmt.Errorf("failed to read tag %s: %w", tagName, err)
 		}
 	}
 	return nil
 }
 
-func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReaders, tagName string, tagBlock *dataBlock, count int) error {
+func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReaders, tagName string, tagBlock *dataBlock, count int, mergeArrays bool) error {
 	if tagBlock.offset != sr.tagMetadata[tagName].bytesRead {
 		logger.Panicf("offset %d must be equal to bytesRead %d", tagBlock.offset, sr.tagMetadata[tagName].bytesRead)
 	}
@@ -683,8 +684,12 @@ func (b *block) readSingleTag(decoder *encoding.BytesBlockDecoder, sr *seqReader
 	td.name = tagName
 	td.valueType = tm.valueType
 
-	// Decode and convert tag values using common helper
-	if err := decodeAndConvertTagValues(td, decoder, bb, tm.valueType, count); err != nil {
+	if mergeArrays {
+		err = decodeMergeTagValues(td, decoder, bb, tm.valueType, count)
+	} else {
+		err = decodeAndConvertTagValues(td, decoder, bb, tm.valueType, count)
+	}
+	if err != nil {
 		releaseTagData(td)
 		return err
 	}
