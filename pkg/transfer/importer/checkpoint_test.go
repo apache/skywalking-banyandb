@@ -578,7 +578,7 @@ func TestResumeCSV_BadPlanSideFileExitsSixBeforeAnything(t *testing.T) {
 func TestTracker_CSVSentMarkAndFoldSeq(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p.json")
 	state := newProgress(csvArtifact(), testBindings())
-	writes := countingWrites(t)
+	writes := countingFoldWrites(t)
 	track, err := startTracker(context.Background(), path, state, 64, nil)
 	require.NoError(t, err)
 	require.NoError(t, track.csvStarted("k", nil, csvMark{File: "f", Record: 1, Rows: 1}))
