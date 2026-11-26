@@ -67,12 +67,16 @@ When an operator designates a lifecycle stage (e.g., `cold`) with S3 storage, th
                │    └── <compaction_id>.snp         (merged manifest)  │
                ├── replicas/<node_id>/                                 │
                │    ├── manifests/<snapshot_id>.snp (replica manifest) │
-               │    └── parts/<part_id>/ ──────────────────────────────┤
-               │         ├── metadata.json           (part summary)     │
-               │         ├── meta.bin                (block offsets)    │
-               │         ├── primary.bin             (primary keys)     │
-               │         ├── timestamps.bin          [MEASURE/STREAM]   │
-               │         └── fv.bin                  [MEASURE values]   │
+               │    └── parts/<part_id>/ ──────────────────────────────┐
+               │         ├── metadata.json           (part summary)    │
+               │         ├── meta.bin                (block offsets)   │
+               │         ├── primary.bin             (primary keys)    │
+               │         ├── tag.type                (tag types)       ├} [CACHED LOCALLY ON DEMAND]
+               │         ├── timestamps.bin          [MEASURE/STREAM]  │
+               │         ├── fv.bin                  [MEASURE values]  │
+               │         ├── spans.bin               [TRACE spans]     │
+               │         └── traceID.filter          [TRACE bloom]     │
+               │         └── (Range-GET block slices in FileCache) ────┘
                └── compacted/                                          │
                     └── parts/<part_id>/... (merged cross-replica parts)
 ```
