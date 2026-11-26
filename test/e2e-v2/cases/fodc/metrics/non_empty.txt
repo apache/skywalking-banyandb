@@ -20,7 +20,6 @@
 # This set is intentionally the always-on core; every other reachable metric is
 # presence-checked in presence.txt. Disjoint from presence.txt,
 # documented_gap.txt, and optional_plugin.txt.
-banyandb_system_cpu_num
 banyandb_system_cpu_limit_cores
 banyandb_system_up_time
 go_goroutines

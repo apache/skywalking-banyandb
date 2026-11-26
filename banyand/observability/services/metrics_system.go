@@ -38,11 +38,8 @@ import (
 var log = logger.GetLogger("metrics")
 
 var (
-	cpuCount      = 0
-	once4CpuCount sync.Once
-	cpuCountsFunc = cpu.Counts
-	cpuTimesFunc  = cpu.Times
-	startTime     = time.Now()
+	cpuTimesFunc = cpu.Times
+	startTime    = time.Now()
 )
 
 // gaugesMu protects the process-global gauge vars below. Multiple metricService
@@ -52,7 +49,6 @@ var gaugesMu sync.RWMutex
 
 var (
 	cpuStateGauge    meter.Gauge
-	cpuNumGauge      meter.Gauge
 	cpuLimitGauge    meter.Gauge
 	memoryStateGauge meter.Gauge
 	netStateGauge    meter.Gauge
@@ -95,7 +91,6 @@ func (p *metricService) initMetrics() {
 	gaugesMu.Lock()
 	defer gaugesMu.Unlock()
 	cpuStateGauge = factory.NewGauge("cpu_state", "kind")
-	cpuNumGauge = factory.NewGauge("cpu_num")
 	cpuLimitGauge = factory.NewGauge("cpu_limit_cores")
 	memoryStateGauge = factory.NewGauge("memory_state", "kind")
 	netStateGauge = factory.NewGauge("net_state", "kind", "name")
@@ -104,13 +99,6 @@ func (p *metricService) initMetrics() {
 }
 
 func collectCPU() {
-	once4CpuCount.Do(func() {
-		if c, err := cpuCountsFunc(false); err != nil {
-			log.Error().Err(err).Msg("cannot get cpu count")
-		} else {
-			cpuCount = c
-		}
-	})
 	s, err := cpuTimesFunc(false)
 	if err != nil {
 		log.Error().Err(err).Msg("cannot get cpu stat")
@@ -125,10 +113,9 @@ func collectCPU() {
 		allStat.Softirq + allStat.Steal + allStat.Guest + allStat.GuestNice
 	gaugesMu.RLock()
 	defer gaugesMu.RUnlock()
-	if cpuNumGauge == nil || cpuLimitGauge == nil || cpuStateGauge == nil {
+	if cpuLimitGauge == nil || cpuStateGauge == nil {
 		return
 	}
-	cpuNumGauge.Set(float64(cpuCount))
 	cpuLimitGauge.Set(float64(cgroups.CPUs()))
 	cpuStateGauge.Set(allStat.User/total, "user")
 	cpuStateGauge.Set(allStat.System/total, "system")

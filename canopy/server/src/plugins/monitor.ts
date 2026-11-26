@@ -115,7 +115,7 @@ function buildStandaloneNode(samples: readonly Sample[], history: readonly Count
     id,
     role: 'standalone' as const,
     uptimeSeconds: sumOf(samples, 'banyandb_system_up_time'),
-    cpuCores: sumOf(samples, 'banyandb_system_cpu_num'),
+    cpuCores: sumOf(samples, 'banyandb_system_cpu_limit_cores'),
     cpuUsedCores: perSecond(prev, cur, 'cpuSeconds'),
     rssBytes: sumOf(samples, 'process_resident_memory_bytes'),
     memoryUsedRatio: sumOf(samples, 'banyandb_system_memory_state', { kind: 'used_percent' }),

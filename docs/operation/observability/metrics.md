@@ -43,11 +43,15 @@ The reporting-node count broken down by role (`liaison` / `data`), via the `cont
 
 **Expression**: `count(banyandb_system_up_time{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (container_name)`
 
+### Discovered Nodes
+
+`banyandb_metadata_dns_discovery_total_nodes_count` (`--node-discovery-mode=dns`) and `banyandb_metadata_file_discovery_total_nodes_count` (`--node-discovery-mode=file`) report the number of nodes in the discovery cache of each liaison, data or lifecycle process running that mode: the nodes whose metadata was fetched successfully. In DNS mode only the nodes resolved from the configured `--node-discovery-dns-srv-addresses` are counted, so the value is what that process's SRV addresses cover, not necessarily the whole cluster. The count falls when DNS stops listing a node, but a dead node that DNS still lists stays counted. Neither metric exists with `--node-discovery-mode=none`, the default and the only mode for a standalone node.
+
 ### Total CPU Cores
 
-The total number of CPU cores across the selected nodes.
+The total number of CPU cores available to the selected nodes: the sum of each node's `banyandb_system_cpu_limit_cores`, which comes from `GOMAXPROCS`. It follows the container's cgroup CPU quota, but setting the `GOMAXPROCS` environment variable overrides the quota-derived value.
 
-**Expression**: `sum(banyandb_system_cpu_num{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
+**Expression**: `sum(banyandb_system_cpu_limit_cores{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
 
 ### Total Memory Used
 
@@ -63,7 +67,7 @@ The total disk space used across the selected nodes, in bytes (summed over all s
 
 ### Node Uptime
 
-The per-node uptime gauge. A value dropping to ~0 indicates a restart; a series disappearing indicates a node that stopped reporting.
+The per-node uptime gauge, in seconds since the process started: it is monotonically increasing and starts again from 0 on a restart, so a value dropping to ~0 indicates a restart. When a node freezes but its FODC agent keeps running, the proxy keeps returning the last reported value, so the series stays and its value stops changing. Once the agent has been unreachable for about 5 minutes (`--agent-cleanup-timeout`), the proxy drops its series, so a series disappearing indicates a node that stopped reporting.
 
 **Expression**: `banyandb_system_up_time{job=~"$job", container_name=~"$role", pod_name=~"$pod"}` (one series per `pod_name`)
 
@@ -83,7 +87,7 @@ A single table joining the key per-node signals so an unhealthy node stands out 
 
 ### CPU Usage
 
-CPU consumed per node as a fraction of its CPU limit (`banyandb_system_cpu_limit_cores`, the GOMAXPROCS value), so it can exceed 100% when the CPU quota is fractional and under-reports when the quota is below one core. Sustained high utilization correlates with rising query/merge latency.
+CPU consumed per node as a fraction of its CPU limit (`banyandb_system_cpu_limit_cores`, the GOMAXPROCS value), so it can exceed 100% when the CPU quota is fractional and under-reports when the quota is below one core. Because the limit is read from `GOMAXPROCS`, setting the `GOMAXPROCS` environment variable overrides the cgroup quota. Sustained high utilization correlates with rising query/merge latency.
 
 **Expression**: `sum(rate(process_cpu_seconds_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name) / max by (pod_name) (banyandb_system_cpu_limit_cores{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
 
@@ -101,7 +105,7 @@ The fraction of host memory used per node. As process memory approaches the memo
 
 ### Disk Usage %
 
-The fraction of disk used per node (the fullest storage path). BanyanDB rejects writes with `STATUS_DISK_FULL` once usage crosses the disk-full threshold (default 95%), so alert well before that — commonly at ~80–85%.
+The fraction of disk used per node (the fullest storage path). BanyanDB rejects writes with `STATUS_DISK_FULL` once usage crosses the disk-full threshold (default 95%), so alert well before that — commonly at ~80–85%. The threshold is configurable: a liaison uses `--measure-max-disk-usage-percent`, `--stream-max-disk-usage-percent` and `--trace-max-disk-usage-percent`, while a data or standalone node uses `--measure-retention-high-watermark`, `--stream-retention-high-watermark` and `--trace-retention-high-watermark` (forced retention starts deleting segments there).
 
 **Expression**: `max by (pod_name) (banyandb_system_disk{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used_percent"})`
 
@@ -155,6 +159,16 @@ The heap size that will trigger the next GC, alongside the allocation rate.
 **Expression1 (next_gc)**: `sum(go_memstats_next_gc_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (pod_name)`
 **Expression2 (alloc_rate)**: `sum(rate(go_memstats_alloc_bytes_total{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (pod_name)`
 
+## Process Health (reference)
+
+| Metric | Type | Labels | Meaning |
+| --- | --- | --- | --- |
+| `banyandb_memory_protector_usage`, `banyandb_memory_protector_limit` | Gauge | — | Bytes in use as tracked by the memory protector, and its limit (`--allowed-percent`). Query execution is throttled as usage approaches the limit. |
+| `banyandb_panic_total` | Counter | `component` | Panics recovered in the process, by component. Lazily registered, so absent until the first panic. |
+| `banyandb_{measure,stream,trace}_metadata_total_panics` | Counter | — | Panics in the schema-metadata handlers of each model. Created at `0`, so `increase()` sees the first panic. |
+| `banyandb_{observability,measure,stream_storage,trace_storage}_scheduler_tasks_panic` | Gauge | `job` (and `group` for the storage ones) | Cumulative number of scheduler tasks that panicked; it only grows, so use `increase()`. |
+| `banyandb_storage_retention_{measure,stream,trace}_forced_retention_segments_deleted_total` | Counter | `service` | Segments deleted by forced retention after disk usage crossed the high watermark. Created at `0`. |
+
 ---
 
 # Workload dashboard
@@ -167,7 +181,7 @@ Cluster-wide RED stats. Each summand is wrapped in `or vector(0)` so a not-yet-r
 
 ### Cluster Write Rate
 
-Total points / elements / span rows written per second across measures, streams and traces. Only the liaison counts client writes; every node (liaison included) also counts its `_monitoring_log` stream and, in native mode, the `_monitoring` measure.
+Total points / elements / span rows written per second across measures, streams and traces. Only the liaison counts client writes; every node (liaison included) also counts its `_monitoring_log` stream and, in native mode, the `_monitoring` measure. A part a data node receives from a liaison through file sync is not counted again, so a client write is counted once, on the liaison. To alert on client writes, exclude the built-in groups with `group!~"_monitoring|_monitoring_log"`.
 
 **Expression**: `(sum(rate(banyandb_measure_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_stream_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0)) + (sum(rate(banyandb_trace_tst_total_written{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) or vector(0))`
 
@@ -179,7 +193,7 @@ Query operations per second on the liaison servers. A measure, stream, trace or 
 
 ### Error Rate
 
-Cluster error rate per minute, combining liaison gRPC, registry (excluding `NotFound`), stream-receive, queue-publisher (excluding `canceled` / `stream_canceled`), and liaison write-queue sync-loop errors. Several of these counters are lazily registered (absent until the first error), hence the `or vector(0)` guards.
+Cluster error rate per minute, combining liaison gRPC, registry (excluding `NotFound`), stream-receive, queue-publisher (excluding `canceled` / `stream_canceled`), and liaison write-queue sync-loop errors. Several of these counters are lazily registered (absent until the first error), hence the `or vector(0)` guards. Unlike `total_stream_err`, the liaison `total_err` also counts requests the client canceled or that hit their deadline.
 
 **Expression**: `(sum(rate(banyandb_liaison_grpc_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_registry_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_liaison_grpc_total_stream_msg_received_err{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_queue_pub_total_err{job=~"$job", container_name=~"$role", pod_name=~"$pod", error_type!~"canceled|stream_canceled"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_measure_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_stream_tst_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0)) + (sum(rate(banyandb_trace_tst_total_sync_loop_err{job=~"$job", container_name="liaison", pod_name=~"$pod"}[$__rate_interval])*60) or vector(0))`
 
@@ -201,7 +215,7 @@ Average query latency in seconds, per `group` — total latency divided by total
 
 **Expression (p99)**: `histogram_quantile(0.99, sum(rate(banyandb_liaison_grpc_query_latency_seconds_bucket{job=~"$job", container_name=~"$role", pod_name=~"$pod", status!="canceled"}[$__rate_interval])) by (le))`
 
-The p99 is per request: `banyandb_liaison_grpc_query_latency_seconds` (labels `service` and `status`, one of `ok`, `err` or `canceled`) is observed once for each query RPC a client sends, however many groups it spans, and a BydbQL request is observed only under `bydbql`. `status!="canceled"` leaves out queries the client canceled or that hit their deadline.
+The p99 is per request: `banyandb_liaison_grpc_query_latency_seconds` (labels `service` and `status`, one of `ok`, `err`, `canceled` or `deadline_exceeded`) is observed once for each query RPC a client sends, however many groups it spans, and a BydbQL request is observed only under `bydbql`. `canceled` is a query the client canceled and `deadline_exceeded` one whose deadline expired. `status!="canceled"` leaves out the client cancellations but keeps the timeouts, so the p99 includes a slow query that times out.
 
 ### gRPC Error Rate
 
@@ -270,7 +284,7 @@ The tier-2 publisher's success throughput by `operation` (for `batch-write` with
 
 ### Write Queue Length (wqueue)
 
-The liaison buffers writes in an **on-disk write queue (wqueue)** before syncing each part to the data nodes. These gauges (scoped with the literal `container_name="liaison"`) expose the queue per `pod_name`/`group` (after a liaison restart, a shard's series appears with its first write): `unsynced_parts` (including in-memory parts), `unsynced_part_bytes` (compressed size) and `oldest_unsynced_part_age_seconds` (`0` when no part has an enqueue time); for trace all three count core parts only. If the shard has no data node to sync to, or the sync is stuck, parts stay in the queue, the age keeps rising and the queue can eventually fill the liaison disk (`STATUS_DISK_FULL`). A part that fails to sync is retried for about 7 seconds (1s + 2s + 4s; one failed part after another), then dropped from the queue and copied to `failed-parts/` on a best-effort basis; `total_sync_failed_parts` (created at `0`, use `increase()`) counts it, so an increase means data may be at risk. `total_file_parts`, `total_mem_part` and `pending_data_count` do not reflect this queue. The matching `*_total_sync_loop_*` counters (`started`/`finished`/`latency`/`bytes`, and the lazily-registered `*_total_sync_loop_err`) describe the loop that drains it; `*_total_sync_loop_err` counts a failed loop (for measure and stream, no data node), not parts that fail to sync.
+The liaison buffers writes in an **on-disk write queue (wqueue)** before syncing each part to the data nodes. These gauges (scoped with the literal `container_name="liaison"`) expose the queue per `pod_name`, `group`, `seg` and `shard` (after a liaison restart, a shard's series appears with its first write): `unsynced_parts` (including in-memory parts) and `oldest_unsynced_part_age_seconds` (`0` when no part has an enqueue time); for trace both count core parts only. If the shard has no data node to sync to, or the sync is stuck, parts stay in the queue, the age keeps rising and the queue can eventually fill the liaison disk (`STATUS_DISK_FULL`). A part that fails to sync is retried for about 7 seconds (1s + 2s + 4s; one failed part after another), then dropped from the queue and copied to `failed-parts/` on a best-effort basis; `total_sync_failed_parts` (created at `0`, use `increase()`) counts it, so an increase means data may be at risk. Read the liaison backlog from `unsynced_parts` and `oldest_unsynced_part_age_seconds`, not from `total_file_parts`, `total_mem_part` or `pending_data_count`: those three are registered on a liaison but never set, so they have no series there. A liaison has no segments, so these gauges carry `seg=""` (alongside `group` and `shard`); do not filter them by `seg`. The matching `*_total_sync_loop_*` counters (`started`/`finished`/`latency`/`bytes`, and the lazily-registered `*_total_sync_loop_err`) describe the loop that drains it; `*_total_sync_loop_err` counts a failed loop (for measure and stream, no data node), not parts that fail to sync.
 
 The `banyandb_{measure,stream_tst,trace_tst}_file_sync_queue_latency_seconds` histograms measure a different boundary: from a core part's commit into the liaison wqueue until that part receives a successful file-sync acknowledgement from each target data node. This includes queue residence, merge/flush scheduling, transfer, and retries. A merged part retains the oldest enqueue time of its inputs. Samples are labeled by `remote_node`; failed acknowledgements and legacy parts without an enqueue timestamp are not sampled.
 
@@ -310,7 +324,7 @@ Merge-file operations per minute, per `group`. A surge means many small files ar
 
 ### Merge File Latency
 
-Average merge-file latency in seconds, per `group` (total merge latency ÷ merge operations). A surge indicates slow merges, often from high disk I/O.
+Average merge-file latency in seconds, per `group` (total merge latency ÷ `total_merge_loop_started`). A surge indicates slow merges, often from high disk I/O. In measure and stream, `total_merge_loop_started` advances on every pass of the merge loop, including passes that find nothing to merge, whereas `total_merged{type="file"}` counts merges that ran; divide by it for the exact per-merge average. The trace `total_merge_latency`, `total_merged` and `total_merged_parts` carry an extra `lane` label besides `type`, which the sums above aggregate away.
 
 **Expression1**: `sum(rate(banyandb_measure_total_merge_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 **Expression2**: `sum(rate(banyandb_stream_tst_total_merge_latency{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
@@ -318,7 +332,7 @@ Average merge-file latency in seconds, per `group` (total merge latency ÷ merge
 
 ### Merge File Partitions
 
-Average number of partitions merged per merge-file operation, per `group` (merged parts ÷ merge operations). A surge suggests the server is under heavy write load.
+Average number of partitions merged per merge-loop pass, per `group` (merged parts ÷ `total_merge_loop_started`). A surge suggests the server is under heavy write load.
 
 **Expression1**: `sum(rate(banyandb_measure_total_merged_parts{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_measure_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
 **Expression2**: `sum(rate(banyandb_stream_tst_total_merged_parts{job=~"$job", container_name=~"$role", pod_name=~"$pod", type="file"}[$__rate_interval])) by (group) / sum(rate(banyandb_stream_tst_total_merge_loop_started{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval])) by (group)`
@@ -490,11 +504,17 @@ Series term-search operations per second, per `group`. A high value means reads 
 
 ### Total Series
 
-The total number of series (index documents) stored, per `group`, for measures, streams and traces.
+The total number of series (index documents) stored, per `group`, for measures, streams and traces. `inverted_index_total_doc_count` has one series per segment (labels `group` and `seg`, the segment start formatted as `YYYYMMDD` for a day interval or `YYYYMMDDHH` for an hour interval) and counts the live documents of the segment's series index, one per series. A segment that is closed when idle or deleted by retention removes its series, so the sum covers the open segments only.
 
 **Expression1 (measure)**: `sum(banyandb_measure_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 **Expression2 (stream)**: `sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 **Expression3 (trace)**: `sum(banyandb_trace_storage_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod", group=~"$group"}) by (group)`
+
+### Current Series Count
+
+`banyandb_measure_series_count`, `banyandb_stream_storage_series_count` and `banyandb_trace_storage_series_count` (label `group`) report the series count of the segment that covers the node's latest write time, on data and standalone nodes (a liaison does not report them). A segment created ahead of time is not counted. The value is 0 when no segment covers that time, when the node has not seen a write since it started, or when that segment is closed. A new segment starts empty and its series are indexed again as they are written, so the value restarts from 0 on every rotation. `banyandb_measure_series_count_previous`, `banyandb_stream_storage_series_count_previous` and `banyandb_trace_storage_series_count_previous` report the series count of the segment right before that one (the closest earlier segment, even if not adjacent in time), read from disk without reopening it when it is closed. They are 0 when there is no such segment. Series only accumulate within a segment, so `series_count_previous` is the final size of the last complete segment. To alert on abnormal growth, compare the two and require a minimum size so that small groups do not fire: `series_count / series_count_previous > 1.2 and series_count_previous > 1000`. The ratio does not depend on the segment interval, and the 0 values after a rotation do not trigger it.
+
+**Expression**: `max by (group) (banyandb_measure_series_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"})` (and the stream and trace names above)
 
 ### Stream tst: Write Rate
 
@@ -510,7 +530,7 @@ Term-search rate on the stream tst inverted index, per `group`.
 
 ### Stream tst: Total Documents
 
-Total documents in the stream tst inverted index, per `group`.
+Total documents in the stream tst inverted index, per `group`. Every shard of a segment writes the same `{group, seg}` series, so the value reflects the documents of a single shard rather than the sum of all shards.
 
 **Expression**: `sum(banyandb_stream_tst_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 

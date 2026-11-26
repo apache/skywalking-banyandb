@@ -431,6 +431,38 @@ func (d *database[T, O]) DeleteOldestSegment() (bool, error) {
 	}
 }
 
+// currentSeriesCount returns the series count of the segment that covers the
+// latest tick time: the segments are ordered by start time and the last one may
+// have been created ahead of time. It is 0 when no segment covers the tick or
+// that segment is closed.
+func (d *database[T, O]) currentSeriesCount() int64 {
+	tick := d.latestTickTime.Load()
+	for _, s := range d.segmentController.copySegments() {
+		if s.Contains(tick) {
+			count, _ := s.openSeriesCount()
+			return count
+		}
+	}
+	return 0
+}
+
+// previousSeriesCount returns the series count of the segment right before the
+// one that covers the latest tick time, whether or not the two are adjacent in
+// time. It is 0 when there is no such segment.
+func (d *database[T, O]) previousSeriesCount() int64 {
+	tick := d.latestTickTime.Load()
+	segments := d.segmentController.copySegments()
+	for i, s := range segments {
+		if s.Contains(tick) {
+			if i == 0 {
+				return 0
+			}
+			return segments[i-1].seriesCount()
+		}
+	}
+	return 0
+}
+
 func (d *database[T, O]) collect() {
 	if d.closed.Load() {
 		return
@@ -450,6 +482,8 @@ func (d *database[T, O]) collect() {
 		}
 	}
 	d.totalSegRefs.Set(float64(openSegments))
+	d.metrics.seriesCount.Set(float64(d.currentSeriesCount()))
+	d.metrics.seriesCountPrevious.Set(float64(d.previousSeriesCount()))
 	if d.metrics.schedulerMetrics == nil {
 		return
 	}

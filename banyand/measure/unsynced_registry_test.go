@@ -40,7 +40,6 @@ const unsyncedMetricPrefix = "banyandb_measure_"
 
 var unsyncedMetricNames = []string{
 	unsyncedMetricPrefix + "unsynced_parts",
-	unsyncedMetricPrefix + "unsynced_part_bytes",
 	unsyncedMetricPrefix + "oldest_unsynced_part_age_seconds",
 	unsyncedMetricPrefix + "total_sync_failed_parts",
 }
@@ -105,7 +104,6 @@ func TestQueueMetricsExposeUnsyncedSeriesPerShard(t *testing.T) {
 	shard1.collectUnsynced()
 
 	require.Equal(t, map[string]float64{"seg-1/0": 1, "seg-1/1": 1}, r.series(t, unsyncedMetricPrefix+"unsynced_parts"))
-	require.Equal(t, map[string]float64{"seg-1/0": 10, "seg-1/1": 100}, r.series(t, unsyncedMetricPrefix+"unsynced_part_bytes"))
 	age := r.series(t, unsyncedMetricPrefix+"oldest_unsynced_part_age_seconds")
 	require.Len(t, age, 2)
 	require.InDelta(t, 10, age["seg-1/0"], 5)
@@ -113,7 +111,6 @@ func TestQueueMetricsExposeUnsyncedSeriesPerShard(t *testing.T) {
 
 	shard0.deleteMetrics()
 	require.Equal(t, map[string]float64{"seg-1/1": 1}, r.series(t, unsyncedMetricPrefix+"unsynced_parts"))
-	require.Equal(t, map[string]float64{"seg-1/1": 100}, r.series(t, unsyncedMetricPrefix+"unsynced_part_bytes"))
 	require.Len(t, r.series(t, unsyncedMetricPrefix+"oldest_unsynced_part_age_seconds"), 1)
 
 	shard1.deleteMetrics()
@@ -152,7 +149,6 @@ func TestCollectUnsyncedNilInputs(t *testing.T) {
 		(&tsTable{metrics: m, snapshot: nil}).collectUnsynced()
 	})
 	require.Empty(t, m.unsyncedParts.(*recordedGauge).series)
-	require.Empty(t, m.unsyncedPartBytes.(*recordedGauge).series)
 	require.Empty(t, m.oldestUnsyncedPartAgeSeconds.(*recordedGauge).series)
 }
 
@@ -192,7 +188,6 @@ func TestQueueSupplierOpenDBCollectsUnsyncedMetrics(t *testing.T) {
 	obsservice.MetricsCollector.Collect()
 	require.Equal(t, map[string]float64{"/2": 1}, r.series(t, partsMetric))
 	require.Greater(t, r.series(t, unsyncedMetricPrefix+"oldest_unsynced_part_age_seconds")["/2"], float64(0), "the part is stamped with its queue time")
-	require.Greater(t, r.series(t, unsyncedMetricPrefix+"unsynced_part_bytes")["/2"], float64(0))
 
 	require.NoError(t, db.Close())
 	// Closing the queue removes its gauges from the registry.

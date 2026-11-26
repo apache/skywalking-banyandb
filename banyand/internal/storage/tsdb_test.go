@@ -595,6 +595,8 @@ func TestTSDBCollect(t *testing.T) {
 	mockMetrics := &metrics{
 		lastTickTime:                 lastTickTimeGauge.MockGauge,
 		totalSegRefs:                 totalSegRefsGauge.MockGauge,
+		seriesCount:                  NewMockGauge(ctrl).MockGauge,
+		seriesCountPrevious:          NewMockGauge(ctrl).MockGauge,
 		totalRotationStarted:         NewMockCounter(ctrl).MockCounter,
 		totalRotationFinished:        NewMockCounter(ctrl).MockCounter,
 		totalRotationErr:             NewMockCounter(ctrl).MockCounter,
@@ -675,6 +677,8 @@ func TestCollectWithPartialClosedSegments(t *testing.T) {
 	mockMetrics := &metrics{
 		lastTickTime:                 lastTickTimeGauge.MockGauge,
 		totalSegRefs:                 totalSegRefsGauge.MockGauge,
+		seriesCount:                  NewMockGauge(ctrl).MockGauge,
+		seriesCountPrevious:          NewMockGauge(ctrl).MockGauge,
 		totalRotationStarted:         NewMockCounter(ctrl).MockCounter,
 		totalRotationFinished:        NewMockCounter(ctrl).MockCounter,
 		totalRotationErr:             NewMockCounter(ctrl).MockCounter,

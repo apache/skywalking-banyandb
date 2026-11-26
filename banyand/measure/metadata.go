@@ -947,7 +947,6 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 			unsyncedParts:                  factory.NewGauge("unsynced_parts", common.ShardLabelNames()...),
-			unsyncedPartBytes:              factory.NewGauge("unsynced_part_bytes", common.ShardLabelNames()...),
 			oldestUnsyncedPartAgeSeconds:   factory.NewGauge("oldest_unsynced_part_age_seconds", common.ShardLabelNames()...),
 		},
 	}

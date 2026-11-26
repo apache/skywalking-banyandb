@@ -80,6 +80,8 @@ func TestQueryLatencyInterceptor(t *testing.T) {
 	now := timestamppb.New(time.Now().Truncate(time.Millisecond))
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
+	expiredCtx, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expire()
 	tests := []struct {
 		ctx    context.Context
 		call   func(ctx context.Context, svc *measureService) error
@@ -104,6 +106,14 @@ func TestQueryLatencyInterceptor(t *testing.T) {
 		{
 			name: "multi-group measure query canceled by the client", method: measurev1.MeasureService_Query_FullMethodName,
 			want: "measure/canceled", ctx: canceledCtx,
+			call: func(ctx context.Context, svc *measureService) error {
+				_, err := svc.Query(ctx, &measurev1.QueryRequest{Groups: []string{"g1", "g2"}, TimeRange: &modelv1.TimeRange{Begin: now, End: now}})
+				return err
+			},
+		},
+		{
+			name: "multi-group measure query whose deadline expired", method: measurev1.MeasureService_Query_FullMethodName,
+			want: "measure/deadline_exceeded", ctx: expiredCtx,
 			call: func(ctx context.Context, svc *measureService) error {
 				_, err := svc.Query(ctx, &measurev1.QueryRequest{Groups: []string{"g1", "g2"}, TimeRange: &modelv1.TimeRange{Begin: now, End: now}})
 				return err
@@ -150,7 +160,7 @@ func TestQueryLatencyStatusFollowsRequestContext(t *testing.T) {
 		{name: "success", want: "stream/ok"},
 		{name: "plain error", err: wrapped, want: "stream/err"},
 		{name: "wrapped plain error after the client canceled", err: wrapped, ctxEnds: true, want: "stream/canceled"},
-		{name: "wrapped plain error after the client deadline", err: wrapped, ctxEnds: true, ctxExpire: true, want: "stream/canceled"},
+		{name: "wrapped plain error after the client deadline", err: wrapped, ctxEnds: true, ctxExpire: true, want: "stream/deadline_exceeded"},
 		// A context error while the request context is alive comes from a failed node connection, not from the client.
 		{name: "context.Canceled while the request context is alive", err: context.Canceled, want: "stream/err"},
 		{name: "gRPC Canceled while the request context is alive", err: status.Error(codes.Canceled, "client connection is closing"), want: "stream/err"},

@@ -57,7 +57,6 @@ func newUnsyncedTestMetrics() *metrics {
 	return &metrics{
 		tbMetrics: tbMetrics{
 			unsyncedParts:                &recordedGauge{},
-			unsyncedPartBytes:            &recordedGauge{},
 			oldestUnsyncedPartAgeSeconds: &recordedGauge{},
 		},
 	}
@@ -97,22 +96,21 @@ func TestCollectUnsynced(t *testing.T) {
 		name      string
 		parts     []*partWrapper
 		wantParts float64
-		wantBytes float64
 		wantAge   float64
 	}{
 		{name: "empty snapshot"},
-		{name: "unstamped part after stamped", parts: []*partWrapper{stamped(20, time.Minute), unstamped(10)}, wantParts: 2, wantBytes: 30, wantAge: 60},
-		{name: "unstamped part before stamped", parts: []*partWrapper{unstamped(10), stamped(20, time.Minute)}, wantParts: 2, wantBytes: 30, wantAge: 60},
-		{name: "queue time in the future", parts: []*partWrapper{stamped(5, -time.Hour)}, wantParts: 1, wantBytes: 5},
-		{name: "oldest part first", parts: []*partWrapper{stamped(10, 2*time.Minute), stamped(20, time.Minute)}, wantParts: 2, wantBytes: 30, wantAge: 120},
-		{name: "oldest across mem and file parts", parts: []*partWrapper{stamped(100, time.Minute), mem(5, 2*time.Minute)}, wantParts: 2, wantBytes: 105, wantAge: 120},
+		{name: "unstamped part after stamped", parts: []*partWrapper{stamped(20, time.Minute), unstamped(10)}, wantParts: 2, wantAge: 60},
+		{name: "unstamped part before stamped", parts: []*partWrapper{unstamped(10), stamped(20, time.Minute)}, wantParts: 2, wantAge: 60},
+		{name: "queue time in the future", parts: []*partWrapper{stamped(5, -time.Hour)}, wantParts: 1},
+		{name: "oldest part first", parts: []*partWrapper{stamped(10, 2*time.Minute), stamped(20, time.Minute)}, wantParts: 2, wantAge: 120},
+		{name: "oldest across mem and file parts", parts: []*partWrapper{stamped(100, time.Minute), mem(5, 2*time.Minute)}, wantParts: 2, wantAge: 120},
 		{
 			name: "file part without rows is never synced",
 			parts: []*partWrapper{
 				{p: &part{partMetadata: partMetadata{CompressedSizeBytes: 5, QueuedAtUnixNano: now.Add(-time.Hour).UnixNano()}}},
 				stamped(20, time.Minute),
 			},
-			wantParts: 1, wantBytes: 20, wantAge: 60,
+			wantParts: 1, wantAge: 60,
 		},
 	}
 	for _, tt := range tests {
@@ -122,7 +120,6 @@ func TestCollectUnsynced(t *testing.T) {
 			tst.collectUnsynced()
 			require.Equal(t, int32(1), tst.snapshot.ref, "collectUnsynced must release the snapshot reference it takes")
 			require.Equal(t, tt.wantParts, gaugeValue(t, m.unsyncedParts))
-			require.Equal(t, tt.wantBytes, gaugeValue(t, m.unsyncedPartBytes))
 			if tt.wantAge == 0 {
 				require.Zero(t, gaugeValue(t, m.oldestUnsyncedPartAgeSeconds))
 			} else {

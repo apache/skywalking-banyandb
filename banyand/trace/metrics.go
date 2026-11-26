@@ -780,7 +780,6 @@ func (qs *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observa
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
 			unsyncedParts:                  factory.NewGauge("unsynced_parts", common.ShardLabelNames()...),
-			unsyncedPartBytes:              factory.NewGauge("unsynced_part_bytes", common.ShardLabelNames()...),
 			oldestUnsyncedPartAgeSeconds:   factory.NewGauge("oldest_unsynced_part_age_seconds", common.ShardLabelNames()...),
 			mergeQuarantinedParts:          factory.NewGauge("merge_quarantined_parts", common.ShardLabelNames()...),
 		},
@@ -861,7 +860,6 @@ func (tst *tsTable) deleteMetrics() {
 	if tst.metrics.tbMetrics.unsyncedParts != nil {
 		labels := tst.unsyncedLabelValues()
 		tst.metrics.tbMetrics.unsyncedParts.Delete(labels...)
-		tst.metrics.tbMetrics.unsyncedPartBytes.Delete(labels...)
 		tst.metrics.tbMetrics.oldestUnsyncedPartAgeSeconds.Delete(labels...)
 	}
 	tst.metrics.tbMetrics.mergeQuarantinedParts.Delete(tst.p.ShardLabelValues()...)
@@ -884,7 +882,6 @@ type tbMetrics struct {
 	pendingDataCount meter.Gauge
 
 	unsyncedParts                meter.Gauge
-	unsyncedPartBytes            meter.Gauge
 	oldestUnsyncedPartAgeSeconds meter.Gauge
 
 	mergeQuarantinedParts meter.Gauge
@@ -917,7 +914,7 @@ func (tst *tsTable) collectUnsynced() {
 	}
 	defer snp.decRef()
 
-	var partCount, partBytes uint64
+	var partCount uint64
 	var oldestQueuedAt int64
 	for _, pw := range snp.parts {
 		// A mem part is always waiting for sync; a file part only when the syncer would pick it.
@@ -926,7 +923,6 @@ func (tst *tsTable) collectUnsynced() {
 		}
 		pm := pw.p.partMetadata
 		partCount++
-		partBytes += pm.CompressedSizeBytes
 		if pm.QueuedAtUnixNano == 0 {
 			continue
 		}
@@ -940,6 +936,5 @@ func (tst *tsTable) collectUnsynced() {
 	}
 	labels := tst.unsyncedLabelValues()
 	m.unsyncedParts.Set(float64(partCount), labels...)
-	m.unsyncedPartBytes.Set(float64(partBytes), labels...)
 	m.oldestUnsyncedPartAgeSeconds.Set(ageSeconds, labels...)
 }

@@ -443,7 +443,6 @@ func (tst *tsTable) deleteMetrics() {
 	if tst.metrics.tbMetrics.unsyncedParts != nil {
 		labels := tst.unsyncedLabelValues()
 		tst.metrics.tbMetrics.unsyncedParts.Delete(labels...)
-		tst.metrics.tbMetrics.unsyncedPartBytes.Delete(labels...)
 		tst.metrics.tbMetrics.oldestUnsyncedPartAgeSeconds.Delete(labels...)
 	}
 }
@@ -464,7 +463,6 @@ type tbMetrics struct {
 	pendingDataCount meter.Gauge
 
 	unsyncedParts                meter.Gauge
-	unsyncedPartBytes            meter.Gauge
 	oldestUnsyncedPartAgeSeconds meter.Gauge
 }
 
@@ -546,7 +544,7 @@ func (tst *tsTable) collectUnsynced() {
 	}
 	defer snp.decRef()
 
-	var partCount, partBytes uint64
+	var partCount uint64
 	var oldestQueuedAt int64
 	for _, pw := range snp.parts {
 		// A mem part is always waiting for sync; a file part only when the syncer would pick it.
@@ -555,7 +553,6 @@ func (tst *tsTable) collectUnsynced() {
 		}
 		pm := pw.p.partMetadata
 		partCount++
-		partBytes += pm.CompressedSizeBytes
 		if pm.QueuedAtUnixNano == 0 {
 			continue
 		}
@@ -569,6 +566,5 @@ func (tst *tsTable) collectUnsynced() {
 	}
 	labels := tst.unsyncedLabelValues()
 	m.unsyncedParts.Set(float64(partCount), labels...)
-	m.unsyncedPartBytes.Set(float64(partBytes), labels...)
 	m.oldestUnsyncedPartAgeSeconds.Set(ageSeconds, labels...)
 }

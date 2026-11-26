@@ -201,7 +201,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "sum(banyandb_system_cpu_num{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
+          "expr": "sum(banyandb_system_cpu_limit_cores{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
           "instant": false,
           "legendFormat": "__auto",
           "range": true,

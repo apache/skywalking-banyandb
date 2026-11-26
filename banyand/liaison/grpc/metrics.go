@@ -235,7 +235,7 @@ var queryLatencyServices = map[string]string{
 }
 
 // newQueryLatencyInterceptor observes query_latency_seconds once per query RPC received from a client, with the status
-// ok, err, or canceled when the client canceled or its deadline expired. It is a
+// ok, err, canceled when the client canceled, or deadline_exceeded when its deadline expired. It is a
 // gRPC interceptor so that BydbQL, which calls the measure, stream, trace and property handlers as Go methods,
 // is observed only under its own service.
 func newQueryLatencyInterceptor(m *metrics) grpc.UnaryServerInterceptor {
@@ -251,7 +251,10 @@ func newQueryLatencyInterceptor(m *metrics) grpc.UnaryServerInterceptor {
 			// The status follows the request context, not the error: the distributed stream, trace and TopN paths
 			// return wrapped errors that carry no gRPC code and do not unwrap to a context error.
 			state = "err"
-			if ctx.Err() != nil {
+			switch {
+			case errors.Is(ctx.Err(), context.DeadlineExceeded):
+				state = "deadline_exceeded"
+			case ctx.Err() != nil:
 				state = "canceled"
 			}
 		}
