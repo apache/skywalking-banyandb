@@ -277,6 +277,14 @@ func classifyNodeErr(err error) (nodeErrKind, *status.Status) {
 	return nodeErrOther, st
 }
 
+// leaseLostOutside reports whether st is a node's FailedPrecondition (which a node answers when its
+// lease of the session expired or is unreadable, and for any other unmet precondition) and the
+// client named the nodes it requires without node: the client needs nothing more from node, so
+// its answer does not matter. An empty required means every node.
+func leaseLostOutside(st *status.Status, required []string, node string) bool {
+	return st.Code() == codes.FailedPrecondition && len(required) > 0 && !slices.Contains(required, node)
+}
+
 // unsupportedNodeError fails a call on a data node without ExportService.
 func unsupportedNodeError(node string) error {
 	return status.Errorf(codes.Unimplemented, "data node %s %s", node, unsupportedExport)
@@ -394,9 +402,10 @@ func (s *exportService) planCreateSession(req *transferv1.PlanRequest, stream tr
 // it fails the node as Internal.
 // CreateSession is strict: every failure is fatal, transport failures as Unavailable and a
 // node silent for exportPlanNodeMaxWait as DeadlineExceeded. Otherwise transport failures, the
-// max wait, NotFound (the node does not hold the session) and Unimplemented (the node
-// predates ExportService) degrade the node to unreachable_nodes and any other status is
-// returned as-is.
+// max wait, NotFound (the node does not hold the session), Unimplemented (the node
+// predates ExportService) and, for a ReadSession naming required_nodes, FailedPrecondition
+// (an expired or unreadable lease) on a node outside them degrade the node to
+// unreachable_nodes; any other status is returned as-is.
 func (s *exportService) fanOutPlan(
 	ctx context.Context, req *transferv1.PlanRequest, nodes []planNode, send func(*transferv1.PlanResponse) error,
 ) (*transferv1.PlanResponse, []planNode, bool, error) {
@@ -449,27 +458,8 @@ func (s *exportService) fanOutPlan(
 		mu.Unlock()
 	}
 	nodeFailed := func(node string, err error) error {
-		kind, st := classifyNodeErr(err)
-		if strict {
-			switch kind {
-			case nodeErrTransport:
-				return nodeError(codes.Unavailable, node, st.Message())
-			case nodeErrUnsupported:
-				return unsupportedNodeError(node)
-			default:
-				return nodeError(st.Code(), node, st.Message())
-			}
-		}
-		switch kind {
-		case nodeErrTransport:
-			s.l.Warn().Err(err).Str("node", node).Msg("data node unreachable during export plan; continuing with the remaining nodes")
-		case nodeErrNotFound:
-			s.l.Warn().Err(err).Str("node", node).Str("session", sessionID(req)).
-				Msg("data node does not hold the export session; reporting it as unreachable")
-		case nodeErrUnsupported:
-			s.l.Warn().Err(err).Str("node", node).Msg("data node " + unsupportedExport + "; reporting it as unreachable")
-		default:
-			return nodeError(st.Code(), node, st.Message())
+		if failErr := s.planNodeFailed(req, strict, node, err); failErr != nil {
+			return failErr
 		}
 		markUnreachable(node)
 		return nil
@@ -561,6 +551,37 @@ func (s *exportService) fanOutPlan(
 	return frame, established, unfinished, nil
 }
 
+// planNodeFailed classifies a node's failed Plan for fanOutPlan: the error to fail the call
+// with, or nil when the node degrades to unreachable_nodes (logged as a WARN).
+func (s *exportService) planNodeFailed(req *transferv1.PlanRequest, strict bool, node string, err error) error {
+	kind, st := classifyNodeErr(err)
+	if strict {
+		switch kind {
+		case nodeErrTransport:
+			return nodeError(codes.Unavailable, node, st.Message())
+		case nodeErrUnsupported:
+			return unsupportedNodeError(node)
+		default:
+			return nodeError(st.Code(), node, st.Message())
+		}
+	}
+	switch {
+	case kind == nodeErrTransport:
+		s.l.Warn().Err(err).Str("node", node).Msg("data node unreachable during export plan; continuing with the remaining nodes")
+	case kind == nodeErrNotFound:
+		s.l.Warn().Err(err).Str("node", node).Str("session", sessionID(req)).
+			Msg("data node does not hold the export session; reporting it as unreachable")
+	case kind == nodeErrUnsupported:
+		s.l.Warn().Err(err).Str("node", node).Msg("data node " + unsupportedExport + "; reporting it as unreachable")
+	case leaseLostOutside(st, req.GetRead().GetRequiredNodes(), node):
+		s.l.Warn().Err(err).Str("node", node).Str("session", sessionID(req)).
+			Msg("a data node answered FAILED_PRECONDITION for the export session and the client does not require it; reporting it as unreachable")
+	default:
+		return nodeError(st.Code(), node, st.Message())
+	}
+	return nil
+}
+
 // releaseOn drops the session on the given nodes and returns the ones that failed, sorted.
 func (s *exportService) releaseOn(ctx context.Context, id string, nodes []planNode) []string {
 	req := &transferv1.SessionsRequest{Action: transferv1.SessionsRequest_ACTION_RELEASE, SessionId: id}
@@ -606,11 +627,13 @@ func (s *exportService) Sessions(req *transferv1.SessionsRequest, stream transfe
 // a node without ExportService) fails it with that node's code, or Internal for an `error`
 // frame. ACTION_HEARTBEAT reports an
 // unreachable node or one without ExportService as an `error` frame (the next heartbeat
-// retries) and fails the call with any other error, so an expired session stops the
-// client's heartbeat. ACTION_RELEASE never fails the call for a node: every failure is
+// retries), and so a FailedPrecondition (an expired or unreadable lease) on a node outside a
+// non-empty required_nodes, which the client needs nothing more from; it fails the call with any
+// other error, so an expired session stops the client's heartbeat. ACTION_RELEASE never fails the call for a node: every failure is
 // reported as an `error` frame so a partially released session stays visible.
 func (s *exportService) fanOutSessions(ctx context.Context, req *transferv1.SessionsRequest, nodes []planNode) ([]*transferv1.SessionsResponse, error) {
 	release := req.GetAction() == transferv1.SessionsRequest_ACTION_RELEASE
+	heartbeat := req.GetAction() == transferv1.SessionsRequest_ACTION_HEARTBEAT
 	var mu sync.Mutex
 	list := req.GetAction() == transferv1.SessionsRequest_ACTION_LIST
 	var frames []*transferv1.SessionsResponse
@@ -631,7 +654,9 @@ func (s *exportService) fanOutSessions(ctx context.Context, req *transferv1.Sess
 					return unsupportedNodeError(n.name())
 				case kind == nodeErrUnsupported:
 					frame = errorOutcome("data node " + unsupportedExport)
-				case release || (kind == nodeErrTransport && req.GetAction() == transferv1.SessionsRequest_ACTION_HEARTBEAT):
+				case release || (kind == nodeErrTransport && heartbeat):
+					frame = errorOutcome(st.Message())
+				case heartbeat && leaseLostOutside(st, req.GetRequiredNodes(), n.name()):
 					frame = errorOutcome(st.Message())
 				case kind == nodeErrTransport:
 					s.l.Warn().Err(err).Str("node", n.name()).Msg("data node did not answer the export session list")

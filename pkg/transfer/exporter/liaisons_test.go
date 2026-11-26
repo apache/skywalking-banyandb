@@ -150,7 +150,7 @@ func TestRenderSummary(t *testing.T) {
 		elapsedKey("a", "MEASURE", "g"): 1500 * time.Millisecond,
 		elapsedKey("b", "MEASURE", "g"): 90 * time.Second,
 	}
-	if err := renderSummary(&out, "/x", m, elapsed, 95*time.Second); err != nil {
+	if err := renderSummary(&out, "/x", m, elapsed, 95*time.Second, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := "NODE  CATALOG  GROUP  STAGE  UNITS  FILES  ROWS  SIZE     TIME\n" +

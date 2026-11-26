@@ -21,6 +21,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -216,8 +217,9 @@ func TestReleaseSession_UnknownSessionIsAnError(t *testing.T) {
 func TestReleaseSession_NotesNodesThatDidNotHoldIt(t *testing.T) {
 	out, errOut, err := runRelease(t, releaseFrame("data-a", "done"), releaseFrame("data-b", "none"))
 	require.NoError(t, err)
-	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd released\n", out)
-	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd was not held on [data-b]\n", errOut)
+	assert.Equal(t, "export session abcdabcdabcdabcdabcdabcdabcdabcd was not held on [data-b]\n"+
+		"export session abcdabcdabcdabcdabcdabcdabcdabcd released\n", out, "both are information")
+	assert.Empty(t, errOut)
 }
 
 func TestDataExport_RejectsPositionalArgs(t *testing.T) {
@@ -259,6 +261,7 @@ func TestDataExport_FlagValidation(t *testing.T) {
 		args []string
 	}{
 		{"--output cannot be combined with --dry-run", []string{"--dry-run", "--output", out}},
+		{"--checkpoint cannot be combined with --dry-run", []string{"--dry-run", "--checkpoint", filepath.Join(out, "p.json")}},
 		{"--preempt cannot be combined with --dry-run", []string{"--dry-run", "--preempt"}},
 		{"--schema-only cannot be combined with --dry-run", []string{"--dry-run", "--schema-only"}},
 		{"--compress: a native export is not compressed", []string{"--output", out, "--format", "native", "--compress", "gzip"}},
@@ -363,14 +366,40 @@ func mustParsed(t *testing.T, args ...string) *cobra.Command {
 }
 
 // parseDataCmd parses args on a fresh command built by newCmd, with the global flags reset
-// before and after the test, and returns the command with its captured stderr.
+// before and after the test, and returns the command with its captured stdout; stderr is captured
+// too (stderrOf).
 func parseDataCmd(t *testing.T, newCmd func() *cobra.Command, args ...string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	ResetFlags()
 	t.Cleanup(ResetFlags)
 	c := newCmd()
-	var errOut bytes.Buffer
-	c.SetErr(&errOut)
+	var out bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&bytes.Buffer{})
 	require.NoError(t, c.ParseFlags(args))
-	return c, &errOut
+	return c, &out
+}
+
+// stderrOf is what a command parsed by parseDataCmd printed on stderr.
+func stderrOf(c *cobra.Command) string {
+	return c.ErrOrStderr().(*bytes.Buffer).String()
+}
+
+// A table keeps everything on stdout; json and yaml keep stdout to the rendering, leave out the
+// lines about the connection and the settings, and print the other information on stderr.
+func TestStreamsOf(t *testing.T) {
+	c := &cobra.Command{}
+	var out, errOut bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errOut)
+	s := streamsOf(c, "table")
+	assert.Same(t, &out, s.info)
+	assert.Same(t, &out, s.hints)
+	assert.Same(t, &out, s.out)
+	for _, format := range []string{"json", "yaml"} {
+		s = streamsOf(c, format)
+		assert.Same(t, &errOut, s.info, format)
+		assert.Equal(t, io.Discard, s.hints, format)
+		assert.Same(t, &out, s.out, format)
+	}
 }

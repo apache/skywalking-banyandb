@@ -137,11 +137,11 @@ type partTarget struct {
 	cancel context.CancelFunc
 	err    error
 	node   string
-	// timedOut tells that the frame timer canceled the stream.
-	timedOut atomic.Bool
 	// completionSent tells that the completion reached the target and the failure came after
 	// it, so the target may have committed the payload.
 	completionSent bool
+	// cause tells why err failed the target.
+	cause transferv1.ImportPartsResponse_FailureCause
 }
 
 // openPayload validates init, routes it and opens one SyncPart stream per target.
@@ -214,6 +214,7 @@ func (s *importService) openPayload(ctx context.Context, init *transferv1.Import
 		client, clientErr := s.tire2.NewChunkedSyncRelayClient(n)
 		if clientErr != nil {
 			t.err = clientErr
+			t.cause = transferv1.ImportPartsResponse_FAILURE_CAUSE_UNREACHABLE
 			continue
 		}
 		// The relay context derives from the client's stream, so a canceled import closes
@@ -223,6 +224,7 @@ func (s *importService) openPayload(ctx context.Context, init *transferv1.Import
 		if openErr != nil {
 			cancel()
 			t.err = openErr
+			t.cause = transferv1.ImportPartsResponse_FAILURE_CAUSE_UNREACHABLE
 			continue
 		}
 		t.stream, t.cancel = syncStream, cancel
@@ -475,15 +477,20 @@ func (t *partTarget) run(req *clusterv1.SyncPartRequest, want clusterv1.SyncStat
 }
 
 func (t *partTarget) exchange(req *clusterv1.SyncPartRequest, want clusterv1.SyncStatus) error {
+	// timerFired is per frame: a timer that fires after its frame was answered still cancels
+	// the stream, but the next frame then fails on a broken stream, not for lack of an answer.
+	var timerFired atomic.Bool
 	timer := time.AfterFunc(relayFrameTimeout, func() {
-		t.timedOut.Store(true)
+		timerFired.Store(true)
 		t.cancel()
 	})
 	defer timer.Stop()
 	fail := func(err error) error {
-		if t.timedOut.Load() {
+		if timerFired.Load() {
+			t.cause = transferv1.ImportPartsResponse_FAILURE_CAUSE_NO_ANSWER
 			return t.timeoutErr(req)
 		}
+		t.cause = transferv1.ImportPartsResponse_FAILURE_CAUSE_STREAM_BROKEN
 		return err
 	}
 	if err := t.stream.Send(req); err != nil {
@@ -501,6 +508,7 @@ func (t *partTarget) exchange(req *clusterv1.SyncPartRequest, want clusterv1.Syn
 		if msg == "" {
 			msg = "no detail"
 		}
+		t.cause = transferv1.ImportPartsResponse_FAILURE_CAUSE_REFUSED
 		return fmt.Errorf("chunk %d answered %s: %s", req.GetChunkIndex(), resp.GetStatus(), msg)
 	}
 	return nil
@@ -542,6 +550,7 @@ func (p *partsPayload) response() *transferv1.ImportPartsResponse {
 		if t.err != nil {
 			r.Error = t.err.Error()
 			r.CompletionSent = t.completionSent
+			r.FailureCause = t.cause
 		}
 		resp.Targets = append(resp.Targets, r)
 	}

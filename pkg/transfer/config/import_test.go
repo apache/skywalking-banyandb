@@ -48,11 +48,11 @@ func resolveImport(t *testing.T, fs *pflag.FlagSet, planFile string, env map[str
 func TestResolveImport_Defaults(t *testing.T) {
 	imp, sources, err := resolveImport(t, boundImport(t), "", nil)
 	require.NoError(t, err)
-	assert.Empty(t, sources)
+	assert.Empty(t, labelsOf(sources))
 	assert.Equal(t, Import{
 		OutputFormat: "table", OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, PartChunkSize: 1 << 20,
 		SendRetryTimeout: 15 * time.Minute, VerifyTimeout: 2 * time.Minute, Parallelism: math.MaxInt,
-		WriteBatchSize: 1000, WriteInflightBatches: 2, IncludeSchema: true, Verify: true,
+		WriteBatchSize: 1000, WriteInflightBatches: 2, CheckpointEveryBatches: 64, IncludeSchema: true, Verify: true, DuplicationPolicy: DuplicationWarn,
 	}, *imp)
 	require.NoError(t, imp.Validate(sources))
 }
@@ -63,6 +63,9 @@ connection:
   rateLimit: 100MiB/s
 import:
   input: ./backup
+  checkpoint: /var/lib/import-progress.json
+  checkpointEveryBatches: 16
+  resumeDuplicationPolicy: block
   includeSchema: true
   schemaOnly: false
   schemaConflictPolicy:
@@ -92,7 +95,8 @@ func TestResolveImport_Plan(t *testing.T) {
 	imp, sources, err := resolveImport(t, boundImport(t), writePlan(t, importPlanYAML), nil)
 	require.NoError(t, err)
 	assert.Equal(t, Import{
-		Input: "./backup", OutputFormat: "table", OnSchemaConflict: ConflictPolicyIgnore,
+		Input: "./backup", Checkpoint: "/var/lib/import-progress.json", CheckpointEveryBatches: 16, OutputFormat: "table", OnSchemaConflict: ConflictPolicyIgnore,
+		DuplicationPolicy: DuplicationBlock,
 		ConflictRules: []ConflictRule{
 			{Match: "group/sw_metric", Policy: ConflictPolicyOverwrite},
 			{Match: "measure/sw_metric/service_cpm_minute", Policy: ConflictPolicyError},
@@ -103,10 +107,11 @@ func TestResolveImport_Plan(t *testing.T) {
 		SendRetryTimeout: time.Hour, VerifyTimeout: 5 * time.Minute, Parallelism: 4, WriteBatchSize: 500,
 		WriteInflightBatches: 4, IncludeSchema: true,
 	}, *imp)
-	assert.Equal(t, "plan.yaml import.schemaConflictPolicy.rules", sources["import.schemaConflictPolicy.rules"],
+	assert.Equal(t, "plan.yaml import.schemaConflictPolicy.rules", labelsOf(sources)["import.schemaConflictPolicy.rules"],
 		"a plan-only setting is keyed by its plan path")
-	assert.True(t, sources.FromPlan("import.schemaConflictPolicy.rules"))
-	assert.True(t, sources.FromPlan("on-schema-conflict"))
+	assert.True(t, sources.FromPlan(&imp.ConflictRules))
+	assert.True(t, sources.FromPlan(&imp.OnSchemaConflict))
+	assert.True(t, sources.FromPlan(&imp.DuplicationPolicy))
 	assert.True(t, imp.HasOverwrite())
 }
 
@@ -119,8 +124,8 @@ func TestResolveImport_PlanOnlyField(t *testing.T) {
 	imp, sources, err := resolveImport(t, fs, "", map[string]string{"BYDBCTL_-": "x"})
 	require.NoError(t, err)
 	assert.Nil(t, imp.ConflictRules)
-	assert.NotContains(t, sources, "import.schemaConflictPolicy.rules")
-	assert.Equal(t, "plan.yaml import.schemaConflictPolicy.rules", sources.Label("import.schemaConflictPolicy.rules"),
+	assert.False(t, sources.FromPlan(&imp.ConflictRules))
+	assert.Equal(t, "plan.yaml import.schemaConflictPolicy.rules", sources.Label(&imp.ConflictRules),
 		"a plan-only setting at its default is labeled by its plan path")
 }
 
@@ -129,7 +134,7 @@ func TestResolveImport_PartFlags(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, float64(3<<30)/60, imp.PartRateLimit)
 	assert.Equal(t, uint64(2<<20), imp.PartChunkSize)
-	assert.True(t, sources.FromFlag("part-rate-limit"))
+	assert.True(t, sources.FromFlag(&imp.PartRateLimit))
 	require.NoError(t, imp.Validate(sources))
 }
 
@@ -146,10 +151,10 @@ func TestResolveImport_Precedence(t *testing.T) {
 	assert.Equal(t, time.Minute, imp.VerifyTimeout)
 	assert.Equal(t, 7, imp.Parallelism, "the environment beats the default")
 	assert.Equal(t, ConflictPolicyIgnore, imp.OnSchemaConflict)
-	assert.True(t, sources.FromFlag("write-batch-size"))
-	assert.True(t, sources.FromPlan("input"))
-	assert.Equal(t, "BYDBCTL_IMPORT_PARALLELISM", sources.Label("parallelism"))
-	assert.Equal(t, "--write-batch-bytes", sources.Label("write-batch-bytes"))
+	assert.True(t, sources.FromFlag(&imp.WriteBatchSize))
+	assert.True(t, sources.FromPlan(&imp.Input))
+	assert.Equal(t, "BYDBCTL_IMPORT_PARALLELISM", sources.Label(&imp.Parallelism))
+	assert.Equal(t, "--write-batch-bytes", sources.Label(&imp.WriteBatchBytes))
 }
 
 func TestResolveImport_EnvNames(t *testing.T) {
@@ -166,16 +171,24 @@ func TestResolveImport_EnvNames(t *testing.T) {
 		"BYDBCTL_IMPORT_NODE_RATE_LIMIT":     "2MiB/s",
 		"BYDBCTL_IMPORT_NODE_ROW_RATE_LIMIT": "20/s",
 		// The export's node rates do not reach an import.
-		"BYDBCTL_NODE_RATE_LIMIT":               "9MiB/s",
-		"BYDBCTL_NODE_ROW_RATE_LIMIT":           "90/s",
-		"BYDBCTL_IMPORT_WRITE_BATCH_SIZE":       "10",
-		"BYDBCTL_IMPORT_WRITE_BATCH_BYTES":      "128KiB",
-		"BYDBCTL_IMPORT_WRITE_INFLIGHT_BATCHES": "8",
-		"BYDBCTL_IMPORT_SEND_RETRY_TIMEOUT":     "1m",
-		"BYDBCTL_IMPORT_STRICT_COVERAGE":        "true",
-		"BYDBCTL_IMPORT_VERIFY":                 "false",
-		"BYDBCTL_IMPORT_VERIFY_TIMEOUT":         "30s",
+		"BYDBCTL_NODE_RATE_LIMIT":                  "9MiB/s",
+		"BYDBCTL_NODE_ROW_RATE_LIMIT":              "90/s",
+		"BYDBCTL_IMPORT_WRITE_BATCH_SIZE":          "10",
+		"BYDBCTL_IMPORT_WRITE_BATCH_BYTES":         "128KiB",
+		"BYDBCTL_IMPORT_WRITE_INFLIGHT_BATCHES":    "8",
+		"BYDBCTL_IMPORT_SEND_RETRY_TIMEOUT":        "1m",
+		"BYDBCTL_IMPORT_STRICT_COVERAGE":           "true",
+		"BYDBCTL_IMPORT_VERIFY":                    "false",
+		"BYDBCTL_IMPORT_VERIFY_TIMEOUT":            "30s",
+		"BYDBCTL_IMPORT_CHECKPOINT":                "/p.json",
+		"BYDBCTL_IMPORT_CHECKPOINT_EVERY_BATCHES":  "8",
+		"BYDBCTL_IMPORT_RESUME_DUPLICATION_POLICY": "skip",
+		"BYDBCTL_IMPORT_RESUME":                    "true",
+		// --restart, like --force, is never taken from the environment.
+		"BYDBCTL_IMPORT_RESTART": "true",
+		"BYDBCTL_RESTART":        "true",
 		// The export's variables do not reach an import.
+		"BYDBCTL_RESUME":             "false",
 		"BYDBCTL_STRICT_COVERAGE":    "false",
 		"BYDBCTL_PARALLELISM":        "9",
 		"BYDBCTL_SEND_RETRY_TIMEOUT": "9m",
@@ -186,9 +199,10 @@ func TestResolveImport_EnvNames(t *testing.T) {
 		Input: "/in", OutputFormat: "json", OnSchemaConflict: ConflictPolicyOverwrite, WriteBatchBytes: 128 << 10, PartChunkSize: 1 << 20,
 		WriteRateLimit: 10, LiaisonRateLimit: 1 << 20, NodeRateLimit: 2 << 20, NodeRowRateLimit: 20, SendRetryTimeout: time.Minute, VerifyTimeout: 30 * time.Second,
 		Parallelism: 3, WriteBatchSize: 10, WriteInflightBatches: 8, DryRun: true, SchemaOnly: true, StrictCoverage: true,
+		Checkpoint: "/p.json", CheckpointEveryBatches: 8, DuplicationPolicy: DuplicationSkip, Resume: true,
 	}, *imp)
 	fs := boundImport(t)
-	for _, name := range []string{"force", "force-ttl", "all-sources", "abort-on-plan-change"} {
+	for _, name := range []string{"force", "force-ttl", "all-sources", "abort-on-plan-change", "restart"} {
 		assert.NotContains(t, fs.Lookup(name).Usage, "BYDBCTL_", "--%s has no variable", name)
 		assert.NotContains(t, fs.Lookup(name).Usage, "plan.yaml", "--%s is not in plan.yaml", name)
 	}
@@ -235,6 +249,10 @@ func TestResolveImport_Errors(t *testing.T) {
 		{plan: rulesPlan("{Match: group/a, policy: ignore}"), want: `rules: [0]: must be a {match, policy} mapping: unknown field "Match"`},
 		{plan: rulesPlan("{match: group/a, Match: group/b, policy: ignore}"), want: `rules: [0]: must be a {match, policy} mapping: unknown field "Match"`},
 		{plan: rulesPlan("{match: group/a, POLICY: ignore}"), want: `rules: [0]: must be a {match, policy} mapping: unknown field "POLICY"`},
+		{args: []string{"--resume-duplication-policy", "Block"}, want: `--resume-duplication-policy: unsupported resume duplication policy "Block"`},
+		{args: []string{"--checkpoint-every-batches", "0"}, want: "--checkpoint-every-batches: count must be an integer >= 1"},
+		{plan: "import:\n  resumeDuplicationPolicy:\n    default: warn\n", want: "plan.yaml import.resumeDuplicationPolicy: must be a string"},
+		{plan: "import:\n  resumeDuplicationPolicy: drop\n", want: `plan.yaml import.resumeDuplicationPolicy: unsupported resume duplication policy "drop"`},
 	} {
 		planFile := ""
 		if c.plan != "" {
@@ -285,45 +303,52 @@ func TestImportValidate(t *testing.T) {
 	base := func() *Import {
 		return &Import{
 			OnSchemaConflict: ConflictPolicyError, WriteBatchBytes: 4 << 20, PartChunkSize: 1 << 20, WriteBatchSize: 1000, WriteInflightBatches: 2,
-			IncludeSchema: true, Verify: true, VerifyTimeout: 2 * time.Minute,
+			CheckpointEveryBatches: 64, IncludeSchema: true, Verify: true, VerifyTimeout: 2 * time.Minute,
 		}
 	}
-	require.NoError(t, base().Validate(Sources{}))
+	b := base()
+	require.NoError(t, b.Validate(sourcesOf(b, nil)))
 
 	for _, c := range []struct {
-		mutate  func(*Import)
-		sources Sources
-		want    string
+		mutate func(*Import)
+		labels map[string]string
+		want   string
 	}{
 		{
-			mutate: func(i *Import) { i.WriteBatchSize = 10001 }, sources: Sources{"write-batch-size": "--write-batch-size"},
+			mutate: func(i *Import) { i.WriteBatchSize = 10001 }, labels: map[string]string{"write-batch-size": "--write-batch-size"},
 			want: "--write-batch-size: 10001 is outside [1, 10000]",
 		},
 		{mutate: func(i *Import) { i.WriteBatchSize = 0 }, want: "--write-batch-size: 0 is outside"},
 		{
-			mutate: func(i *Import) { i.WriteBatchBytes = 64<<10 - 1 }, sources: Sources{"write-batch-bytes": "plan.yaml import.writeBatchBytes"},
+			mutate: func(i *Import) { i.WriteBatchBytes = 64<<10 - 1 }, labels: map[string]string{"write-batch-bytes": "plan.yaml import.writeBatchBytes"},
 			want: "plan.yaml import.writeBatchBytes: 65535 bytes is outside [64KiB, 64MiB]",
 		},
 		{mutate: func(i *Import) { i.WriteBatchBytes = 64<<20 + 1 }, want: "--write-batch-bytes: 67108865 bytes is outside"},
 		{mutate: func(i *Import) { i.DryRun, i.WriteBatchBytes = true, 16<<10 }, want: "--write-batch-bytes: 16384 bytes is outside"},
 		{
-			mutate: func(i *Import) { i.PartChunkSize = 64<<10 - 1 }, sources: Sources{"part-chunk-size": "plan.yaml import.partChunkSize"},
+			mutate: func(i *Import) { i.PartChunkSize = 64<<10 - 1 }, labels: map[string]string{"part-chunk-size": "plan.yaml import.partChunkSize"},
 			want: "plan.yaml import.partChunkSize: 65535 bytes is outside [64KiB, 4MiB]",
 		},
 		{mutate: func(i *Import) { i.PartChunkSize = 4<<20 + 1 }, want: "--part-chunk-size: 4194305 bytes is outside [64KiB, 4MiB]"},
 		{mutate: func(i *Import) { i.SchemaOnly, i.IncludeSchema = true, false }, want: "--schema-only needs the schema; it cannot be combined with --include-schema=false"},
-		{mutate: func(i *Import) { i.Verify = false }, sources: Sources{"verify-timeout": "--verify-timeout"}, want: "--verify-timeout has no effect"},
 		{
-			mutate: func(i *Import) { i.SchemaOnly = true }, sources: Sources{"verify-timeout": "plan.yaml import.verifyTimeout"},
-			want: "plan.yaml import.verifyTimeout has no effect",
+			mutate: func(i *Import) { i.SchemaOnly = true }, labels: map[string]string{"verify-timeout": "plan.yaml import.verifyTimeout"},
+			want: "plan.yaml import.verifyTimeout has no effect: --schema-only writes no data to verify",
 		},
-		{mutate: func(i *Import) { i.VerifyTimeout = 0 }, sources: Sources{"verify-timeout": "--verify-timeout"}, want: "--verify-timeout: 0s must be positive"},
+		{
+			// A payload an earlier run skipped forces the verification on whatever the policy now is.
+			mutate: func(i *Import) { i.Verify, i.VerifyTimeout = false, 0 },
+			labels: map[string]string{"verify-timeout": "BYDBCTL_IMPORT_VERIFY_TIMEOUT"},
+			want:   "BYDBCTL_IMPORT_VERIFY_TIMEOUT: 0s must be positive; even with --verify=false a skipped payload forces the verification on",
+		},
+		{mutate: func(i *Import) { i.VerifyTimeout = 0 }, labels: map[string]string{"verify-timeout": "--verify-timeout"}, want: "--verify-timeout: 0s must be positive"},
 		{mutate: func(i *Import) { i.VerifyTimeout = -time.Second }, want: "--verify-timeout: -1s must be positive"},
 		{
-			mutate: func(i *Import) { i.WriteInflightBatches = 0 }, sources: Sources{"write-inflight-batches": "plan.yaml import.writeInflightBatches"},
+			mutate: func(i *Import) { i.WriteInflightBatches = 0 }, labels: map[string]string{"write-inflight-batches": "plan.yaml import.writeInflightBatches"},
 			want: "plan.yaml import.writeInflightBatches: 0 is outside [1, 8]",
 		},
 		{mutate: func(i *Import) { i.WriteInflightBatches = 9 }, want: "--write-inflight-batches: 9 is outside [1, 8]"},
+		{mutate: func(i *Import) { i.CheckpointEveryBatches = 10001 }, want: "--checkpoint-every-batches: 10001 is outside [1, 10000]"},
 		{mutate: func(i *Import) { i.Force = true }, want: "--force confirms an overwrite"},
 		{
 			mutate: func(i *Import) {
@@ -335,31 +360,40 @@ func TestImportValidate(t *testing.T) {
 	} {
 		imp := base()
 		c.mutate(imp)
-		sources := c.sources
-		if sources == nil {
-			sources = Sources{}
-		}
-		err := imp.Validate(sources)
+		err := imp.Validate(sourcesOf(imp, c.labels))
 		require.Error(t, err, c.want)
 		assert.Contains(t, err.Error(), c.want)
 	}
 
 	for _, c := range []struct {
-		mutate  func(*Import)
-		sources Sources
-		name    string
+		mutate func(*Import)
+		labels map[string]string
+		name   string
 	}{
-		{name: "bounds are inclusive", mutate: func(i *Import) { i.WriteBatchSize, i.WriteBatchBytes, i.WriteInflightBatches = 10000, 64<<20, 8 }},
-		{name: "lower bounds are inclusive", mutate: func(i *Import) { i.WriteBatchSize, i.WriteBatchBytes, i.WriteInflightBatches = 1, 64<<10, 1 }},
+		{
+			name: "bounds are inclusive",
+			mutate: func(i *Import) {
+				i.WriteBatchSize, i.WriteBatchBytes, i.WriteInflightBatches, i.CheckpointEveryBatches = 10000, 64<<20, 8, MaxCheckpointEveryBatches
+			},
+		},
+		{
+			name: "lower bounds are inclusive",
+			mutate: func(i *Import) {
+				i.WriteBatchSize, i.WriteBatchBytes, i.WriteInflightBatches, i.CheckpointEveryBatches = 1, 64<<10, 1, 1
+			},
+		},
 		{
 			name: "verify-timeout from the environment is unused", mutate: func(i *Import) { i.Verify = false },
-			sources: Sources{"verify-timeout": "BYDBCTL_IMPORT_VERIFY_TIMEOUT"},
+			labels: map[string]string{"verify-timeout": "BYDBCTL_IMPORT_VERIFY_TIMEOUT"},
 		},
-		{name: "dry run ignores verify-timeout", mutate: func(i *Import) { i.Verify, i.DryRun = false, true }, sources: Sources{"verify-timeout": "--verify-timeout"}},
+		{
+			name:   "a payload skipped earlier can force verify, so an explicit timeout with verify off is accepted",
+			mutate: func(i *Import) { i.Verify = false }, labels: map[string]string{"verify-timeout": "--verify-timeout"},
+		},
+		{name: "dry run ignores verify-timeout", mutate: func(i *Import) { i.Verify, i.DryRun = false, true }, labels: map[string]string{"verify-timeout": "--verify-timeout"}},
 		{name: "dry run ignores write-batch-size", mutate: func(i *Import) { i.DryRun, i.WriteBatchSize = true, 20000 }},
 		{name: "dry run ignores write-inflight-batches", mutate: func(i *Import) { i.DryRun, i.WriteInflightBatches = true, 0 }},
 		{name: "a short verify-timeout", mutate: func(i *Import) { i.VerifyTimeout = time.Second }},
-		{name: "verify off skips the verify-timeout check", mutate: func(i *Import) { i.Verify, i.VerifyTimeout = false, 0 }},
 		{name: "dry run skips the verify-timeout check", mutate: func(i *Import) { i.DryRun, i.VerifyTimeout = true, 0 }},
 		{name: "schema only skips the verify-timeout check", mutate: func(i *Import) { i.SchemaOnly, i.VerifyTimeout = true, 0 }},
 		{name: "force with an overwrite default", mutate: func(i *Import) { i.Force, i.OnSchemaConflict = true, ConflictPolicyOverwrite }},
@@ -373,11 +407,7 @@ func TestImportValidate(t *testing.T) {
 	} {
 		imp := base()
 		c.mutate(imp)
-		sources := c.sources
-		if sources == nil {
-			sources = Sources{}
-		}
-		assert.NoError(t, imp.Validate(sources), c.name)
+		assert.NoError(t, imp.Validate(sourcesOf(imp, c.labels)), c.name)
 	}
 }
 
@@ -389,7 +419,7 @@ func TestImportEffectiveVerify(t *testing.T) {
 }
 
 func TestResolveImport_ValidateEndToEnd(t *testing.T) {
-	imp, sources, err := resolveImport(t, boundImport(t, "--verify=false"), writePlan(t, "import:\n  verifyTimeout: 1m\n"), nil)
+	imp, sources, err := resolveImport(t, boundImport(t, "--schema-only"), writePlan(t, "import:\n  verifyTimeout: 1m\n"), nil)
 	require.NoError(t, err)
 	err = imp.Validate(sources)
 	require.Error(t, err)
@@ -412,4 +442,52 @@ func TestSizeLabel(t *testing.T) {
 	assert.Equal(t, "1536KiB", sizeLabel(3<<19))
 	assert.Equal(t, "1000 bytes", sizeLabel(1000))
 	assert.Equal(t, "0 bytes", sizeLabel(0))
+}
+
+func TestHasDuplicationSkip(t *testing.T) {
+	assert.False(t, (&Import{}).HasDuplicationSkip())
+	assert.False(t, (&Import{DuplicationPolicy: DuplicationWarn}).HasDuplicationSkip())
+	assert.True(t, (&Import{DuplicationPolicy: DuplicationSkip}).HasDuplicationSkip())
+}
+
+// --resume from the environment is a default for every run: it is told apart from the flag, and
+// yields to an explicit --restart, which the flag does not.
+func TestImport_ResumeFromTheEnvironment(t *testing.T) {
+	env := map[string]string{"BYDBCTL_IMPORT_RESUME": "true"}
+	imp, sources, err := resolveImport(t, boundImport(t), "", env)
+	require.NoError(t, err)
+	assert.True(t, imp.Resume)
+	assert.True(t, sources.FromEnv(&imp.Resume))
+	assert.False(t, sources.FromFlag(&imp.Resume))
+	assert.Equal(t, "BYDBCTL_IMPORT_RESUME", sources.Label(&imp.Resume))
+
+	imp, sources, err = resolveImport(t, boundImport(t, "--resume"), "", env)
+	require.NoError(t, err)
+	assert.True(t, sources.FromFlag(&imp.Resume), "the flag wins over the variable")
+	assert.False(t, sources.FromEnv(&imp.Resume))
+
+	imp, sources, err = resolveImport(t, boundImport(t, "--restart"), "", env)
+	require.NoError(t, err)
+	imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
+	require.NoError(t, imp.Validate(sources))
+	assert.True(t, imp.Restart)
+	assert.False(t, imp.Resume, "a resume from the environment yields to --restart")
+
+	imp, sources, err = resolveImport(t, boundImport(t, "--restart", "--resume"), "", nil)
+	require.NoError(t, err)
+	imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
+	err = imp.Validate(sources)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--restart and --resume exclude each other")
+}
+
+// --dry-run and --schema-only ignore --resume, so they accept it with --restart.
+func TestImportValidate_DryRunAndSchemaOnlyIgnoreResumeWithRestart(t *testing.T) {
+	for _, mode := range []string{"--dry-run", "--schema-only"} {
+		imp, sources, err := resolveImport(t, boundImport(t, "--restart", "--resume", mode), "", nil)
+		require.NoError(t, err)
+		imp.WriteBatchSize, imp.CheckpointEveryBatches, imp.VerifyTimeout = 1, 1, time.Second
+		require.NoError(t, imp.Validate(sources), mode)
+		assert.False(t, imp.Resume, mode)
+	}
 }

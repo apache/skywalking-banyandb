@@ -54,7 +54,7 @@ with open(path, "w") as f:
     json.dump(m, f, indent=2)
 EOF
 rc=0
-bydbctl data import --dry-run --nodes "$DST_GRPC" --input "$work/artifact" --force-ttl --include-schema=false \
+bydbctl data import --dry-run --nodes "$DST_GRPC" --input "$work/artifact" --checkpoint "$work/progress.json" --force-ttl --include-schema=false \
   >"$work/dryrun.stdout" 2>"$work/dryrun.stderr" || rc=$?
 tail -n 60 "$work/dryrun.stdout" "$work/dryrun.stderr" >&2
 echo "dryRunExitCode: $rc"

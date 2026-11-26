@@ -20,6 +20,8 @@ package importer
 import (
 	"bytes"
 	"context"
+	"io"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -73,9 +75,9 @@ func runImportVia(t *testing.T, f *fakeLiaison, liaisons []*cluster.Liaison, opt
 
 func fastPolls(t *testing.T) {
 	t.Helper()
-	base, retry := verifyPollInterval, transfer.RetryBase
-	verifyPollInterval, transfer.RetryBase = 10*time.Millisecond, time.Millisecond
-	t.Cleanup(func() { verifyPollInterval, transfer.RetryBase = base, retry })
+	base, retry, sample := verifyPollInterval, transfer.RetryBase, reconcileSampleInterval
+	verifyPollInterval, transfer.RetryBase, reconcileSampleInterval = 10*time.Millisecond, time.Millisecond, time.Millisecond
+	t.Cleanup(func() { verifyPollInterval, transfer.RetryBase, reconcileSampleInterval = base, retry, sample })
 }
 
 func TestRunImportWritesSchemaPushesRowsAndVerifies(t *testing.T) {
@@ -219,10 +221,13 @@ func TestRunImportAbortsOnPlanChange(t *testing.T) {
 
 	f.targetCalls = 0
 	opts.AbortOnPlanChange = true
+	// The first import's progress file would make this one a resume.
+	opts.Checkpoint = filepath.Join(t.TempDir(), "progress.json")
 	batches := len(f.receivedBatches())
 	run = runImport(t, f, li, opts)
 	assert.Equal(t, exitcode.ExitPlanChanged, run.code(), run.err)
 	assert.Len(t, f.receivedBatches(), batches, "no data is sent")
+	assert.NoFileExists(t, opts.Checkpoint, "a fresh import stopped before its push leaves no progress file to resume")
 }
 
 func TestRunImportVerifyMismatchExitsFour(t *testing.T) {
@@ -244,13 +249,36 @@ func TestRunImportUnreachableNodeLeavesVerifyIncomplete(t *testing.T) {
 	fastPolls(t)
 	f := newFakeLiaison()
 	li := f.serve(t)
-	f.unreachable = []string{"data-a"}
+	// data-a answers the baseline Plan, then stops answering.
+	f.onPlan = func() {
+		if f.planCalls > 1 {
+			f.unreachable = []string{"data-a"}
+		}
+	}
 	opts := defaultImport(t, writeDataArtifact(t))
 	opts.Verify = true
 	opts.VerifyTimeout = 100 * time.Millisecond
 	run := runImport(t, f, li, opts)
 	assert.Equal(t, exitcode.ExitVerify, run.code(), run.log)
+	require.NotNil(t, run.res.Verify, run.log)
 	assert.NotEmpty(t, run.res.Verify.Incomplete)
+}
+
+func TestRunImportBaselineWithoutATargetNodeSendsNothing(t *testing.T) {
+	f := newFakeLiaison()
+	li := f.serve(t)
+	f.unreachable = []string{"data-a"}
+	opts := defaultImport(t, writeDataArtifact(t))
+	// --verify needs the baseline.
+	opts.Verify = true
+	run := runImport(t, f, li, opts)
+	assert.Equal(t, exitcode.ExitRuntime, run.code(), run.log)
+	require.Error(t, run.err)
+	assert.Contains(t, run.err.Error(), "did not count target node(s) data-a; no data was sent")
+	assert.Contains(t, run.err.Error(), "run the same command again to resume")
+	assert.Empty(t, f.receivedBatches())
+	state := readState(t, ProgressPath(opts))
+	assert.Nil(t, state.BaselineAt, "a baseline missing a target node is not recorded: the next run takes it again")
 }
 
 func TestRunImportRejectsAMissingInput(t *testing.T) {
@@ -348,8 +376,8 @@ func mirrorWithConflict(f *fakeLiaison) {
 func TestLogRatesFollowsTheFormat(t *testing.T) {
 	opts := &config.Import{PartRateLimit: 1 << 20, NodeRateLimit: 50 << 20}
 	var native, csv bytes.Buffer
-	logRates(&native, opts, true)
-	logRates(&csv, opts, false)
+	logRates(&native, &native, opts, true)
+	logRates(&csv, &csv, opts, false)
 	assert.Contains(t, native.String(), "rate limits: native parts 1048576 bytes/s")
 	assert.Contains(t, native.String(), "WARN --node-rate-limit")
 	assert.NotContains(t, native.String(), "rate limits: node")
@@ -358,6 +386,89 @@ func TestLogRatesFollowsTheFormat(t *testing.T) {
 	assert.NotContains(t, csv.String(), "rate limits: native parts")
 
 	native.Reset()
-	logRates(&native, &config.Import{}, true)
+	logRates(&native, &native, &config.Import{}, true)
 	assert.Empty(t, native.String(), "no limit set, nothing logged")
+}
+
+// The warning about a limit the artifact's format ignores goes to its own writer: a structured
+// output drops the settings, not the warning.
+func TestLogRatesWarnsApartFromTheSettings(t *testing.T) {
+	var settings, warnings bytes.Buffer
+	logRates(&settings, &warnings, &config.Import{PartRateLimit: 1 << 20, NodeRateLimit: 50 << 20}, true)
+	assert.Contains(t, settings.String(), "rate limits: native parts 1048576 bytes/s")
+	assert.NotContains(t, settings.String(), "WARN")
+	assert.Contains(t, warnings.String(), "WARN --node-rate-limit")
+	assert.NotContains(t, warnings.String(), "rate limits")
+
+	settings.Reset()
+	warnings.Reset()
+	logRates(&settings, &warnings, &config.Import{PartRateLimit: 1 << 20, NodeRateLimit: 50 << 20}, false)
+	assert.Contains(t, settings.String(), "rate limits: node 52428800 bytes/s")
+	assert.Contains(t, warnings.String(), "WARN --part-rate-limit applies to native parts only")
+}
+
+// runImportSplit is runImportEnv with Err apart from Log; it returns what Err received too.
+func runImportSplit(ctx context.Context, f *fakeLiaison, li *cluster.Liaison, opts config.Import, hook func(string)) (importRun, string) {
+	var out, log, errOut bytes.Buffer
+	res, err := RunImport(ctx, Env{
+		Log: &log, Out: &out, Err: &errOut, Cluster: clusterOf(f, li.Addr), Liaisons: &cluster.Liaisons{All: []*cluster.Liaison{li}},
+		Now: func() time.Time { return dataNow }, Hook: hook,
+	}, opts)
+	return importRun{res: res, err: err, out: out.String(), log: log.String()}, errOut.String()
+}
+
+// A structured output leaves the lines about the settings out (Hints discards them), but not a
+// warning: a limit the artifact's format ignores is still said on Log.
+func TestRunImport_StructuredOutputKeepsTheRateLimitWarning(t *testing.T) {
+	fastPolls(t)
+	f := newFakeLiaison()
+	li := f.serve(t)
+	opts := resumeImport(t, writeDataArtifact(t))
+	opts.PartRateLimit, opts.NodeRateLimit = 1<<20, 50<<20
+	var out, log bytes.Buffer
+	_, err := RunImport(context.Background(), Env{
+		Log: &log, Out: &out, Hints: io.Discard, Cluster: clusterOf(f, li.Addr), Liaisons: &cluster.Liaisons{All: []*cluster.Liaison{li}},
+		Now: func() time.Time { return dataNow },
+	}, opts)
+	require.NoError(t, err, log.String())
+	assert.Contains(t, log.String(), "WARN --part-rate-limit applies to native parts only; this CSV import ignores it")
+	assert.NotContains(t, log.String(), "rate limits: node", "the settings stay out")
+	assert.NotContains(t, log.String(), "parallelism:")
+}
+
+// What explains a failure goes to Err before the error: the work items an interrupted push left
+// and a verify report that fails. Log keeps the information, a verify report that passes too.
+func TestRunImport_FailureExplanationGoesToErr(t *testing.T) {
+	fastPolls(t)
+	f := newFakeLiaison()
+	li := f.serve(t)
+	opts := resumeImport(t, writeDataArtifact(t))
+	ctx, cancel := context.WithCancel(context.Background())
+	run, errOut := runImportSplit(ctx, f, li, opts, cancelAt(2, cancel))
+	cancel()
+	require.Equal(t, exitcode.ExitRuntime, run.code(), run.log)
+	assert.Contains(t, errOut, "work items done (")
+	assert.Contains(t, errOut, "work items not done (")
+	assert.NotContains(t, run.log, "work items done")
+	assert.Contains(t, run.log, "progress: ")
+
+	f = newFakeLiaison()
+	li = f.serve(t)
+	f.dropNode = "data-b"
+	opts = defaultImport(t, writeDataArtifact(t))
+	opts.Verify, opts.VerifyTimeout = true, 200*time.Millisecond
+	run, errOut = runImportSplit(context.Background(), f, li, opts, nil)
+	require.Equal(t, exitcode.ExitVerify, run.code(), run.log)
+	assert.Contains(t, errOut, "VERIFY    FAILED")
+	assert.NotContains(t, run.log, "VERIFY")
+	assert.Contains(t, run.log, "IMPORTED  ")
+
+	f = newFakeLiaison()
+	li = f.serve(t)
+	opts = defaultImport(t, writeDataArtifact(t))
+	opts.Verify = true
+	run, errOut = runImportSplit(context.Background(), f, li, opts, nil)
+	require.NoError(t, run.err, run.log)
+	assert.Contains(t, run.log, "VERIFY    ok")
+	assert.Empty(t, errOut)
 }

@@ -62,19 +62,34 @@ type Counts struct {
 	Shards map[CountKey]map[string]int64
 	// Segments are the segment-level (index-mode) documents of every segment.
 	Segments map[CountKey]map[string]int64
+	// Properties are the documents of every property group, summed over its shards and nodes;
+	// they include superseded revisions and tombstones. Only known when PropertiesCounted is set
+	// (not by a baseline recorded before they were counted).
+	Properties map[string]int64
 	// Unreachable are the nodes the Plan could not count.
 	Unreachable []string
+	// Answered are the nodes the Plan counted; nil when not known (a baseline recorded without
+	// it). A node in neither list was not asked: the liaison does not know it.
+	Answered          []string
+	PropertiesCounted bool
 }
 
 // CountsFromPlan folds a Plan's frames into Counts.
 func CountsFromPlan(result *cluster.PlanResult) *Counts {
-	c := &Counts{Shards: map[CountKey]map[string]int64{}, Segments: map[CountKey]map[string]int64{}}
+	c := &Counts{Shards: map[CountKey]map[string]int64{}, Segments: map[CountKey]map[string]int64{}, Properties: map[string]int64{}, PropertiesCounted: true}
 	c.Unreachable = slices.Clone(result.UnreachableNodes)
+	c.Answered = slices.Clone(result.AnsweredNodes)
+	if c.Answered == nil {
+		c.Answered = []string{}
+	}
 	for _, f := range result.Frames {
 		node := f.GetNodeId()
 		stage := normalizeStage(f.GetStage())
 		for _, u := range f.GetUnits() {
-			if u.GetProperty() != nil {
+			if p := u.GetProperty(); p != nil {
+				for _, s := range p.GetShards() {
+					c.Properties[p.GetGroup()] += int64(s.GetDocCount())
+				}
 				continue
 			}
 			seg := u.GetSegment()
@@ -120,8 +135,9 @@ func VerifySelectors(entries []Entry) []*transferv1.Selector {
 
 // segmentDeltas sums post − pre over the segments present in post for every key; a segment
 // pre has and post lacks was removed by retention and is left out on both sides, with a
-// warning.
-func segmentDeltas(pre, post map[CountKey]map[string]int64) (map[CountKey]int64, []string) {
+// warning, and its (catalog, group, stage) is in gone: rows sent into it may be gone too. The
+// keys of the nodes post did not count (uncounted) are left out: their segments are unknown.
+func segmentDeltas(pre, post map[CountKey]map[string]int64, uncounted func(node string) bool) (map[CountKey]int64, []string, map[streamKey]bool) {
 	out := map[CountKey]int64{}
 	for k, segs := range post {
 		for seg, n := range segs {
@@ -129,15 +145,20 @@ func segmentDeltas(pre, post map[CountKey]map[string]int64) (map[CountKey]int64,
 		}
 	}
 	var warns []string
+	gone := map[streamKey]bool{}
 	for k, segs := range pre {
+		if uncounted(k.Node) {
+			continue
+		}
 		for seg := range segs {
 			if _, ok := post[k][seg]; !ok {
 				warns = append(warns, fmt.Sprintf("segment %s of %s %s/%s on %s shard %d disappeared (retention?); it is left out of the check",
 					seg, transfer.CatalogName(k.Catalog), k.Group, k.Stage, k.Node, k.Shard))
+				gone[streamKey{catalog: k.Catalog, group: k.Group, stage: k.Stage}] = true
 			}
 		}
 	}
-	return out, warns
+	return out, warns, gone
 }
 
 // VerifyReport is the outcome of --verify: checks that could not complete and count mismatches,
@@ -146,6 +167,12 @@ type VerifyReport struct {
 	Incomplete []string
 	Mismatches []string
 	Warnings   []string
+	// Partial are the trace (group, stage)s checked partially because they sample spans in
+	// merges, so their row counts do not keep every row sent: only the routes, some growth on
+	// the target nodes and no more growth than the rows sent × copies are checked.
+	Partial []string
+	// partialGroups are the groups of Partial.
+	partialGroups []string
 	// progress describes, per (catalog, group, stage) not reconciled yet, how far its counts
 	// are, for the waiting line of a poll.
 	progress []string
@@ -160,6 +187,8 @@ type VerifyReport struct {
 	pending bool
 	// noBaseline marks a target node missing from the baseline Plan: no later poll can count it.
 	noBaseline bool
+	// interrupted marks a verify that Ctrl-C or SIGTERM stopped: the import exits 3, not 4.
+	interrupted bool
 }
 
 type measureProgress struct {
@@ -171,13 +200,25 @@ type measureProgress struct {
 // Failed reports whether verification fails the import.
 func (r *VerifyReport) Failed() bool { return len(r.Incomplete) > 0 || len(r.Mismatches) > 0 }
 
-// evaluate applies the verification checks to one pair of snapshots, given where the import
-// sent the rows (routes) and how many (pushed).
-func evaluate(pre, post *Counts, routes map[RouteKey]*transferv1.TargetsResponse, pushed map[PushKey]uint64) *VerifyReport {
+// counted tells whether a Plan counted node: it did not report it unreachable and, when it says
+// which nodes answered, it is one of them.
+func (c *Counts) counted(node string) bool {
+	return !slices.Contains(c.Unreachable, node) && (c.Answered == nil || slices.Contains(c.Answered, node))
+}
+
+// evaluate applies the verification checks to one pair of snapshots, given where the
+// import sent the rows (routes) and how many (pushed); tolerance are the rows a resumed import
+// pushed again although they may have landed already (a stream or trace (group, stage) may hold
+// up to those rows more), and sampled the trace groups that sample spans in merges, which are
+// checked partially (evaluatePartial).
+func evaluate(pre, post *Counts, routes map[RouteKey]*transferv1.TargetsResponse, pushed map[PushKey]uint64,
+	tolerance map[streamKey]*verifyTolerance, sampled map[string]bool,
+) *VerifyReport {
 	r := &VerifyReport{}
-	shardDelta, warns := segmentDeltas(pre.Shards, post.Shards)
+	uncounted := func(n string) bool { return !post.counted(n) }
+	shardDelta, warns, gone := segmentDeltas(pre.Shards, post.Shards, uncounted)
 	r.Warnings = append(r.Warnings, warns...)
-	segDelta, warns := segmentDeltas(pre.Segments, post.Segments)
+	segDelta, warns, _ := segmentDeltas(pre.Segments, post.Segments, uncounted)
 	r.Warnings = append(r.Warnings, warns...)
 
 	rowsPushed := map[streamKey]uint64{}
@@ -201,18 +242,18 @@ func evaluate(pre, post *Counts, routes map[RouteKey]*transferv1.TargetsResponse
 	}
 	// A node missing from the baseline has no pre counts, so all it holds would read as growth:
 	// its (group, stage) checks are left out, the node is reported as not counted.
+	// A node the baseline did not ask, such as one added since, is missing from it the same way.
 	noBaseline := map[string]bool{}
-	for _, n := range transfer.UniqueSorted(slices.Concat(pre.Unreachable, post.Unreachable)) {
-		if !routeNodes[n] {
-			continue
-		}
-		if slices.Contains(pre.Unreachable, n) {
+	for _, n := range slices.Sorted(maps.Keys(routeNodes)) {
+		if !pre.counted(n) {
 			noBaseline[n] = true
 			r.noBaseline = true
-			r.Incomplete = append(r.Incomplete, fmt.Sprintf("target node %s did not answer the baseline Plan, so its rows cannot be counted", n))
+			r.Incomplete = append(r.Incomplete, fmt.Sprintf("target node %s was not counted by the baseline Plan, so its rows cannot be counted", n))
 			continue
 		}
-		r.Incomplete = append(r.Incomplete, fmt.Sprintf("target node %s did not answer the Plan, so its rows cannot be counted", n))
+		if !post.counted(n) {
+			r.Incomplete = append(r.Incomplete, fmt.Sprintf("target node %s did not answer the Plan, so its rows cannot be counted", n))
+		}
 	}
 	for _, rk := range sortedRowKeys(rowsPushed) {
 		route := routeOf(routes, rk.group, rk.stage)
@@ -226,11 +267,18 @@ func evaluate(pre, post *Counts, routes map[RouteKey]*transferv1.TargetsResponse
 			}
 		}
 		label := fmt.Sprintf("%s %s/%s", transfer.CatalogName(rk.catalog), rk.group, rk.stage)
-		if rk.catalog == commonv1.Catalog_CATALOG_MEASURE {
-			r.evaluateMeasure(label, rowsPushed[rk], route, perShard, preRows(pre.Shards, rk))
+		if rk.catalog == commonv1.Catalog_CATALOG_TRACE && sampled[rk.group] {
+			if !slices.Contains(r.partialGroups, rk.group) {
+				r.partialGroups = append(r.partialGroups, rk.group)
+			}
+			r.evaluatePartial(label, rowsPushed[rk], route, perShard, tolerance[rk], gone[rk])
 			continue
 		}
-		r.evaluateRows(label, rowsPushed[rk], route, perShard)
+		if rk.catalog == commonv1.Catalog_CATALOG_MEASURE {
+			r.evaluateMeasure(label, rowsPushed[rk], route, perShard, preRows(pre.Shards, rk), tolerance[rk])
+			continue
+		}
+		r.evaluateRows(label, rowsPushed[rk], route, perShard, tolerance[rk], gone[rk])
 	}
 	for _, rk := range sortedRowKeys(segPushed) {
 		r.reportSegments(rk, segPushed[rk], routeOf(routes, rk.group, rk.stage), segDelta, pre.Segments)
@@ -260,9 +308,20 @@ func (r *VerifyReport) reportSegments(rk streamKey, pushed uint64, route routeVi
 }
 
 // evaluateRows checks a stream or trace (group, stage): every shard that grew grew on exactly
-// its target nodes by the same amount, and the shards together grew by the rows sent.
-func (r *VerifyReport) evaluateRows(label string, pushed uint64, route routeView, perShard map[uint32]map[string]int64) {
-	var sum, counted int64
+// its target nodes by the same amount, and the shards together grew by the rows sent. With a
+// tolerance, the rows a resumed import pushed again may show up on top: the copies of a shard
+// may differ by up to those rows, and the shards may grow by up to those rows more; that is a
+// warning naming the payloads, not a mismatch.
+//
+// When a segment of the (group, stage) disappeared (gone), rows sent into it may have gone with
+// it, on some copies only too: fewer rows than sent, and copies that differ, cannot be checked,
+// which is incomplete, not a mismatch.
+func (r *VerifyReport) evaluateRows(label string, pushed uint64, route routeView, perShard map[uint32]map[string]int64, tol *verifyTolerance, gone bool) {
+	var sum, counted, excess int64
+	var allowed int64
+	if tol != nil {
+		allowed = int64(tol.rows)
+	}
 	mismatches := len(r.Mismatches)
 	defer func() {
 		if len(r.Mismatches) > mismatches {
@@ -273,21 +332,33 @@ func (r *VerifyReport) evaluateRows(label string, pushed uint64, route routeView
 		deltas := perShard[shard]
 		targets := route.targets(shard)
 		counted += minGrowth(deltas, targets)
-		var want int64
 		ok := len(targets) > 0
-		for _, n := range targets {
+		var lo, hi int64
+		for i, n := range targets {
 			d := deltas[n]
-			if d <= 0 || (want != 0 && d != want) {
+			if d <= 0 {
 				ok = false
 			}
-			if want == 0 {
-				want = d
+			if i == 0 || d < lo {
+				lo = d
+			}
+			if i == 0 || d > hi {
+				hi = d
 			}
 		}
+		if hi-lo > allowed {
+			ok = false
+		}
+		outside := false
 		for n, d := range deltas {
 			if !slices.Contains(targets, n) || d < 0 {
-				ok = false
+				ok, outside = false, outside || !slices.Contains(targets, n)
 			}
+		}
+		if !ok && gone && !outside {
+			r.Incomplete = append(r.Incomplete, fmt.Sprintf("%s shard %d: rows grew by %s on [%s], but a segment of it disappeared meanwhile "+
+				"(retention?) and may have held the rest", label, shard, formatDeltas(deltas), strings.Join(targets, " ")))
+			continue
 		}
 		if !ok {
 			r.pending = true
@@ -295,12 +366,77 @@ func (r *VerifyReport) evaluateRows(label string, pushed uint64, route routeView
 				label, shard, formatDeltas(deltas), strings.Join(targets, " ")))
 			continue
 		}
-		sum += want
+		sum += lo
+		excess += hi - lo
 	}
-	if sum != int64(pushed) {
+	switch {
+	case sum == int64(pushed) && excess == 0:
+	case allowed > 0 && sum >= int64(pushed) && sum-int64(pushed)+excess <= allowed:
+		more := ""
+		if excess > 0 {
+			more = fmt.Sprintf(" (%d more on some copies)", excess)
+		}
+		r.Warnings = append(r.Warnings, fmt.Sprintf("%s: rows grew by %d per copy%s, %d were sent; within the %d row(s) "+
+			"the resumed import pushed again although they may have landed already: %s", label, sum, more, pushed, allowed, strings.Join(tol.payloads, "; ")))
+	case gone && sum < int64(pushed):
+		r.Incomplete = append(r.Incomplete, fmt.Sprintf("%s: rows grew by %d per copy, %d were sent, but a segment of it disappeared meanwhile "+
+			"(retention?) and may have held the rest", label, sum, pushed))
+	default:
 		r.pending = true
 		r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s: rows grew by %d per copy, %d were sent", label, sum, pushed))
-		return
+	}
+}
+
+// evaluatePartial checks a trace (group, stage) whose sampling drops spans in merges, so its row
+// counts need not add up to the rows sent, and a merge may drop spans the target held before:
+// no node outside a shard's targets grows, the target nodes grow when rows were sent, and their
+// growth is at most the rows sent (with a tolerance, plus the rows pushed again) × copies. A
+// shrinking target node, or a segment that disappeared (gone), may hide the growth: no growth is
+// then not checked, which is a warning, not a mismatch.
+func (r *VerifyReport) evaluatePartial(label string, pushed uint64, route routeView, perShard map[uint32]map[string]int64, tol *verifyTolerance,
+	gone bool,
+) {
+	r.Partial = append(r.Partial, label+" checked partially: it samples spans in merges, so only the routes, the growth on the target nodes "+
+		"and at most the rows sent × copies are checked")
+	var allowed uint64
+	if tol != nil {
+		allowed = tol.rows
+	}
+	var grown int64
+	shrank := false
+	copies := 1
+	for _, shard := range slices.Sorted(maps.Keys(perShard)) {
+		deltas := perShard[shard]
+		targets := route.targets(shard)
+		copies = max(copies, len(targets))
+		var outside []string
+		for _, n := range slices.Sorted(maps.Keys(deltas)) {
+			d := deltas[n]
+			switch {
+			case !slices.Contains(targets, n):
+				if d > 0 {
+					outside = append(outside, n)
+				}
+			case d > 0:
+				grown += d
+			case d < 0:
+				shrank = true
+			}
+		}
+		if len(outside) > 0 {
+			r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s shard %d: rows grew by %s, but only [%s] are its target nodes",
+				label, shard, formatDeltas(deltas), strings.Join(targets, " ")))
+		}
+	}
+	switch {
+	case pushed > 0 && grown <= 0 && (shrank || gone):
+		r.Warnings = append(r.Warnings, fmt.Sprintf("%s: %d row(s) sent, but no target node counts new rows; merges dropped spans the target held, "+
+			"or a segment disappeared (retention?), so the growth cannot be checked", label, pushed))
+	case pushed > 0 && grown <= 0:
+		r.pending = true
+		r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s: %d row(s) sent, but no target node counts new rows", label, pushed))
+	case grown > int64(pushed+allowed)*int64(copies):
+		r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s: nodes count %d new rows, more than %d sent × %d copies", label, grown, pushed+allowed, copies))
 	}
 }
 
@@ -333,8 +469,9 @@ func preRows(pre map[CountKey]map[string]int64, rk streamKey) map[uint32]map[str
 // evaluateMeasure checks a measure (group, stage) once its counts settled: rows sent show up,
 // no more than rows × copies appear, and a shard that grew grew on every target node. Where
 // the target already held rows, no growth is only a warning: replayed points merge into the
-// ones already there.
-func (r *VerifyReport) evaluateMeasure(label string, pushed uint64, route routeView, perShard, before map[uint32]map[string]int64) {
+// ones already there. With a tolerance, the points a resumed import pushed again may be counted
+// twice until a merge: up to those rows × copies more is a warning naming the payloads.
+func (r *VerifyReport) evaluateMeasure(label string, pushed uint64, route routeView, perShard, before map[uint32]map[string]int64, tol *verifyTolerance) {
 	var total int64
 	mismatches := len(r.Mismatches)
 	defer func() {
@@ -385,6 +522,9 @@ func (r *VerifyReport) evaluateMeasure(label string, pushed uint64, route routeV
 	case pushed > 0 && total <= 0:
 		r.pending = true
 		r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s: %d row(s) sent, but no node counts new rows", label, pushed))
+	case total > int64(pushed)*int64(copies) && tol != nil && total <= int64(pushed+tol.rows)*int64(copies):
+		r.Warnings = append(r.Warnings, fmt.Sprintf("%s: nodes count %d new rows, more than %d sent × %d copies; within the %d row(s) the resumed import "+
+			"pushed again, which are counted twice until a merge: %s", label, total, pushed, copies, tol.rows, strings.Join(tol.payloads, "; ")))
 	case total > int64(pushed)*int64(copies):
 		r.Mismatches = append(r.Mismatches, fmt.Sprintf("%s: nodes count %d new rows, more than %d sent × %d copies", label, total, pushed, copies))
 	}
@@ -411,6 +551,12 @@ type VerifyOptions struct {
 	// Progress, on a terminal, shows what verify waits for in a live line instead of a note
 	// per poll.
 	Progress *output.Progress
+	// Tolerance are the rows a resumed import pushed again although they may have landed
+	// already, per stream key.
+	Tolerance map[streamKey]*verifyTolerance
+	// Sampled are the trace groups whose sampling pipeline may drop spans in merges: their row
+	// counts cannot be compared, so they are checked partially.
+	Sampled map[string]bool
 	// Timeout is --verify-timeout.
 	Timeout time.Duration
 }
@@ -474,7 +620,9 @@ func Verify(ctx context.Context, conn *grpc.ClientConn, pre *Counts, plan *Plan,
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return report(finishReport(last, lastErr, fmt.Errorf("interrupted: %w", context.Cause(ctx))))
+			rep := finishReport(last, lastErr, fmt.Errorf("interrupted: %w", context.Cause(ctx)))
+			rep.interrupted = true
+			return report(rep)
 		case <-timer.C:
 		}
 		// A Plan that hangs must not hold the import past --verify-timeout (plus a grace).
@@ -484,14 +632,14 @@ func Verify(ctx context.Context, conn *grpc.ClientConn, pre *Counts, plan *Plan,
 		expired := !time.Now().Before(deadline)
 		if err != nil {
 			lastErr = err
-			fmt.Fprintf(opts.Log, "verify: Plan failed: %v\n", err)
+			verifyPlanFailed(opts.Log, err)
 			if expired {
 				return report(finishReport(last, lastErr, nil))
 			}
 			continue
 		}
 		lastErr = nil
-		rep := evaluate(pre, post, routes, pushed)
+		rep := evaluate(pre, post, routes, pushed, opts.Tolerance, opts.Sampled)
 		settled := len(rep.measures) == 0 || (polls > 0 && rep.measureTotal == prevTotal)
 		prevTotal = rep.measureTotal
 		polls++
@@ -512,9 +660,7 @@ func Verify(ctx context.Context, conn *grpc.ClientConn, pre *Counts, plan *Plan,
 			opts.Progress.Redraw()
 			continue
 		}
-		fmt.Fprintf(opts.Log, "verify: waiting for the target to flush (%s elapsed, timeout %s): %s; next poll in %s\n",
-			time.Since(start).Round(time.Second), opts.Timeout, rep.waiting(settled),
-			nextWait().Round(time.Second))
+		verifyWaiting(opts.Log, time.Since(start).Round(time.Second), opts.Timeout, rep.waiting(settled), nextWait().Round(time.Second))
 	}
 }
 
@@ -552,19 +698,32 @@ func finishReport(rep *VerifyReport, pollErr, stopErr error) *VerifyReport {
 	return rep
 }
 
+// notFullyChecked counts the trace groups whose row counts verify checked partially.
+func (r *VerifyReport) notFullyChecked() int {
+	return len(r.partialGroups)
+}
+
 // Render writes the conclusion of the report and every problem it found.
 func (r *VerifyReport) Render(w io.Writer) {
 	took := ""
 	if r.Elapsed > 0 {
 		took = " in " + output.FormatElapsed(r.Elapsed)
 	}
-	if r.Failed() {
+	switch {
+	case r.interrupted:
+		fmt.Fprintf(w, "VERIFY    interrupted%s\n", took)
+	case r.Failed():
 		fmt.Fprintf(w, "VERIFY    FAILED%s (exit %d)\n", took, exitcode.ExitVerify)
-	} else {
+	case r.notFullyChecked() > 0:
+		fmt.Fprintf(w, "VERIFY    ok (%d group(s) not fully checked)%s\n", r.notFullyChecked(), took)
+	default:
 		fmt.Fprintf(w, "VERIFY    ok%s\n", took)
 	}
 	for _, l := range r.Incomplete {
 		fmt.Fprintf(w, "  - not checked: %s\n", l)
+	}
+	for _, l := range r.Partial {
+		fmt.Fprintf(w, "  - %s\n", l)
 	}
 	for _, l := range r.Mismatches {
 		fmt.Fprintf(w, "  - %s\n", l)

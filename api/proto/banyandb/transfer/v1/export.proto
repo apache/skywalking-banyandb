@@ -199,6 +199,18 @@ message CreateSession {
 // so the result is the same frozen view CreateSession returned.
 message ReadSession {
   string id = 1 [(validate.rules).string.pattern = "^[0-9a-f]{32}$"];
+  // The data nodes that must still hold a readable lease of the session: the nodes the client
+  // has units left to export from. Empty: every node. A node outside the list whose lease
+  // expired or is unreadable (FAILED_PRECONDITION) is reported in unreachable_nodes like one
+  // that no longer holds the session, as the client needs nothing more from it; on a listed
+  // node, or with the list empty, it fails the whole call. A liaison that predates the field
+  // ignores it and fails the call for any node.
+  repeated string required_nodes = 2 [(validate.rules).repeated = {
+    max_items: 1024
+    items: {
+      string: {min_len: 1}
+    }
+  }];
 }
 
 // PlanResponse is one frame of the Plan stream. The liaison stream is: with CreateSession a
@@ -245,7 +257,8 @@ message PlanSummary {
   // Data nodes the liaison could not plan (live directories and ReadSession only;
   // CreateSession treats any of these as a failure instead): a transport failure, no next
   // frame within the liaison's maximum wait for a node's Plan, NotFound (the node no longer holds the requested
-  // session), or a data node without ExportService (UNIMPLEMENTED, an older version during a
+  // session), FAILED_PRECONDITION on a node outside a non-empty ReadSession.required_nodes (its
+  // lease expired or is unreadable), or a data node without ExportService (UNIMPLEMENTED, an older version during a
   // rolling upgrade). Unit frames already stamped with such a node_id are partial and must
   // be dropped.
   repeated string unreachable_nodes = 2;
@@ -275,6 +288,18 @@ message SessionsRequest {
   }];
   // Required by ACTION_HEARTBEAT and ACTION_RELEASE, ignored by ACTION_LIST.
   string session_id = 2 [(validate.rules).string.pattern = "^([0-9a-f]{32})?$"];
+  // ACTION_HEARTBEAT only, ignored by the other actions: the data nodes that must still hold a
+  // readable lease of the session, the nodes the client has units left to export from. Empty:
+  // every node. A node outside the list whose lease expired or is unreadable
+  // (FAILED_PRECONDITION) answers an `error` frame instead of failing the call, as the client
+  // needs nothing more from it; on a listed node, or with the list empty, it fails the whole
+  // call. A liaison that predates the field ignores it and fails the call for any node.
+  repeated string required_nodes = 3 [(validate.rules).repeated = {
+    max_items: 1024
+    items: {
+      string: {min_len: 1}
+    }
+  }];
 }
 
 // SessionsResponse is one data node's answer.
@@ -293,8 +318,9 @@ message SessionsResponse {
     // ACTION_HEARTBEAT and ACTION_RELEASE: the node did not complete the action; the frame is
     // still sent so the client can tell which nodes failed.
     // ACTION_HEARTBEAT: the node was unreachable, does not hold the session, or is a data
-    // node without ExportService. An expired or unreadable lease, or any other node error,
-    // fails the whole call instead (FAILED_PRECONDITION for the lease).
+    // node without ExportService, or (only for a node outside a non-empty required_nodes) its
+    // lease expired or is unreadable. An expired or unreadable lease on any other node, or any
+    // other node error, fails the whole call instead (FAILED_PRECONDITION for the lease).
     // ACTION_RELEASE: the node was unreachable, removing the session failed, or it is a data
     // node without ExportService. A node that does not hold the session answers `none`.
     string error = 5;
