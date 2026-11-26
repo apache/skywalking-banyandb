@@ -57,6 +57,75 @@ func (file *LocalFile) IsLocked() bool {
 	return file != nil && file.locked
 }
 
+// createLockFile opens the lock file name, takes its exclusive lock without waiting through lock,
+// which also reports whether a failure means another open file holds it, and returns the locked file.
+func createLockFile(name string, permission Mode, opts []LockOption, lock func(*os.File) (held bool, err error)) (File, error) {
+	var o lockOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	flags := os.O_RDWR | os.O_CREATE
+	if o.preserve {
+		flags |= preservedLockOpenFlags
+	} else {
+		flags |= os.O_TRUNC
+	}
+	file, err := os.OpenFile(name, flags, os.FileMode(permission))
+	switch {
+	case err == nil:
+		return lockOpenedFile(file, name, o.preserve, lock)
+	case os.IsExist(err):
+		return nil, &FileSystemError{
+			Code:    isExistError,
+			Message: fmt.Sprintf("File is exist, file name: %s,error message: %s", name, err),
+		}
+	case os.IsPermission(err):
+		return nil, &FileSystemError{
+			Code:    permissionError,
+			Message: fmt.Sprintf("There is not enough permission, file name: %s, permission: %d,error message: %s", name, permission, err),
+		}
+	default:
+		return nil, &FileSystemError{
+			Code:    otherError,
+			Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
+		}
+	}
+}
+
+func lockOpenedFile(file *os.File, name string, preserve bool, lock func(*os.File) (bool, error)) (File, error) {
+	if preserve {
+		info, err := file.Stat()
+		if err == nil && !info.Mode().IsRegular() {
+			err = fmt.Errorf("%s is not a regular file (%s)", name, info.Mode().Type())
+		}
+		if err != nil {
+			_ = file.Close()
+			return nil, &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
+			}
+		}
+	}
+	if held, err := lock(file); err != nil {
+		_ = file.Close()
+		return nil, &FileSystemError{
+			Code:    lockError,
+			Message: fmt.Sprintf("Cannot lock file, file name: %s, error message: %s", name, err),
+			held:    held,
+		}
+	}
+	if preserve {
+		if err := file.Truncate(0); err != nil {
+			_ = file.Close()
+			return nil, &FileSystemError{
+				Code:    otherError,
+				Message: fmt.Sprintf("Create file return error, file name: %s,error message: %s", name, err),
+			}
+		}
+	}
+	return &LocalFile{file: file, locked: true}, nil
+}
+
 // NewLocalFileSystem is used to create the Local File system.
 func NewLocalFileSystem() FileSystem {
 	return &localFileSystem{

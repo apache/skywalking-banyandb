@@ -21,13 +21,14 @@
 //	checker <stream|measure|trace|property> <artifact dir> [liaison host:grpc-port]
 //	checker schema-only <artifact dir>
 //
-// and serves the import cases with five more subcommands, described in their files:
+// and serves the import and resume cases with six more subcommands, described in their files:
 //
 //	checker compare <artifact A> <artifact B>                        (compare.go)
 //	checker conflict-schema <artifact A> <out dir>                   (conflict.go)
 //	checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>  (queries.go)
 //	checker ttl-rows <artifact A>                                    (ttl.go)
 //	checker native <artifact dir>                                    (native.go)
+//	checker resume-state <what> <path>...                            (resume.go)
 //
 // Every row is checked against its group's schema, and the rows of known sources (the events
 // report-events.sh reports, trace-mocker's services and their metrics, the UI template
@@ -103,6 +104,8 @@ func main() {
 			os.Exit(runTTLRows(os.Args[2:]))
 		case "native":
 			os.Exit(runNative(os.Args[2:]))
+		case "resume-state":
+			os.Exit(runResumeState(os.Args[2:]))
 		}
 	}
 	if len(os.Args) != 3 && len(os.Args) != 4 {
@@ -140,6 +143,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "       checker queries <source host:grpc-port> <destination host:grpc-port> <artifact A>")
 	fmt.Fprintln(os.Stderr, "       checker ttl-rows <artifact A>")
 	fmt.Fprintln(os.Stderr, "       checker native <artifact dir>")
+	fmt.Fprintln(os.Stderr, "       checker resume-state <export|done-files|listing|plan-units|manifest-units> <export dir>")
+	fmt.Fprintln(os.Stderr, "       checker resume-state import <import progress file>")
+	fmt.Fprintln(os.Stderr, "       checker resume-state files <dir> <list>")
 	os.Exit(2)
 }
 

@@ -71,10 +71,10 @@ create_once stream "$work/stream.json"
 
 before="$(dst_schema_digest "$work/schema-before")"
 dry_rc=0
-bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" --dry-run >"$work/dryrun.stdout" 2>"$work/dryrun.stderr" || dry_rc=$?
+bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" --checkpoint "$work/progress.json" --dry-run >"$work/dryrun.stdout" 2>"$work/dryrun.stderr" || dry_rc=$?
 echo "conflict dry run exited $dry_rc" >&2
 rc=0
-bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" >"$work/import.stdout" 2>"$work/import.stderr" || rc=$?
+bydbctl data import --nodes "$DST_GRPC" --input "$ARTIFACT_IN" --checkpoint "$work/progress.json" >"$work/import.stdout" 2>"$work/import.stderr" || rc=$?
 echo "conflict import exited $rc" >&2
 tail -n 80 "$work/import.stdout" "$work/import.stderr" >&2
 if [ "$rc" -ne 1 ] && [ "$rc" -ne 2 ]; then

@@ -25,8 +25,10 @@ import (
 	"io"
 	"maps"
 	"net"
+	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -40,7 +42,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	transferv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/transfer/v1"
 	"github.com/apache/skywalking-banyandb/pkg/transfer"
-	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/format/artifactpath"
 )
 
 // fakeLiaison is a real TCP gRPC server standing in for a liaison: it answers the
@@ -64,11 +66,16 @@ type fakeLiaison struct {
 	exportInits         []*transferv1.ExportRequest_Init
 	groups              []*commonv1.Group
 	dataNodes           []*databasev1.Node
+	liaisons            []*databasev1.Node // the registered liaisons the cluster state reports (route table tire1)
 	sessionCalls        []*transferv1.SessionsRequest
 	planFrames          []*transferv1.PlanResponse
 	listed              []*transferv1.SessionsResponse    // ACTION_LIST answer; nil answers none on every data node
 	onCreateAttempt     func(f *fakeLiaison, attempt int) // called, under the lock, as a create attempt starts
+	onRelease           func()                            // called, without the lock, before a release is answered
+	idFor               func(attempt int) string          // the session id a create attempt announces; nil: sessionID
 	released            []string
+	sessionNodes        []string // the data nodes a create made the session on; nil: every data node holds it
+	expiredNodes        []string // the data nodes whose lease of the session expired and was not swept yet
 	plans               []*transferv1.PlanRequest
 	hbFrames            []*transferv1.SessionsResponse // ACTION_HEARTBEAT answer; nil answers done on every data node
 	releaseFrames       []*transferv1.SessionsResponse // ACTION_RELEASE answer; nil releases on every data node
@@ -77,7 +84,9 @@ type fakeLiaison struct {
 	failCreateTimes     int
 	mu                  sync.Mutex
 	hbCode              codes.Code
+	readCode            codes.Code // a Plan{read} fails with this code when set
 	failAfterFirstFrame bool
+	hangAfterCreated    bool // a create announces the id and then waits for the client to go away
 	failGetClusterState bool
 	skipSummary         bool
 	healthAuth          bool // the health check also requires requireUser
@@ -133,6 +142,9 @@ func (f *fakeLiaison) GetClusterState(ctx context.Context, _ *databasev1.GetClus
 	if len(f.dataNodes) > 0 {
 		tables["tire2"] = &databasev1.RouteTable{Registered: f.dataNodes}
 	}
+	if len(f.liaisons) > 0 {
+		tables["tire1"] = &databasev1.RouteTable{Registered: f.liaisons}
+	}
 	return &databasev1.GetClusterStateResponse{RouteTables: tables}, nil
 }
 
@@ -147,7 +159,8 @@ func (f *fakeLiaison) List(ctx context.Context, _ *databasev1.GroupRegistryServi
 }
 
 // Sessions answers like the liaison fan-out: ACTION_LIST streams listed (or none per data
-// node), ACTION_HEARTBEAT fails with hbCode or streams hbFrames (or done per data node), and
+// node), ACTION_HEARTBEAT fails with hbCode or streams hbFrames (or done per data node holding the
+// session, an error frame per other one), and
 // ACTION_RELEASE records the id and streams releaseFrames (or done per data node).
 func (f *fakeLiaison) Sessions(req *transferv1.SessionsRequest, stream transferv1.ExportService_SessionsServer) error {
 	if err := f.checkAuth(stream.Context()); err != nil {
@@ -167,13 +180,45 @@ func (f *fakeLiaison) Sessions(req *transferv1.SessionsRequest, stream transferv
 		frames = f.releaseFrames
 	}
 	hbCode := f.hbCode
+	holders := f.sessionNodes
+	expired := slices.Clone(f.expiredNodes)
+	onRelease := f.onRelease
 	f.mu.Unlock()
+	if req.GetAction() == transferv1.SessionsRequest_ACTION_RELEASE && onRelease != nil {
+		onRelease()
+	}
 	if req.GetAction() == transferv1.SessionsRequest_ACTION_HEARTBEAT && hbCode != codes.OK {
 		return status.Errorf(hbCode, "data node data-b:17912: export session %s (injected)", req.GetSessionId())
 	}
+	if req.GetAction() == transferv1.SessionsRequest_ACTION_HEARTBEAT && frames == nil {
+		// Like the liaison: an expired lease on a required node fails the call, on any other node
+		// it is that node's error frame.
+		for _, n := range expired {
+			if required := req.GetRequiredNodes(); len(required) == 0 || slices.Contains(required, n) {
+				return status.Errorf(codes.FailedPrecondition, "data node %s: export session %s expired", n, req.GetSessionId())
+			}
+		}
+		for _, n := range f.dataNodes {
+			name := n.GetMetadata().GetName()
+			switch {
+			case slices.Contains(expired, name):
+				frames = append(frames, errorFrame(name, "export session "+req.GetSessionId()+" expired"))
+			case holders != nil && !slices.Contains(holders, name):
+				frames = append(frames, errorFrame(name, "export session "+req.GetSessionId()+" not found on this node"))
+			default:
+				frames = append(frames, doneFrame(name))
+			}
+		}
+	}
 	if frames == nil {
 		for _, n := range f.dataNodes {
-			frames = append(frames, perNode(n.GetMetadata().GetName()))
+			name := n.GetMetadata().GetName()
+			if req.GetAction() == transferv1.SessionsRequest_ACTION_HEARTBEAT && holders != nil && !slices.Contains(holders, name) {
+				// Like a data node, one that does not hold the session answers an error frame.
+				frames = append(frames, errorFrame(name, "export session "+req.GetSessionId()+" not found on this node"))
+				continue
+			}
+			frames = append(frames, perNode(name))
 		}
 	}
 	for _, fr := range frames {
@@ -185,8 +230,12 @@ func (f *fakeLiaison) Sessions(req *transferv1.SessionsRequest, stream transferv
 }
 
 // Plan streams planFrames and then, unless skipSummary is set, exactly one summary frame:
-// summary when set, otherwise every data node answered. A create first announces the
-// session id like the liaison, then applies the occupant rule.
+// summary when set, otherwise every data node answered. Like the liaison, a Plan{read} asks every
+// data node, and one a create did not make the session on answers NotFound, which the liaison
+// reports as unreachable. A node in expiredNodes fails a Plan{read} with FAILED_PRECONDITION
+// unless the read names required_nodes without it: then, like the liaison, it is reported
+// unreachable and sends no unit. A create first announces the session id like the liaison, then
+// applies the occupant rule.
 func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.ExportService_PlanServer) error {
 	if err := f.checkAuth(stream.Context()); err != nil {
 		return err
@@ -198,6 +247,29 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 		summary = &transferv1.PlanSummary{}
 		for _, n := range f.dataNodes {
 			summary.AnsweredNodes = append(summary.AnsweredNodes, n.GetMetadata().GetName())
+		}
+	}
+	if code := f.readCode; req.GetRead() != nil && code != codes.OK {
+		f.mu.Unlock()
+		return status.Errorf(code, "export session %s not held (injected)", req.GetRead().GetId())
+	}
+	if req.GetRead() != nil && f.summary == nil && f.sessionNodes != nil {
+		summary = &transferv1.PlanSummary{}
+		for _, n := range f.dataNodes {
+			name := n.GetMetadata().GetName()
+			if slices.Contains(f.sessionNodes, name) {
+				summary.AnsweredNodes = append(summary.AnsweredNodes, name)
+			} else {
+				summary.UnreachableNodes = append(summary.UnreachableNodes, name)
+			}
+		}
+	}
+	frames := f.planFrames
+	if req.GetRead() != nil && len(f.expiredNodes) > 0 {
+		var err error
+		if summary, frames, err = f.readExpired(req.GetRead(), summary, frames); err != nil {
+			f.mu.Unlock()
+			return err
 		}
 	}
 	var refused []string
@@ -212,6 +284,10 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 			f.mu.Unlock()
 			return status.Errorf(codes.Unavailable, "data node data-b:17912 did not reach (injected failure #%d)", attempt)
 		}
+		f.sessionNodes = f.sessionNodes[:0]
+		for _, n := range f.dataNodes {
+			f.sessionNodes = append(f.sessionNodes, n.GetMetadata().GetName())
+		}
 		summary = proto.Clone(summary).(*transferv1.PlanSummary)
 		for _, fr := range f.listed {
 			if l := fr.GetSession(); l != nil {
@@ -223,10 +299,13 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 			}
 		}
 	}
-	frames := f.planFrames
 	skipSummary := f.skipSummary
 	failAfterFirst := f.failAfterFirstFrame
+	hang := f.hangAfterCreated
 	id := f.sessionID
+	if f.idFor != nil {
+		id = f.idFor(f.createAttempts)
+	}
 	f.mu.Unlock()
 	if create {
 		if err := stream.Send(&transferv1.PlanResponse{Frame: &transferv1.PlanResponse_Created{Created: &transferv1.SessionCreated{SessionId: id}}}); err != nil {
@@ -237,6 +316,10 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 		}
 		if failAfterFirst {
 			return status.Error(codes.Internal, "data node data-b:17912: snapshot failed")
+		}
+		if hang {
+			<-stream.Context().Done()
+			return stream.Context().Err()
 		}
 	}
 	for _, fr := range frames {
@@ -251,6 +334,26 @@ func (f *fakeLiaison) Plan(req *transferv1.PlanRequest, stream transferv1.Export
 }
 
 // Export reads init, records it and hands the stream to exportScript (or defaultExport).
+// readExpired applies expiredNodes to a Plan{read}, under the lock, like the liaison: an expired
+// lease on a required node (every node without required_nodes) fails the read; on any other node
+// it reports that node unreachable and drops its units.
+func (f *fakeLiaison) readExpired(read *transferv1.ReadSession, summary *transferv1.PlanSummary, frames []*transferv1.PlanResponse,
+) (*transferv1.PlanSummary, []*transferv1.PlanResponse, error) {
+	expired := f.expiredNodes
+	for _, n := range expired {
+		if required := read.GetRequiredNodes(); len(required) == 0 || slices.Contains(required, n) {
+			return nil, nil, status.Errorf(codes.FailedPrecondition, "data node %s: export session %s expired", n, read.GetId())
+		}
+	}
+	summary = proto.Clone(summary).(*transferv1.PlanSummary)
+	summary.AnsweredNodes = slices.DeleteFunc(summary.AnsweredNodes, func(n string) bool { return slices.Contains(expired, n) })
+	summary.UnreachableNodes = append(summary.UnreachableNodes, expired...)
+	frames = slices.DeleteFunc(slices.Clone(frames), func(fr *transferv1.PlanResponse) bool {
+		return slices.Contains(expired, fr.GetUnits().GetNodeId())
+	})
+	return summary, frames, nil
+}
+
 func (f *fakeLiaison) Export(stream transferv1.ExportService_ExportServer) error {
 	first, err := stream.Recv()
 	if err != nil {
@@ -323,9 +426,9 @@ func (f *fakeLiaison) filesFor(req *transferv1.ExportRequest) []fakeFile {
 	name, revs := f.schema.first(group)
 	var out []fakeFile
 	for _, sh := range shards {
-		p := fmt.Sprintf("%s/%s/shard-%d-00001.csv", catalog, csvfmt.EscapePathComponent(group), sh)
+		p := fmt.Sprintf("%s/%s/shard-%d-00001.csv", catalog, artifactpath.EscapeComponent(group), sh)
 		if seg != "" {
-			p = fmt.Sprintf("%s/%s/seg-%s/shard-%d-00001.csv", catalog, csvfmt.EscapePathComponent(group), seg, sh)
+			p = fmt.Sprintf("%s/%s/seg-%s/shard-%d-00001.csv", catalog, artifactpath.EscapeComponent(group), seg, sh)
 		}
 		out = append(out, fakeFile{
 			path: p, shard: sh, property: catalog == "property", content: []byte(fmt.Sprintf("_name,v\n%s,%d\n%s,%d\n", name, sh, name, sh+1)),
@@ -436,12 +539,18 @@ type fakeSchema struct {
 	bindings   []*databasev1.IndexRuleBinding
 	topNs      []*databasev1.TopNAggregation
 	mu         sync.Mutex
+	firstDelay time.Duration // the first List call waits this long
+	failList   bool          // every List of a measure answers failCode
+	failCode   codes.Code    // UNAVAILABLE when unset
 }
 
 func (s *fakeSchema) record(kind, group string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.listCalls = append(s.listCalls, kind+"/"+group)
+	delay := s.firstDelay
+	s.firstDelay = 0
+	s.mu.Unlock()
+	time.Sleep(delay)
 }
 
 func (s *fakeSchema) calls() []string {
@@ -527,6 +636,15 @@ func (r fakeStreamRegistry) List(_ context.Context, req *databasev1.StreamRegist
 
 func (r fakeMeasureRegistry) List(_ context.Context, req *databasev1.MeasureRegistryServiceListRequest) (*databasev1.MeasureRegistryServiceListResponse, error) {
 	r.s.record("measure", req.GetGroup())
+	r.s.mu.Lock()
+	fail, code := r.s.failList, r.s.failCode
+	r.s.mu.Unlock()
+	if fail {
+		if code == codes.OK {
+			code = codes.Unavailable
+		}
+		return nil, status.Error(code, "measure registry unavailable (injected failure)")
+	}
 	return &databasev1.MeasureRegistryServiceListResponse{Measure: inGroup(r.s.measures, req.GetGroup())}, nil
 }
 

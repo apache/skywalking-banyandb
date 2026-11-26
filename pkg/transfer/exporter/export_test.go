@@ -46,6 +46,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/transfer/exitcode"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/csvfmt"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/format/manifest"
+	"github.com/apache/skywalking-banyandb/pkg/transfer/resume"
 	"github.com/apache/skywalking-banyandb/pkg/transfer/schemasync"
 )
 
@@ -133,6 +134,7 @@ func exportFake() *fakeLiaison {
 type testOptions struct {
 	Log      io.Writer
 	Out      io.Writer
+	Err      io.Writer
 	Terminal func() (int, int)
 	Confirm  func(context.Context, string) bool
 	config.Export
@@ -167,7 +169,7 @@ func envFor(t *testing.T, opts testOptions, fakes ...*fakeLiaison) Env {
 		liaisons.All = append(liaisons.All, &cluster.Liaison{Addr: addr, Conn: dial(t, addr)})
 	}
 	return Env{
-		Log: opts.Log, Out: opts.Out, Terminal: opts.Terminal, Confirm: opts.Confirm, Liaisons: liaisons, Groups: fakes[0].groups,
+		Log: opts.Log, Out: opts.Out, Err: opts.Err, Terminal: opts.Terminal, Confirm: opts.Confirm, Liaisons: liaisons, Groups: fakes[0].groups,
 		Cluster: &cluster.Info{Liaison: liaisons.All[0].Addr, DataNodes: fakes[0].dataNodes},
 	}
 }
@@ -199,14 +201,17 @@ func requireExit(t *testing.T, err error, code int, contains string) {
 	}
 }
 
-// requireKept checks a failed run kept the session: no release call and the release hint.
+// requireKept checks a failed run kept the session: no release call and the hint that offers
+// the resume.
 func requireKept(t *testing.T, f *fakeLiaison, log *syncBuffer) {
 	t.Helper()
 	if got := f.releasedIDs(); len(got) != 0 {
 		t.Fatalf("a failed export must keep the session, released %v", got)
 	}
-	if !strings.Contains(log.String(), "export session feedfeed kept; release it with: bydbctl data release-session --id feedfeed") {
-		t.Fatalf("the release hint is missing:\n%s", log)
+	if !strings.Contains(log.String(), "export session feedfeed and the progress file ") ||
+		!strings.Contains(log.String(), "are kept\n  to resume: run the same command again (add --resume when not at a terminal)\n"+
+			"  to give up: release the session with: bydbctl data release-session --id feedfeed; then delete ") {
+		t.Fatalf("the resume hint is missing:\n%s", log)
 	}
 }
 
@@ -499,7 +504,7 @@ func TestRunExport_OccupiedClusterExits2(t *testing.T) {
 		t.Fatalf("a refused create was rolled back by the liaison; nothing is kept:\n%s", log)
 	}
 	// The schema it wrote is removed, so the same command with --preempt can run next.
-	if err := CheckOutputDir(opts.Output); err != nil {
+	if err := CheckOutputDir(opts.Output, ""); err != nil {
 		t.Fatalf("the output directory must be empty again: %v", err)
 	}
 }
@@ -527,7 +532,7 @@ func TestRunExport_AsksBeforeTakingOver(t *testing.T) {
 			continue
 		}
 		requireExit(t, err, exitcode.ExitPreflight, "left as they are; give --preempt to take them over")
-		if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
+		if checkErr := CheckOutputDir(opts.Output, ""); checkErr != nil {
 			t.Fatalf("a no leaves the output directory empty: %v", checkErr)
 		}
 	}
@@ -546,7 +551,7 @@ func TestRunExport_InterruptedAtTheQuestion(t *testing.T) {
 	}
 	err := RunExport(ctx, envFor(t, opts, f), opts.Export)
 	requireExit(t, err, exitcode.ExitRuntime, "export interrupted before its session was created")
-	if checkErr := CheckOutputDir(opts.Output); checkErr != nil {
+	if checkErr := CheckOutputDir(opts.Output, ""); checkErr != nil {
 		t.Fatalf("an interrupted export leaves the output directory empty: %v", checkErr)
 	}
 }
@@ -580,7 +585,60 @@ func TestRunExport_HeartbeatLostAborts(t *testing.T) {
 	opts, log := exportOptions(t, f)
 	shortHeartbeat(t, 20*time.Millisecond)
 	requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "export session feedfeed lost")
-	requireKept(t, f, log)
+	if got := f.releasedIDs(); len(got) != 0 || !strings.Contains(log.String(), "release the session with: bydbctl data release-session --id feedfeed") {
+		t.Fatalf("a lost session is not released, the operator is told how to: released %v\n%s", got, log)
+	}
+}
+
+// A data node refuses the Export stream of a session released or preempted meanwhile with
+// FAILED_PRECONDITION, at its init or while it reads a unit: the session is lost, and the hint
+// says so instead of telling the operator to run the command again.
+func TestRunExport_SessionGoneOnTheNodeIsLost(t *testing.T) {
+	for _, tc := range []struct {
+		script func(f *fakeLiaison, init *transferv1.ExportRequest_Init, stream transferv1.ExportService_ExportServer) error
+		name   string
+	}{
+		{name: "at init", script: func(_ *fakeLiaison, _ *transferv1.ExportRequest_Init, _ transferv1.ExportService_ExportServer) error {
+			return status.Error(codes.FailedPrecondition, "export session feedfeed is not held on this node (released, preempted or never created)")
+		}},
+		{name: "in a unit", script: func(_ *fakeLiaison, init *transferv1.ExportRequest_Init, stream transferv1.ExportService_ExportServer) error {
+			if err := sendReady(init, stream); err != nil {
+				return err
+			}
+			return status.Error(codes.FailedPrecondition, "export session feedfeed is gone (released or preempted)")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := exportFake()
+			f.exportScript = tc.script
+			f.expiredNodes = []string{nodeA, nodeB}
+			opts, log := exportOptions(t, f)
+			requireExit(t, runExport(t, f, opts), exitcode.ExitRuntime, "export session feedfeed")
+			if !strings.Contains(log.String(), "export session feedfeed is lost, so this export cannot be resumed") ||
+				strings.Contains(log.String(), "to resume: run the same command again") {
+				t.Fatalf("a session gone on a node is lost, not to be resumed:\n%s", log)
+			}
+		})
+	}
+}
+
+// A node refuses an Export stream with FAILED_PRECONDITION for other reasons than a lost session
+// (a catalog the CSV format cannot encode): the heartbeat finds the session still held, so the
+// error is reported as it is, without telling the operator to give the export up.
+func TestRunExport_FailedPreconditionOfAHeldSessionIsAnOrdinaryError(t *testing.T) {
+	f := exportFake()
+	f.exportScript = func(_ *fakeLiaison, _ *transferv1.ExportRequest_Init, _ transferv1.ExportService_ExportServer) error {
+		return status.Error(codes.FailedPrecondition, "trace catalog cannot be encoded as csv; use --format native")
+	}
+	opts, log := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	requireExit(t, err, exitcode.ExitRuntime, "use --format native")
+	if strings.Contains(err.Error(), "lost") || strings.Contains(log.String(), "is lost") {
+		t.Fatalf("a session that is still held is not lost:\n%v\n%s", err, log)
+	}
+	if !strings.Contains(log.String(), "to resume: run the same command again") {
+		t.Fatalf("the session is kept and the export can be resumed:\n%s", log)
+	}
 }
 
 func TestRunExport_FailFastCancelsOtherWorkers(t *testing.T) {
@@ -1259,5 +1317,66 @@ func TestStartFile_RefusesAnExistingTmp(t *testing.T) {
 	p.abandon()
 	if info, statErr := os.Stat(p.tmp); statErr != nil || info.Mode().Perm() != 0o600 {
 		t.Fatalf("a new .tmp is 0600: %v %v", info, statErr)
+	}
+}
+
+// An interrupt reports the cause of the cancellation for the bare error of a node stream it
+// canceled, and keeps every error that says more.
+func TestRunErr_KeepsWhatSaysMoreThanACancellation(t *testing.T) {
+	cause := errors.New("signal: interrupt")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(cause)
+	for _, tc := range []struct {
+		err  error
+		name string
+		want string
+	}{
+		{name: "context error", err: context.Canceled, want: "export interrupted: " + cause.Error()},
+		{name: "grpc cancellation", err: status.Error(codes.Canceled, "context canceled"), want: "export interrupted: " + cause.Error()},
+		{name: "session lost", err: sessionLostError{errors.New("session abc lost")}, want: "export interrupted: session abc lost"},
+		{name: "schema changed", err: schemaChangedError{errors.New("schema changed")}, want: "export interrupted: schema changed"},
+		{name: "announced", err: &announcedError{err: context.Canceled, hints: "release it"}, want: "a session that was announced may still be held"},
+		{name: "ordinary failure", err: errors.New("snapshot unit missing"), want: "export interrupted: snapshot unit missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runErr(ctx, context.Background(), tc.err)
+			if got == nil || !strings.Contains(got.Error(), tc.want) {
+				t.Fatalf("runErr = %v, want it to contain %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// A create given up after several attempts announced a session each releases every one of them,
+// not only the last the progress file records.
+func TestRunExport_CreateRetriesExhaustedReleaseEveryAnnouncedSession(t *testing.T) {
+	orig := createRetryBase
+	createRetryBase = time.Millisecond
+	t.Cleanup(func() { createRetryBase = orig })
+	f := exportFake()
+	f.failAfterFirstFrame = true
+	f.idFor = func(attempt int) string { return fmt.Sprintf("feed%04d", attempt) }
+	opts, _ := exportOptions(t, f)
+	err := runExport(t, f, opts)
+	requireExit(t, err, exitcode.ExitRuntime, "creating export sessions feed0001, feed0002, feed0003 failed after they were announced")
+	got := f.releasedIDs()
+	slices.Sort(got)
+	if want := []string{"feed0001", "feed0002", "feed0003"}; !slices.Equal(got, want) {
+		t.Fatalf("released %v, want every announced session %v", got, want)
+	}
+	if resume.Exists(ProgressPath(opts.Export)) {
+		t.Fatal("no progress file is left")
+	}
+}
+
+// A fresh export refused for its selectors leaves nothing behind, not even the empty output
+// directory the lock would create.
+func TestRunExport_RefusedSelectorsLeaveNoOutputDirectory(t *testing.T) {
+	f := exportFake()
+	opts, _ := exportOptions(t, f)
+	opts.Selectors = []*transferv1.Selector{{Catalog: commonv1.Catalog_CATALOG_STREAM, Groups: []string{"no_such_group"}}}
+	requireExit(t, runExport(t, f, opts), exitcode.ExitUsage, "no_such_group")
+	if _, err := os.Stat(opts.Output); !os.IsNotExist(err) {
+		t.Fatalf("the output directory is not created: %v", err)
 	}
 }

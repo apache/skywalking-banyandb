@@ -465,6 +465,43 @@ func planServiceSpecs() {
 		gomega.Expect(transfertest.Release(conn, id)).To(gomega.BeEmpty())
 	})
 
+	ginkgo.It("degrades an expired lease on a node outside required_nodes and fails on a required one", func() {
+		frames := transfertest.MustPlan(conn, transfertest.CreateRequest(streamSelector, false))
+		id := frames[0].GetCreated().GetSessionId()
+		// Node 1's lease expires, as after a partition longer than the lease; the sweep is held off.
+		transfertest.ExpireLease(streamLease(dataDirs[1], id))
+		read := transfertest.ReadRequest(id)
+		read.GetRead().RequiredNodes = []string{nodeNames[0]}
+		frames = transfertest.MustPlan(conn, read)
+		summary := transfertest.Summary(frames)
+		gomega.Expect(summary.GetUnreachableNodes()).To(gomega.Equal([]string{nodeNames[1]}))
+		gomega.Expect(summary.GetAnsweredNodes()).To(gomega.Equal([]string{nodeNames[0]}))
+		gomega.Expect(unitNodes(frames)).To(gomega.Equal([]string{nodeNames[0]}))
+		hb, err := transfertest.Sessions(conn, &transferv1.SessionsRequest{
+			Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: id, RequiredNodes: []string{nodeNames[0]},
+		})
+		gomega.Expect(err).NotTo(gomega.HaveOccurred())
+		gomega.Expect(hb).To(gomega.HaveLen(2))
+		for _, f := range hb {
+			if f.GetNodeId() == nodeNames[1] {
+				gomega.Expect(f.GetError()).To(gomega.ContainSubstring("expired"))
+			} else {
+				gomega.Expect(f.GetDone()).NotTo(gomega.BeNil(), f.String())
+			}
+		}
+		gomega.Expect(exporter.HeartbeatOnce(context.Background(), conn, id, exporter.OnlyNodes([]string{nodeNames[0]}))).To(gomega.Succeed())
+
+		read.GetRead().RequiredNodes = nodeNames
+		_, err = transfertest.Plan(conn, read)
+		gomega.Expect(status.Code(err)).To(gomega.Equal(codes.FailedPrecondition))
+		gomega.Expect(err.Error()).To(gomega.ContainSubstring(nodeNames[1]))
+		_, err = transfertest.Sessions(conn, &transferv1.SessionsRequest{
+			Action: transferv1.SessionsRequest_ACTION_HEARTBEAT, SessionId: id, RequiredNodes: nodeNames,
+		})
+		gomega.Expect(status.Code(err)).To(gomega.Equal(codes.FailedPrecondition))
+		gomega.Expect(transfertest.Release(conn, id)).To(gomega.BeEmpty())
+	})
+
 	ginkgo.It("keeps the live data directories byte-identical through the session lifecycle", func() {
 		liveDir := filepath.Join(dataDirs[1], "stream", "data")
 		before := transfertest.StableTree(liveDir)

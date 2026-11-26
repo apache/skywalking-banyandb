@@ -198,14 +198,9 @@ func writeTraceShard(run *unitRun, fw *fileWriter, shardDir string, layout *csvf
 	}
 	cells := layout.NewRow()
 	for _, id := range partIDs {
-		rofs := newReadOnlyFS()
-		part, openErr := dumptrace.OpenPart(id, shardDir, rofs)
-		if openErr == nil && rofs.err != nil {
-			_ = part.Close()
-			openErr = rofs.err
-		}
+		part, openErr := openSnapshotPart(dumptrace.OpenPart, id, shardDir)
 		if openErr != nil {
-			return snapshot.ReadError(fmt.Sprintf("open part %016x of %s", id, shardDir), openErr)
+			return openErr
 		}
 		it := part.Iterator()
 		for it.Next() {

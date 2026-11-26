@@ -61,8 +61,11 @@ type MultiSource struct {
 
 // Report is the dry-run summary rendered by Render.
 type Report struct {
-	Rows        []Row         `json:"rows"`
-	MultiSource []MultiSource `json:"multiSource"`
+	// Resumed, set by the dry run of an interrupted export, names its progress file and how many
+	// of its units are done: Rows then list only the units left.
+	Resumed     *ResumedProgress `json:"resumed,omitempty"`
+	Rows        []Row            `json:"rows"`
+	MultiSource []MultiSource    `json:"multiSource"`
 	// DataNodes are the nodes the liaison fanned out to: the answered and the unreachable
 	// ones, which may differ from the preflight's registry snapshot.
 	DataNodes     []string `json:"dataNodes"`
@@ -72,6 +75,13 @@ type Report struct {
 	MissingNodes     []string `json:"missingNodes"`
 	UnreachableNodes []string `json:"unreachableNodes"`
 	Standalone       bool     `json:"standalone"`
+}
+
+// ResumedProgress is the progress file a dry run previews the resume of.
+type ResumedProgress struct {
+	Path  string `json:"path"`
+	Done  int    `json:"done"`
+	Total int    `json:"total"`
 }
 
 // LargestNodeCompressedBytes is the largest per-node compressed subtotal and its node:

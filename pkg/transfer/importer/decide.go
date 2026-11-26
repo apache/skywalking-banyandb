@@ -129,6 +129,9 @@ type MultiSourceDecision struct {
 type Plan struct {
 	// nativeCache holds what the native gates derived per group during Decide.
 	nativeCache *nativeDecision
+	// Resumed is what the progress file records of an earlier run, nil without one; the text
+	// rendering says what is left of it, the json and yaml renderings show it.
+	Resumed     *ResumedProgress      `json:"resumed,omitempty"`
 	Entries     []Entry               `json:"entries"`
 	Rejected    []Rejection           `json:"rejected"`
 	MultiSource []MultiSourceDecision `json:"multiSource"`
@@ -146,6 +149,15 @@ type Plan struct {
 	Header   Header    `json:"header"`
 	// SchemaOnly marks a --schema-only import: only a blocking schema action or an artifact error refuses it.
 	SchemaOnly bool `json:"schemaOnly,omitempty"`
+}
+
+// ResumedProgress is what a progress file records: its path, the work items of the plan it
+// records as done, and when the import finished, if it did.
+type ResumedProgress struct {
+	FinishedAt *time.Time `json:"finishedAt,omitempty"`
+	Path       string     `json:"path"`
+	Done       int        `json:"done"`
+	Total      int        `json:"total"`
 }
 
 // SchemaBlocked reports whether any schema action refuses the import.
@@ -171,16 +183,22 @@ var refusingGates = []refusingGate{
 // action, an artifact error, or, unless only the schema is imported, a target blocker, a
 // rejection by one of the refusingGates, or every work item rejected.
 func (p *Plan) Refused() bool {
+	if p.refusedForProblems() {
+		return true
+	}
+	return !p.SchemaOnly && len(p.Entries) == 0 && len(p.Rejected) > 0
+}
+
+// refusedForProblems tells whether the plan is refused for its schema, artifact, a blocker or a
+// gate that refuses the whole import, whatever is left to push.
+func (p *Plan) refusedForProblems() bool {
 	if p.SchemaBlocked() || len(p.Errors) > 0 {
 		return true
 	}
 	if p.SchemaOnly {
 		return false
 	}
-	if len(p.Blockers) > 0 || slices.ContainsFunc(refusingGates, func(g refusingGate) bool { return p.rejectedBy(g.gate) }) {
-		return true
-	}
-	return len(p.Entries) == 0 && len(p.Rejected) > 0
+	return len(p.Blockers) > 0 || slices.ContainsFunc(refusingGates, func(g refusingGate) bool { return p.rejectedBy(g.gate) })
 }
 
 func (p *Plan) rejectedBy(gate string) bool {
