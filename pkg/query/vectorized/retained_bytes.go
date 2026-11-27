@@ -37,6 +37,19 @@ const (
 // retained by a merge operator. Protobuf values are charged their payload once plus
 // a fixed object overhead; this is not an exact Go heap measurement. Shared payloads may be counted twice.
 func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
+	return estimatedBytes(batch, false)
+}
+
+// EstimatedActiveBytes is EstimatedRetainedBytes for the rows the batch's selection keeps: the payload of a row the
+// selection drops is not counted, and a column is charged for the active rows, not for its capacity. A consumer that copies
+// only the active rows (the response serializer) must be charged for those: a batch that a limit cut down to one row still
+// holds the storage of every row it was read with, and charging for that made a limit of 1 cost as much as the whole batch.
+func EstimatedActiveBytes(batch *RecordBatch) uint64 {
+	return estimatedBytes(batch, true)
+}
+
+// estimatedBytes adds up the estimate over all the rows of the batch, or over its active rows only.
+func estimatedBytes(batch *RecordBatch, activeOnly bool) uint64 {
 	if batch == nil {
 		return 0
 	}
@@ -51,56 +64,86 @@ func EstimatedRetainedBytes(batch *RecordBatch) uint64 {
 		}
 		switch column.Type() {
 		case ColumnTypeDecimal:
-			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[decimal.Int128])))
+			total = saturatingAdd(total, columnBytes(batch, column.(*TypedColumn[decimal.Int128]), activeOnly))
 		case ColumnTypeInt64:
-			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[int64])))
+			total = saturatingAdd(total, columnBytes(batch, column.(*TypedColumn[int64]), activeOnly))
 		case ColumnTypeFloat64:
-			total = saturatingAdd(total, retainedColumnBytes(column.(*TypedColumn[float64])))
+			total = saturatingAdd(total, columnBytes(batch, column.(*TypedColumn[float64]), activeOnly))
 		case ColumnTypeString:
 			typed := column.(*TypedColumn[string])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, value := range typed.Data() {
-				total = saturatingAdd(total, uint64(len(value)))
-			}
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(value string) uint64 { return uint64(len(value)) }))
 		case ColumnTypeBytes:
 			typed := column.(*TypedColumn[[]byte])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, value := range typed.Data() {
-				total = saturatingAdd(total, uint64(cap(value)))
-			}
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(value []byte) uint64 { return uint64(cap(value)) }))
 		case ColumnTypeInt64Array:
 			typed := column.(*TypedColumn[[]int64])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, value := range typed.Data() {
-				total = saturatingAdd(total, saturatingMultiply(uint64(cap(value)), 8))
-			}
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(value []int64) uint64 { return saturatingMultiply(uint64(cap(value)), 8) }))
 		case ColumnTypeStrArray:
 			typed := column.(*TypedColumn[[]string])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, arrayValues := range typed.Data() {
-				total = saturatingAdd(total, saturatingMultiply(uint64(cap(arrayValues)), 16))
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(arrayValues []string) uint64 {
+				bytes := saturatingMultiply(uint64(cap(arrayValues)), 16)
 				for _, value := range arrayValues {
-					total = saturatingAdd(total, uint64(len(value)))
+					bytes = saturatingAdd(bytes, uint64(len(value)))
 				}
-			}
+				return bytes
+			}))
 		case ColumnTypeTagValue:
 			typed := column.(*TypedColumn[*modelv1.TagValue])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, value := range typed.Data() {
-				if value != nil {
-					total = saturatingAdd(total, estimatedTagValueBytes(value))
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(value *modelv1.TagValue) uint64 {
+				if value == nil {
+					return 0
 				}
-			}
+				return estimatedTagValueBytes(value)
+			}))
 		case ColumnTypeFieldValue:
 			typed := column.(*TypedColumn[*modelv1.FieldValue])
-			total = saturatingAdd(total, retainedColumnBytes(typed))
-			for _, value := range typed.Data() {
-				if value != nil {
-					total = saturatingAdd(total, estimatedFieldValueBytes(value))
+			total = saturatingAdd(total, columnBytes(batch, typed, activeOnly))
+			total = saturatingAdd(total, sumRows(batch, typed.Data(), activeOnly, func(value *modelv1.FieldValue) uint64 {
+				if value == nil {
+					return 0
 				}
-			}
+				return estimatedFieldValueBytes(value)
+			}))
 		default:
 			return math.MaxUint64
+		}
+	}
+	return total
+}
+
+// columnBytes is the storage of a column: its capacity, or only the active rows when activeOnly.
+func columnBytes[T any](batch *RecordBatch, column *TypedColumn[T], activeOnly bool) uint64 {
+	if !activeOnly {
+		return retainedColumnBytes(column)
+	}
+	var element T
+	rows := uint64(batch.ActiveLen())
+	return saturatingAdd(saturatingMultiply(rows, uint64(unsafe.Sizeof(element))), saturatingMultiply((rows+63)/64, 8))
+}
+
+// sumRows adds size(value) over every value of data, or over the active rows' values only when activeOnly.
+func sumRows[T any](batch *RecordBatch, data []T, activeOnly bool, size func(T) uint64) uint64 {
+	var total uint64
+	if !activeOnly {
+		for _, value := range data {
+			total = saturatingAdd(total, size(value))
+		}
+		return total
+	}
+	if batch.Selection == nil {
+		for i := 0; i < min(batch.Len, len(data)); i++ {
+			total = saturatingAdd(total, size(data[i]))
+		}
+		return total
+	}
+	for _, row := range batch.Selection {
+		if int(row) < len(data) {
+			total = saturatingAdd(total, size(data[row]))
 		}
 	}
 	return total

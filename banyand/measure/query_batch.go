@@ -287,16 +287,36 @@ func (iqr *indexSortResult) PullBatch(ctx context.Context) (*model.MeasureBatch,
 	if len(iqr.segResults.results) == 0 {
 		return nil, nil
 	}
-	const rows = 2 * mergeBatchMaxRows
-	columns := uint64(len(iqr.batchSchema.Columns))
-	if columns > (math.MaxInt64-256*1024-rows*128)/(rows*64) {
+	remaining := iqr.remainingRows()
+	workspace, fits := indexBatchWorkspaceBytes(uint64(len(iqr.batchSchema.Columns)), remaining)
+	if !fits {
 		return nil, vectorized.ErrMemoryBudgetExceeded
 	}
-	workspace := uint64(rows)*(columns*64+128) + 256*1024
 	if err := query.ReserveAllocationOnce(ctx, iqr, workspace); err != nil {
 		return nil, err
 	}
-	return iqr.mergeSegResultsBatch(iqr.batchSchema, mergeBatchMaxRows)
+	// The batch is allocated for the rows that are left, which the workspace above was sized for.
+	return iqr.mergeSegResultsBatch(iqr.batchSchema, min(max(remaining, 1), mergeBatchMaxRows))
+}
+
+// remainingRows is the number of rows the segment results can still produce.
+func (iqr *indexSortResult) remainingRows() int {
+	remaining := 0
+	for _, sr := range iqr.segResults.results {
+		remaining += max(len(sr.SeriesList)-sr.i, 0)
+	}
+	return remaining
+}
+
+// indexBatchWorkspaceBytes is the workspace a pull of the index-sorted rows reserves before it builds the batch: room for
+// twice the rows the pull can emit, which is the rows left or a full batch, whichever is fewer. Sizing it for a full batch
+// whatever is left made a limit of 1 reserve the workspace of 4096 rows. It reports false when the size overflows.
+func indexBatchWorkspaceBytes(columns uint64, remaining int) (uint64, bool) {
+	rows := uint64(2 * min(max(remaining, 1), mergeBatchMaxRows))
+	if columns > (math.MaxInt64-256*1024-rows*128)/(rows*64) {
+		return 0, false
+	}
+	return rows*(columns*64+128) + 256*1024, true
 }
 
 // mergeSegResultsBatch is the batch-aware counterpart of indexSortResult.Pull.

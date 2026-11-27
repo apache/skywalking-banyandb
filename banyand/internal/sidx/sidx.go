@@ -38,6 +38,7 @@ import (
 	"github.com/apache/skywalking-banyandb/pkg/logger"
 	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pool"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/model"
 )
 
@@ -357,14 +358,27 @@ func (s *sidx) PrepareSynced(partIDsToSync map[uint64]struct{}) func(cur *Snapsh
 
 // blockCursor represents a cursor for iterating through a loaded block, similar to query_by_ts.go.
 type blockCursor struct {
+	lease    query.BudgetLease
 	p        *part
 	bm       *blockMetadata
 	tags     map[string][]Tag
 	userKeys []int64
 	data     [][]byte
 	request  QueryRequest
+	charged  uint64
 	seriesID common.SeriesID
 	idx      int
+}
+
+// holdCharge records that bytes were charged to the query lease for this cursor's block, so releasing the cursor gives them
+// back: the decoded block is what the charge stands for, and it is gone with the cursor.
+func (bc *blockCursor) holdCharge(ctx context.Context, bytes uint64) {
+	if bytes == 0 {
+		return
+	}
+	if lease, ok := query.BudgetLeaseFromContext(ctx); ok {
+		bc.lease, bc.charged = lease, bytes
+	}
 }
 
 type blockCursorBuilder struct {
@@ -1017,6 +1031,10 @@ func generateBlockCursor() *blockCursor {
 }
 
 func releaseBlockCursor(bc *blockCursor) {
+	if bc.lease != nil && bc.charged > 0 {
+		bc.lease.Refund(bc.charged)
+	}
+	bc.lease, bc.charged = nil, 0
 	bc.p = nil
 	bc.bm = nil
 	bc.userKeys = bc.userKeys[:0]
