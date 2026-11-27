@@ -86,6 +86,37 @@ func TestDecodeRepairDocValueTermEscapes(t *testing.T) {
 	}
 }
 
+// A term whose escapes make it grow well past the room its decode starts with decodes intact, a term at the length limit is still
+// refused, and decoding does not reserve the largest allowed term for a short one.
+func TestDecodeRepairDocValueTermEscapedGrowth(t *testing.T) {
+	long := bytes.Repeat([]byte{0xff, '\\', 'x'}, 500)
+	encoded := make([]byte, 0, 2*len(long)+1)
+	for _, b := range long {
+		if b == 0xff || b == '\\' {
+			encoded = append(encoded, '\\')
+		}
+		encoded = append(encoded, b)
+	}
+	encoded = append(encoded, 0xff)
+	value, remaining, decodeErr := decodeRepairDocValueTerm(encoded)
+	if decodeErr != nil || len(remaining) != 0 || !bytes.Equal(value, long) {
+		t.Fatalf("decoded %d bytes, remaining %d, error %v, want the %d-byte term", len(value), len(remaining), decodeErr, len(long))
+	}
+
+	short, _, shortErr := decodeRepairDocValueTerm([]byte{'a', '\\', 0xff, 0xff})
+	if shortErr != nil || !bytes.Equal(short, []byte{'a', 0xff}) {
+		t.Fatalf("short escaped term = %x, error %v", short, shortErr)
+	}
+	if cap(short) >= maxRepairSortValueLength {
+		t.Fatalf("a 2-byte term holds %d bytes of capacity", cap(short))
+	}
+
+	atLimit := append(bytes.Repeat([]byte{'a'}, maxRepairSortValueLength), '\\', 0xff, 0xff)
+	if _, _, limitErr := decodeRepairDocValueTerm(atLimit); limitErr == nil {
+		t.Fatal("a term over the length limit decoded")
+	}
+}
+
 func TestRepairDocValueReaderAcceptsLegacyEmptyChunkPositions(t *testing.T) {
 	emptyChunk := emptyLegacyDocValueChunk()
 	for _, testCase := range []struct {

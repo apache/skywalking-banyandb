@@ -414,6 +414,7 @@ func TestTopFieldPlanFiltersMatchAPlainPredicate(t *testing.T) {
 	for _, mode := range []ladderMode{ladderNone, ladderAll, ladderMixed} {
 		for _, storage := range []struct{ persisted, merged bool }{{false, false}, {true, false}, {true, true}} {
 			t.Run(fmt.Sprintf("ladder=%s/persisted=%v/merged=%v", mode, storage.persisted, storage.merged), func(t *testing.T) {
+				t.Parallel()
 				rng := rand.New(rand.NewSource(17)) //nolint:gosec // deterministic test data
 				batches := randomTopFieldBatches(rng, shape, mode)
 				for b := range batches {
