@@ -715,8 +715,9 @@ func decodeRepairDocValueTerm(encoded []byte) ([]byte, []byte, error) {
 				if sourceIndex > maxRepairSortValueLength {
 					return nil, nil, fmt.Errorf("term exceeds %d bytes", maxRepairSortValueLength)
 				}
-				unescaped = make([]byte, sourceIndex, maxRepairSortValueLength)
-				copy(unescaped, encoded[:sourceIndex])
+				// A decoded term is never longer than its encoding, and most are short: let append grow it rather than
+				// zeroing the largest allowed term for every value that holds an escape byte.
+				unescaped = append(make([]byte, 0, sourceIndex+16), encoded[:sourceIndex]...)
 			}
 			sourceIndex++
 		}

@@ -33,8 +33,25 @@ const (
 	genericReadLimit = 16 << 20
 )
 
+var largeDictionaryFixture struct {
+	err      error
+	payload  []byte
+	selected []byte
+	once     sync.Once
+}
+
+// largeDictionarySegment returns the encoded segment and one of its terms. Encoding 300,000 random terms is by far the most
+// expensive step of these tests, so it runs once; callers must not modify what it returns.
 func largeDictionarySegment(t testing.TB) ([]byte, []byte) {
 	t.Helper()
+	largeDictionaryFixture.once.Do(func() {
+		largeDictionaryFixture.payload, largeDictionaryFixture.selected, largeDictionaryFixture.err = buildLargeDictionarySegment()
+	})
+	requireNativeNoError(t, largeDictionaryFixture.err)
+	return largeDictionaryFixture.payload, largeDictionaryFixture.selected
+}
+
+func buildLargeDictionarySegment() ([]byte, []byte, error) {
 	terms := make([]EncodeTerm, regressionDictionaryTermCount)
 	var state uint64 = 0x9e3779b97f4a7c15
 	var selected []byte
@@ -55,8 +72,7 @@ func largeDictionarySegment(t testing.TB) ([]byte, []byte) {
 		Identifier: []byte("large-dictionary-document"),
 		Fields:     []EncodeField{{Name: "large", Value: []byte("large"), Index: true, Terms: terms}},
 	}}})
-	requireNativeNoError(t, encodeErr)
-	return payload, selected
+	return payload, selected, encodeErr
 }
 
 func TestReaderAcceptsDictionaryBetweenGenericReadLimitAndSelectionLimit(t *testing.T) {

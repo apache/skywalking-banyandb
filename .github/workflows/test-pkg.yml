@@ -20,11 +20,22 @@ on:
   workflow_call:
 
 jobs:
+  # The index packages are the slowest of ./pkg/... under the race detector, so they run in their own job. The other job
+  # runs all of ./pkg/... except the sub-packages of pkg/index (pkg/index itself runs in both), so a package added
+  # anywhere else, even next to it, is still tested without listing it here.
+  test-pkg-index:
+    uses: ./.github/workflows/test.yml
+    with:
+      test-name: Pkg Index Tests
+      options: --vv --fail-fast --label-filter \\!slow
+      timeout-minutes: 30
+      pkg: ./pkg/index/...
+      coverage-flag: pkg
   test-pkg:
     uses: ./.github/workflows/test.yml
     with:
       test-name: Pkg Tests
-      options: --vv --fail-fast --label-filter \\!slow
+      options: --vv --fail-fast --label-filter \\!slow --skip-package=/pkg/index/
       timeout-minutes: 30
       pkg: ./pkg/...
       coverage-flag: pkg

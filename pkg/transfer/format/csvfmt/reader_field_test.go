@@ -210,6 +210,7 @@ func TestReaderRoundTripRandom(t *testing.T) {
 		} {
 			name := fmt.Sprintf("seed%d/gzip=%v/annotations=%v/max=%d", seed, opts.Gzip, opts.Annotations, opts.MaxFileSize)
 			t.Run(name, func(t *testing.T) {
+				t.Parallel()
 				g := &valueGen{rnd: rand.New(rand.NewSource(seed)), large: seed%2 == 0} //nolint:gosec // a fixed seed keeps failures reproducible.
 				resources, want, cells := randomRows(l, g, 300)
 				sink := &memSink{}
