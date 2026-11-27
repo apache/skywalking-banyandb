@@ -230,7 +230,9 @@ func serializationReservationBytes(batch *vectorized.RecordBatch) (int64, error)
 }
 
 func serializationPreflight(batch *vectorized.RecordBatch) (int64, uint64, bool, error) {
-	retained := vectorized.EstimatedRetainedBytes(batch)
+	// Serialization copies the active rows only, so it is charged for those: a batch a limit has cut to a few rows still holds
+	// the storage of every row it was read with, which the response never contains.
+	retained := vectorized.EstimatedActiveBytes(batch)
 	rows := uint64(batch.ActiveLen())
 	ordered := orderedSerializationSelection(batch)
 	memoryRetained := retained

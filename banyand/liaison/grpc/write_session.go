@@ -59,6 +59,10 @@ const (
 	writeWindowInit = 4
 	writeWindowMin  = 1
 	writeWindowMax  = 16
+	// writeDeadlineGrace is how long before a client deadline a cancellation still counts as the deadline expiring: the
+	// server's deadline is the client's plus the transit time of the request headers, so the client's RST_STREAM can
+	// arrive a little before the server's own deadline timer.
+	writeDeadlineGrace = time.Second
 	// writePressureTimeout bounds the busy retries of a batch when the client stream carries no deadline.
 	writePressureTimeout        = 30 * time.Second
 	defaultWriteRetryBackoff    = 100 * time.Millisecond
@@ -428,15 +432,20 @@ func (s *writeSession) runBatch(b *writeBatch) {
 	defer s.wg.Done()
 	var firstBusy time.Time
 	var limit time.Duration
+	var busyStatus modelv1.Status
 	for attempt := 0; ; attempt++ {
 		out := s.publishOnce(b)
 		if !out.notApplied {
+			if !firstBusy.IsZero() && out.status != modelv1.Status_STATUS_SUCCEED && s.ctx.Err() != nil {
+				s.failIfClientDeadlinePassed(b.node, busyStatus, firstBusy)
+			}
 			s.finishBatch(b, out.status)
 			return
 		}
 		if m := s.deps.metrics; m != nil {
 			m.writeBatchBusyRetry.Inc(1, s.deps.service, out.status.String())
 		}
+		busyStatus = out.status
 		now := time.Now()
 		if firstBusy.IsZero() {
 			firstBusy = now
@@ -468,10 +477,25 @@ func (s *writeSession) runBatch(b *writeBatch) {
 			return
 		case <-s.ctx.Done():
 			timer.Stop()
+			s.failIfClientDeadlinePassed(b.node, busyStatus, firstBusy)
 			s.finishBatch(b, modelv1.Status_STATUS_SERVER_BUSY)
 			return
 		}
 	}
+}
+
+// failIfClientDeadlinePassed fails the session when the client stream's deadline has been reached while the node was busy.
+// When the client's deadline expires, the server sees either its own DeadlineExceeded or the client's RST_STREAM, which
+// is a plain cancellation and can arrive a little before the server's own deadline timer, so the deadline is compared
+// with the clock, with writeDeadlineGrace of tolerance, instead of relying on the context error. A stream that the
+// client cancels earlier than that is not failed.
+func (s *writeSession) failIfClientDeadlinePassed(node string, busyStatus modelv1.Status, firstBusy time.Time) {
+	deadline, ok := s.ctx.Deadline()
+	if !ok || time.Until(deadline) > writeDeadlineGrace {
+		return
+	}
+	s.fail(status.Errorf(codes.ResourceExhausted, "data node %s is unable to accept writes (%s) for %s until the client deadline",
+		node, busyStatus, time.Since(firstBusy)))
 }
 
 // publishOnce sends the batch's rows through a fresh publisher and classifies the outcome. A batch is only reported

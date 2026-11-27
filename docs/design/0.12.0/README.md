@@ -1,5 +1,8 @@
 # 0.12.0 Design Documents
 
+- [Reuse measure merge buffers and keep numeric columns typed](measure-merge-buffer-reuse.md)
+- [Whole-block merge copy experiment (reverted)](stream-measure-block-copy.md)
+- [Merge replay using captured showcase data](showcase-merge-replay.md)
 - [Trace sampling before lifecycle migration](lifecycle-trace-sampling.md)
 - [Measure QL Catalog B: core SQL implementation plan](measure-ql-core-sql/README.md)
   - [PR 1 scope and isolated verification](measure-ql-core-sql/pr1-verification.md)

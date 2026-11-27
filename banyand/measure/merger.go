@@ -346,7 +346,7 @@ func mergeBlocks(closeCh <-chan struct{}, bw *blockWriter, br *blockReader, conf
 		}
 
 		if pendingBlock.bm.seriesID != b.bm.seriesID ||
-			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max <= b.bm.timestamps.min) {
+			(pendingBlock.isFull() && pendingBlock.bm.timestamps.max < b.bm.timestamps.min) {
 			bw.mustWriteBlock(pendingBlock.bm.seriesID, &pendingBlock.block)
 			releaseDecoder()
 			loadAndRename()

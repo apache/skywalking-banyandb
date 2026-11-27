@@ -18,6 +18,8 @@ package trace
 import (
 	"bytes"
 	"context"
+	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -26,9 +28,11 @@ import (
 
 	"github.com/apache/skywalking-banyandb/api/common"
 	"github.com/apache/skywalking-banyandb/banyand/internal/sidx"
+	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/pkg/fs"
 	"github.com/apache/skywalking-banyandb/pkg/logger"
+	pbv1 "github.com/apache/skywalking-banyandb/pkg/pb/v1"
 	"github.com/apache/skywalking-banyandb/pkg/pipeline/sdk"
 	"github.com/apache/skywalking-banyandb/pkg/run"
 	"github.com/apache/skywalking-banyandb/pkg/test"
@@ -100,6 +104,17 @@ func newCeilingTestTable(t *testing.T, fileSystem fs.FileSystem, tmpPath string,
 // returns the published output part (ref=1, caller must decRef).
 func runCeilingMerge(t *testing.T, tst *tsTable, parts []*partWrapper, filter *mergeFilter) *partWrapper {
 	t.Helper()
+	newPart, err := runCeilingMergeWith(tst, parts, filter, nil)
+	require.NoError(t, err)
+	return newPart
+}
+
+// runCeilingMergeWith is runCeilingMerge with a hook that can fail an introduction before it is applied; attempt
+// counts the introductions from 1. An applied introduction releases the sidx output parts, as the real introducer's
+// owner would after publishing them.
+func runCeilingMergeWith(tst *tsTable, parts []*partWrapper, filter *mergeFilter,
+	failIntroduction func(attempt int, mi *mergerIntroduction),
+) (*partWrapper, error) {
 	merged := make(map[uint64]struct{}, len(parts))
 	for _, pw := range parts {
 		merged[pw.ID()] = struct{}{}
@@ -108,7 +123,17 @@ func runCeilingMerge(t *testing.T, tst *tsTable, parts []*partWrapper, filter *m
 	introducerDone := make(chan struct{})
 	go func() {
 		defer close(introducerDone)
+		attempt := 0
 		for mi := range merges {
+			attempt++
+			if failIntroduction != nil {
+				failIntroduction(attempt, mi)
+			}
+			if mi.resultErr == nil {
+				for _, introduction := range mi.sidxMergerIntroduced {
+					introduction.ReleaseNewPart()
+				}
+			}
 			close(mi.applied)
 		}
 	}()
@@ -117,10 +142,9 @@ func runCeilingMerge(t *testing.T, tst *tsTable, parts []*partWrapper, filter *m
 		snapshotCreatorMerger, parts, merged, merges, closeCh,
 		mergeTypeFile, mergeLaneFast, &mergeOverrides{filter: filter},
 	)
-	require.NoError(t, err)
 	close(merges)
 	<-introducerDone
-	return newPart
+	return newPart, err
 }
 
 // readPartTraceIDs reads back the ascending trace-ID sequence a merged part
@@ -738,4 +762,142 @@ func TestFiltersCarryResolvedDropSetBudget(t *testing.T) {
 
 	require.Equal(t, hotFilter.budget, snapshot.Events[0].DropSetBudget,
 		"hot and finalize construction sites must carry the identical resolved budget (spec section 3.4)")
+}
+
+// newRealSidxWithElements builds a real sidx instance whose single mem part (ID
+// partID) holds one encoded trace-ID element per id.
+func newRealSidxWithElements(t *testing.T, fileSystem fs.FileSystem, root string, partID uint64, ids []string) sidx.SIDX {
+	t.Helper()
+	options, err := sidx.NewOptions(root, protector.Nop{})
+	require.NoError(t, err)
+	instance, err := sidx.NewSIDX(fileSystem, options)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, instance.Close()) })
+	reqs := make([]sidx.WriteRequest, 0, len(ids))
+	for idx, id := range ids {
+		reqs = append(reqs, sidx.WriteRequest{
+			SeriesID: common.SeriesID(1),
+			Key:      int64(idx + 1),
+			Data:     append([]byte{byte(idFormatV1)}, id...),
+			Tags:     []sidx.Tag{{Name: "source", Value: []byte(id), ValueType: pbv1.ValueTypeStr}},
+		})
+	}
+	memPart, err := instance.ConvertToMemPart(reqs, 0, nil, nil)
+	require.NoError(t, err)
+	instance.IntroduceMemPart(partID, memPart)
+	return instance
+}
+
+func newSidxPrunedTestTable(t *testing.T, fileSystem fs.FileSystem, tmpPath string, sidxIDs map[string][]string) (*tsTable, *fakeMetricCounter) {
+	t.Helper()
+	// The first input part carries the sidx elements; parts start at ID 100.
+	sidxMap := make(map[string]sidx.SIDX, len(sidxIDs))
+	for name, ids := range sidxIDs {
+		sidxMap[name] = newRealSidxWithElements(t, fileSystem, filepath.Join(tmpPath, "sidx-"+name), 100, ids)
+	}
+	tst := newCeilingTestTable(t, fileSystem, tmpPath, sidxMap)
+	m, ok := (&supplier{omr: observability.BypassRegistry}).newMetrics(common.Position{}).(*metrics)
+	require.True(t, ok)
+	pruned := &fakeMetricCounter{}
+	m.pipelineSidxPruned = pruned
+	tst.metrics = m
+	return tst, pruned
+}
+
+// TestMergeCountsPrunedSidxRows asserts that the sidx rows removed by the drop set, summed over every sidx,
+// are added to pipeline_sidx_pruned once the guard has approved the merge.
+func TestMergeCountsPrunedSidxRows(t *testing.T) {
+	tmpPath, defFn := test.Space(require.New(t))
+	defer defFn()
+	fileSystem := fs.NewLocalFileSystem()
+
+	ids := []string{"trace-a", "trace-b", "trace-c", "trace-d", "trace-e"}
+	parts := buildCeilingTestParts(t, fileSystem, tmpPath, ids)
+	defer func() {
+		for _, pw := range parts {
+			pw.decRef()
+		}
+	}()
+	tst, pruned := newSidxPrunedTestTable(t, fileSystem, tmpPath, map[string][]string{
+		"latency":    {"trace-a", "trace-b", "trace-c"},
+		"start_time": {"trace-a", "trace-a", "trace-b", "trace-d", "trace-e"},
+	})
+
+	guard := &recordingTraceFragmentGuard{}
+	chain := newMergeChain("g", "s", []sdk.Sampler{&fakeSampler{dropIDs: idSet(ids)}}, 0)
+	filter := &mergeFilter{
+		chain: chain, timeout: time.Second, owner: tst, budget: ceilingTestBudget,
+		guard: &traceFragmentGuardSession{guard: guard},
+	}
+	defer filter.chain.close()
+
+	newPart := runCeilingMerge(t, tst, parts, filter)
+	defer newPart.decRef()
+
+	require.ElementsMatch(t, []string{"trace-c", "trace-d", "trace-e"}, readPartTraceIDs(t, newPart))
+	require.Len(t, pruned.calls, 1)
+	require.Equal(t, float64(5), pruned.calls[0].delta,
+		"trace-a and trace-b are dropped: two rows in latency plus three rows in start_time are pruned")
+}
+
+// TestMergeDoesNotCountPrunedSidxRowsWhenOutputIsRejected asserts that a pruned output that is not published
+// leaves pipeline_sidx_pruned untouched and that the lossless retry keeps every trace, whether the guard refuses
+// the output before it reaches the introducer or the introducer rejects it at publication.
+func TestMergeDoesNotCountPrunedSidxRowsWhenOutputIsRejected(t *testing.T) {
+	tests := []struct {
+		rejecting        *rejectingTraceFragmentGuard
+		failIntroduction func(attempt int, mi *mergerIntroduction)
+		name             string
+	}{
+		{
+			name:      "guard refuses before publication",
+			rejecting: &rejectingTraceFragmentGuard{},
+		},
+		{
+			name: "introducer rejects at publication",
+			failIntroduction: func(attempt int, mi *mergerIntroduction) {
+				if attempt == 1 {
+					mi.resultErr = errors.New("rejected at publication")
+					mi.guardRejected = true
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpPath, defFn := test.Space(require.New(t))
+			defer defFn()
+			fileSystem := fs.NewLocalFileSystem()
+
+			ids := []string{"trace-a", "trace-b", "trace-c", "trace-d", "trace-e"}
+			parts := buildCeilingTestParts(t, fileSystem, tmpPath, ids)
+			defer func() {
+				for _, pw := range parts {
+					pw.decRef()
+				}
+			}()
+			tst, pruned := newSidxPrunedTestTable(t, fileSystem, tmpPath, map[string][]string{"latency": ids})
+
+			var guard traceFragmentGuard = &recordingTraceFragmentGuard{}
+			if tt.rejecting != nil {
+				guard = tt.rejecting
+			}
+			chain := newMergeChain("g", "s", []sdk.Sampler{&fakeSampler{dropIDs: idSet(ids)}}, 0)
+			filter := &mergeFilter{
+				chain: chain, timeout: time.Second, owner: tst, budget: ceilingTestBudget,
+				guard: &traceFragmentGuardSession{guard: guard},
+			}
+			defer filter.chain.close()
+
+			newPart, err := runCeilingMergeWith(tst, parts, filter, tt.failIntroduction)
+			require.NoError(t, err)
+			defer newPart.decRef()
+
+			if tt.rejecting != nil {
+				require.Equal(t, 1, tt.rejecting.revalidateCalls)
+			}
+			require.ElementsMatch(t, ids, readPartTraceIDs(t, newPart), "the lossless retry keeps every trace")
+			require.Empty(t, pruned.calls)
+		})
+	}
 }

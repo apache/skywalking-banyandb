@@ -81,6 +81,11 @@ type segment[T TSTable, O any] struct {
 	l        *logger.Logger
 	index    *seriesIndex
 	sLst     atomic.Pointer[[]*shard[T]]
+	// closedSeriesCount caches the series index document count read from disk
+	// while the segment is closed. closeGen counts index closes: closing is the
+	// only point after which the on-disk count can differ, so it drops the cache
+	// and invalidates a read that raced with it.
+	closedSeriesCount atomic.Pointer[int64]
 	*segmentCache
 	indexMetrics *idxmetrics.Metrics
 	lfs          banyanfs.FileSystem
@@ -89,6 +94,7 @@ type segment[T TSTable, O any] struct {
 	suffix        string
 	location      string
 	lastAccessed  atomic.Int64
+	closeGen      atomic.Uint64
 	mu            sync.RWMutex
 	refCount      int32
 	mustBeDeleted uint32
@@ -318,6 +324,42 @@ func (s *segment[T, O]) collectOpenMetrics(shardMetrics Metrics) bool {
 	return true
 }
 
+// openSeriesCount returns the live document count of the segment's series
+// index. It reports false when the segment is closed, and never reopens it.
+func (s *segment[T, O]) openSeriesCount() (int64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.index == nil {
+		return 0, false
+	}
+	count, _ := s.index.Stats()
+	return count, true
+}
+
+// seriesCount returns the document count of the segment's series index. An
+// open segment is read live. A closed segment is read from disk without
+// reopening it and the result is cached until the segment is closed again.
+func (s *segment[T, O]) seriesCount() int64 {
+	if count, open := s.openSeriesCount(); open {
+		return count
+	}
+	if cached := s.closedSeriesCount.Load(); cached != nil {
+		return *cached
+	}
+	gen := s.closeGen.Load()
+	count, err := closedSeriesIndexDocCount(filepath.Join(s.location, seriesIndexDirName))
+	if err != nil {
+		s.l.Debug().Err(err).Str("seg", s.String()).Msg("closed series index has no readable doc count")
+		return 0
+	}
+	s.mu.RLock()
+	if s.index == nil && s.closeGen.Load() == gen {
+		s.closedSeriesCount.Store(&count)
+	}
+	s.mu.RUnlock()
+	return count
+}
+
 // DecRef releases one active reference. Reaching refCount==0 does NOT close the
 // segment -- it becomes dormant (open, reclaimable by the idle reclaimer). The
 // sole exception: a segment flagged for deletion (mustBeDeleted) while held runs
@@ -355,6 +397,8 @@ func (s *segment[T, O]) closeResourcesLocked() {
 			s.closeFailed.Store(true)
 		}
 		s.index = nil
+		s.closeGen.Add(1)
+		s.closedSeriesCount.Store(nil)
 	}
 	if sLst := s.sLst.Load(); sLst != nil {
 		for _, shard := range *sLst {

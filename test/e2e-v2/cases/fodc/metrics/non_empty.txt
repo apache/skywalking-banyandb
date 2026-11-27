@@ -20,7 +20,7 @@
 # This set is intentionally the always-on core; every other reachable metric is
 # presence-checked in presence.txt. Disjoint from presence.txt,
 # documented_gap.txt, and optional_plugin.txt.
-banyandb_system_cpu_num
+banyandb_system_cpu_limit_cores
 banyandb_system_up_time
 go_goroutines
 go_memstats_heap_inuse_bytes
@@ -30,6 +30,7 @@ banyandb_measure_total_written
 banyandb_liaison_grpc_total_started
 banyandb_queue_pub_total_finished
 banyandb_queue_sub_total_finished
+banyandb_liaison_grpc_query_latency_seconds_bucket
 banyandb_queue_pub_total_latency_bucket
 banyandb_queue_sub_total_latency_bucket
 banyandb_queue_pub_total_batch_latency_bucket

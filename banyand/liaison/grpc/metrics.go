@@ -18,8 +18,20 @@
 package grpc
 
 import (
+	"context"
+	"errors"
 	"strings"
+	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
+	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	propertyv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/property/v1"
+	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	tracev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/trace/v1"
 	"github.com/apache/skywalking-banyandb/banyand/liaison/pkg/auth"
 	"github.com/apache/skywalking-banyandb/banyand/observability"
 	"github.com/apache/skywalking-banyandb/pkg/meter"
@@ -50,6 +62,7 @@ type metrics struct {
 	writeBatchBusyRetry  meter.Counter
 	writeBackpressure    meter.Counter
 	writeBatchAckLatency meter.Histogram
+	queryLatency         meter.Histogram
 
 	totalRegistryStarted  meter.Counter
 	totalRegistryFinished meter.Counter
@@ -120,6 +133,7 @@ func newMetrics(factory observability.Factory, rbacFactories ...observability.Fa
 		writeBatchBusyRetry:                factory.NewCounter("write_batch_busy_retry_total", "service", "status"),
 		writeBackpressure:                  factory.NewCounter("write_backpressure_total", "service", "reason"),
 		writeBatchAckLatency:               factory.NewHistogram("write_batch_ack_seconds", meter.DefBuckets, "service"),
+		queryLatency:                       factory.NewHistogram("query_latency_seconds", meter.QueryLatencyBuckets, "service", "status"),
 		totalRegistryStarted:               factory.NewCounter("total_registry_started", "group", "service", "method"),
 		totalRegistryFinished:              factory.NewCounter("total_registry_finished", "group", "service", "method"),
 		totalRegistryErr:                   factory.NewCounter("total_registry_err", "group", "service", "method"),
@@ -148,6 +162,11 @@ func newMetrics(factory observability.Factory, rbacFactories ...observability.Fa
 	result.rbacDecisions = rbacFactory.NewCounter("rbac_decisions_total", "decision", "permission", "method", "reason")
 	result.rbacPolicyReload = rbacFactory.NewCounter("rbac_policy_reload_total", "result")
 	result.rbacPolicyRevision = rbacFactory.NewGauge("rbac_policy_revision")
+	// Create the event counters at zero so increase() sees their first event.
+	result.totalPanic.Inc(0)
+	for _, service := range []string{"measure", "stream", "trace"} {
+		result.totalStreamErr.Inc(0, service, "write")
+	}
 	return result
 }
 
@@ -192,4 +211,63 @@ func (m *metrics) updateBufferSizeMetrics(connSize, streamSize int32) {
 // self-observability does not collide on the _monitoring measure schema.
 func (m *metrics) updateMemoryState(state int) {
 	m.memoryLoadSheddingState.Set(float64(state))
+}
+
+// recordWriteStreamErr counts a write stream once when the receive loop's error err or the session's finishErr is an
+// error other than a cancellation or an expired deadline. Client errors, such as a missing first-message
+// metadata, are counted too. A cancellation or an expired deadline from the receive loop does not hide a session
+// failure: when the data node stayed busy until the client deadline, the session fails with ResourceExhausted and the
+// stream is counted.
+func recordWriteStreamErr(m *metrics, service string, err, finishErr error) {
+	if isWriteStreamErr(err) || isWriteStreamErr(finishErr) {
+		m.totalStreamErr.Inc(1, service, "write")
+	}
+}
+
+// queryLatencyServices maps the query RPCs the liaison serves to the service label of query_latency_seconds.
+var queryLatencyServices = map[string]string{
+	measurev1.MeasureService_Query_FullMethodName:   "measure",
+	measurev1.MeasureService_TopN_FullMethodName:    "topn",
+	streamv1.StreamService_Query_FullMethodName:     "stream",
+	tracev1.TraceService_Query_FullMethodName:       "trace",
+	propertyv1.PropertyService_Query_FullMethodName: "property",
+	bydbqlv1.BydbQLService_Query_FullMethodName:     "bydbql",
+}
+
+// newQueryLatencyInterceptor observes query_latency_seconds once per query RPC received from a client, with the status
+// ok, err, canceled when the client canceled, or deadline_exceeded when its deadline expired. It is a
+// gRPC interceptor so that BydbQL, which calls the measure, stream, trace and property handlers as Go methods,
+// is observed only under its own service.
+func newQueryLatencyInterceptor(m *metrics) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+		service, ok := queryLatencyServices[info.FullMethod]
+		if !ok {
+			return handler(ctx, req)
+		}
+		start := time.Now()
+		resp, err := handler(ctx, req)
+		state := "ok"
+		if err != nil {
+			// The status follows the request context, not the error: the distributed stream, trace and TopN paths
+			// return wrapped errors that carry no gRPC code and do not unwrap to a context error.
+			state = "err"
+			switch {
+			case errors.Is(ctx.Err(), context.DeadlineExceeded):
+				state = "deadline_exceeded"
+			case ctx.Err() != nil:
+				state = "canceled"
+			}
+		}
+		m.queryLatency.Observe(time.Since(start).Seconds(), service, state)
+		return resp, err
+	}
+}
+
+// isWriteStreamErr reports whether err is an error rather than nil, a cancellation or an expired deadline.
+func isWriteStreamErr(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	code := status.Code(err)
+	return code != codes.Canceled && code != codes.DeadlineExceeded
 }

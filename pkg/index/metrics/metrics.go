@@ -136,6 +136,7 @@ func (m *Metrics) DeleteAll(labelValues ...string) {
 	m.curOnDiskBytes.Delete(labelValues...)
 	m.curOnDiskFiles.Delete(labelValues...)
 	m.nativeSnapshotBytes.Delete(labelValues...)
+	m.totalDocCount.Delete(labelValues...)
 
 	m.cacheGetCalls.Delete(labelValues...)
 	m.cacheSetCalls.Delete(labelValues...)

@@ -280,6 +280,7 @@ func (s *streamService) Write(stream streamv1.StreamService_WriteServer) error {
 	if dl := s.l.Debug(); dl.Enabled() {
 		dl.Int("total_requests", requestCount).Msg("completed stream write stream")
 	}
+	recordWriteStreamErr(s.metrics, "stream", err, finishErr)
 	s.metrics.totalStreamFinished.Inc(1, "stream", "write")
 	s.metrics.totalStreamLatency.Inc(time.Since(start).Seconds(), "stream", "write")
 	return err

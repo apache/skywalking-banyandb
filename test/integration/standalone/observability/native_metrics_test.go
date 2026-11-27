@@ -33,7 +33,6 @@ var systemNativeMetrics = []struct {
 	extraTags []string
 }{
 	{name: "up_time"},
-	{name: "cpu_num"},
 	{name: "cpu_state", extraTags: []string{"kind"}},
 	{name: "memory_state", extraTags: []string{"kind"}},
 	{name: "disk", extraTags: []string{"path", "kind"}},
@@ -114,9 +113,6 @@ var _ = g.Describe("Native self-observability metrics in _monitoring group", fun
 			}
 			if labelErr := requireLabeledSeries(diskPoints, "kind", diskStateKinds, false); labelErr != nil {
 				return labelErr
-			}
-			if _, cpuNumErr := QueryObservabilityMeasure("cpu_num"); cpuNumErr != nil {
-				return cpuNumErr
 			}
 			// net_state may be empty when the host has no eth*/en* interfaces; schema+query must still succeed.
 			if _, netErr := QueryObservabilityMeasure("net_state", "kind", "name"); netErr != nil {

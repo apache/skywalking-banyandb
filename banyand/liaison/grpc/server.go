@@ -666,6 +666,7 @@ func (s *server) Serve() run.StopNotify {
 	}
 	unaryChain = append(unaryChain,
 		grpc_validator.UnaryServerInterceptor(),
+		newQueryLatencyInterceptor(s.metrics),
 		recovery.UnaryServerInterceptor(recovery.WithRecoveryHandlerContext(grpcPanicRecoveryHandler)),
 	)
 	if s.protector != nil {

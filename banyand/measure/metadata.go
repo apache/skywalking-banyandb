@@ -881,6 +881,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 		SegmentInterval: storage.MustToIntervalRule(ro.SegmentInterval),
 		Location:        path.Join(s.path, group),
 		Option:          s.option,
+		Collect:         (*tsTable).collectUnsynced,
 		Metrics:         metrics,
 		MetricsFactory:  metricsFactory,
 		SubQueueCreator: newWriteQueue,
@@ -904,7 +905,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 
 func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observability.Factory) {
 	factory := s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues())))
-	return &metrics{
+	m := &metrics{
 		totalWritten:               factory.NewCounter("total_written"),
 		totalBatch:                 factory.NewCounter("total_batch"),
 		totalBatchIntroLatency:     factory.NewCounter("total_batch_intro_time"),
@@ -932,6 +933,7 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 		totalMergedParts:           factory.NewCounter("total_merged_parts", "type"),
 		totalMergeLatency:          factory.NewCounter("total_merge_latency", "type"),
 		totalMerged:                factory.NewCounter("total_merged", "type"),
+		totalSyncFailedParts:       factory.NewCounter("total_sync_failed_parts"),
 		tbMetrics: tbMetrics{
 			totalMemParts:                  factory.NewGauge("total_mem_part", common.ShardLabelNames()...),
 			totalMemElements:               factory.NewGauge("total_mem_elements", common.ShardLabelNames()...),
@@ -944,8 +946,13 @@ func (s *queueSupplier) newMetrics(p common.Position) (storage.Metrics, observab
 			totalFilePartBytes:             factory.NewGauge("total_file_part_bytes", common.ShardLabelNames()...),
 			totalFilePartUncompressedBytes: factory.NewGauge("total_file_part_uncompressed_bytes", common.ShardLabelNames()...),
 			pendingDataCount:               factory.NewGauge("pending_data_count", common.ShardLabelNames()...),
+			unsyncedParts:                  factory.NewGauge("unsynced_parts", common.ShardLabelNames()...),
+			oldestUnsyncedPartAgeSeconds:   factory.NewGauge("oldest_unsynced_part_age_seconds", common.ShardLabelNames()...),
 		},
-	}, factory
+	}
+	// Create the series at zero so increase() sees the first failure.
+	m.totalSyncFailedParts.Inc(0)
+	return m, factory
 }
 
 // GetTopNSchema returns the schema of the topN result measure.

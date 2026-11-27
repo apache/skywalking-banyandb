@@ -157,8 +157,8 @@ const (
 )
 
 // column holds the rows of one tag or field. Rows live either in values (the
-// default) or, for a null-free int64/float64 column read for a query with typed
-// decoding enabled, in int64s/float64s. form says which one is populated, and
+// default) or, for a null-free int64/float64 column read with typed decoding
+// enabled, in int64s/float64s. form says which one is populated, and
 // the other representations are always empty.
 type column struct {
 	name      string
@@ -244,6 +244,74 @@ func (c *column) copyRowsFrom(src *column, start, end int) {
 	}
 }
 
+// appendRowsFrom appends rows while retaining a compatible numeric form. Byte
+// rows keep their existing ownership; typed rows are copied into owned storage.
+func (c *column) appendRowsFrom(src *column, start, end int) {
+	if start == end {
+		return
+	}
+	if c.rowCount() == 0 {
+		c.form = src.form
+	}
+	if c.form == src.form {
+		c.copyRowsFrom(src, start, end)
+		return
+	}
+	c.materializeBytes()
+	if src.form == numericFormBytes {
+		c.values = append(c.values, src.values[start:end]...)
+		return
+	}
+	c.appendNumericBytes(src, start, end)
+}
+
+// appendNulls pads a missing column. Nullable columns use the existing byte form.
+func (c *column) appendNulls(count int) {
+	if count == 0 {
+		return
+	}
+	c.materializeBytes()
+	c.values = append(c.values, make([][]byte, count)...)
+}
+
+// truncateRows rolls back an append, dropping references to discarded byte rows.
+func (c *column) truncateRows(count int) {
+	switch c.form {
+	case numericFormInt64:
+		c.int64s = c.int64s[:count]
+	case numericFormFloat64:
+		c.float64s = c.float64s[:count]
+	case numericFormBytes:
+		clear(c.values[count:])
+		c.values = c.values[:count]
+	}
+}
+
+// materializeBytes changes typed rows to byte-backed rows with one payload
+// allocation. The payload is not reused: other merge blocks may retain its rows.
+func (c *column) materializeBytes() {
+	if c.form == numericFormBytes {
+		return
+	}
+	c.appendNumericBytes(c, 0, c.rowCount())
+	c.clearNumeric()
+}
+
+func (c *column) appendNumericBytes(src *column, start, end int) {
+	payload := make([]byte, 0, 8*(end-start))
+	oldLen := len(c.values)
+	c.values = append(c.values, make([][]byte, end-start)...)
+	for i := start; i < end; i++ {
+		offset := len(payload)
+		if src.form == numericFormInt64 {
+			payload = convert.AppendInt64Bytes(payload, src.int64s[i])
+		} else {
+			payload = convert.AppendFloat64Bytes(payload, src.float64s[i])
+		}
+		c.values[oldLen+i-start] = payload[offset:len(payload):len(payload)]
+	}
+}
+
 func (c *column) resizeValues(valuesLen int) [][]byte {
 	values := c.values
 	if n := valuesLen - cap(values); n > 0 {
@@ -281,24 +349,23 @@ func (c *column) mustWriteTo(cm *columnMetadata, columnWriter *writer) {
 }
 
 func (c *column) encodeInt64Column(bb *bytes.Buffer) {
-	// convert byte array to int64 array
-	intValuesPtr := generateInt64Slice(len(c.values))
-	intValues := *intValuesPtr
-	defer releaseInt64Slice(intValuesPtr)
+	intValues := c.int64s
 	var encodeType encoding.EncodeType
-
-	for i, v := range c.values {
-		if v == nil || string(v) == "null" {
-			c.encodeDefault(bb)
-			encodeType = encoding.EncodeTypePlain
-			// Prepend encodeType (1 byte) to the beginning
-			bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
-			return
+	if c.form != numericFormInt64 {
+		intValuesPtr := generateInt64Slice(len(c.values))
+		intValues = *intValuesPtr
+		defer releaseInt64Slice(intValuesPtr)
+		for i, v := range c.values {
+			if v == nil || string(v) == "null" {
+				c.encodeDefault(bb)
+				bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
+				return
+			}
+			if len(v) != 8 {
+				logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
+			}
+			intValues[i] = convert.BytesToInt64(v)
 		}
-		if len(v) != 8 {
-			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
-		}
-		intValues[i] = convert.BytesToInt64(v)
 	}
 	// use delta encoding for integer column
 	var firstValue int64
@@ -315,34 +382,33 @@ func (c *column) encodeInt64Column(bb *bytes.Buffer) {
 }
 
 func (c *column) encodeFloat64Column(bb *bytes.Buffer) {
-	// convert byte array to float64 array
-	intValuesPtr := generateInt64Slice(len(c.values))
+	intValuesPtr := generateInt64Slice(c.rowCount())
 	intValues := *intValuesPtr
 	defer releaseInt64Slice(intValuesPtr)
 
-	floatValuesPtr := generateFloat64Slice(len(c.values))
-	floatValues := *floatValuesPtr
-	defer releaseFloat64Slice(floatValuesPtr)
-
-	var encodeType encoding.EncodeType
-
 	doEncodeDefault := func() {
+		c.materializeBytes()
 		c.encodeDefault(bb)
-		encodeType = encoding.EncodeTypePlain
-		// Prepend encodeType (1 byte) to the beginning
-		bb.Buf = append([]byte{byte(encodeType)}, bb.Buf...)
+		bb.Buf = append([]byte{byte(encoding.EncodeTypePlain)}, bb.Buf...)
 	}
 
-	for i, v := range c.values {
-		if v == nil || string(v) == "null" {
-			doEncodeDefault()
-			return
+	floatValues := c.float64s
+	if c.form != numericFormFloat64 {
+		floatValuesPtr := generateFloat64Slice(len(c.values))
+		floatValues = *floatValuesPtr
+		defer releaseFloat64Slice(floatValuesPtr)
+		for i, v := range c.values {
+			if v == nil || string(v) == "null" {
+				doEncodeDefault()
+				return
+			}
+			if len(v) != 8 {
+				logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
+			}
+			floatValues[i] = convert.BytesToFloat64(v)
 		}
-		if len(v) != 8 {
-			logger.Panicf("invalid value length at index %d: expected 8 bytes, got %d", i, len(v))
-		}
-		floatValues[i] = convert.BytesToFloat64(v)
 	}
+	var encodeType encoding.EncodeType
 	intValues, exp, err := encoding.Float64ListToDecimalIntList(intValues[:0], floatValues)
 	if err != nil {
 		logger.Errorf("cannot convert Float64List to DecimalIntList : %v", err)
@@ -381,7 +447,7 @@ func (c *column) encodeDefault(bb *bytes.Buffer) {
 // int64/float64 column is decoded straight into c.int64s/c.float64s instead of
 // per-row bytes; every other column, and every column when typedNumeric is false,
 // is decoded into c.values. Only readers that understand numericForm (the
-// vectorized query path) may pass true.
+// vectorized query path and ordinary merge path) may pass true.
 func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.Reader, cm columnMetadata, count uint64, typedNumeric bool) {
 	c.name = cm.name
 	c.valueType = cm.valueType
@@ -404,7 +470,7 @@ func (c *column) mustReadValues(decoder *encoding.BytesBlockDecoder, reader fs.R
 	c.decodeColumnValues(decoder, reader.Path(), count, bb, typedNumeric)
 }
 
-func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64) {
+func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *seqReader, cm columnMetadata, count uint64, typedNumeric bool) {
 	c.name = cm.name
 	c.valueType = cm.valueType
 	c.clearNumeric()
@@ -421,7 +487,7 @@ func (c *column) mustSeqReadValues(decoder *encoding.BytesBlockDecoder, reader *
 
 	bb.Buf = bytes.ResizeOver(bb.Buf, int(valuesSize))
 	reader.mustReadFull(bb.Buf)
-	c.decodeColumnValues(decoder, reader.Path(), count, bb, false)
+	c.decodeColumnValues(decoder, reader.Path(), count, bb, typedNumeric)
 }
 
 func (c *column) decodeColumnValues(decoder *encoding.BytesBlockDecoder, path string, count uint64, bb *bytes.Buffer, typedNumeric bool) {
