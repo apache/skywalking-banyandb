@@ -49,6 +49,7 @@ type vectorizedTraceQueryResult struct {
 	finishResultSpan func(int, error)
 	recordResult     func(*model.TraceResult)
 	err              error
+	loader           *traceGroupLoader
 	results          []*model.TraceResult
 	segments         []storage.Segment[*tsTable, option]
 	idx              int
@@ -64,16 +65,23 @@ func newVectorizedTraceQueryResult(
 	finishResultSpan func(int, error),
 	recordResult func(*model.TraceResult),
 ) (*vectorizedTraceQueryResult, error) {
-	results, materializeErr := materializeVectorizedTraceResults(ctx, batch, qo)
-	releaseVectorizedScanBatch(batch)
-	if materializeErr != nil {
-		return nil, materializeErr
+	if batch != nil && batch.err != nil {
+		releaseVectorizedScanBatch(batch)
+		return nil, batch.err
+	}
+	loader := newTraceGroupLoader(batch, qo)
+	// The first group loads now, so a query that cannot be answered fails here, before it returns a result.
+	results, loadErr := loader.load(ctx)
+	if loadErr != nil {
+		loader.release(ctx)
+		return nil, loadErr
 	}
 	return &vectorizedTraceQueryResult{
 		ctx:              ctx,
 		cancel:           cancel,
 		finishResultSpan: finishResultSpan,
 		recordResult:     recordResult,
+		loader:           loader,
 		results:          results,
 		segments:         segments,
 	}, nil
@@ -89,8 +97,17 @@ func (r *vectorizedTraceQueryResult) Pull() *model.TraceResult {
 	if r.err != nil {
 		return &model.TraceResult{Error: r.err}
 	}
-	if r.idx >= len(r.results) {
-		return nil
+	for r.idx >= len(r.results) {
+		if r.loader == nil || r.loader.exhausted() {
+			return nil
+		}
+		// The group in hand is fully handed out: load the next one, which returns the budget of this one first.
+		group, loadErr := r.loader.load(r.ctx)
+		if loadErr != nil {
+			r.err = loadErr
+			return &model.TraceResult{Error: r.err}
+		}
+		r.results, r.idx = group, 0
 	}
 	result := r.results[r.idx]
 	r.idx++
@@ -106,6 +123,10 @@ func (r *vectorizedTraceQueryResult) Release() {
 	}
 	r.released = true
 	traceQueryResultTracker.Release(r)
+	if r.loader != nil {
+		r.loader.release(r.ctx)
+		r.loader = nil
+	}
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -175,6 +196,20 @@ func assembleVectorizedTraceResults(
 	schemaTagTypes map[string]pbv1.ValueType,
 	budgetBytes int64,
 ) ([]*model.TraceResult, error) {
+	results, _, err := assembleVectorizedTraceResultsCharged(ctx, batch, tagCols, schemaTagTypes, budgetBytes)
+	return results, err
+}
+
+// assembleVectorizedTraceResultsCharged is assembleVectorizedTraceResults that also returns the bytes it charged to the
+// query lease, so a caller that gives the results up can refund them, on failure too.
+func assembleVectorizedTraceResultsCharged(
+	ctx context.Context,
+	batch *scanBatch,
+	tagCols []string,
+	schemaTagTypes map[string]pbv1.ValueType,
+	budgetBytes int64,
+) ([]*model.TraceResult, uint64, error) {
+	var charged uint64
 	known := make(map[string]struct{}, len(batch.traceIDsOrder))
 	for _, tid := range batch.traceIDsOrder {
 		known[tid] = struct{}{}
@@ -189,17 +224,17 @@ func assembleVectorizedTraceResults(
 		cursor := batch.cursors[i]
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			releaseRemainingBlockCursors(batch, i)
-			return nil, fmt.Errorf("interrupt while loading trace data: %w", ctxErr)
+			return nil, charged, fmt.Errorf("interrupt while loading trace data: %w", ctxErr)
 		}
 		if budgetBytes > 0 {
 			if usedBytes >= budgetBytes {
 				releaseRemainingBlockCursors(batch, i)
-				return nil, fmt.Errorf("%w: used %d bytes, budget %d bytes", errVectorizedTraceQueryMemoryBudgetExceeded, usedBytes, budgetBytes)
+				return nil, charged, fmt.Errorf("%w: used %d bytes, budget %d bytes", errVectorizedTraceQueryMemoryBudgetExceeded, usedBytes, budgetBytes)
 			}
 			remainingBytes := budgetBytes - usedBytes
 			if usedBytes > 0 && cursor.bm.uncompressedSpanSizeBytes > uint64(remainingBytes) {
 				releaseRemainingBlockCursors(batch, i)
-				return nil, fmt.Errorf(
+				return nil, charged, fmt.Errorf(
 					"%w: used %d bytes, next block estimates %d bytes, budget %d bytes",
 					errVectorizedTraceQueryMemoryBudgetExceeded, usedBytes, cursor.bm.uncompressedSpanSizeBytes, budgetBytes,
 				)
@@ -210,8 +245,9 @@ func assembleVectorizedTraceResults(
 		tmpBlock.reset()
 		if chargeErr := query.Charge(ctx, cursor.bm.uncompressedSpanSizeBytes); chargeErr != nil {
 			releaseRemainingBlockCursors(batch, i)
-			return nil, chargeErr
+			return nil, charged, chargeErr
 		}
+		charged += cursor.bm.uncompressedSpanSizeBytes
 		tmpBlock.mustReadFrom(&cursor.tagValuesDecoder, cursor.p, cursor.bm)
 		if len(tmpBlock.spans) == 0 {
 			releaseBlockCursor(cursor)
@@ -293,7 +329,7 @@ func assembleVectorizedTraceResults(
 		}
 		results = append(results, result)
 	}
-	return results, nil
+	return results, charged, nil
 }
 
 func releaseRemainingBlockCursors(batch *scanBatch, start int) {

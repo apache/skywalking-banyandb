@@ -75,3 +75,35 @@ func TestEstimatedRetainedBytesChargesLargeValueOnce(t *testing.T) {
 	}
 	require.Less(t, withTag, uint64(2*payload), "a 1.5 MB value must not be charged several times over")
 }
+
+// A batch a limit has cut to one row still holds the storage of the rows it was read with: the estimate of its active rows
+// counts the row that is left and not the others, while the retained estimate keeps counting all of them.
+func TestEstimatedActiveBytesCountsOnlyTheSelectedRows(t *testing.T) {
+	const (
+		rows    = 64
+		payload = 8 << 10
+	)
+	text := NewStringColumn(rows)
+	numbers := NewInt64Column(rows)
+	for i := 0; i < rows; i++ {
+		text.Append(string(make([]byte, payload)))
+		numbers.Append(int64(i))
+	}
+	batch := &RecordBatch{Columns: []Column{text, numbers}, Len: rows}
+	all := EstimatedActiveBytes(batch)
+	require.GreaterOrEqual(t, all, uint64(rows*payload), "with no selection every row is active")
+	require.GreaterOrEqual(t, EstimatedRetainedBytes(batch), uint64(rows*payload))
+
+	batch.Selection = []uint16{5}
+	one := EstimatedActiveBytes(batch)
+	require.Less(t, one, uint64(2*payload), "one active row of %d bytes must not be charged for the other %d", payload, rows-1)
+	require.GreaterOrEqual(t, one, uint64(payload))
+	require.GreaterOrEqual(t, EstimatedRetainedBytes(batch), uint64(rows*payload), "the retained estimate still counts what the batch holds")
+
+	batch.Selection = []uint16{}
+	require.Less(t, EstimatedActiveBytes(batch), uint64(payload), "no active row, no payload")
+}
+
+func TestEstimatedActiveBytesOfNilBatch(t *testing.T) {
+	require.Zero(t, EstimatedActiveBytes(nil))
+}

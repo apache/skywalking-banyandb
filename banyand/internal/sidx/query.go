@@ -638,6 +638,7 @@ func (s *sidx) buildCursorsForBatch(
 					effectiveReq, effectiveTagsToLoad := requestForPart(req, tagsToLoad, bsResult.p)
 					bc := generateBlockCursor()
 					bc.init(bsResult.p, &bsResult.bm, effectiveReq)
+					bc.holdCharge(ctx, bsResult.bm.uncompressedSize)
 
 					if s.loadBlockCursor(bc, tmpBlock, bsResult, effectiveTagsToLoad, effectiveReq, s.pm, metrics) {
 						if asc {
@@ -732,6 +733,7 @@ func (s *sidx) buildCursorsForBatchSync(
 		effectiveReq, effectiveTagsToLoad := requestForPart(req, tagsToLoad, bsResult.p)
 		bc := generateBlockCursor()
 		bc.init(bsResult.p, &bsResult.bm, effectiveReq)
+		bc.holdCharge(ctx, bsResult.bm.uncompressedSize)
 		if s.loadBlockCursor(bc, tmpBlock, bsResult, effectiveTagsToLoad, effectiveReq, s.pm, metrics) {
 			if asc {
 				bc.idx = 0

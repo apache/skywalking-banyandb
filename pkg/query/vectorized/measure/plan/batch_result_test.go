@@ -19,6 +19,7 @@ package plan
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -26,6 +27,7 @@ import (
 	"github.com/apache/skywalking-banyandb/api/data"
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
+	"github.com/apache/skywalking-banyandb/pkg/query"
 	"github.com/apache/skywalking-banyandb/pkg/query/executor"
 	"github.com/apache/skywalking-banyandb/pkg/query/vectorized"
 	vmeasure "github.com/apache/skywalking-banyandb/pkg/query/vectorized/measure"
@@ -134,4 +136,48 @@ func TestBatchBoundaryThousandQueriesReleaseAllOwnersAndReservations(t *testing.
 	require.Equal(t, before, vectorized.OutstandingOwnerPins())
 	require.Equal(t, initial, vectorized.QueryMemoryStats().LiveReservedBytes)
 	require.Equal(t, handles, vmeasure.BatchExecutionStats().LiveResults)
+}
+
+// countingLease is an unlimited query lease that records the most it was charged at once.
+type countingLease struct {
+	used atomic.Uint64
+	peak atomic.Uint64
+}
+
+func (l *countingLease) Charge(bytes uint64) error {
+	used := l.used.Add(bytes)
+	for {
+		peak := l.peak.Load()
+		if used <= peak || l.peak.CompareAndSwap(peak, used) {
+			return nil
+		}
+	}
+}
+
+func (l *countingLease) Refund(bytes uint64) { l.used.Add(^(bytes - 1)) }
+func (*countingLease) Limit() uint64         { return 1 << 40 }
+func (l *countingLease) Used() uint64        { return l.used.Load() }
+func (l *countingLease) Owner() any          { return l }
+
+// A rows query on the liaison hands back to its lease what it releases: the decoded chunks are let go as the rows are
+// serialized, and a lease that only accumulated charged every stage of the query in full, about three times what it held at once.
+func TestRowsQueryLeaseFollowsWhatTheQueryHolds(t *testing.T) {
+	previous := data.MeasureWireModeRaw()
+	data.SetMeasureWireModeRaw(true)
+	t.Cleanup(func() { data.SetMeasureWireModeRaw(previous) })
+	plan := batchBoundaryPlan(t)
+	lease := &countingLease{}
+	ctx := executor.WithDistributedExecutionContext(query.WithBudgetLease(t.Context(), lease), &fakeCluster{nodes: 2, build: rowsBatch})
+	result, err := plan.ExecuteBatches(ctx)
+	require.NoError(t, err)
+	for {
+		batch, pullErr := result.NextBatch(ctx)
+		require.NoError(t, pullErr)
+		if batch == nil {
+			break
+		}
+	}
+	require.NoError(t, result.Close())
+	require.NotZero(t, lease.peak.Load(), "the query charged its chunks to the lease")
+	require.Zero(t, lease.Used(), "and the lease holds nothing once the chunks are released")
 }

@@ -364,3 +364,45 @@ func TestSerializationUnsortedUniqueKeepsExactCopyResidency(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, duplicated, ascending, "repeated payload copies must increase the preallocation guard")
 }
+
+// A response is charged for the rows it carries. A batch a limit has cut to one row still holds the storage of every row it
+// was read with; reserving for all of them made a limit of 1 over 8 KiB values ask for the whole batch, four times over.
+func TestSerializationReservationFollowsTheActiveRows(t *testing.T) {
+	const (
+		rows    = 256
+		payload = 8 << 10
+	)
+	schema := vectorized.NewBatchSchema([]vectorized.ColumnDef{
+		{Role: vectorized.RoleTimestamp, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleVersion, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleSeriesID, Type: vectorized.ColumnTypeInt64},
+		{Role: vectorized.RoleTag, Name: "id", TagFamily: "default", Type: vectorized.ColumnTypeString},
+	})
+	batch := vectorized.NewRecordBatch(schema, rows)
+	for i := 0; i < rows; i++ {
+		for col := 0; col < 3; col++ {
+			batch.Columns[col].(*vectorized.TypedColumn[int64]).Append(int64(i))
+		}
+		batch.Columns[3].(*vectorized.TypedColumn[string]).Append(string(make([]byte, payload)))
+	}
+	batch.Len = rows
+
+	all, err := serializationReservationBytes(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all < int64(rows*payload) {
+		t.Fatalf("a batch of %d rows of %d bytes reserved only %d bytes", rows, payload, all)
+	}
+	batch.Selection = []uint16{rows - 1}
+	one, err := serializationReservationBytes(batch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one > 16*payload {
+		t.Fatalf("one row of %d bytes reserved %d bytes: the rows the limit dropped are charged too", payload, one)
+	}
+	if one < payload {
+		t.Fatalf("one row of %d bytes reserved only %d bytes", payload, one)
+	}
+}
