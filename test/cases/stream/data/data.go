@@ -84,14 +84,14 @@ func collectWriteStatuses(writeClient streamv1.StreamService_WriteClient) []stri
 	return statuses
 }
 
-// expectWriteSucceeded drains writeClient and asserts every row in this write attempt
-// succeeded. A schema barrier is only a hint under eventual consistency: the liaison's
-// own write cache can still lag it for a moment, so a write that races that lag is
-// refused by status (e.g. STATUS_NOT_FOUND), not a stream error. Call this from inside a
-// gm.Eventually so that refusal is retried; only a refusal that persists past
+// ExpectWriteSucceeded drains writeClient, asserts every row in this write attempt
+// succeeded and returns the row statuses. A schema barrier is only a hint under eventual
+// consistency: the liaison's own write cache can still lag it for a moment, so a write that
+// races that lag is refused by status (e.g. STATUS_NOT_FOUND), not a stream error. Call this
+// from inside a gm.Eventually so that refusal is retried; only a refusal that persists past
 // flags.EventuallyTimeout, or a batch that is only partially accepted (gm.StopTrying —
 // resending would duplicate the already-accepted rows), is a real failure.
-func expectWriteSucceeded(innerGm gm.Gomega, writeClient streamv1.StreamService_WriteClient) {
+func ExpectWriteSucceeded(innerGm gm.Gomega, writeClient streamv1.StreamService_WriteClient) []string {
 	statuses := collectWriteStatuses(writeClient)
 	innerGm.Expect(statuses).NotTo(gm.BeEmpty())
 	succeeded := 0
@@ -104,6 +104,7 @@ func expectWriteSucceeded(innerGm gm.Gomega, writeClient streamv1.StreamService_
 		gm.StopTrying(fmt.Sprintf("stream write partially rejected; statuses=%v", statuses)).Now()
 	}
 	innerGm.Expect(succeeded).To(gm.Equal(len(statuses)), "stream write rejected; statuses=%v", statuses)
+	return statuses
 }
 
 // VerifyFn verify whether the query response matches the wanted result.
@@ -354,7 +355,7 @@ func WriteToGroup(conn *grpclib.ClientConn, name, group, fileName string, baseTi
 		elementCounter := 0
 		loadData(writeClient, metadata, fmt.Sprintf("%s.json", fileName), baseTime, interval, &elementCounter)
 		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-		expectWriteSucceeded(innerGm, writeClient)
+		ExpectWriteSucceeded(innerGm, writeClient)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
@@ -408,7 +409,7 @@ func WriteMixed(conn *grpclib.ClientConn, baseTime time.Time, interval time.Dura
 		}
 
 		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-		expectWriteSucceeded(innerGm, writeClient)
+		ExpectWriteSucceeded(innerGm, writeClient)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
 
@@ -530,6 +531,6 @@ func WriteDeduplicationTest(conn *grpclib.ClientConn, name string, baseTime time
 		innerGm.Expect(writeErr).NotTo(gm.HaveOccurred())
 		loadDataWithElementIDMap(writeClient, metadata, fmt.Sprintf("%s.json", name), baseTime, interval)
 		innerGm.Expect(writeClient.CloseSend()).To(gm.Succeed())
-		expectWriteSucceeded(innerGm, writeClient)
+		ExpectWriteSucceeded(innerGm, writeClient)
 	}, flags.EventuallyTimeout).Should(gm.Succeed())
 }
