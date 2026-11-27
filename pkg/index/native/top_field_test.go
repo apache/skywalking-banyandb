@@ -195,6 +195,8 @@ func TestTopFieldHitsMatchesExhaustiveSort(t *testing.T) {
 			for _, storage := range []struct{ persisted, merged bool }{{false, false}, {true, false}, {true, true}} {
 				name := fmt.Sprintf("%s/ladder=%s/persisted=%v/merged=%v", shapeName, mode, storage.persisted, storage.merged)
 				t.Run(name, func(t *testing.T) {
+					// Each subtest owns its fixture and random source, and nothing here reads ladderDescents.
+					t.Parallel()
 					rng := rand.New(rand.NewSource(5)) //nolint:gosec // deterministic test data
 					owner := newTopFieldFixture(t, storage.persisted, storage.merged, randomTopFieldBatches(rng, shape, mode))
 					view, err := owner.Acquire(context.Background())
