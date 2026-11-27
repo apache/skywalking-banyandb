@@ -55,7 +55,7 @@ The total number of CPU cores available to the selected nodes: the sum of each n
 
 ### Total Memory Used
 
-The total resident memory used across the selected nodes, in bytes.
+The total resident memory (RSS) of the selected BanyanDB processes, in bytes. This is the processes' own memory, not the host's, so adding nodes together gives a meaningful total.
 
 **Expression**: `sum(process_resident_memory_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
 
@@ -78,7 +78,7 @@ A single table joining the key per-node signals so an unhealthy node stands out 
 - Uptime — `banyandb_system_up_time{…}`
 - CPU (cores) — `sum(rate(process_cpu_seconds_total{…}[$__rate_interval])) by (pod_name)`
 - RSS — `sum(process_resident_memory_bytes{…}) by (pod_name)`
-- Memory % — `max(banyandb_system_memory_state{…, kind="used_percent"}) by (pod_name)`
+- Host Mem % — `max(banyandb_system_memory_state{…, kind="used_percent"}) by (pod_name)` (the host's memory, see **Host Memory %**)
 - Disk % — `max by (pod_name) (banyandb_system_disk{…, kind="used_percent"})`
 
 ## Resources
@@ -97,11 +97,34 @@ Resident set size per node, in bytes. The peak over the rate interval is used so
 
 **Expression**: `max by (pod_name) (max_over_time(process_resident_memory_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}[$__rate_interval]))`
 
-### System Memory %
+### Host Memory %
 
-The fraction of host memory used per node. As process memory approaches the memory protector limit (`--allowed-percent`, default 75% of the cgroup limit), query execution is throttled, so high memory surfaces as query slowdown first.
+The fraction of the **host** (machine) memory in use, per node. `banyandb_system_memory_state` (`kind` is `total`, `used` or `used_percent`) reads the memory of the machine the pod runs on, not the pod's memory limit. Two things follow:
+
+- It does not show how close a pod is to its own limit. Use **Memory vs Container Limit** and **Memory Protector Usage %** below for that.
+- Pods on the same host report the same value, so do not `sum` it across pods: the total counts the host once per pod.
 
 **Expression**: `max(banyandb_system_memory_state{job=~"$job", container_name=~"$role", pod_name=~"$pod", kind="used_percent"}) by (pod_name)`
+
+### Memory vs Container Limit
+
+Each pod's memory against its limits, in bytes:
+
+- `used` — `banyandb_memory_protector_usage`: the Go runtime memory (heap, stacks and runtime metadata) the memory protector tracks.
+- `RSS` — `process_resident_memory_bytes`: the process resident memory.
+- `protector limit` — `banyandb_memory_protector_limit`: the memory the protector allows, which is `--allowed-percent` (default 75%) of the container limit, or `--allowed-bytes` when that is set.
+- `container limit` — `banyandb_memory_protector_cgroup_limit_bytes`: the pod's memory limit. It is `0` when there is no container limit or it cannot be read, and the series is then hidden.
+
+**Expression1 (used)**: `max by (pod_name) (banyandb_memory_protector_usage{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
+**Expression2 (RSS)**: `max by (pod_name) (process_resident_memory_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"})`
+**Expression3 (protector limit)**: `max by (pod_name) (banyandb_memory_protector_limit{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) > 0`
+**Expression4 (container limit)**: `max by (pod_name) (banyandb_memory_protector_cgroup_limit_bytes{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) > 0`
+
+### Memory Protector Usage %
+
+The memory the protector tracks as a fraction of the protector limit, per pod. As it approaches 100%, query execution is throttled, so high values show up as slow or failing queries first. Pods whose limit is `0` (no container limit, or the protector is disabled) are not shown.
+
+**Expression**: `max by (pod_name) (banyandb_memory_protector_usage{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) / (max by (pod_name) (banyandb_memory_protector_limit{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) > 0)`
 
 ### Disk Usage %
 
@@ -163,7 +186,8 @@ The heap size that will trigger the next GC, alongside the allocation rate.
 
 | Metric | Type | Labels | Meaning |
 | --- | --- | --- | --- |
-| `banyandb_memory_protector_usage`, `banyandb_memory_protector_limit` | Gauge | — | Bytes in use as tracked by the memory protector, and its limit (`--allowed-percent`). Query execution is throttled as usage approaches the limit. |
+| `banyandb_memory_protector_usage`, `banyandb_memory_protector_limit` | Gauge | — | Bytes in use as tracked by the memory protector (Go runtime memory), and its limit (`--allowed-percent` of the container limit, or `--allowed-bytes`). Query execution is throttled as usage approaches the limit. |
+| `banyandb_memory_protector_cgroup_limit_bytes` | Gauge | — | The container (cgroup) memory limit in bytes. `0` means no container limit, or it could not be read. |
 | `banyandb_panic_total` | Counter | `component` | Panics recovered in the process, by component. Lazily registered, so absent until the first panic. |
 | `banyandb_{measure,stream,trace}_metadata_total_panics` | Counter | — | Panics in the schema-metadata handlers of each model. Created at `0`, so `increase()` sees the first panic. |
 | `banyandb_{observability,measure,stream_storage,trace_storage}_scheduler_tasks_panic` | Gauge | `job` (and `group` for the storage ones) | Cumulative number of scheduler tasks that panicked; it only grows, so use `increase()`. |
