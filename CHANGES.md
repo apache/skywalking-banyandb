@@ -72,6 +72,7 @@ Release Notes.
 
 ### Bug Fixes
 
+- Stop the native index decoding a sort value that holds an escape byte into a zeroed 64 KiB buffer. Numeric sort values often contain `0xff` or `\`, so every such value read for a sort or a top-field query allocated the largest allowed term; the buffer now grows with the term.
 - Stop a vectorized stream query from charging a whole scanner batch of blocks at once. The scan decoded every block of a batch (up to 32) as soon as it pulled the batch, so a series with large blocks (a hot key over hours) overran the per-query memory budget with `per_query_limit` even for `LIMIT 20`. The scan now decodes and charges one block at a time.
 - Make a BydbQL stream, trace or property query with `LIMIT 0` return no row, as the statement says. The native request reads a limit of 0 as the default limit, so such a query used to return a full default page. A measure query keeps its legacy contract, where `LIMIT 0` is the default page.
 - Honour `OFFSET` in a BydbQL property query. The property request has no offset, so the query ignored it and returned the first page again.
