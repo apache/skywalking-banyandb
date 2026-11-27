@@ -180,6 +180,7 @@ Release Notes.
 
 ### Chores
 
+- Make the FODC Nodes dashboard and its documentation separate host memory from pod memory. `banyandb_system_memory_state` reports the host, so the panel is renamed Host Memory %, and two panels, Memory vs Container Limit and Memory Protector Usage %, chart each pod against its container limit with `banyandb_memory_protector_*`. The overhead guide now says the memory protector limit is a percentage of the container limit.
 - Upgrade the OAP E2E suites to SkyWalking 5689aa8 and add the AI agent conversations case (`ai-agent`), which stores multi-MB tag values. The yq installer now pins v4.54.1 when the installed yq lacks `tonumber`, and the OAP-based Helm cases drop the UI image, which SkyWalking no longer publishes.
 - Remove the legacy embedded web UI (`ui/`) from the BanyanDB binaries, Docker images and release packages. Use the standalone [Canopy](docs/interacting/canopy.md) web console instead; the HTTP port (`17913`) now serves only the HTTP API under `/api`. The `-slim` builds now only stub out the memory-pool diagnostic tracking.
 - Remove accidentally committed local design notes from the repository root.

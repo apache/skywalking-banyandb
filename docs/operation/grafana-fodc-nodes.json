@@ -216,7 +216,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "Total resident memory (RSS) across the selected nodes.",
+      "description": "Total resident memory (RSS) of the selected BanyanDB processes. This is the processes' own memory, not the host's.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -623,7 +623,7 @@
               "Value #A": "Uptime",
               "Value #B": "CPU (cores)",
               "Value #C": "RSS",
-              "Value #D": "Mem %",
+              "Value #D": "Host Mem %",
               "Value #E": "Disk %"
             },
             "indexByName": {
@@ -1296,7 +1296,7 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
-      "description": "System memory used percent per node (from kind=used_percent).",
+      "description": "Percent of the HOST (machine) memory in use, from banyandb_system_memory_state kind=used_percent. It is the whole machine, not the pod, and pods on the same host report the same value, so do not sum it across pods. For the pod see 'Memory vs Container Limit' and 'Memory Protector Usage %'.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1393,7 +1393,7 @@
           "refId": "A"
         }
       ],
-      "title": "System Memory %",
+      "title": "Host Memory %",
       "type": "timeseries"
     },
     {
@@ -1506,6 +1506,248 @@
         "type": "prometheus",
         "uid": "${DS_PROMETHEUS}"
       },
+      "description": "Memory of each pod against its limits. 'used' is the Go runtime memory the memory protector tracks, 'RSS' is the process resident memory, 'protector limit' is --allowed-percent (default 75%) of the container limit, and 'container limit' is the pod's memory limit. A limit series is hidden when it is 0 (no container limit, or the protector is disabled).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 47
+      },
+      "id": 63,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (pod_name) (banyandb_memory_protector_usage{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
+          "instant": false,
+          "legendFormat": "{{pod_name}} used",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (pod_name) (process_resident_memory_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"})",
+          "instant": false,
+          "legendFormat": "{{pod_name}} RSS",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (pod_name) (banyandb_memory_protector_limit{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) > 0",
+          "instant": false,
+          "legendFormat": "{{pod_name}} protector limit",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (pod_name) (banyandb_memory_protector_cgroup_limit_bytes{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) > 0",
+          "instant": false,
+          "legendFormat": "{{pod_name}} container limit",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Memory vs Container Limit",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "description": "Memory the protector tracks as a fraction of the protector limit, per pod. Query execution is throttled as this approaches 100%, so high values show up as slow or failing queries first. Pods without a limit (limit 0) are not shown.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.8
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 47
+      },
+      "id": 64,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max",
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "sortBy": "Last *",
+          "sortDesc": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "11.2.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max by (pod_name) (banyandb_memory_protector_usage{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) / (max by (pod_name) (banyandb_memory_protector_limit{job=~\"$job\", container_name=~\"$role\", pod_name=~\"$pod\"}) > 0)",
+          "instant": false,
+          "legendFormat": "{{pod_name}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Protector Usage %",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
       "description": "Per-node NIC throughput (received / sent).",
       "fieldConfig": {
         "defaults": {
@@ -1563,7 +1805,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 47
+        "y": 55
       },
       "id": 18,
       "options": {
@@ -1620,7 +1862,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 63
       },
       "id": 19,
       "panels": [],
@@ -1689,7 +1931,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 56
+        "y": 64
       },
       "id": 20,
       "options": {
@@ -1790,7 +2032,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 56
+        "y": 64
       },
       "id": 21,
       "options": {
@@ -1895,7 +2137,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 72
       },
       "id": 22,
       "options": {
@@ -1940,7 +2182,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 72
+        "y": 80
       },
       "id": 50,
       "panels": [],
@@ -2009,7 +2251,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 81
       },
       "id": 51,
       "options": {
@@ -2110,7 +2352,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 81
       },
       "id": 52,
       "options": {
@@ -2211,7 +2453,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 81
+        "y": 89
       },
       "id": 53,
       "options": {
@@ -2325,7 +2567,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 81
+        "y": 89
       },
       "id": 54,
       "options": {
@@ -2389,7 +2631,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 89
+        "y": 97
       },
       "targets": [
         {

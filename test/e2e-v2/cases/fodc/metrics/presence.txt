@@ -19,7 +19,7 @@
 # always-positive core lives in non_empty.txt; metrics that need a specific
 # event to materialise (error counters, completed part-merges) live in
 # documented_gap.txt. The four lists, including optional_plugin.txt, are
-# disjoint and their union is exactly the 125 distinct names referenced by the
+# disjoint and their union is exactly the 127 distinct names referenced by the
 # FODC Grafana dashboards.
 #
 # Calibrated against a live run: OAP writes the BanyanDB trace model, so the
@@ -41,6 +41,9 @@ banyandb_measure_inverted_index_total_term_searchers_started
 banyandb_measure_inverted_index_total_updates
 banyandb_measure_total_file_elements
 banyandb_measure_total_merge_loop_started
+banyandb_memory_protector_cgroup_limit_bytes
+banyandb_memory_protector_limit
+banyandb_memory_protector_usage
 banyandb_queue_pub_sent_bytes
 banyandb_queue_sub_received_bytes
 banyandb_queue_sub_total_started
