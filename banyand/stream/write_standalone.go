@@ -49,11 +49,12 @@ type writeCallback struct {
 	pm                  protector.Memory
 	drops               *common.WriteDrops
 	maxDiskUsagePercent int
+	skipActiveSeries    bool
 }
 
 func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
 	dropped meter.Counter,
-) bus.MessageListener {
+) *writeCallback {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -64,6 +65,13 @@ func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePe
 		pm:                  pm,
 		drops:               common.NewWriteDrops[resourceSchema.Group](dropped, schemaRepo),
 	}
+}
+
+// withoutActiveSeries returns a copy of the write callback cb that does not count active series. It serves the import subscription.
+func withoutActiveSeries(cb *writeCallback) bus.MessageListener {
+	w := *cb
+	w.skipActiveSeries = true
+	return &w
 }
 
 func (w *writeCallback) CheckHealth() *common.Error {
@@ -362,6 +370,9 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 		for j := range g.tables {
 			es := g.tables[j]
 			es.tsTable.mustAddElements(es.elements)
+			if !w.skipActiveSeries {
+				storage.ActiveSeriesOf(g.tsdb).AddDocs(es.shardID, es.seriesDocs.docs)
+			}
 			releaseElements(es.elements)
 			if len(es.docs) > 0 {
 				index := es.tsTable.Index()

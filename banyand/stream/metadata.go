@@ -539,14 +539,15 @@ func (sr *schemaRepo) loadQueue(groupName string) (*wqueue.Queue[*tsTable, optio
 var _ resourceSchema.ResourceSupplier = (*supplier)(nil)
 
 type supplier struct {
-	metadata   metadata.Repo
-	omr        observability.MetricsRegistry
-	pm         protector.Memory
-	l          *logger.Logger
-	schemaRepo *schemaRepo
-	nodeLabels map[string]string
-	path       string
-	option     option
+	metadata          metadata.Repo
+	omr               observability.MetricsRegistry
+	pm                protector.Memory
+	l                 *logger.Logger
+	schemaRepo        *schemaRepo
+	nodeLabels        map[string]string
+	path              string
+	option            option
+	countActiveSeries bool
 }
 
 func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *supplier {
@@ -561,14 +562,15 @@ func newSupplier(path string, svc *standalone, nodeLabels map[string]string) *su
 	}
 
 	return &supplier{
-		metadata:   svc.metadata,
-		l:          svc.l,
-		option:     opt,
-		omr:        svc.omr,
-		pm:         svc.pm,
-		path:       path,
-		schemaRepo: &svc.schemaRepo,
-		nodeLabels: nodeLabels,
+		metadata:          svc.metadata,
+		l:                 svc.l,
+		option:            opt,
+		omr:               svc.omr,
+		pm:                svc.pm,
+		path:              path,
+		schemaRepo:        &svc.schemaRepo,
+		nodeLabels:        nodeLabels,
+		countActiveSeries: svc.countActiveSeries,
 	}
 }
 
@@ -619,6 +621,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		DisableRetention:               res.DisableRetention,
 		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
+		CountActiveSeries:              s.countActiveSeries,
 	}
 	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
@@ -711,6 +714,7 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 		Collect:                  (*tsTable).collectUnsynced,
 		Metrics:                  metrics,
 		MetricsFactory:           metricsFactory,
+		ActiveSeriesFactory:      s.omr.With(storageScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
 		SubQueueCreator:          newWriteQueue,
 		SubQueueCreatorWithLease: newWriteQueueWithLease,
 		RootLeaseFactory: func(lock fs.File, root string) (storage.RootLease, error) {

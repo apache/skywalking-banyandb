@@ -26,9 +26,6 @@ import (
 type metrics struct {
 	lastTickTime meter.Gauge
 	totalSegRefs meter.Gauge
-	seriesCount  meter.Gauge
-	// seriesCountPrevious is the series count of the segment before the current one.
-	seriesCountPrevious meter.Gauge
 
 	totalRotationStarted  meter.Counter
 	totalRotationFinished meter.Counter
@@ -50,8 +47,6 @@ func newMetrics(factory observability.Factory) *metrics {
 	return &metrics{
 		lastTickTime:                 factory.NewGauge("last_tick_time"),
 		totalSegRefs:                 factory.NewGauge("total_segment_refs"),
-		seriesCount:                  factory.NewGauge("series_count"),
-		seriesCountPrevious:          factory.NewGauge("series_count_previous"),
 		totalRotationStarted:         factory.NewCounter("total_rotation_started"),
 		totalRotationFinished:        factory.NewCounter("total_rotation_finished"),
 		totalRotationErr:             factory.NewCounter("total_rotation_err"),

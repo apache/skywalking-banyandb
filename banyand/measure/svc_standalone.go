@@ -351,7 +351,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicMeasureImport, transfer.ImportListener(node.NodeID, withoutActiveSeries(writeListener))); err != nil {
 		return err
 	}
 	// Register chunked sync handler for measure data.

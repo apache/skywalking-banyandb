@@ -65,7 +65,7 @@ func TestStreamWriteRoundTrip(t *testing.T) {
 	req.NoError(err)
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 	pm := protector.NewMemory(metricSvc)
-	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, nil)
+	streamSvc, err := stream.NewDataSVC(metaSvc, pipeline, metricSvc, pm, nil)
 	req.NoError(err)
 
 	metaPath, metaDefer, err := test.NewSpace()

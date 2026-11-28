@@ -1589,3 +1589,42 @@ func TestProxyClient_reconnect_NoDeadlockWithActiveHeartbeat(t *testing.T) {
 		t.Fatal("reconnect deadlocked: heartbeatWg.Wait() blocked because stopCh was not closed before waiting")
 	}
 }
+
+// TestProxyClient_SendLatestMetrics_DropsVanishedSeries verifies a series the watchdog stopped reporting is not sent again.
+func TestProxyClient_SendLatestMetrics_DropsVanishedSeries(t *testing.T) {
+	testLogger := initTestLogger(t)
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	pc := NewProxyClient("localhost:8080", "datanode-hot", "192.168.1.1", []string{"data"}, nil, 5*time.Second, 10*time.Second, fr, nil, nil, nil, nil, testLogger)
+
+	shardMetric := func(shard string, value float64) metrics.RawMetric {
+		return metrics.RawMetric{
+			Name:   "banyandb_measure_active_series",
+			Value:  value,
+			Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: shard}},
+		}
+	}
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{shardMetric("0", 10), shardMetric("1", 20)}))
+	for round := 0; round < 3; round++ {
+		require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{shardMetric("0", float64(11+round))}))
+	}
+
+	ctx := context.Background()
+	mockStream := newMockStreamMetricsClient(ctx)
+	pc.streamsMu.Lock()
+	pc.metricsStream = mockStream
+	pc.streamsMu.Unlock()
+
+	require.NoError(t, pc.RetrieveAndSendMetrics(ctx, nil))
+
+	mockStream.mu.Lock()
+	defer mockStream.mu.Unlock()
+	require.Len(t, mockStream.sentRequests, 1)
+	shards := make([]string, 0)
+	for _, metric := range mockStream.sentRequests[0].Metrics {
+		if metric.GetName() == "banyandb_measure_active_series" {
+			shards = append(shards, metric.GetLabels()["shard"])
+			assert.Equal(t, 13.0, metric.GetValue())
+		}
+	}
+	assert.Equal(t, []string{"0"}, shards)
+}

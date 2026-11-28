@@ -516,3 +516,36 @@ func TestPrometheusFormatCompliance(t *testing.T) {
 		assert.NotContains(t, body, char, "Output contains invalid character")
 	}
 }
+
+// TestPrometheusFormat_OmitsDeletedSeries verifies Collect no longer exports a series the watchdog stopped reporting.
+func TestPrometheusFormat_OmitsDeletedSeries(t *testing.T) {
+	fr := flightrecorder.NewFlightRecorder(1000000)
+	collector := NewDatasourceCollector(fr)
+	reg := prometheus.NewRegistry()
+	require.NoError(t, reg.Register(collector))
+	handler := promhttp.HandlerFor(reg, promhttp.HandlerOpts{})
+
+	shardMetric := func(shard string, value float64) metrics.RawMetric {
+		return metrics.RawMetric{
+			Name:   "banyandb_measure_active_series",
+			Value:  value,
+			Desc:   "Active series",
+			Type:   "gauge",
+			Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: shard}},
+		}
+	}
+	scrape := func() string {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		return w.Body.String()
+	}
+
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{shardMetric("0", 10), shardMetric("1", 20)}))
+	assert.Contains(t, scrape(), `shard="1"`)
+
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{shardMetric("0", 11)}))
+	body := scrape()
+	assert.Contains(t, body, `banyandb_measure_active_series{group="g",shard="0"} 11`)
+	assert.NotContains(t, body, `shard="1"`)
+}

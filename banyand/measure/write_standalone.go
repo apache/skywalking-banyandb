@@ -53,11 +53,20 @@ type writeCallback struct {
 	pm                  protector.Memory
 	drops               *common.WriteDrops
 	maxDiskUsagePercent int
+	// skipActiveSeries keeps the writes of this listener out of the active series count.
+	skipActiveSeries bool
+}
+
+// withoutActiveSeries returns a copy of the write callback cb whose writes are not counted as active series.
+func withoutActiveSeries(cb *writeCallback) bus.MessageListener {
+	w := *cb
+	w.skipActiveSeries = true
+	return &w
 }
 
 func setUpWriteCallback(l *logger.Logger, schemaRepo *schemaRepo, maxDiskUsagePercent int, pm protector.Memory,
 	dropped meter.Counter,
-) bus.MessageListener {
+) *writeCallback {
 	if maxDiskUsagePercent > 100 {
 		maxDiskUsagePercent = 100
 	}
@@ -156,6 +165,9 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 			tables:   make([]*dataPointsInTable, 0),
 			segments: make([]storage.Segment[*tsTable, option], 0),
 		}
+		if !w.skipActiveSeries {
+			dpg.activeSeries = storage.ActiveSeriesOf(tsdb)
+		}
 		dst[gn] = dpg
 	}
 	if dpg.latestTS < ts {
@@ -210,9 +222,17 @@ func (w *writeCallback) handle(ctx context.Context, dst map[string]*dataPointsIn
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
+	countActive := stm.countActiveSeries && dpg.activeSeries != nil
+	before := len(dpt.metadataDocs) + len(dpt.indexModeDocs)
 	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
+	}
+	if countActive && len(dpt.metadataDocs)+len(dpt.indexModeDocs) > before {
+		if dpt.activeSeriesIDs == nil {
+			dpt.activeSeriesIDs = generateActiveSeriesIDs()
+		}
+		*dpt.activeSeriesIDs = append(*dpt.activeSeriesIDs, sid)
 	}
 	if !skipTopN {
 		w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
@@ -535,6 +555,11 @@ func (w *writeCallback) Rev(ctx context.Context, message bus.Message) (resp bus.
 			}
 			if dps.dataPoints != nil {
 				releaseDataPoints(dps.dataPoints)
+			}
+			if dps.activeSeriesIDs != nil {
+				g.activeSeries.AddIDs(dps.shardID, *dps.activeSeriesIDs)
+				releaseActiveSeriesIDs(dps.activeSeriesIDs)
+				dps.activeSeriesIDs = nil
 			}
 			if len(dps.metadataDocs) > 0 {
 				// Inserting a series that exists is a no-op, so the write may be retried.

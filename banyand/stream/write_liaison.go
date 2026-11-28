@@ -29,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
 	"github.com/apache/skywalking-banyandb/banyand/queue"
@@ -224,6 +225,7 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				es.tsTable.mustAddElementsWithSegmentID(es.elements, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
 				releaseElements(es.elements)
 			}
+			storage.ActiveSeriesOf(g.queue).AddDocs(es.shardID, es.seriesDocs.docs)
 			// Get nodes for this shard
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {

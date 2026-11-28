@@ -89,6 +89,7 @@ type standalone struct {
 	maxFileSnapshotNum    int
 	minFileSnapshotAge    time.Duration
 	snapshotMux           sync.Mutex
+	countActiveSeries     bool
 }
 
 func (s *standalone) Stream(metadata *commonv1.Metadata) (Stream, error) {
@@ -326,7 +327,7 @@ func (s *standalone) PreRun(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = s.pipeline.Subscribe(data.TopicStreamImport, transfer.ImportListener(node.NodeID, writeListener)); err != nil {
+	if err = s.pipeline.Subscribe(data.TopicStreamImport, transfer.ImportListener(node.NodeID, withoutActiveSeries(writeListener))); err != nil {
 		return err
 	}
 	s.pipeline.RegisterChunkedSyncHandler(data.TopicStreamPartSync, setUpChunkedSyncCallback(s.l, &s.schemaRepo))
@@ -370,8 +371,8 @@ func (s *standalone) GracefulStop() {
 	}
 }
 
-// NewService returns a new service.
-func NewService(
+// NewDataSVC returns a new data service.
+func NewDataSVC(
 	metadata metadata.Repo,
 	pipeline queue.Server,
 	omr observability.MetricsRegistry,
@@ -384,6 +385,22 @@ func NewService(
 		omr:                   omr,
 		pm:                    pm,
 		internalWritePipeline: internalWritePipeline,
+	}, nil
+}
+
+// NewStandalone returns a new standalone service, which counts the active series of the normal write subscriptions.
+func NewStandalone(
+	metadata metadata.Repo,
+	pipeline queue.Server,
+	omr observability.MetricsRegistry,
+	pm protector.Memory,
+) (Service, error) {
+	return &standalone{
+		metadata:          metadata,
+		pipeline:          pipeline,
+		omr:               omr,
+		pm:                pm,
+		countActiveSeries: true,
 	}, nil
 }
 

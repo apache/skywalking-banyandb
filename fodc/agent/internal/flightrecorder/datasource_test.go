@@ -18,6 +18,7 @@
 package flightrecorder
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -663,4 +664,95 @@ func TestDatasource_UpdateBatch_EmptyBatch(t *testing.T) {
 	timestamps := ds.GetTimestamps()
 	assert.Equal(t, 100.0, metricsMap["metric1"].GetCurrentValue())
 	assert.Equal(t, timestamp2, timestamps.GetCurrentValue())
+}
+
+// TestDatasource_ReplaceBatch_RemovesStaleKeys verifies a key missing from the next batch of the same source is deleted.
+func TestDatasource_ReplaceBatch_RemovesStaleKeys(t *testing.T) {
+	ds := NewDatasource()
+	shard0 := `banyandb_measure_active_series{group="g",shard="0"}`
+	shard1 := `banyandb_measure_active_series{group="g",shard="1"}`
+
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{
+		{Name: "banyandb_measure_active_series", Value: 10, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "0"}}},
+		{Name: "banyandb_measure_active_series", Value: 20, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "1"}}},
+		{Name: "cpu_usage", Value: 1, Desc: "CPU usage", Type: "gauge"},
+	}, 1000))
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{
+		{Name: "banyandb_measure_active_series", Value: 11, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "0"}}},
+	}, 2000))
+
+	metricsMap := ds.GetMetrics()
+	assert.Contains(t, metricsMap, shard0)
+	assert.Equal(t, 11.0, metricsMap[shard0].GetCurrentValue())
+	assert.NotContains(t, metricsMap, shard1)
+	assert.NotContains(t, metricsMap, "cpu_usage")
+	assert.NotContains(t, ds.GetDescriptions(), "cpu_usage")
+	assert.NotContains(t, ds.GetTypes(), "cpu_usage")
+}
+
+// TestDatasource_ReplaceBatch_SourceIsolation verifies ReplaceBatch keeps keys written by other writers and UpdateBatch keeps source keys.
+func TestDatasource_ReplaceBatch_SourceIsolation(t *testing.T) {
+	ds := NewDatasource()
+
+	require.NoError(t, ds.UpdateBatch([]metrics.RawMetric{{Name: "ktm_status", Value: 0, Desc: "KTM status"}}, 1000))
+	require.NoError(t, ds.UpdateBatch([]metrics.RawMetric{
+		{Name: "ktm_syscall_total", Value: 5, Labels: []metrics.Label{{Name: "comm", Value: "banyand"}}},
+	}, 1000))
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{{Name: "cpu_usage", Value: 1}, {Name: "memory_bytes", Value: 2}}, 2000))
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{{Name: "cpu_usage", Value: 3}}, 3000))
+
+	metricsMap := ds.GetMetrics()
+	assert.Contains(t, metricsMap, "ktm_status")
+	assert.Contains(t, metricsMap, `ktm_syscall_total{comm="banyand"}`)
+	assert.Equal(t, "KTM status", ds.GetDescriptions()["ktm_status"])
+	assert.NotContains(t, metricsMap, "memory_bytes")
+
+	// UpdateBatch never deletes, not even the keys of a source.
+	require.NoError(t, ds.UpdateBatch([]metrics.RawMetric{
+		{Name: "ktm_syscall_total", Value: 6, Labels: []metrics.Label{{Name: "comm", Value: "banyand"}}},
+	}, 4000))
+	assert.Equal(t, 3.0, ds.GetMetrics()["cpu_usage"].GetCurrentValue())
+
+	// A different source does not delete the keys of the first one.
+	require.NoError(t, ds.ReplaceBatch("other", []metrics.RawMetric{{Name: "other_metric", Value: 1}}, 5000))
+	assert.Contains(t, ds.GetMetrics(), "cpu_usage")
+
+	assert.Error(t, ds.ReplaceBatch("", []metrics.RawMetric{{Name: "cpu_usage", Value: 1}}, 6000))
+}
+
+// TestDatasource_ReplaceBatch_KeyReappears verifies a deleted key can be written again and serves its new value.
+func TestDatasource_ReplaceBatch_KeyReappears(t *testing.T) {
+	ds := NewDatasource()
+	labels := []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "1"}}
+	key := `banyandb_measure_active_series{group="g",shard="1"}`
+
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{{Name: "banyandb_measure_active_series", Value: 20, Labels: labels, Type: "gauge"}}, 1000))
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{{Name: "cpu_usage", Value: 1}}, 2000))
+	require.NotContains(t, ds.GetMetrics(), key)
+	require.NotContains(t, ds.GetTypes(), "banyandb_measure_active_series")
+
+	require.NoError(t, ds.ReplaceBatch("watchdog", []metrics.RawMetric{{Name: "banyandb_measure_active_series", Value: 30, Labels: labels, Type: "gauge"}}, 3000))
+	metricsMap := ds.GetMetrics()
+	require.Contains(t, metricsMap, key)
+	assert.Equal(t, 30.0, metricsMap[key].GetCurrentValue())
+	assert.Equal(t, []float64{30}, metricsMap[key].GetAllValues())
+	assert.Equal(t, "gauge", ds.GetTypes()["banyandb_measure_active_series"])
+}
+
+// TestDatasource_ReplaceBatch_CapacityNotReduced verifies deleting keys does not lower the computed ring buffer capacity.
+func TestDatasource_ReplaceBatch_CapacityNotReduced(t *testing.T) {
+	ds := NewDatasource()
+	capacitySize := int64(100000)
+	batch := make([]metrics.RawMetric, 0, 20)
+	for idx := 0; idx < 20; idx++ {
+		batch = append(batch, metrics.RawMetric{Name: "series", Value: float64(idx), Labels: []metrics.Label{{Name: "id", Value: fmt.Sprintf("%d", idx)}}, Desc: "series"})
+	}
+	require.NoError(t, ds.ReplaceBatch("watchdog", batch, 1000))
+	before := ds.ComputeCapacity(capacitySize)
+
+	require.NoError(t, ds.ReplaceBatch("watchdog", batch[:5], 2000))
+	require.Len(t, ds.GetMetrics(), 5)
+	after := ds.ComputeCapacity(capacitySize)
+
+	assert.GreaterOrEqual(t, after, before)
 }

@@ -245,7 +245,15 @@ func newQueryLatencyInterceptor(m *metrics) grpc.UnaryServerInterceptor {
 			return handler(ctx, req)
 		}
 		start := time.Now()
+		_, hasDeadline := ctx.Deadline()
+		var ended chan time.Time
+		if hasDeadline {
+			ended = make(chan time.Time, 1)
+			stop := context.AfterFunc(ctx, func() { ended <- time.Now() })
+			defer stop()
+		}
 		resp, err := handler(ctx, req)
+		returned := time.Now()
 		state := "ok"
 		if err != nil {
 			// The status follows the request context, not the error: the distributed stream, trace and TopN paths
@@ -256,11 +264,42 @@ func newQueryLatencyInterceptor(m *metrics) grpc.UnaryServerInterceptor {
 				state = "deadline_exceeded"
 			case ctx.Err() != nil:
 				state = "canceled"
+				if hasDeadline {
+					// The context ended at the earlier of the time the callback recorded and the time the handler
+					// returned. A callback scheduled late does not move the end later, so the classification uses
+					// the end time observed.
+					endedAt := returned
+					select {
+					case callbackAt := <-ended:
+						if callbackAt.Before(endedAt) {
+							endedAt = callbackAt
+						}
+					default:
+					}
+					if deadlineReached(ctx, endedAt) {
+						state = "deadline_exceeded"
+					}
+				}
 			}
 		}
-		m.queryLatency.Observe(time.Since(start).Seconds(), service, state)
+		m.queryLatency.Observe(returned.Sub(start).Seconds(), service, state)
 		return resp, err
 	}
+}
+
+// queryDeadlineTolerance is how far before the client's deadline a request context may end and still count as the
+// deadline expiring.
+const queryDeadlineTolerance = 100 * time.Millisecond
+
+// deadlineReached reports whether ctx, which ended at endedAt, ended within queryDeadlineTolerance of its deadline or
+// after it. The gRPC server transport runs its own timer for the client's deadline that cancels the stream, so a
+// handler can see context.Canceled although the deadline is what ended the request. The judgment uses the moment the
+// context ended, not the moment the handler returned, so a request canceled earlier stays canceled however long the
+// handler takes to return. A client cancellation within the tolerance cannot be told apart from the deadline and is
+// counted as the deadline.
+func deadlineReached(ctx context.Context, endedAt time.Time) bool {
+	deadline, ok := ctx.Deadline()
+	return ok && deadline.Sub(endedAt) <= queryDeadlineTolerance
 }
 
 // isWriteStreamErr reports whether err is an error rather than nil, a cancellation or an expired deadline.
