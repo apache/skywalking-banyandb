@@ -73,6 +73,7 @@ type Opts[S SubQueue, O any] struct {
 	Collect                  func(S)
 	Metrics                  storage.Metrics
 	MetricsFactory           observability.Factory
+	ActiveSeriesFactory      observability.Factory
 	Option                   O
 	Group                    string
 	Location                 string
@@ -82,14 +83,15 @@ type Opts[S SubQueue, O any] struct {
 
 // Queue represents a write queue that manages multiple shards.
 type Queue[S SubQueue, O any] struct {
-	lfs       fs.FileSystem
-	lock      fs.File
-	rootLease storage.RootLease
-	logger    *logger.Logger
-	p         common.Position
-	location  string
-	sLst      []*Shard[S]
-	opts      Opts[S, O]
+	lfs          fs.FileSystem
+	lock         fs.File
+	rootLease    storage.RootLease
+	logger       *logger.Logger
+	activeSeries *storage.ActiveSeries
+	p            common.Position
+	location     string
+	sLst         []*Shard[S]
+	opts         Opts[S, O]
 	sync.RWMutex
 	closed atomic.Bool
 }
@@ -99,6 +101,8 @@ func (q *Queue[S, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	if q.closed.Load() {
 		return
 	}
+	// The tracker records the new shard count before q.opts publishes it.
+	q.activeSeries.UpdateShardNum(resourceOpts.ShardNum)
 	q.Lock()
 	defer q.Unlock()
 	si := storage.MustToIntervalRule(resourceOpts.SegmentInterval)
@@ -116,6 +120,11 @@ func (q *Queue[S, O]) getOpts() Opts[S, O] {
 	return q.opts
 }
 
+// ActiveSeries returns the active series tracker, or nil when Opts.ActiveSeriesFactory is not set.
+func (q *Queue[S, O]) ActiveSeries() *storage.ActiveSeries {
+	return q.activeSeries
+}
+
 // Close closes the queue and all its shards.
 func (q *Queue[S, O]) Close() error {
 	if q.closed.Load() {
@@ -123,9 +132,10 @@ func (q *Queue[S, O]) Close() error {
 	}
 	q.closed.Store(true)
 	// Unregister before closing shards so no collection runs against closed sub-queues.
-	if q.opts.Collect != nil {
+	if q.opts.Collect != nil || q.activeSeries != nil {
 		obsservice.MetricsCollector.Unregister(q.location)
 	}
+	q.activeSeries.Close()
 	q.Lock()
 	defer q.Unlock()
 	for _, shard := range q.sLst {
@@ -143,6 +153,9 @@ func (q *Queue[S, O]) Close() error {
 	}
 	if q.opts.MetricsFactory != nil {
 		q.opts.MetricsFactory.Close()
+	}
+	if q.opts.ActiveSeriesFactory != nil {
+		q.opts.ActiveSeriesFactory.Close()
 	}
 	return nil
 }
@@ -191,11 +204,17 @@ func Open[S SubQueue, O any](ctx context.Context, opts Opts[S, O], _ string) (*Q
 		}
 		q.rootLease = rootLease
 	}
-	if opts.Collect != nil {
+	clock, _ := timestamp.GetClock(ctx)
+	q.activeSeries = storage.NewActiveSeries(opts.ActiveSeriesFactory, clock, opts.ShardNum)
+	if opts.Collect != nil || q.activeSeries != nil {
+		// A single getter serves both collectors: Register overwrites an existing key.
 		obsservice.MetricsCollector.Register(location, func() {
-			for _, sq := range q.SubQueues() {
-				q.opts.Collect(sq)
+			if q.opts.Collect != nil {
+				for _, sq := range q.SubQueues() {
+					q.opts.Collect(sq)
+				}
 			}
+			q.activeSeries.Collect()
 		})
 	}
 	return q, nil

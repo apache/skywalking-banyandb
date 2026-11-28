@@ -510,11 +510,12 @@ The total number of series (index documents) stored, per `group`, for measures, 
 **Expression2 (stream)**: `sum(banyandb_stream_storage_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"}) by (group)`
 **Expression3 (trace)**: `sum(banyandb_trace_storage_inverted_index_total_doc_count{job=~"$job", container_name=~"$role", pod_name=~"$pod", group=~"$group"}) by (group)`
 
-### Current Series Count
+### Active Series
 
-`banyandb_measure_series_count`, `banyandb_stream_storage_series_count` and `banyandb_trace_storage_series_count` (label `group`) report the series count of the segment that covers the node's latest write time, on data and standalone nodes (a liaison does not report them). A segment created ahead of time is not counted. The value is 0 when no segment covers that time, when the node has not seen a write since it started, or when that segment is closed. A new segment starts empty and its series are indexed again as they are written, so the value restarts from 0 on every rotation. `banyandb_measure_series_count_previous`, `banyandb_stream_storage_series_count_previous` and `banyandb_trace_storage_series_count_previous` report the series count of the segment right before that one (the closest earlier segment, even if not adjacent in time), read from disk without reopening it when it is closed. They are 0 when there is no such segment. Series only accumulate within a segment, so `series_count_previous` is the final size of the last complete segment. To alert on abnormal growth, compare the two and require a minimum size so that small groups do not fire: `series_count / series_count_previous > 1.2 and series_count_previous > 1000`. The ratio does not depend on the segment interval, and the 0 values after a rotation do not trigger it.
+The number of distinct series written per `group` in the last complete UTC hour, for measures and streams. `active_series` (labels `group` and `shard`) is a HyperLogLog estimate reported by liaison and standalone nodes; data nodes do not report it. Each (group, shard) is written through one liaison, so take the maximum per shard and sum the shards. Traces, Top-N result measures and imported data are not counted. The value changes once an hour, and the hours are cut by when a write arrives, not by its data timestamp. A (group, shard) has no sample for the hour in which the node started, for the hour in which the group's shard count changed and the hour after, and when the previous hour had no writes. The hour in which the writing liaisons change (a liaison is added, removed or restarted) can read low.
 
-**Expression**: `max by (group) (banyandb_measure_series_count{job=~"$job", container_name=~"$role", pod_name=~"$pod"})` (and the stream and trace names above)
+**Expression1 (measure)**: `sum by (group) (max by (group, shard) (banyandb_measure_active_series{job=~"$job"}))`
+**Expression2 (stream)**: `sum by (group) (max by (group, shard) (banyandb_stream_storage_active_series{job=~"$job"}))`
 
 ### Stream tst: Write Rate
 

@@ -20,6 +20,7 @@ package flightrecorder
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/apache/skywalking-banyandb/fodc/agent/internal/metrics"
@@ -68,6 +69,7 @@ type Datasource struct {
 	metrics      map[string]*MetricRingBuffer // Map from metric name+labels to RingBuffer storing metric values
 	descriptions map[string]string            // Map from metric name to HELP content descriptions
 	types        map[string]string            // Map from metric name to Prometheus type string
+	sources      map[string]string            // Map from metric name+labels to the source that wrote it through ReplaceBatch
 	timestamps   *TimestampRingBuffer         // RingBuffer storing timestamps for each polling cycle
 	mu           sync.RWMutex
 	CapacitySize int64 // Memory limit in bytes
@@ -80,6 +82,7 @@ func NewDatasource() *Datasource {
 		timestamps:   NewTimestampRingBuffer(),
 		descriptions: make(map[string]string),
 		types:        make(map[string]string),
+		sources:      make(map[string]string),
 		CapacitySize: 0,
 	}
 }
@@ -120,15 +123,61 @@ func (ds *Datasource) AddTimestamp(timestamp int64) {
 	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
 }
 
-// UpdateBatch atomically updates a batch of metrics and timestamp.
+// UpdateBatch atomically updates a batch of metrics and timestamp. Keys missing from the batch are kept.
 func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int64) error {
 	ds.mu.Lock()
 	defer ds.mu.Unlock()
+	ds.writeBatchLocked("", rawMetrics, timestamp)
+	return nil
+}
 
+// ReplaceBatch atomically updates a batch of metrics and timestamp on behalf of source, then deletes
+// every key earlier written by source that is missing from the batch, together with its ring buffer.
+// A metric name left with no keys also loses its description and type. Keys of other sources and keys
+// written through UpdateBatch or Update are never deleted.
+func (ds *Datasource) ReplaceBatch(source string, rawMetrics []metrics.RawMetric, timestamp int64) error {
+	if source == "" {
+		return fmt.Errorf("source cannot be empty")
+	}
+
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	written := ds.writeBatchLocked(source, rawMetrics, timestamp)
+
+	removedNames := make(map[string]struct{})
+	for metricKey, keySource := range ds.sources {
+		if keySource != source {
+			continue
+		}
+		if _, ok := written[metricKey]; ok {
+			continue
+		}
+		delete(ds.metrics, metricKey)
+		delete(ds.sources, metricKey)
+		removedNames[metricKeyName(metricKey)] = struct{}{}
+	}
+	if len(removedNames) == 0 {
+		return nil
+	}
+	for metricKey := range ds.metrics {
+		delete(removedNames, metricKeyName(metricKey))
+	}
+	for name := range removedNames {
+		delete(ds.descriptions, name)
+		delete(ds.types, name)
+	}
+	return nil
+}
+
+// writeBatchLocked writes a batch of metrics and timestamp and returns the set of written keys.
+// A non-empty source is recorded as the owner of every written key. The caller must hold ds.mu.
+func (ds *Datasource) writeBatchLocked(source string, rawMetrics []metrics.RawMetric, timestamp int64) map[string]struct{} {
 	UpdateTimestampRingBuffer(ds.timestamps, timestamp)
 
 	// Track which RingBuffers were updated in this batch
 	updatedBuffers := make([]*MetricRingBuffer, 0, len(rawMetrics))
+	written := make(map[string]struct{}, len(rawMetrics))
 
 	for idx := range rawMetrics {
 		m := &rawMetrics[idx]
@@ -142,6 +191,9 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		if _, exists := ds.metrics[metricKey]; !exists {
 			ds.metrics[metricKey] = NewMetricRingBuffer()
 		}
+		if source != "" {
+			ds.sources[metricKey] = source
+		}
 		if m.Desc != "" {
 			ds.descriptions[m.Name] = m.Desc
 		}
@@ -151,6 +203,7 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		buffer := ds.metrics[metricKey]
 		UpdateMetricRingBuffer(buffer, m.Value)
 		updatedBuffers = append(updatedBuffers, buffer)
+		written[metricKey] = struct{}{}
 	}
 
 	for _, buffer := range updatedBuffers {
@@ -161,7 +214,15 @@ func (ds *Datasource) UpdateBatch(rawMetrics []metrics.RawMetric, timestamp int6
 		ds.timestamps.FinalizeLastVisible()
 	}
 
-	return nil
+	return written
+}
+
+// metricKeyName returns the metric name part of a key produced by metrics.MetricKey.String().
+func metricKeyName(metricKey string) string {
+	if idx := strings.IndexByte(metricKey, '{'); idx >= 0 {
+		return metricKey[:idx]
+	}
+	return metricKey
 }
 
 // SetCapacity sets the capacity for the datasource and updates all ring buffer capacities.

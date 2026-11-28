@@ -29,6 +29,7 @@ import (
 	commonv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/common/v1"
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
+	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
 	"github.com/apache/skywalking-banyandb/banyand/internal/wqueue"
 	obsservice "github.com/apache/skywalking-banyandb/banyand/observability/services"
 	"github.com/apache/skywalking-banyandb/banyand/protector"
@@ -147,6 +148,11 @@ func (w *writeQueueCallback) Rev(ctx context.Context, message bus.Message) (resp
 				es.tsTable.mustAddDataPointsWithSegmentID(es.dataPoints, es.timeRange.Start.UnixNano(), seriesMetadataBytes)
 				releaseDataPoints(es.dataPoints)
 			}
+			if es.activeSeriesIDs != nil {
+				g.activeSeries.AddIDs(es.shardID, *es.activeSeriesIDs)
+				releaseActiveSeriesIDs(es.activeSeriesIDs)
+				es.activeSeriesIDs = nil
+			}
 			nodes := g.queue.GetNodes(es.shardID)
 			if len(nodes) == 0 {
 				w.l.Warn().Uint32("shardID", uint32(es.shardID)).Msg("no nodes found for shard")
@@ -208,9 +214,10 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 	dpg, ok := dst[gn]
 	if !ok {
 		dpg = &dataPointsInQueue{
-			name:   gn,
-			queue:  queue,
-			tables: make([]*dataPointsInTable, 0),
+			name:         gn,
+			queue:        queue,
+			activeSeries: storage.ActiveSeriesOf(queue),
+			tables:       make([]*dataPointsInTable, 0),
 		}
 		dst[gn] = dpg
 	}
@@ -250,9 +257,17 @@ func (w *writeQueueCallback) handle(ctx context.Context, dst map[string]*dataPoi
 		dpg.tables = append(dpg.tables, dpt)
 	}
 
+	countActive := stm.countActiveSeries && dpg.activeSeries != nil
+	before := len(dpt.metadataDocs) + len(dpt.indexModeDocs)
 	sid, err := processDataPoint(dpt, req, writeEvent, stm, is, ts, metadata, spec)
 	if err != nil {
 		return nil, err
+	}
+	if countActive && len(dpt.metadataDocs)+len(dpt.indexModeDocs) > before {
+		if dpt.activeSeriesIDs == nil {
+			dpt.activeSeriesIDs = generateActiveSeriesIDs()
+		}
+		*dpt.activeSeriesIDs = append(*dpt.activeSeriesIDs, sid)
 	}
 	w.schemaRepo.inFlow(ctx, stm.GetSchema(), sid, writeEvent.EntityValues, req.DataPoint, spec)
 	return dst, nil

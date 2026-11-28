@@ -35,11 +35,16 @@ import (
 // MetricsRecorder is an interface for recording metrics.
 // This allows Watchdog to work with any implementation of FlightRecorder.
 type MetricsRecorder interface {
-	// Update records metrics from a polling cycle.
+	// Update records metrics from a polling cycle, keeping previously recorded metrics missing from it.
 	Update(rawMetrics []metrics.RawMetric) error
+	// UpdateSource records a complete polling cycle of source, deleting the metrics source recorded
+	// earlier that are missing from it.
+	UpdateSource(source string, rawMetrics []metrics.RawMetric) error
 }
 
 const (
+	// metricsSource identifies the metrics the watchdog writes into the recorder.
+	metricsSource  = "watchdog"
 	maxRetries     = 3
 	initialBackoff = 100 * time.Millisecond
 	maxBackoff     = 5 * time.Second
@@ -116,7 +121,7 @@ func (w *Watchdog) AddPostPollHook(fn func(ctx context.Context)) {
 // identity is cached and "sticks": if the provider later regresses to an unresolved role
 // (ROLE_UNSPECIFIED), the cached resolved identity is returned instead. Without this, a regression
 // would cause the flight recorder to buffer a duplicate (ghost) series under the unresolved
-// identity, which is never evicted.
+// identity.
 func (w *Watchdog) resolveNodeInfo() (role string, labels map[string]string) {
 	w.mu.RLock()
 	fn := w.nodeInfo
@@ -310,7 +315,7 @@ func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) 
 		"endpoint_count": fmt.Sprintf("%d", len(w.urls)),
 	})
 
-	rawMetrics, pollErr := w.pollMetrics(ctx)
+	rawMetrics, allSucceeded, pollErr := w.pollMetrics(ctx)
 	if pollErr != nil {
 		return ctx, fmt.Errorf("failed to poll metrics: %w", pollErr)
 	}
@@ -323,7 +328,15 @@ func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) 
 		return ctx, nil
 	}
 
-	if updateErr := w.recorder.Update(rawMetrics); updateErr != nil {
+	// Metrics missing from a cycle where some endpoint failed may only be missing because of the
+	// failure, so they are deleted only after a cycle where every endpoint succeeded.
+	var updateErr error
+	if allSucceeded {
+		updateErr = w.recorder.UpdateSource(metricsSource, rawMetrics)
+	} else {
+		updateErr = w.recorder.Update(rawMetrics)
+	}
+	if updateErr != nil {
 		return ctx, fmt.Errorf("failed to forward metrics to recorder: %w", updateErr)
 	}
 	ctx = panicdiag.WithBreadcrumb(ctx, "forwarded watchdog metrics", "fodc-watchdog", map[string]string{
@@ -342,10 +355,11 @@ func (w *Watchdog) pollAndForward(ctx context.Context) (context.Context, error) 
 	return ctx, nil
 }
 
-// pollMetrics fetches raw metrics text from all endpoints and parses them.
-func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error) {
+// pollMetrics fetches raw metrics text from all endpoints and parses them. It also reports whether
+// every endpoint succeeded; metrics of the endpoints that succeeded are returned either way.
+func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, bool, error) {
 	if len(w.urls) == 0 {
-		return nil, fmt.Errorf("no metrics endpoints configured")
+		return nil, false, fmt.Errorf("no metrics endpoints configured")
 	}
 	allMetrics := make([]metrics.RawMetric, 0)
 	var lastErr error
@@ -370,9 +384,9 @@ func (w *Watchdog) pollMetrics(ctx context.Context) ([]metrics.RawMetric, error)
 			Msg("Successfully polled metrics from endpoint")
 	}
 	if len(allMetrics) == 0 && lastErr != nil {
-		return nil, fmt.Errorf("failed to poll metrics from any endpoint: %w", lastErr)
+		return nil, false, fmt.Errorf("failed to poll metrics from any endpoint: %w", lastErr)
 	}
-	return allMetrics, nil
+	return allMetrics, lastErr == nil, nil
 }
 
 // pollMetricsFromEndpoint fetches raw metrics text from a single endpoint and parses them.

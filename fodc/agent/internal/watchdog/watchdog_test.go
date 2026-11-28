@@ -44,16 +44,27 @@ const testMetricsCPUUsage = "cpu_usage 75.5"
 type mockMetricsRecorder struct {
 	metrics         [][]metrics.RawMetric
 	updateErrors    []error
+	calledMethods   []string
 	updateCallCount int
 	mu              sync.Mutex
 }
 
 // Update records metrics from a polling cycle.
 func (m *mockMetricsRecorder) Update(rawMetrics []metrics.RawMetric) error {
+	return m.record("Update", rawMetrics)
+}
+
+// UpdateSource records a complete polling cycle of source.
+func (m *mockMetricsRecorder) UpdateSource(source string, rawMetrics []metrics.RawMetric) error {
+	return m.record("UpdateSource:"+source, rawMetrics)
+}
+
+func (m *mockMetricsRecorder) record(method string, rawMetrics []metrics.RawMetric) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.updateCallCount++
+	m.calledMethods = append(m.calledMethods, method)
 	m.metrics = append(m.metrics, rawMetrics)
 
 	if len(m.updateErrors) > 0 {
@@ -75,7 +86,15 @@ func (m *mockMetricsRecorder) GetMetrics() [][]metrics.RawMetric {
 	return result
 }
 
-// GetUpdateCallCount returns the number of times Update was called.
+// GetCalledMethods returns the recorder methods called, in order.
+func (m *mockMetricsRecorder) GetCalledMethods() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	return append([]string(nil), m.calledMethods...)
+}
+
+// GetUpdateCallCount returns the number of times Update or UpdateSource was called.
 func (m *mockMetricsRecorder) GetUpdateCallCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,7 +102,7 @@ func (m *mockMetricsRecorder) GetUpdateCallCount() int {
 	return m.updateCallCount
 }
 
-// SetUpdateErrors sets errors to return on Update calls.
+// SetUpdateErrors sets errors to return on Update or UpdateSource calls.
 func (m *mockMetricsRecorder) SetUpdateErrors(errors []error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -94,6 +113,10 @@ func (m *mockMetricsRecorder) SetUpdateErrors(errors []error) {
 type panicMetricsRecorder struct{}
 
 func (panicMetricsRecorder) Update(_ []metrics.RawMetric) error {
+	panic("recorder panic")
+}
+
+func (panicMetricsRecorder) UpdateSource(_ string, _ []metrics.RawMetric) error {
 	panic("recorder panic")
 }
 
@@ -153,7 +176,7 @@ http_requests_total{method="GET"} 100
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	require.NoError(t, err)
 	assert.Len(t, rawMetrics, 2)
@@ -176,7 +199,7 @@ func TestWatchdog_PollMetrics_HTTPError(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
@@ -191,7 +214,7 @@ func TestWatchdog_PollMetrics_ConnectionFailure(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
@@ -212,7 +235,7 @@ func TestWatchdog_PollMetrics_InvalidMetricsFormat(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	// Invalid format causes parsing error after retries
 	assert.Error(t, err)
@@ -241,7 +264,7 @@ func TestWatchdog_PollMetrics_RetryWithExponentialBackoff(t *testing.T) {
 	require.NoError(t, preRunErr)
 
 	startTime := time.Now()
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 	duration := time.Since(startTime)
 
 	require.NoError(t, err)
@@ -271,7 +294,7 @@ func TestWatchdog_PollMetrics_ContextCancellation(t *testing.T) {
 	// Cancel context before polling
 	cancel()
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
@@ -655,7 +678,7 @@ http_requests_total{method="GET"} 100`
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, pollErr := wd.pollMetrics(ctx)
+	rawMetrics, _, pollErr := wd.pollMetrics(ctx)
 	require.NoError(t, pollErr)
 	require.NotEmpty(t, rawMetrics)
 
@@ -715,7 +738,7 @@ func TestWatchdog_RetryBackoffResetOnSuccess(t *testing.T) {
 	require.NoError(t, preRunErr)
 
 	// First poll will retry and succeed
-	_, err := wd.pollMetrics(ctx)
+	_, _, err := wd.pollMetrics(ctx)
 	require.NoError(t, err)
 
 	// Verify backoff was reset to initial value
@@ -775,7 +798,7 @@ http_requests_total{method="GET"} 100`
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	require.NoError(t, err)
 	assert.Len(t, rawMetrics, 2)
@@ -806,7 +829,7 @@ func TestWatchdog_PollMetrics_MultipleEndpoints_OneFails(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	require.NoError(t, err)
 	assert.Len(t, rawMetrics, 1)
@@ -822,7 +845,7 @@ func TestWatchdog_PollMetrics_NoEndpoints(t *testing.T) {
 	preRunErr := wd.PreRun(ctx)
 	require.NoError(t, preRunErr)
 
-	rawMetrics, err := wd.pollMetrics(ctx)
+	rawMetrics, _, err := wd.pollMetrics(ctx)
 
 	assert.Error(t, err)
 	assert.Nil(t, rawMetrics)
@@ -879,4 +902,44 @@ func TestResolveNodeInfoSticky(t *testing.T) {
 	role, labels = wd.resolveNodeInfo()
 	assert.Equal(t, "ROLE_DATA", role, "must stick to the resolved role")
 	assert.Equal(t, "warm", labels["type"], "must stick to the resolved labels")
+}
+
+// TestWatchdog_PollAndForward_RecorderMethodByEndpointOutcome verifies which recorder method a cycle uses.
+func TestWatchdog_PollAndForward_RecorderMethodByEndpointOutcome(t *testing.T) {
+	okServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(testMetricsCPUUsage))
+	}))
+	defer okServer.Close()
+	failServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer failServer.Close()
+
+	tests := []struct {
+		name            string
+		urls            []string
+		expectedMethods []string
+		expectErr       bool
+	}{
+		{name: "all endpoints succeed", urls: []string{okServer.URL, okServer.URL}, expectedMethods: []string{"UpdateSource:" + metricsSource}},
+		{name: "one endpoint fails", urls: []string{failServer.URL, okServer.URL}, expectedMethods: []string{"Update"}},
+		{name: "all endpoints fail", urls: []string{failServer.URL, failServer.URL}, expectedMethods: nil, expectErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &mockMetricsRecorder{}
+			wd := NewWatchdogWithConfig(recorder, tt.urls, 10*time.Second, "datanode-cold", "test", []string{"data", "lifecycle"})
+			require.NoError(t, wd.PreRun(context.Background()))
+
+			_, err := wd.pollAndForward(context.Background())
+
+			if tt.expectErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tt.expectedMethods, recorder.GetCalledMethods())
+		})
+	}
 }

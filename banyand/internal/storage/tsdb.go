@@ -66,6 +66,7 @@ type TSDBOpts[T TSTable, O any] struct {
 	SeriesIndexFlushTimeoutSeconds int64
 	SeriesIndexCacheMaxBytes       int
 	ShardNum                       uint32
+	CountActiveSeries              bool
 	DisableRetention               bool
 	DisableRotation                bool
 	SegmentIdleTimeout             time.Duration
@@ -153,6 +154,7 @@ type database[T TSTable, O any] struct {
 	lfs               fs.FileSystem
 	tsEventCh         chan int64
 	scheduler         *timestamp.Scheduler
+	activeSeries      *ActiveSeries
 	segmentController *segmentController[T, O]
 	metricsFactory    observability.Factory
 	*metrics
@@ -173,6 +175,9 @@ func (d *database[T, O]) Close() error {
 		return nil
 	}
 	d.closed.Store(true)
+	// Unregister waits for a collection in progress, so none runs after the tracker and the factory are closed.
+	obsservice.MetricsCollector.Unregister(d.location)
+	d.activeSeries.Close()
 	d.Lock()
 	defer d.Unlock()
 	d.scheduler.Close()
@@ -188,7 +193,6 @@ func (d *database[T, O]) Close() error {
 	if d.metricsFactory != nil {
 		d.metricsFactory.Close()
 	}
-	obsservice.MetricsCollector.Unregister(d.location)
 	return nil
 }
 
@@ -282,16 +286,23 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 		db.segmentController.optsMutex.Unlock()
 		db.rootLease = rootLease
 	}
-	if err := db.segmentController.open(ctx); err != nil {
+	if err = db.segmentController.open(ctx); err != nil {
 		return nil, err
 	}
-	obsservice.MetricsCollector.Register(location, db.collect)
 	db.disableRotation = opts.DisableRotation
 	// db (and its lock fd) is now owned by the caller; on rotation-task error
-	// the partially-initialized db is still returned so the caller can Close
-	// it and unregister the metrics collector.
+	// the partially-initialized db is still returned so the caller can Close it.
 	released = true
-	return db, db.startRotationTask(ctx)
+	if err = db.startRotationTask(ctx); err != nil {
+		return db, err
+	}
+	// The active series gauge is registered only after every step that can fail has succeeded,
+	// so a failed open leaves no gauge behind.
+	if opts.CountActiveSeries {
+		db.activeSeries = NewActiveSeries(opts.StorageMetricsFactory, clock, opts.ShardNum)
+	}
+	obsservice.MetricsCollector.Register(location, db.collect)
+	return db, nil
 }
 
 func (d *database[T, O]) CreateSegmentIfNotExist(ts time.Time) (Segment[T, O], error) {
@@ -341,7 +352,13 @@ func (d *database[T, O]) UpdateOptions(resourceOpts *commonv1.ResourceOpts) {
 	if d.closed.Load() {
 		return
 	}
+	d.activeSeries.UpdateShardNum(resourceOpts.GetShardNum())
 	d.segmentController.updateOptions(resourceOpts)
+}
+
+// ActiveSeries returns the active series tracker, or nil when the database does not count active series.
+func (d *database[T, O]) ActiveSeries() *ActiveSeries {
+	return d.activeSeries
 }
 
 // TakeFileSnapshot writes a point-in-time snapshot of every segment under dst.
@@ -431,42 +448,11 @@ func (d *database[T, O]) DeleteOldestSegment() (bool, error) {
 	}
 }
 
-// currentSeriesCount returns the series count of the segment that covers the
-// latest tick time: the segments are ordered by start time and the last one may
-// have been created ahead of time. It is 0 when no segment covers the tick or
-// that segment is closed.
-func (d *database[T, O]) currentSeriesCount() int64 {
-	tick := d.latestTickTime.Load()
-	for _, s := range d.segmentController.copySegments() {
-		if s.Contains(tick) {
-			count, _ := s.openSeriesCount()
-			return count
-		}
-	}
-	return 0
-}
-
-// previousSeriesCount returns the series count of the segment right before the
-// one that covers the latest tick time, whether or not the two are adjacent in
-// time. It is 0 when there is no such segment.
-func (d *database[T, O]) previousSeriesCount() int64 {
-	tick := d.latestTickTime.Load()
-	segments := d.segmentController.copySegments()
-	for i, s := range segments {
-		if s.Contains(tick) {
-			if i == 0 {
-				return 0
-			}
-			return segments[i-1].seriesCount()
-		}
-	}
-	return 0
-}
-
 func (d *database[T, O]) collect() {
 	if d.closed.Load() {
 		return
 	}
+	d.activeSeries.Collect()
 	if d.metrics == nil {
 		return
 	}
@@ -482,8 +468,6 @@ func (d *database[T, O]) collect() {
 		}
 	}
 	d.totalSegRefs.Set(float64(openSegments))
-	d.metrics.seriesCount.Set(float64(d.currentSeriesCount()))
-	d.metrics.seriesCountPrevious.Set(float64(d.previousSeriesCount()))
 	if d.metrics.schedulerMetrics == nil {
 		return
 	}

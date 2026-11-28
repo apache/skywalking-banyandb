@@ -79,19 +79,20 @@ func (i *indexSchema) parse(schema *databasev1.Measure) {
 }
 
 type measure struct {
-	indexSchema  atomic.Value
-	tsdb         atomic.Value
-	c            storage.Cache
-	pm           protector.Memory
-	decodePool   *decodePool
-	l            *logger.Logger
-	schema       *databasev1.Measure
-	schemaRepo   *schemaRepo
-	queryMetrics *queryMetrics
-	name         string
-	group        string
-	interval     time.Duration
-	vectorized   vmeasure.VectorizedConfig
+	indexSchema       atomic.Value
+	tsdb              atomic.Value
+	c                 storage.Cache
+	pm                protector.Memory
+	decodePool        *decodePool
+	l                 *logger.Logger
+	schema            *databasev1.Measure
+	schemaRepo        *schemaRepo
+	queryMetrics      *queryMetrics
+	name              string
+	group             string
+	interval          time.Duration
+	vectorized        vmeasure.VectorizedConfig
+	countActiveSeries bool
 }
 
 func (m *measure) GetSchema() *databasev1.Measure {
@@ -216,6 +217,8 @@ func openMeasure(spec measureSpec,
 		schemaRepo:   schemaRepo,
 		queryMetrics: qm,
 		vectorized:   vectorized,
+
+		countActiveSeries: countsActiveSeries(spec.schema),
 	}
 	if err := m.parseSpec(); err != nil {
 		return nil, err

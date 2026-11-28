@@ -708,6 +708,8 @@ type supplier struct {
 	queryMetrics sync.Map
 	path         string
 	option       option
+	// countActiveSeries makes the opened groups count their active series; only the standalone supplier sets it.
+	countActiveSeries bool
 }
 
 // groupQueryMetrics is the query metrics of one group and the factory that owns
@@ -747,6 +749,8 @@ func newSupplier(path string, svc *standalone, sr *schemaRepo, nodeLabels map[st
 		decodePool: svc.decodePool,
 		schemaRepo: sr,
 		nodeLabels: nodeLabels,
+
+		countActiveSeries: true,
 	}
 }
 
@@ -798,6 +802,7 @@ func (s *supplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, error
 		DisableRetention:               res.DisableRetention,
 		DisableRotation:                res.DisableRotation,
 		MemoryLimit:                    s.pm.GetLimit(),
+		CountActiveSeries:              s.countActiveSeries,
 	}
 	return storage.OpenTSDB(
 		common.SetPosition(context.Background(), func(_ common.Position) common.Position {
@@ -884,7 +889,9 @@ func (s *queueSupplier) OpenDB(groupSchema *commonv1.Group) (resourceSchema.DB, 
 		Collect:         (*tsTable).collectUnsynced,
 		Metrics:         metrics,
 		MetricsFactory:  metricsFactory,
-		SubQueueCreator: newWriteQueue,
+		// The tracker owns its factory, which carries the group as a constant label under the measure scope.
+		ActiveSeriesFactory: s.omr.With(measureScope.ConstLabels(meter.ToLabelPairs(common.DBLabelNames(), p.DBLabelValues()))),
+		SubQueueCreator:     newWriteQueue,
 		GetNodes: func(shardID common.ShardID) []string {
 			copies := ro.Replicas + 1
 			nodes, err := s.measureDataNodeRegistry.LocateAll(group, uint32(shardID), int(copies))

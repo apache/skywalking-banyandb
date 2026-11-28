@@ -42,8 +42,19 @@ func NewFlightRecorder(capacitySize int64) *FlightRecorder {
 	}
 }
 
-// Update records metrics from a polling cycle.
+// Update records metrics from a polling cycle. Metrics missing from the batch are kept.
 func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
+	return fr.update("", rawMetrics)
+}
+
+// UpdateSource records a complete polling cycle of source: metrics that source wrote earlier and that
+// are missing from the batch are deleted. An empty batch records nothing and deletes nothing.
+func (fr *FlightRecorder) UpdateSource(source string, rawMetrics []metrics.RawMetric) error {
+	return fr.update(source, rawMetrics)
+}
+
+// update writes the batch into the first datasource, replacing the keys of source when it is non-empty.
+func (fr *FlightRecorder) update(source string, rawMetrics []metrics.RawMetric) error {
 	if len(rawMetrics) == 0 {
 		return nil
 	}
@@ -61,7 +72,13 @@ func (fr *FlightRecorder) Update(rawMetrics []metrics.RawMetric) error {
 	}
 
 	timestamp := time.Now().Unix()
-	if updateErr := ds.UpdateBatch(rawMetrics, timestamp); updateErr != nil {
+	var updateErr error
+	if source == "" {
+		updateErr = ds.UpdateBatch(rawMetrics, timestamp)
+	} else {
+		updateErr = ds.ReplaceBatch(source, rawMetrics, timestamp)
+	}
+	if updateErr != nil {
 		return fmt.Errorf("failed to update batch: %w", updateErr)
 	}
 

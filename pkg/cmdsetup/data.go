@@ -69,7 +69,7 @@ func newDataCmd(runners ...run.Unit) *cobra.Command {
 		"property": propertySvc,
 	})
 
-	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, propertyStreamPipeline)
+	streamSvc, err := stream.NewDataSVC(metaSvc, pipeline, metricSvc, pm, propertyStreamPipeline)
 	if err != nil {
 		l.Fatal().Err(err).Msg("failed to initiate stream service")
 	}

@@ -679,3 +679,48 @@ func TestLatestValues(t *testing.T) {
 	// An empty name list returns an empty map.
 	assert.Empty(t, fr.LatestValues(nil, nil))
 }
+
+// TestFlightRecorder_UpdateSource_RemovesStaleKeys verifies LatestValues no longer resolves a series the source stopped reporting.
+func TestFlightRecorder_UpdateSource_RemovesStaleKeys(t *testing.T) {
+	fr := NewFlightRecorder(1000000)
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{
+		{Name: "banyandb_measure_active_series", Value: 10, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "0"}}},
+		{Name: "banyandb_measure_active_series", Value: 20, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "1"}}},
+		{Name: "process_cpu_seconds_total", Value: 5, Desc: "CPU seconds", Type: "counter"},
+	}))
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{
+		{Name: "banyandb_measure_active_series", Value: 11, Labels: []metrics.Label{{Name: "group", Value: "g"}, {Name: "shard", Value: "0"}}},
+	}))
+
+	_, ok := fr.LatestValues([]string{"banyandb_measure_active_series"}, map[string]string{"shard": "1"})["banyandb_measure_active_series"]
+	assert.False(t, ok)
+	values := fr.LatestValues([]string{"banyandb_measure_active_series"}, map[string]string{"shard": "0"})
+	assert.Equal(t, 11.0, values["banyandb_measure_active_series"])
+	_, ok = fr.LatestValues([]string{"process_cpu_seconds_total"}, nil)["process_cpu_seconds_total"]
+	assert.False(t, ok)
+
+	ds := fr.GetDatasources()[0]
+	assert.NotContains(t, ds.GetMetrics(), `banyandb_measure_active_series{group="g",shard="1"}`)
+	assert.NotContains(t, ds.GetDescriptions(), "process_cpu_seconds_total")
+	assert.NotContains(t, ds.GetTypes(), "process_cpu_seconds_total")
+}
+
+// TestFlightRecorder_UpdateSource_EmptyBatch verifies an empty batch deletes nothing.
+func TestFlightRecorder_UpdateSource_EmptyBatch(t *testing.T) {
+	fr := NewFlightRecorder(1000000)
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{{Name: "cpu_usage", Value: 1}}))
+	require.NoError(t, fr.UpdateSource("watchdog", nil))
+	assert.Equal(t, 1.0, fr.LatestValues([]string{"cpu_usage"}, nil)["cpu_usage"])
+}
+
+// TestFlightRecorder_UpdateSource_KeepsUpdateKeys verifies UpdateSource keeps metrics recorded through Update.
+func TestFlightRecorder_UpdateSource_KeepsUpdateKeys(t *testing.T) {
+	fr := NewFlightRecorder(1000000)
+	require.NoError(t, fr.Update([]metrics.RawMetric{{Name: "ktm_status", Value: 0}}))
+	require.NoError(t, fr.Update([]metrics.RawMetric{{Name: "ktm_syscall_total", Value: 5}, {Name: "ktm_status", Value: 2}}))
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{{Name: "cpu_usage", Value: 1}}))
+	require.NoError(t, fr.UpdateSource("watchdog", []metrics.RawMetric{{Name: "memory_bytes", Value: 2}}))
+
+	values := fr.LatestValues([]string{"ktm_status", "ktm_syscall_total", "cpu_usage", "memory_bytes"}, nil)
+	assert.Equal(t, map[string]float64{"ktm_status": 2, "ktm_syscall_total": 5, "memory_bytes": 2}, values)
+}

@@ -20,14 +20,22 @@ package grpc
 import (
 	"context"
 	"errors"
+	"net"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	bydbqlv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/bydbql/v1"
@@ -154,6 +162,7 @@ func TestQueryLatencyStatusFollowsRequestContext(t *testing.T) {
 		err       error
 		name      string
 		want      string
+		deadline  time.Duration
 		ctxEnds   bool
 		ctxExpire bool
 	}{
@@ -161,6 +170,10 @@ func TestQueryLatencyStatusFollowsRequestContext(t *testing.T) {
 		{name: "plain error", err: wrapped, want: "stream/err"},
 		{name: "wrapped plain error after the client canceled", err: wrapped, ctxEnds: true, want: "stream/canceled"},
 		{name: "wrapped plain error after the client deadline", err: wrapped, ctxEnds: true, ctxExpire: true, want: "stream/deadline_exceeded"},
+		{
+			name: "wrapped plain error after the client canceled within the tolerance of its deadline", err: wrapped, ctxEnds: true,
+			deadline: 50 * time.Millisecond, want: "stream/deadline_exceeded",
+		},
 		// A context error while the request context is alive comes from a failed node connection, not from the client.
 		{name: "context.Canceled while the request context is alive", err: context.Canceled, want: "stream/err"},
 		{name: "gRPC Canceled while the request context is alive", err: status.Error(codes.Canceled, "client connection is closing"), want: "stream/err"},
@@ -173,6 +186,10 @@ func TestQueryLatencyStatusFollowsRequestContext(t *testing.T) {
 				cancel()
 				ctx, cancel = context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 			}
+			if tt.deadline > 0 {
+				cancel()
+				ctx, cancel = context.WithTimeout(context.Background(), tt.deadline)
+			}
 			defer cancel()
 			_, m, reg := newQueryLatencyMeasureService()
 			_, err := newQueryLatencyInterceptor(m)(ctx, nil, &grpc.UnaryServerInfo{FullMethod: streamv1.StreamService_Query_FullMethodName},
@@ -183,6 +200,200 @@ func TestQueryLatencyStatusFollowsRequestContext(t *testing.T) {
 					return nil, tt.err
 				})
 			require.Equal(t, tt.err, err)
+			require.Equal(t, map[string]uint64{tt.want: 1}, queryLatencyCounts(t, reg))
+		})
+	}
+}
+
+// TestQueryLatencyCancelBeforeToleranceReturnedInside checks that the status follows the moment the request context
+// ended: a cancellation more than the tolerance before the deadline stays canceled although the handler returns
+// within the tolerance of the deadline.
+func TestQueryLatencyCancelBeforeToleranceReturnedInside(t *testing.T) {
+	_, m, reg := newQueryLatencyMeasureService()
+	deadline := time.Now().Add(time.Second)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	_, err := newQueryLatencyInterceptor(m)(ctx, nil, &grpc.UnaryServerInfo{FullMethod: streamv1.StreamService_Query_FullMethodName},
+		func(context.Context, any) (any, error) {
+			cancel()
+			time.Sleep(time.Until(deadline.Add(-queryDeadlineTolerance / 2)))
+			return nil, errors.New("handler returned after cleanup")
+		})
+	require.Error(t, err)
+	require.Equal(t, map[string]uint64{"stream/canceled": 1}, queryLatencyCounts(t, reg))
+}
+
+// TestQueryLatencyCallbackScheduledAfterHandlerReturned checks that a context callback that runs late does not move
+// the end of the request later. With one P, the handler cancels the context and then queues busy goroutines ahead of
+// the callback, so the callback runs after the handler returned. The request was canceled more than the tolerance
+// before its deadline and stays canceled.
+func TestQueryLatencyCallbackScheduledAfterHandlerReturned(t *testing.T) {
+	prev := runtime.GOMAXPROCS(1)
+	t.Cleanup(func() { runtime.GOMAXPROCS(prev) })
+	const rounds = 5
+	got := make(map[string]int)
+	valid := 0
+	for i := 0; i < rounds; i++ {
+		_, m, reg := newQueryLatencyMeasureService()
+		deadline := time.Now().Add(400 * time.Millisecond)
+		ctx, cancel := context.WithDeadline(context.Background(), deadline)
+		var stop atomic.Bool
+		var wg sync.WaitGroup
+		var left time.Duration
+		_, _ = newQueryLatencyInterceptor(m)(ctx, nil, &grpc.UnaryServerInfo{FullMethod: streamv1.StreamService_Query_FullMethodName},
+			func(context.Context, any) (any, error) {
+				time.Sleep(time.Until(deadline.Add(-queryDeadlineTolerance - 20*time.Millisecond)))
+				cancel()
+				for j := 0; j < 4; j++ {
+					wg.Add(1)
+					//panicdiag:allow-rawgo test helper goroutine
+					go func() {
+						defer wg.Done()
+						// revive:disable-next-line:empty-block
+						for !stop.Load() {
+						}
+					}()
+				}
+				left = time.Until(deadline)
+				return nil, errors.New("canceled by the client")
+			})
+		stop.Store(true)
+		wg.Wait()
+		cancel()
+		counts := queryLatencyCounts(t, reg)
+		// A round counts only when the handler returned more than the tolerance before the deadline.
+		if left <= queryDeadlineTolerance {
+			continue
+		}
+		valid++
+		for k, v := range counts {
+			got[k] += int(v)
+		}
+	}
+	if valid == 0 {
+		t.Skip("the scheduler delayed every handler past the tolerance")
+	}
+	assert.Equal(t, map[string]int{"stream/canceled": valid}, got)
+}
+
+// TestDeadlineReached checks the boundary of the tolerance with fixed times: only a context that ended within
+// queryDeadlineTolerance of its deadline, or after it, has reached the deadline.
+func TestDeadlineReached(t *testing.T) {
+	base := time.Now()
+	tests := []struct {
+		deadline time.Time
+		endedAt  time.Time
+		name     string
+		want     bool
+	}{
+		{name: "no deadline", endedAt: base},
+		{name: "deadline far away", deadline: base.Add(time.Hour), endedAt: base},
+		{name: "ended before the tolerance", deadline: base.Add(queryDeadlineTolerance + time.Millisecond), endedAt: base},
+		{name: "ended exactly at the tolerance", deadline: base.Add(queryDeadlineTolerance), endedAt: base, want: true},
+		{name: "ended within the tolerance", deadline: base.Add(50 * time.Millisecond), endedAt: base, want: true},
+		{name: "ended at the deadline", deadline: base, endedAt: base, want: true},
+		{name: "ended after the deadline", deadline: base.Add(-time.Second), endedAt: base, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			if !tt.deadline.IsZero() {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithDeadline(ctx, tt.deadline)
+				defer cancel()
+			}
+			require.Equal(t, tt.want, deadlineReached(ctx, tt.endedAt))
+		})
+	}
+}
+
+// blockingStreamServer blocks every stream query until the request context ends, then fails it with that context's
+// error, the way a handler waiting on a data node does.
+type blockingStreamServer struct {
+	streamv1.UnimplementedStreamServiceServer
+	started chan struct{}
+}
+
+func (b *blockingStreamServer) Query(ctx context.Context, _ *streamv1.QueryRequest) (*streamv1.QueryResponse, error) {
+	close(b.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestQueryLatencyStatusOverGRPCTransport sends the request through a real gRPC server: the transport derives the
+// request context from the grpc-timeout header and also runs its own deadline timer that cancels the stream, so the
+// handler may observe context.Canceled although the client's deadline is what ended the request.
+func TestQueryLatencyStatusOverGRPCTransport(t *testing.T) {
+	tests := []struct {
+		call func(client streamv1.StreamServiceClient, started <-chan struct{}) error
+		name string
+		want string
+	}{
+		{
+			name: "client deadline expires", want: "stream/deadline_exceeded",
+			call: func(client streamv1.StreamServiceClient, _ <-chan struct{}) error {
+				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+				defer cancel()
+				_, err := client.Query(ctx, &streamv1.QueryRequest{})
+				return err
+			},
+		},
+		{
+			name: "client cancels", want: "stream/canceled",
+			call: func(client streamv1.StreamServiceClient, started <-chan struct{}) error {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				//panicdiag:allow-rawgo test helper goroutine
+				go func() {
+					<-started
+					cancel()
+				}()
+				_, err := client.Query(ctx, &streamv1.QueryRequest{})
+				return err
+			},
+		},
+		{
+			name: "client cancels with a deadline far away", want: "stream/canceled",
+			call: func(client streamv1.StreamServiceClient, started <-chan struct{}) error {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+				defer cancel()
+				//panicdiag:allow-rawgo test helper goroutine
+				go func() {
+					<-started
+					cancel()
+				}()
+				_, err := client.Query(ctx, &streamv1.QueryRequest{})
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, m, reg := newQueryLatencyMeasureService()
+			lis := bufconn.Listen(1 << 20)
+			server := grpc.NewServer(grpc.ChainUnaryInterceptor(newQueryLatencyInterceptor(m)))
+			handler := &blockingStreamServer{started: make(chan struct{})}
+			streamv1.RegisterStreamServiceServer(server, handler)
+			//panicdiag:allow-rawgo test server
+			go func() { _ = server.Serve(lis) }()
+			defer server.Stop()
+			conn, err := grpc.NewClient("passthrough:///bufnet",
+				grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+				grpc.WithTransportCredentials(insecure.NewCredentials()))
+			require.NoError(t, err)
+			defer conn.Close()
+			// Connect before the call, so that the call's deadline does not include the connection setup.
+			conn.Connect()
+			connectCtx, connectCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer connectCancel()
+			for state := conn.GetState(); state != connectivity.Ready; state = conn.GetState() {
+				require.True(t, conn.WaitForStateChange(connectCtx, state), "the connection must become ready")
+			}
+
+			require.Error(t, tt.call(streamv1.NewStreamServiceClient(conn), handler.started))
+			require.Eventually(t, func() bool {
+				return len(queryLatencyCounts(t, reg)) > 0
+			}, 5*time.Second, 10*time.Millisecond, "the interceptor must observe the finished request")
 			require.Equal(t, map[string]uint64{tt.want: 1}, queryLatencyCounts(t, reg))
 		})
 	}

@@ -224,6 +224,7 @@ type dataPointsInTable struct {
 	segment         storage.Segment[*tsTable, option]
 	tsTable         *tsTable
 	dataPoints      *dataPoints
+	activeSeriesIDs *[]uint64
 	metadataDocMap  map[uint64]int
 	indexModeDocMap map[uint64]int
 	timeRange       timestamp.TimeRange
@@ -233,14 +234,31 @@ type dataPointsInTable struct {
 }
 
 type dataPointsInGroup struct {
-	tsdb     storage.TSDB[*tsTable, option]
-	tables   []*dataPointsInTable
-	segments []storage.Segment[*tsTable, option]
-	latestTS int64
+	tsdb         storage.TSDB[*tsTable, option]
+	activeSeries *storage.ActiveSeries
+	tables       []*dataPointsInTable
+	segments     []storage.Segment[*tsTable, option]
+	latestTS     int64
 }
 
 type dataPointsInQueue struct {
-	name   string
-	queue  *wqueue.Queue[*tsTable, option]
-	tables []*dataPointsInTable
+	name         string
+	queue        *wqueue.Queue[*tsTable, option]
+	activeSeries *storage.ActiveSeries
+	tables       []*dataPointsInTable
+}
+
+var activeSeriesIDsPool = pool.Register[*[]uint64]("measure-activeSeriesIDs")
+
+func generateActiveSeriesIDs() *[]uint64 {
+	if v := activeSeriesIDsPool.Get(); v != nil {
+		return v
+	}
+	ids := make([]uint64, 0, 64)
+	return &ids
+}
+
+func releaseActiveSeriesIDs(ids *[]uint64) {
+	*ids = (*ids)[:0]
+	activeSeriesIDsPool.Put(ids)
 }

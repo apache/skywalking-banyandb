@@ -434,7 +434,7 @@ func TestProducer_RealEngineData(t *testing.T) {
 	req.NoError(err)
 	metricSvc := obsservice.NewMetricService(metaSvc, pipeline, "test", nil)
 	pm := protector.NewMemory(metricSvc)
-	streamSvc, err := stream.NewService(metaSvc, pipeline, metricSvc, pm, nil)
+	streamSvc, err := stream.NewStandalone(metaSvc, pipeline, metricSvc, pm)
 	req.NoError(err)
 	measureSvc, err := measure.NewStandalone(metaSvc, pipeline, nil, metricSvc, pm)
 	req.NoError(err)
