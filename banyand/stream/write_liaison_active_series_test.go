@@ -122,13 +122,17 @@ type activeSeriesResource struct {
 
 func (r activeSeriesResource) Delegated() resourceSchema.IndexListener { return r.s }
 
-// activeSeriesClient accepts every publish.
+// activeSeriesClient accepts every publish and every part sync.
 type activeSeriesClient struct {
 	queue.Client
 }
 
 func (activeSeriesClient) Publish(context.Context, bus.Topic, ...bus.Message) (bus.Future, error) {
 	return activeSeriesFuture{}, nil
+}
+
+func (activeSeriesClient) NewChunkedSyncClient(string, uint32) (queue.ChunkedSyncClient, error) {
+	return &mockChunkedSyncClient{}, nil
 }
 
 type activeSeriesFuture struct{}
@@ -154,7 +158,7 @@ func newLiaisonActiveSeriesHarness(tb testing.TB, countActive bool, shardNum uin
 		Group:           activeSeriesGroup,
 		ShardNum:        shardNum,
 		SegmentInterval: storage.IntervalRule{Unit: storage.DAY, Num: 1},
-		Option:          option{mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}},
+		Option:          option{mergePolicy: newDefaultMergePolicyForTesting(), protector: protector.Nop{}, tire2Client: activeSeriesClient{}},
 		SubQueueCreator: newWriteQueue,
 		GetNodes:        func(common.ShardID) []string { return getNodes },
 	}
@@ -277,6 +281,19 @@ func TestActiveSeriesLiaisonWithoutFactoryDoesNotCount(t *testing.T) {
 		h.callback.Rev(context.Background(), bus.NewMessage(1, activeSeriesBatch(1, 10, 2)))
 	})
 	assert.Empty(t, h.collect(t))
+}
+
+// TestActiveSeriesLiaisonSubQueueSyncsToNodes checks that the harness sub-queues can sync parts to their nodes,
+// which their background syncer does after every flush.
+func TestActiveSeriesLiaisonSubQueueSyncsToNodes(t *testing.T) {
+	h := newLiaisonActiveSeriesHarness(t, true, 1, []string{"data-node"})
+	shard, err := h.queue.GetOrCreateShard(0)
+	require.NoError(t, err)
+	tst := shard.SubQueue()
+	require.NotPanics(t, func() {
+		_, err = tst.executeSyncWithRetry(nil, tst.getNodes())
+	})
+	require.NoError(t, err)
 }
 
 // BenchmarkWriteQueueCallbackRev measures a batch of 1000 elements of 200 series, without (off) and with (on) active series counting.

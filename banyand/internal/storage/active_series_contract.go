@@ -44,7 +44,7 @@ func SetActiveSeriesWindowForTest(d time.Duration) (restore func()) {
 	return func() { activeSeriesWindowNanos.Store(prev) }
 }
 
-var activeSeriesClockOverride atomic.Pointer[timestamp.Clock] // nil means the clock of the database.
+var activeSeriesClockOverride atomic.Pointer[timestamp.Clock] // nil means the clock the owner passes.
 
 // activeSeriesClock returns the clock a new tracker reads: the one set by SetActiveSeriesClockForTest, else c.
 func activeSeriesClock(c timestamp.Clock) timestamp.Clock {
@@ -54,10 +54,9 @@ func activeSeriesClock(c timestamp.Clock) timestamp.Clock {
 	return c
 }
 
-// SetActiveSeriesClockForTest makes the trackers that OpenTSDB creates afterwards in this process read c and returns a
-// function that restores the previous clock. The clock is a process-wide setting that applies to every such tracker, in
-// all databases of the process. The trackers of a wqueue.Queue read the clock of their context and are not affected.
-// It exists for tests; production trackers read the clock of their database.
+// SetActiveSeriesClockForTest makes the trackers created afterwards in this process read c and returns a function that
+// restores the previous clock. The clock is a process-wide setting that applies to every such tracker, those of a
+// database and those of a wqueue.Queue alike. It exists for tests; production trackers read the clock of their owner.
 func SetActiveSeriesClockForTest(c timestamp.Clock) (restore func()) {
 	prev := activeSeriesClockOverride.Swap(&c)
 	return func() { activeSeriesClockOverride.Store(prev) }

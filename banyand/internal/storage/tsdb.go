@@ -299,7 +299,7 @@ func OpenTSDB[T TSTable, O any](ctx context.Context, opts TSDBOpts[T, O], cache 
 	// The active series gauge is registered only after every step that can fail has succeeded,
 	// so a failed open leaves no gauge behind.
 	if opts.CountActiveSeries {
-		db.activeSeries = NewActiveSeries(opts.StorageMetricsFactory, activeSeriesClock(clock), opts.ShardNum)
+		db.activeSeries = NewActiveSeries(opts.StorageMetricsFactory, clock, opts.ShardNum)
 	}
 	obsservice.MetricsCollector.Register(location, db.collect)
 	return db, nil

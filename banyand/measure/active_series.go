@@ -23,6 +23,7 @@ import (
 	databasev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/database/v1"
 	"github.com/apache/skywalking-banyandb/api/validate"
 	"github.com/apache/skywalking-banyandb/banyand/internal/storage"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 // countsActiveSeries reports whether writes of m count toward the group's active series: a Top-N result measure has a
@@ -35,4 +36,10 @@ func countsActiveSeries(m *databasev1.Measure) bool {
 // The window is a process-wide setting: it applies to every tracker created afterwards, in all databases of the process.
 func SetActiveSeriesWindowForTest(d time.Duration) (restore func()) {
 	return storage.SetActiveSeriesWindowForTest(d)
+}
+
+// SetActiveSeriesClockForTest forwards to storage.SetActiveSeriesClockForTest for in-process cluster tests.
+// The clock is a process-wide setting: it applies to every tracker created afterwards, in all databases and queues of the process.
+func SetActiveSeriesClockForTest(c timestamp.Clock) (restore func()) {
+	return storage.SetActiveSeriesClockForTest(c)
 }

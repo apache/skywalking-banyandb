@@ -41,6 +41,7 @@ import (
 	measurev1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/measure/v1"
 	modelv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/model/v1"
 	streamv1 "github.com/apache/skywalking-banyandb/api/proto/banyandb/stream/v1"
+	"github.com/apache/skywalking-banyandb/pkg/timestamp"
 )
 
 const (
@@ -303,20 +304,66 @@ func (w *seriesWriter) conn(addr string) (*grpclib.ClientConn, error) {
 	return conn, nil
 }
 
-// boundaryMargin is how close to the end of a tracker window a batch may choose its series set. A batch chosen closer to the boundary
-// waits for the next window, because its rows could be acknowledged after the boundary and be counted in the wrong window.
-const boundaryMargin = 500 * time.Millisecond
+// windowClock is the clock of every active series tracker in this suite. It reads the real time but does not leave a window while a
+// measure batch whose series set was chosen for that window is unacknowledged. A liaison counts a row before it acknowledges it,
+// so the tracker counts every such batch in the window its series set belongs to, however long the batch takes.
+type windowClock struct {
+	timestamp.Clock
+	cond *sync.Cond
+	// window is the index of the window Now reads, counted from the Unix epoch.
+	window   int64
+	inflight int
+	mu       sync.Mutex
+}
 
-// windowParity is the parity of the tracker window that the current time falls in. It waits for the next window when fewer than
-// boundaryMargin remain in the current one.
-func windowParity() int {
-	now := time.Now().UnixNano()
-	window := int64(activeSeriesWindow)
-	if remaining := window - now%window; remaining < int64(boundaryMargin) {
-		time.Sleep(time.Duration(remaining))
-		now = time.Now().UnixNano()
+func newWindowClock() *windowClock {
+	c := &windowClock{Clock: timestamp.NewClock(), window: time.Now().UnixNano() / int64(activeSeriesWindow)}
+	c.cond = sync.NewCond(&c.mu)
+	return c
+}
+
+// Now returns the real time, or the last instant of the current window while the real time is past it and a batch is in flight.
+func (c *windowClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if c.advanceLocked(now) {
+		return now
 	}
-	return int(now / window % 2)
+	return time.Unix(0, (c.window+1)*int64(activeSeriesWindow)-1)
+}
+
+// advanceLocked moves the clock to the window of now unless a batch is in flight, and reports whether the clock is in that window.
+func (c *windowClock) advanceLocked(now time.Time) bool {
+	w := now.UnixNano() / int64(activeSeriesWindow)
+	if w <= c.window {
+		return true
+	}
+	if c.inflight > 0 {
+		return false
+	}
+	c.window = w
+	return true
+}
+
+// begin returns the parity of the window the clock is in and keeps the clock in that window until end is called.
+// Once the real time has left the window, it waits until the batches in flight end and the clock follows.
+func (c *windowClock) begin() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for !c.advanceLocked(time.Now()) {
+		c.cond.Wait()
+	}
+	c.inflight++
+	return int(c.window % 2)
+}
+
+// end releases the window that the matching begin held.
+func (c *windowClock) end() {
+	c.mu.Lock()
+	c.inflight--
+	c.mu.Unlock()
+	c.cond.Broadcast()
 }
 
 // round sends every series once per repeat, splitting the rows into batches that alternate between the liaisons.
@@ -353,7 +400,8 @@ func (w *seriesWriter) round(ctx context.Context) {
 		//panicdiag:allow-rawgo test helper goroutine
 		go func() {
 			defer wg.Done()
-			parity := windowParity()
+			parity := trackerClock.begin()
+			defer trackerClock.end()
 			rows := make([]*measurev1.WriteRequest, 0, hi-lo)
 			for idx := lo; idx < hi; idx++ {
 				ts := timestamppb.New(now.Add(time.Duration(idx/w.measureN) * time.Millisecond))

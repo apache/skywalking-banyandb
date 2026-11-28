@@ -249,6 +249,7 @@ func TestQueryLatencyCallbackScheduledAfterHandlerReturned(t *testing.T) {
 					//panicdiag:allow-rawgo test helper goroutine
 					go func() {
 						defer wg.Done()
+						// revive:disable-next-line:empty-block
 						for !stop.Load() {
 						}
 					}()

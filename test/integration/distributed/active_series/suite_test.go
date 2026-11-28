@@ -65,6 +65,8 @@ var (
 	liaisons      []*node
 	cleanupFuncs  []func()
 	goods         []gleak.Goroutine
+	// trackerClock is the clock of every active series tracker of the suite.
+	trackerClock *windowClock
 )
 
 // startLiaison starts a liaison whose sub server serves /metrics on its own HTTP port.
@@ -127,6 +129,8 @@ var _ = g.BeforeSuite(func() {
 
 	restore := measure.SetActiveSeriesWindowForTest(activeSeriesWindow)
 	cleanupFuncs = append(cleanupFuncs, restore)
+	trackerClock = newWindowClock()
+	cleanupFuncs = append(cleanupFuncs, measure.SetActiveSeriesClockForTest(trackerClock))
 
 	dir, releaseSpace, err := test.NewSpace()
 	gomega.Expect(err).NotTo(gomega.HaveOccurred())

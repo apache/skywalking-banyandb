@@ -318,19 +318,20 @@ var _ = g.Describe("Active series of a batch whose parity is chosen next to a wi
 	g.It("keeps the sum within the tolerance when the batch arrives after the boundary", func() {
 		windowOf := func(t time.Time) int64 { return t.UnixNano() / int64(activeSeriesWindow) }
 		next := time.Unix(0, (windowOf(time.Now())+1)*int64(activeSeriesWindow))
-		if time.Until(next) < 200*time.Millisecond {
+		if time.Until(next) < time.Second {
 			next = next.Add(activeSeriesWindow)
 		}
-		time.Sleep(time.Until(next.Add(-100 * time.Millisecond)))
-		parity := windowParity()
+		time.Sleep(time.Until(next.Add(-600 * time.Millisecond)))
+		parity := trackerClock.begin()
 		ts := timestamppb.New(time.Now().Add(-time.Minute).Truncate(time.Millisecond))
 		rows := make([]*measurev1.WriteRequest, 0, batchRows)
 		for i := range batchRows {
 			rows = append(rows, writer.measureRow(ts, parity, i))
 		}
 		// The batch reaches the liaison after the boundary that follows the moment its series were chosen.
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(time.Until(next.Add(300 * time.Millisecond)))
 		writer.sendMeasure(context.Background(), liaisonAddrs()[0], rows)
+		trackerClock.end()
 
 		time.Sleep(time.Until(next.Add(activeSeriesWindow + 4*time.Second)))
 		expectAggregate(gomega.Default, measureActiveSeries, measureGroup, measureSeries)

@@ -60,11 +60,13 @@ type shardWindow struct {
 	mu      sync.RWMutex
 }
 
-// NewActiveSeries creates a tracker that exports the active_series gauge through factory. It returns nil when factory is nil.
+// NewActiveSeries creates a tracker that exports the active_series gauge through factory and reads clock, or the clock
+// set by SetActiveSeriesClockForTest. It returns nil when factory is nil.
 func NewActiveSeries(factory observability.Factory, clock timestamp.Clock, shardNum uint32) *ActiveSeries {
 	if factory == nil {
 		return nil
 	}
+	clock = activeSeriesClock(clock)
 	a := &ActiveSeries{
 		clock:    clock,
 		gauge:    factory.NewGauge("active_series", "shard"),
